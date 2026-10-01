@@ -12,12 +12,12 @@ type TunnelStatus struct {
 }
 
 type SlotInfo struct {
-	ID          string
-	Device      string
-	Description string
-	LinkUp      bool
-	Connected   bool
-	Managed     bool
+	ID          string `json:"id"`
+	Device      string `json:"device"`
+	Description string `json:"description"`
+	LinkUp      bool   `json:"linkUp"`
+	Connected   bool   `json:"connected"`
+	Managed     bool   `json:"managed"`
 }
 
 type Backend interface {
