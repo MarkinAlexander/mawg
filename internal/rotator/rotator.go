@@ -406,13 +406,13 @@ func (e *Engine) probeAndMaybeRotate(p store.Pool, st *store.PoolState) {
 		})
 		return
 	}
-	ok, detail := e.probe(p)
+	verdict, detail := e.probe(p)
 	e.store.MutateState(p.Name, func(s *store.PoolState) {
 		s.LastCheck = e.now()
 		s.LastResult = detail
 	})
-	if ok {
-		if st.ConsecFails > 0 {
+	if verdict != probeFail {
+		if st.ConsecFails > 0 && verdict == probeOK {
 			e.store.MutateState(p.Name, func(s *store.PoolState) { s.ConsecFails = 0 })
 		}
 		return
@@ -432,39 +432,48 @@ func (e *Engine) probeAndMaybeRotate(p store.Pool, st *store.PoolState) {
 	e.rotate(p, e.store.State(p.Name), st.ActiveFile)
 }
 
-func (e *Engine) probe(p store.Pool) (bool, string) {
+const (
+	probeFail  = 0
+	probeOK    = 1
+	probeLossy = 2
+)
+
+func (e *Engine) probe(p store.Pool) (int, string) {
 	status, err := e.backend.Status(p)
 	if err != nil {
-		return false, "status error: " + err.Error()
+		return probeFail, "status error: " + err.Error()
 	}
 	if !status.LinkUp {
-		return false, "link down"
+		return probeFail, "link down"
 	}
 	target := p.Settings.ProbeHost
-	var probeOK bool
+	var gotReply bool
 	var rtt int
 	var kind string
 	if store.IsHTTPProbe(target) {
 		kind = "http"
-		probeOK, rtt, _ = httpProbe(p.DeviceName(), target, 8*time.Second)
+		gotReply, rtt, _ = httpProbe(p.DeviceName(), target, 8*time.Second)
 	} else {
 		kind = "icmp"
-		probeOK, rtt, _ = e.backend.Probe(p, target)
+		gotReply, rtt, _ = e.backend.Probe(p, target)
 	}
-	if probeOK && rtt > 0 && p.Settings.MaxRTTms > 0 && rtt > p.Settings.MaxRTTms {
-		return false, fmt.Sprintf("%s %dms выше порога %dms", kind, rtt, p.Settings.MaxRTTms)
+	if gotReply && rtt > 0 && p.Settings.MaxRTTms > 0 && rtt > p.Settings.MaxRTTms {
+		return probeFail, fmt.Sprintf("%s %dms выше порога %dms", kind, rtt, p.Settings.MaxRTTms)
 	}
 	rttSuffix := ""
 	if rtt > 0 {
 		rttSuffix = fmt.Sprintf(", %s %dms", kind, rtt)
 	}
-	if !probeOK {
+	if !gotReply {
 		if status.HandshakeAgo >= 0 && status.HandshakeAgo <= 120 {
-			return true, fmt.Sprintf("ok (handshake %ds ago, %s lossy)", status.HandshakeAgo, kind)
+			if p.Settings.MaxRTTms > 0 {
+				return probeLossy, fmt.Sprintf("ok (handshake %ds ago, %s lossy), отказы не сброшены: задан порог %dms", status.HandshakeAgo, kind, p.Settings.MaxRTTms)
+			}
+			return probeOK, fmt.Sprintf("ok (handshake %ds ago, %s lossy)", status.HandshakeAgo, kind)
 		}
-		return false, "probe " + target + " failed"
+		return probeFail, "probe " + target + " failed"
 	}
-	return true, fmt.Sprintf("ok (handshake %ds ago%s)", status.HandshakeAgo, rttSuffix)
+	return probeOK, fmt.Sprintf("ok (handshake %ds ago%s)", status.HandshakeAgo, rttSuffix)
 }
 
 type wanCacheEntry struct {

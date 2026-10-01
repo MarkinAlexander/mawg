@@ -481,3 +481,50 @@ func TestWANDownSkipsFailures(t *testing.T) {
 		t.Fatalf("detail = %q", st.State("proton").LastResult)
 	}
 }
+
+func TestLossyDoesNotResetThresholdFailures(t *testing.T) {
+	st, fb, cl := setup(t, store.FallbackDirect)
+	fb.SetProbe("proton", true)
+	st.UpdatePool("proton", store.PoolSettings{
+		Platform: store.PlatformKeenetic, KeeneticSlot: "Wireguard2",
+		Fallback: store.FallbackDirect, CheckIntervalSec: 1, FailThreshold: 3, CooldownMin: 5,
+		ProbeHost: "1.1.1.1", MaxRTTms: 120,
+	})
+	e := newEngine(st.Store, fb, cl, "")
+	e.checkPool("proton")
+
+	// отказ по порогу
+	fb.ProbeRTT["proton"] = 214
+	cl.Add(20 * time.Second)
+	e.checkPool("proton")
+	if got := st.State("proton").ConsecFails; got != 1 {
+		t.Fatalf("fails = %d, want 1", got)
+	}
+
+	// lossy: проба без ответа, но свежий handshake - не сбрасывает отказы при пороге
+	fb.SetProbe("proton", false)
+	fb.StatusMap["proton"] = platform.TunnelStatus{LinkUp: true, Connected: true, HandshakeAgo: 40}
+	cl.Add(20 * time.Second)
+	e.checkPool("proton")
+	if got := st.State("proton").ConsecFails; got != 1 {
+		t.Fatalf("lossy сбросил отказы: fails = %d, want 1", got)
+	}
+	if !strings.Contains(st.State("proton").LastResult, "отказы не сброшены") {
+		t.Fatalf("detail = %q", st.State("proton").LastResult)
+	}
+
+	// снова порог - накапливается до ротации
+	fb.SetProbe("proton", true)
+	cl.Add(20 * time.Second)
+	e.checkPool("proton")
+	fb.SetProbe("proton", false)
+	fb.StatusMap["proton"] = platform.TunnelStatus{LinkUp: true, Connected: true, HandshakeAgo: 40}
+	cl.Add(20 * time.Second)
+	e.checkPool("proton")
+	fb.SetProbe("proton", true)
+	cl.Add(20 * time.Second)
+	e.checkPool("proton")
+	if len(fb.Applied()) != 2 {
+		t.Fatalf("ротация не произошла, applied = %v", fb.Applied())
+	}
+}
