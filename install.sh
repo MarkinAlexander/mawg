@@ -41,6 +41,20 @@ fetch() {
     fi
 }
 
+fetch_ok() {
+    command -v curl >/dev/null 2>&1 && return 0
+    command -v wget >/dev/null 2>&1 && wget -q --spider https://github.com >/dev/null 2>&1 && return 0
+    return 1
+}
+
+ensure_fetch() {
+    fetch_ok && return 0
+    say "wget не умеет https, устанавливаю curl"
+    opkg update >/dev/null 2>&1
+    opkg install curl >/dev/null 2>&1
+    fetch_ok || die "нужен curl или wget с https: opkg install curl"
+}
+
 ask() {
     printf '%s [y/N]: ' "$1"
     if [ -t 0 ]; then
@@ -204,6 +218,7 @@ fi
 
 say "платформа: $PLATFORM, архитектура: $ARCH"
 
+ensure_fetch
 mkdir -p "$TMP" || die "не создать $TMP"
 
 if [ "$MODE" = install ]; then
