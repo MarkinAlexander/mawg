@@ -88,15 +88,12 @@ detect_arch() {
         riscv64) echo riscv64; return;;
     esac
     if command -v opkg >/dev/null 2>&1; then
-        if opkg print-architecture 2>/dev/null | awk '{print $2}' | grep -qx mipsel; then
-            echo mipsle; return
-        fi
-        if opkg print-architecture 2>/dev/null | awk '{print $2}' | grep -qx mips; then
-            echo mips; return
-        fi
+        archs=$(opkg print-architecture 2>/dev/null | awk '{print $2}')
+        if echo "$archs" | grep -q '^mipsel'; then echo mipsle; return; fi
+        if echo "$archs" | grep -qx 'mips'; then echo mips; return; fi
     fi
-    b=$(printf '\001' | od -An -tx1 2>/dev/null | tr -d ' \n')
-    if [ "$b" = "01" ]; then echo mipsle; else echo mips; fi
+    warn "энддиан mips не определен (нет opkg), предполагаю little-endian"
+    echo mipsle
 }
 
 PLATFORM=$(detect_platform)
@@ -231,7 +228,7 @@ if [ "$MODE" = install ]; then
 
     if [ "$PLATFORM" = keenetic ]; then
         say "проверка компонента WireGuard"
-        if /bin/ndmc show version 2>/dev/null | grep -qi 'wireguard'; then
+        if /bin/ndmc -c 'show version' 2>/dev/null | grep -qi 'wireguard'; then
             echo "   компонент WireGuard уже установлен"
         else
             say "установка системного компонента WireGuard"
