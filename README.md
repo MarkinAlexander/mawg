@@ -1,8 +1,9 @@
 # mawg - Multi-AWG Changer
 
 Менеджер WireGuard/AmneziaWG интерфейсов с ротацией конфигов для роутеров
-Keenetic (Keenetic OS 5.1+, Entware) и OpenWrt (24.10+). Один бинарник,
-веб-интерфейс и REST API на порту 8090.
+Keenetic/NetCraze (прошивка 5.1+, Entware; NetCraze - продолжение Keenetic OS,
+совместимо) и OpenWrt (24.10+). Один бинарник, веб-интерфейс и REST API
+на порту 8090.
 
 ## Быстрая установка
 
@@ -10,8 +11,8 @@ OpenWrt 24.10+:
 
     curl -o /tmp/mawg.sh https://raw.githubusercontent.com/MarkinAlexander/mawg/main/install.sh && sh /tmp/mawg.sh
 
-Keenetic (Keenetic OS 5.1+ с Entware; сначала ставится curl, фирменный wget
-не умеет https):
+Keenetic/NetCraze (прошивка 5.1+ с Entware; сначала ставится curl, фирменный
+wget не умеет https):
 
     opkg install curl && curl -o /tmp/mawg.sh https://raw.githubusercontent.com/MarkinAlexander/mawg/main/install.sh && sh /tmp/mawg.sh
 
@@ -129,9 +130,9 @@ amnezia-vpn/amneziawg-openwrt - панель Система покажет ве�
 (Cloudflare WARP) работают, серверы с обязательной обфускацией (Proton и
 похожие) - нет.
 
-## Установка на Keenetic
+## Установка на Keenetic/NetCraze
 
-Требуется Keenetic OS 5.1+, компонент WireGuard (Web UI - Обновления - Компоненты)
+Требуется прошивка Keenetic OS или NetCraze 5.1+, компонент WireGuard (Web UI - Обновления - Компоненты)
 и Entware на USB.
 
 1. Скопируйте бинарник и init-скрипт (mips: mawg-mipsle, arm: arm64-сборка):
