@@ -4,8 +4,6 @@
 Keenetic (Keenetic OS 5.1+, Entware) и OpenWrt (24.10+). Один бинарник,
 веб-интерфейс и REST API на порту 8090.
 
-Обсуждение и поддержка: сообщество NetCraze (https://netcraze.cc, раздел Keenetic).
-
 ## Быстрая установка
 
 OpenWrt 24.10+:
