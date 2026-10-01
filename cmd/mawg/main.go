@@ -21,7 +21,7 @@ import (
 	"mawg/internal/web"
 )
 
-const version = "0.1.0"
+var version = "dev"
 
 func detectPlatform() (string, string) {
 	if _, err := os.Stat("/etc/openwrt_release"); err == nil {

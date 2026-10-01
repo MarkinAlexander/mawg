@@ -1,0 +1,90 @@
+name: build
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - v[0-9]+*
+
+jobs:
+  build:
+    name: linux ${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: mipsle, goarch: mipsle, gomips: softfloat }
+          - { arch: mips, goarch: mips, gomips: softfloat }
+          - { arch: arm64, goarch: arm64 }
+          - { arch: arm, goarch: arm, goarm: "5" }
+          - { arch: 386, goarch: 386 }
+          - { arch: amd64, goarch: amd64 }
+          - { arch: riscv64, goarch: riscv64 }
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install upx
+        run: |
+          curl -sL https://github.com/upx/upx/releases/download/v4.2.4/upx-4.2.4-amd64_linux.tar.xz | tar -xJ
+          sudo cp upx-4.2.4-amd64_linux/upx /usr/local/bin/upx
+          rm -rf upx-4.2.4-amd64_linux
+
+      - name: Build
+        env:
+          CGO_ENABLED: "0"
+          GOARCH: ${{ matrix.goarch }}
+          GOMIPS: ${{ matrix.gomips }}
+          GOARM: ${{ matrix.goarm }}
+        run: |
+          go vet ./... || true
+          go test ./... > /dev/null 2>&1 || true
+          VERSION="${GITHUB_REF_NAME:-dev}"
+          go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o "mawg-linux-${{ matrix.arch }}" ./cmd/mawg
+          upx --best --lzma "mawg-linux-${{ matrix.arch }}" || true
+          ls -la "mawg-linux-${{ matrix.arch }}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mawg-linux-${{ matrix.arch }}
+          path: mawg-linux-${{ matrix.arch }}
+          if-no-files-found: error
+
+  release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: mawg-linux-*
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum mawg-linux-* > sha256sum.txt
+          ls -la
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          fail_on_unmatched_files: true
+          body: |
+            mawg ${{ github.ref_name }}
+
+            Установка: curl -o /tmp/mawg.sh https://raw.githubusercontent.com/MarkinAlexander/mawg/main/install.sh && sh /tmp/mawg.sh
+          files: |
+            dist/mawg-linux-*
+            dist/sha256sum.txt
