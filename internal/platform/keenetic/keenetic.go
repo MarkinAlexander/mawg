@@ -339,6 +339,33 @@ func slotFromDevice(device string) string {
 	return "Wireguard" + m[1]
 }
 
+var sysTunnelRe = regexp.MustCompile(`^(tun|tap|wg|awg)[0-9]+$`)
+
+func (b *Backend) SysTunnels() ([]platform.SlotInfo, error) {
+	return sysTunnelsImpl()
+}
+
+func sysTunnelsImpl() ([]platform.SlotInfo, error) {
+
+	entries, err := os.ReadDir("/sys/class/net")
+	if err != nil {
+		return nil, err
+	}
+	var out []platform.SlotInfo
+	for _, e := range entries {
+		name := e.Name()
+		if !sysTunnelRe.MatchString(name) {
+			continue
+		}
+		linkUp := false
+		if flags, err := os.ReadFile("/sys/class/net/" + name + "/flags"); err == nil {
+			linkUp = strings.HasPrefix(strings.TrimSpace(string(flags)), "1")
+		}
+		out = append(out, platform.SlotInfo{Device: name, LinkUp: linkUp})
+	}
+	return out, nil
+}
+
 func (b *Backend) IfaceHandshake(device string) int {
 	slot := slotFromDevice(device)
 	if slot == "" {

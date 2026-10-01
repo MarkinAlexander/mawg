@@ -366,6 +366,33 @@ func (b *Backend) ProbeDevice(device, target string) (bool, int) {
 	return true, pingRTT(string(out))
 }
 
+var sysTunnelRe = regexp.MustCompile(`^(tun|tap|wg|awg)[0-9]+$`)
+
+func (b *Backend) SysTunnels() ([]platform.SlotInfo, error) {
+	return sysTunnelsImpl()
+}
+
+func sysTunnelsImpl() ([]platform.SlotInfo, error) {
+
+	entries, err := os.ReadDir("/sys/class/net")
+	if err != nil {
+		return nil, err
+	}
+	var out []platform.SlotInfo
+	for _, e := range entries {
+		name := e.Name()
+		if !sysTunnelRe.MatchString(name) {
+			continue
+		}
+		linkUp := false
+		if flags, err := os.ReadFile("/sys/class/net/" + name + "/flags"); err == nil {
+			linkUp = strings.HasPrefix(strings.TrimSpace(string(flags)), "1")
+		}
+		out = append(out, platform.SlotInfo{Device: name, LinkUp: linkUp})
+	}
+	return out, nil
+}
+
 func parseHandshakes(out string) int {
 	best := int64(-1)
 	for _, field := range strings.Fields(out) {

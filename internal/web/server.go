@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -193,10 +194,39 @@ type ifaceView struct {
 	ProbeStatus  string            `json:"probeStatus,omitempty"`
 }
 
-func (s *Server) getIfaces(w http.ResponseWriter, r *http.Request) {
+func (s *Server) allIfaces(ctx context.Context) []platform.SlotInfo {
 	slots, err := s.backend.Slots()
 	if err != nil {
-		writeErr(w, err)
+		return nil
+	}
+	seen := map[string]bool{}
+	for _, sl := range slots {
+		seen[sl.Device] = true
+	}
+	if tunnels, err := s.backend.SysTunnels(); err == nil {
+		for _, sl := range tunnels {
+			if !seen[sl.Device] {
+				slots = append(slots, sl)
+				seen[sl.Device] = true
+			}
+		}
+	}
+	if groups, err := s.mtClient().GroupsWithRules(ctx); err == nil {
+		for _, g := range groups {
+			if g.Interface == "" || seen[g.Interface] {
+				continue
+			}
+			slots = append(slots, platform.SlotInfo{Device: g.Interface})
+			seen[g.Interface] = true
+		}
+	}
+	return slots
+}
+
+func (s *Server) getIfaces(w http.ResponseWriter, r *http.Request) {
+	slots := s.allIfaces(r.Context())
+	if slots == nil {
+		writeErr(w, fmt.Errorf("не удалось получить список интерфейсов"))
 		return
 	}
 	poolByDevice := map[string]string{}
@@ -259,13 +289,8 @@ func (s *Server) setIfaceMode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	device := r.PathValue("device")
-	slots, err := s.backend.Slots()
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
 	known := false
-	for _, sl := range slots {
+	for _, sl := range s.allIfaces(r.Context()) {
 		if sl.Device == device {
 			known = true
 			break

@@ -88,6 +88,10 @@ func (f *Fake) Probe(pool store.Pool, host string) (bool, int, error) {
 
 func (f *Fake) IfaceHandshake(device string) int { return -1 }
 
+func (f *Fake) SysTunnels() ([]platform.SlotInfo, error) {
+	return nil, nil
+}
+
 func (f *Fake) ProbeDevice(device, target string) (bool, int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

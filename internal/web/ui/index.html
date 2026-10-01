@@ -131,9 +131,10 @@ input[type=color] { padding: 1px 2px; width: 34px; height: 26px; }
           <option value="icmp">Ping IP</option>
         </select>
         <input id="wanTarget" placeholder="http://www.gstatic.com/generate_204" style="flex:1;min-width:180px">
-        <label style="display:flex;align-items:center;gap:6px;font-size:12px">порог мс
-          <input type="checkbox" id="wanRttOn"><input id="wanRtt" type="number" min="1" max="5000" style="width:80px">
-        </label>
+        <span style="display:inline-flex;align-items:center;gap:6px;font-size:12px">
+          <label class="switch" title="включить порог RTT"><input type="checkbox" id="wanRttOn"><span class="knob"></span></label>
+          порог <input id="wanRtt" type="number" min="1" max="5000" style="width:80px"> мс
+        </span>
         <button class="primary" id="wanSave">сохранить</button>
       </div>
     </div>
@@ -206,10 +207,11 @@ input[type=color] { padding: 1px 2px; width: 34px; height: 26px; }
     <label class="f">Цель пробы
       <input id="spProbe" placeholder="http://www.gstatic.com/generate_204">
     </label>
-    <label class="f" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-      <input type="checkbox" id="spRttOn" style="margin:0"> считать нерабочим при RTT выше
+    <div class="f" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <label class="switch" title="включить порог RTT"><input type="checkbox" id="spRttOn"><span class="knob"></span></label>
+      <span>считать нерабочим при RTT выше</span>
       <input id="spRtt" type="number" min="1" max="5000" style="width:90px"> мс
-    </label>
+    </div>
     <label class="f">Интервал проверки, сек
       <input id="spInterval" type="number" min="10" max="3600">
     </label>
@@ -271,10 +273,11 @@ input[type=color] { padding: 1px 2px; width: 34px; height: 26px; }
     <label class="f">Цель пробы
       <input id="ipTarget" placeholder="http://www.gstatic.com/generate_204">
     </label>
-    <label class="f" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-      <input type="checkbox" id="ipRttOn" style="margin:0"> считать нерабочим при RTT выше
+    <div class="f" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <label class="switch" title="включить порог RTT"><input type="checkbox" id="ipRttOn"><span class="knob"></span></label>
+      <span>считать нерабочим при RTT выше</span>
       <input id="ipRtt" type="number" min="1" max="5000" style="width:90px"> мс
-    </label>
+    </div>
     <div class="btnrow" style="justify-content:space-between">
       <button type="button" id="ipRemove" class="danger">убрать проверку</button>
       <span style="display:flex;gap:6px">
@@ -538,9 +541,19 @@ async function loadSlots() {
   try {
     const r = await api('GET', '/slots');
     const sel = $('#pSlot');
-    sel.innerHTML = (r.slots || []).map(s =>
-      `<option value="${s.id}">${s.id}${s.device ? ' (' + s.device + ')' : ''}${s.description ? ' - ' + s.description : ''}${s.linkUp ? ' [UP]' : ''}</option>`
-    ).join('');
+    const mawgSlots = new Set((STATUS ? STATUS.pools : []).map(p => p.slot).filter(Boolean));
+    let firstFree = '', firstAny = '';
+    sel.innerHTML = (r.slots || [])
+      .filter(s => !mawgSlots.has(s.id))
+      .map(s => {
+        if (!firstAny) firstAny = s.id;
+        const busy = s.linkUp || s.connected || s.description;
+        if (!busy && !firstFree) firstFree = s.id;
+        const mark = busy ? ' - занят' : ' - свободен';
+        return `<option value="${s.id}">${s.id} (${s.device})${s.description ? ' ' + s.description : ''}${mark}</option>`;
+      }).join('');
+    const preselect = firstFree || firstAny;
+    if (preselect) sel.value = preselect;
     $('#slotRow').style.display = r.slots && r.slots.length && STATUS && STATUS.platform === 'keenetic' ? '' : 'none';
     $('#protoRow').style.display = STATUS && STATUS.platform === 'openwrt' ? '' : 'none';
   } catch { $('#slotRow').style.display = 'none'; }
@@ -550,6 +563,17 @@ document.querySelector('#dlgPool button[value=cancel]').onclick = () => dlgPool.
 
 const PROBE_DEFAULTS = { http: 'http://www.gstatic.com/generate_204', icmp: '1.1.1.1' };
 function probeTypeOf(target) { return /^https?:\/\//.test(target) ? 'http' : 'icmp'; }
+function wireRttField(onCb, numInput) {
+  const sync = () => {
+    numInput.disabled = !onCb.checked;
+    numInput.style.opacity = onCb.checked ? '' : '.45';
+  };
+  onCb.addEventListener('change', sync);
+  sync();
+}
+wireRttField($('#spRttOn'), $('#spRtt'));
+wireRttField(document.getElementById('ipRttOn'), document.getElementById('ipRtt'));
+wireRttField(document.getElementById('wanRttOn'), document.getElementById('wanRtt'));
 function wireProbeSwitch(typeSel, targetInput) {
   typeSel.addEventListener('change', () => {
     const cur = targetInput.value.trim();
@@ -574,6 +598,7 @@ function openSettings(name) {
   $('#spProbe').value = p.settings.probeHost || PROBE_DEFAULTS[ptype];
   $('#spRttOn').checked = p.settings.maxRttMs > 0;
   $('#spRtt').value = p.settings.maxRttMs > 0 ? p.settings.maxRttMs : 300;
+  $('#spRttOn').dispatchEvent(new Event('change'));
   $('#spInterval').value = p.settings.checkIntervalSec;
   $('#spThreshold').value = p.settings.failThreshold;
   $('#spCooldown').value = p.settings.cooldownMin;
@@ -706,6 +731,7 @@ function openIfaceProbeDlg(it) {
   document.getElementById('ipTarget').placeholder = PROBE_DEFAULTS[ptype];
   document.getElementById('ipRttOn').checked = (probe.maxRttMs || 0) > 0;
   document.getElementById('ipRtt').value = (probe.maxRttMs || 0) > 0 ? probe.maxRttMs : 300;
+  document.getElementById('ipRttOn').dispatchEvent(new Event('change'));
   dlgIfaceProbe.showModal();
 }
 wireProbeSwitch(document.getElementById('ipType'), document.getElementById('ipTarget'));
@@ -743,6 +769,7 @@ async function refreshWAN() {
     document.getElementById('wanTarget').placeholder = PROBE_DEFAULTS[ptype];
     document.getElementById('wanRttOn').checked = (probe.maxRttMs || 0) > 0;
     document.getElementById('wanRtt').value = (probe.maxRttMs || 0) > 0 ? probe.maxRttMs : 300;
+    document.getElementById('wanRttOn').dispatchEvent(new Event('change'));
   } catch {}
 }
 wireProbeSwitch(document.getElementById('wanType'), document.getElementById('wanTarget'));

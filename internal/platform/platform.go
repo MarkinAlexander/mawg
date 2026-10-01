@@ -24,6 +24,7 @@ type Backend interface {
 	Name() string
 	Detect() error
 	Slots() ([]SlotInfo, error)
+	SysTunnels() ([]SlotInfo, error)
 	Apply(pool store.Pool, cfg wgconf.Config) error
 	Up(pool store.Pool) error
 	Down(pool store.Pool) error
