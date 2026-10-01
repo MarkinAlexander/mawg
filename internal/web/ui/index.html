@@ -583,7 +583,7 @@ async function loadSlots() {
       hint.textContent = 'Все слоты WireGuard заняты пулами mawg. Удалите ненужный пул, чтобы освободить слот.';
       hint.style.display = '';
     } else if (!firstFree) {
-      hint.textContent = 'Свободных слотов нет: все заняты другими интерфейсами. Удалите ненужное WireGuard-подключение в веб-интерфейсе Keenetic (Мои сети и Wi-Fi - Интернет) или займите редко используемый слот из списка.';
+      hint.textContent = 'Свободных слотов нет: все заняты другими интерфейсами. Удалите ненужное WireGuard-подключение в веб-интерфейсе Keenetic (Интернет - Другие подключения) или займите редко используемый слот из списка.';
       hint.style.display = '';
     } else {
       hint.style.display = 'none';
