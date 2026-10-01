@@ -4,6 +4,26 @@
 Keenetic (Keenetic OS 5.1+, Entware) и OpenWrt (24.10+). Один бинарник,
 веб-интерфейс и REST API на порту 8090.
 
+Обсуждение и поддержка: сообщество NetCraze (https://netcraze.cc, раздел Keenetic).
+
+## Быстрая установка
+
+OpenWrt 24.10+:
+
+    curl -o /tmp/mawg.sh https://raw.githubusercontent.com/MarkinAlexander/mawg/main/install.sh && sh /tmp/mawg.sh
+
+Keenetic (Keenetic OS 5.1+ с Entware; сначала ставится curl, фирменный wget
+не умеет https):
+
+    opkg install curl && curl -o /tmp/mawg.sh https://raw.githubusercontent.com/MarkinAlexander/mawg/main/install.sh && sh /tmp/mawg.sh
+
+Установщик сам определит платформу (OpenWrt или Keenetic) и архитектуру,
+проверит WireGuard, предложит MagiTrickle, скачает бинарник из последнего
+релиза и запустит сервис. Веб-интерфейс откроется на http://роутер:8090.
+Флаги: -u (обновить), -r (удалить, --purge - с данными), --with-magitrickle /
+--without-magitrickle (не спрашивать про MagiTrickle), --with-awg3 (поднять
+AmneziaWG до 3.1 на OpenWrt).
+
 ## Что умеет
 
 - несколько именованных пулов-интерфейсов (proton, warp, ...) с фиксированными именами
@@ -86,22 +106,6 @@ HTTP-запрос идет через туннель с привязкой к и
 запускается (бессмысленно менять конфиги, когда лежит сам интернет).
 Результат виден в статусе: "...канал провайдера недоступен, отказ не
 засчитан".
-
-## Установка одной командой
-
-На роутере с интернетом (OpenWrt 24.10+ или Keenetic с Entware):
-
-    curl -o /tmp/mawg.sh https://raw.githubusercontent.com/MarkinAlexander/mawg/main/install.sh && sh /tmp/mawg.sh
-
-Установщик сам определит платформу и архитектуру, проверит WireGuard,
-предложит поставить MagiTrickle, скачает бинарник нужной архитектуры из
-последнего релиза, поставит службу и автозапуск, в конце напечатает адрес
-веб-интерфейса. Флаги: --with-magitrickle / --without-magitrickle
-(не спрашивать), --with-awg3 (обновить AmneziaWG до 3.1 на OpenWrt,
-требует перезагрузку), -u (только обновить бинарник), -r (удалить,
---purge - вместе с данными).
-
-Ручная установка описана ниже.
 
 ## Установка на OpenWrt
 
