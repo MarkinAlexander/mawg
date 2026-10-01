@@ -9,10 +9,12 @@ for c in ./tools/upx-*/upx.exe ./tools/upx-*/upx upx; do
   if command -v "$c" >/dev/null 2>&1; then UPX="$c"; break; fi
 done
 
+VERSION="$(git describe --tags 2>/dev/null || echo dev)"
+
 build() {
   os="$1"; arch="$2"; extra="$3"; out="$4"
-  echo "== building $out"
-  CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" $extra go build -trimpath -ldflags "-s -w" -o "dist/$out" ./cmd/mawg
+  echo "== building $out ($VERSION)"
+  CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" $extra go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o "dist/$out" ./cmd/mawg
   if [ -n "$UPX" ]; then
     echo "== packing with upx"
     "$UPX" --best --lzma -f "dist/$out" -o "dist/$out.upx" >/dev/null
