@@ -1,0 +1,12 @@
+testconfigs/
+local-docs/
+dist/
+bin/
+tools/
+*.log
+*.conf
+!testdata/*.conf
+.zcodeignore
+.zcode/
+*.pdf
+.idea/
