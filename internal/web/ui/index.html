@@ -153,6 +153,7 @@ input[type=color] { padding: 1px 2px; width: 34px; height: 26px; }
     </label>
     <label class="f" id="slotRow">Слот Keenetic
       <select id="pSlot"></select>
+      <div id="slotHint" style="display:none;font-size:11px;color:var(--warn);margin-top:4px"></div>
     </label>
     <label class="f" id="protoRow">Протокол (OpenWrt)
       <select id="pProto">
@@ -563,10 +564,11 @@ async function loadSlots() {
     const r = await api('GET', '/slots');
     const sel = $('#pSlot');
     const mawgSlots = new Set((STATUS ? STATUS.pools : []).map(p => p.slot).filter(Boolean));
-    let firstFree = '', firstAny = '';
+    let firstFree = '', firstAny = '', listed = 0;
     sel.innerHTML = (r.slots || [])
       .filter(s => !mawgSlots.has(s.id))
       .map(s => {
+        listed++;
         if (!firstAny) firstAny = s.id;
         const busy = s.linkUp || s.connected || s.description;
         if (!busy && !firstFree) firstFree = s.id;
@@ -575,6 +577,16 @@ async function loadSlots() {
       }).join('');
     const preselect = firstFree || firstAny;
     if (preselect) sel.value = preselect;
+    const hint = document.getElementById('slotHint');
+    if (listed === 0) {
+      hint.textContent = 'Все слоты WireGuard заняты пулами mawg. Удалите ненужный пул, чтобы освободить слот.';
+      hint.style.display = '';
+    } else if (!firstFree) {
+      hint.textContent = 'Свободных слотов нет: все заняты другими интерфейсами. Удалите ненужное WireGuard-подключение в веб-интерфейсе Keenetic (Мои сети и Wi-Fi - Интернет) или займите редко используемый слот из списка.';
+      hint.style.display = '';
+    } else {
+      hint.style.display = 'none';
+    }
     $('#slotRow').style.display = r.slots && r.slots.length && STATUS && STATUS.platform === 'keenetic' ? '' : 'none';
     $('#protoRow').style.display = STATUS && STATUS.platform === 'openwrt' ? '' : 'none';
   } catch { $('#slotRow').style.display = 'none'; }
