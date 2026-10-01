@@ -288,6 +288,27 @@ input[type=color] { padding: 1px 2px; width: 34px; height: 26px; }
   </form>
 </dialog>
 
+<dialog id="dlgConfirm">
+  <form method="dialog" style="display:grid; gap:10px; min-width:380px">
+    <h3 style="margin:0" id="cfTitle">Подтверждение</h3>
+    <div id="cfText" style="font-size:13px"></div>
+    <div class="btnrow" style="justify-content:end;margin:0">
+      <button value="cancel">Отмена</button>
+      <button class="primary" id="cfOk">Установить</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="dlgResult">
+  <form method="dialog" style="display:grid; gap:10px; min-width:460px; max-width:640px">
+    <h3 style="margin:0" id="rsTitle">Результат</h3>
+    <pre id="rsOut" style="max-height:300px;overflow:auto;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;font:11.5px/1.5 ui-monospace,monospace;margin:0;white-space:pre-wrap;word-break:break-word"></pre>
+    <div class="btnrow" style="justify-content:end;margin:0">
+      <button class="primary" value="ok">Закрыть</button>
+    </div>
+  </form>
+</dialog>
+
 <div class="msg" id="msg"></div>
 
 <script>
@@ -1219,23 +1240,48 @@ async function refreshSystem(force) {
   } catch (e) { console.warn(e); }
 }
 
-async function installComp(id, btn) {
-  try {
-    const r = await api('GET', '/system/check');
-    const item = (r.items || []).find(i => i.id === id);
-    if (!item || !item.confirm || !confirm(item.confirm)) return;
-    btn.disabled = true; btn.textContent = 'установка...';
-    const res = await fetch('/api/v1/system/install', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id })
-    }).then(x => x.json());
-    if (res.ok) toast('Установлено. ' + (res.output || '').split('\n').slice(-3).join(' '));
-    else toast('Ошибка: ' + (res.error || ''), true);
-  } catch (e) { toast(e.message, true); }
+let confirmCb = null;
+function askModal(title, text, okLabel, cb) {
+  confirmCb = cb;
+  document.getElementById('cfTitle').textContent = title;
+  document.getElementById('cfText').textContent = text;
+  document.getElementById('cfOk').textContent = okLabel || 'ОК';
+  dlgConfirm.showModal();
+}
+document.querySelector('#dlgConfirm button[value=cancel]').onclick = () => dlgConfirm.close();
+document.getElementById('cfOk').onclick = e => { e.preventDefault(); dlgConfirm.close(); if (confirmCb) confirmCb(); };
+
+function showResult(ok, output, errText) {
+  document.getElementById('rsTitle').textContent = ok ? 'Установлено' : 'Ошибка установки';
+  document.getElementById('rsTitle').style.color = ok ? 'var(--ok)' : 'var(--err)';
+  const outText = (errText ? errText + String.fromCharCode(10, 10) : '') + (output || '').trim();
+  document.getElementById('rsOut').textContent = outText;
+  dlgResult.showModal();
   lastSysJSON = '';
   refreshSystem(true);
-refreshRules(true);
-loadPresets();
-fillIfaceSelects();
+  refreshRules(true);
+  loadPresets();
+  fillIfaceSelects();
+}
+
+async function installComp(id, btn) {
+  let item;
+  try {
+    const r = await api('GET', '/system/check');
+    item = (r.items || []).find(i => i.id === id);
+  } catch (e) { return toast(e.message, true); }
+  if (!item || !item.confirm) return;
+  askModal('Установка: ' + item.title, item.confirm, 'Установить', async () => {
+    btn.disabled = true; btn.textContent = 'установка...';
+    let res;
+    try {
+      res = await fetch('/api/v1/system/install', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id })
+      }).then(x => x.json());
+    } catch (e) { btn.disabled = false; btn.textContent = 'установить'; return showResult(false, '', e.message); }
+    btn.disabled = false; btn.textContent = 'установить';
+    showResult(!!res.ok, res.output, res.ok ? '' : (res.error || 'неизвестная ошибка'));
+  });
 }
 
 $('#sysrefresh').onclick = () => { lastSysJSON = ''; refreshSystem(true);

@@ -52,6 +52,11 @@ func shellRun(script string, timeout time.Duration) (string, error) {
 	}
 }
 
+func opkgHasPackage(pkg string) bool {
+	out, _ := shellRun("opkg list 2>/dev/null | grep -m1 '^"+pkg+" '", 20*time.Second)
+	return strings.TrimSpace(out) != ""
+}
+
 func opkgInstalled(pkg string) (bool, string) {
 	out, _ := shellRun("opkg list-installed 2>/dev/null | grep '^"+pkg+" '", 15*time.Second)
 	line := strings.TrimSpace(out)
@@ -84,6 +89,17 @@ func awgToolsVersion(v string) int {
 	return n
 }
 
+const awgDirectAction = `rel=$(. /etc/openwrt_release 2>/dev/null; echo "$DISTRIB_RELEASE:$DISTRIB_ARCH") && ver=${rel%%:*} && arch=${rel##*:} && tgt=$(ubus call system board 2>/dev/null | tr -d ' ' | grep -o '"target":"[^"]*"' | cut -d'"' -f4 | tr '/' '_') && base="https://github.com/2Grey/awg-openwrt/releases/download/v$ver" && wget -4 -q -O /tmp/kmod-awg.ipk "$base/kmod-amneziawg_v${ver}_${arch}_${tgt}.ipk" && wget -4 -q -O /tmp/tools-awg.ipk "$base/amneziawg-tools_v${ver}_${arch}_${tgt}.ipk" && opkg install /tmp/kmod-awg.ipk /tmp/tools-awg.ipk && (modprobe amneziawg 2>/dev/null || true) && rm -f /tmp/kmod-awg.ipk /tmp/tools-awg.ipk`
+
+const awgScriptAction = "wget -4 -qO /tmp/awg-install.sh https://raw.githubusercontent.com/2Grey/awg-openwrt/refs/heads/master/amneziawg-install.sh && sh /tmp/awg-install.sh -e -n < /dev/null"
+
+func awgAction(release string) string {
+	if strings.HasPrefix(release, "25.") {
+		return awgScriptAction
+	}
+	return awgDirectAction
+}
+
 func CheckOpenwrt() Result {
 	res := Result{Platform: "openwrt", Items: []Item{}}
 
@@ -105,11 +121,11 @@ func CheckOpenwrt() Result {
 		release := openwrtRelease()
 		note := "Установлена версия 1.x без I-пакетов: часть обфусцированных конфигов (Proton) не подключится."
 		action := ""
-		if release == "24.10.8" || strings.HasPrefix(release, "25.") {
-			action = "wget -4 -qO /tmp/awg-install.sh https://raw.githubusercontent.com/Slava-Shchipunov/awg-openwrt/refs/heads/master/amneziawg-install.sh && sh /tmp/awg-install.sh -e -n < /dev/null"
+		if strings.HasPrefix(release, "24.10") || strings.HasPrefix(release, "25.") {
+			action = awgAction(release)
 			note += " Доступно обновление до 3.1."
 		} else {
-			note += " Для обновления нужна прошивка 24.10.8 или новее (сейчас " + release + "), затем повторите проверку."
+			note += " Для обновления нужна прошивка 24.10 или новее (сейчас " + release + "), затем повторите проверку."
 		}
 		res.Items = append(res.Items, Item{ID: "awg", Title: "AmneziaWG (обфускация)", Installed: false, Version: awgVer, Action: action,
 			Confirm: "Обновить пакеты AmneziaWG до 3.1? Заменяется модуль ядра, после установки нужен перезапуск интерфейсов.",
@@ -122,11 +138,17 @@ func CheckOpenwrt() Result {
 			Confirm: "Установить утилиты amneziawg-tools?",
 		})
 	} else {
+		action := "opkg update && opkg install kmod-amneziawg amneziawg-tools"
+		confirm := "Установить пакеты AmneziaWG из официального репозитория?"
+		note := "В официальном репозитории версия 1.x; для I-пакетов (AWG 2.0+) затем обновление до 3.1."
+		if !opkgHasPackage("amneziawg-tools") {
+			action = awgAction(openwrtRelease())
+			confirm = "Установить AmneziaWG 3.1 из репозитория 2Grey/awg-openwrt? Заменяется модуль ядра, после установки нужна перезагрузка."
+			note = "Пакетов AmneziaWG в настроенных репозиториях нет; ставится сборка 3.1 (I-пакеты AWG 2.0/3.x) с заменой модуля ядра."
+		}
 		res.Items = append(res.Items, Item{
 			ID: "awg", Title: "AmneziaWG (обфускация)", Installed: false,
-			Action:  "opkg update && opkg install kmod-amneziawg amneziawg-tools",
-			Confirm: "Установить пакеты AmneziaWG из репозитория?",
-			Note:    "В официальном репозитории версия 1.x; для I-пакетов (AWG 2.0+) нужна прошивка 24.10.8+ и обновление до 3.1.",
+			Action: action, Confirm: confirm, Note: note,
 		})
 	}
 

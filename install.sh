@@ -256,7 +256,7 @@ if [ "$MODE" = install ]; then
             say "обновление до AmneziaWG 3.1 (репозиторий Slava-Shchipunov)"
             warn "заменяет kmod, после установки потребуется перезагрузка роутера"
             if ask "продолжить обновление AmneziaWG до 3.1"; then
-                fetch "https://raw.githubusercontent.com/Slava-Shchipunov/awg-openwrt/refs/heads/master/amneziawg-install.sh" "$TMP/awg.sh" \
+                fetch "https://raw.githubusercontent.com/2Grey/awg-openwrt/refs/heads/master/amneziawg-install.sh" "$TMP/awg.sh" \
                     && sh "$TMP/awg.sh" -e -n < /dev/null \
                     || warn "обновление AWG не удалось, смотрите вывод выше"
                 warn "перезагрузите роутер после установки"
