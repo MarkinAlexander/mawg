@@ -223,11 +223,7 @@ func ndmcSlots(ifaces map[string]rciInterface) []platform.SlotInfo {
 			Connected:   ifc.Connected == "yes",
 		})
 	}
-	sort.Slice(out, func(i, j int) bool {
-		a, _ := strconv.Atoi(slotRe.FindStringSubmatch(out[i].ID)[1])
-		b, _ := strconv.Atoi(slotRe.FindStringSubmatch(out[j].ID)[1])
-		return a < b
-	})
+	sortSlots(out)
 	return out
 }
 
@@ -259,7 +255,22 @@ func slotInfos(ifaces map[string]rciInterface) []platform.SlotInfo {
 			Connected:   ifc.Connected == "yes",
 		})
 	}
+	sortSlots(out)
 	return out
+}
+
+func sortSlots(out []platform.SlotInfo) {
+	sort.Slice(out, func(i, j int) bool {
+		return slotNum(out[i].ID) < slotNum(out[j].ID)
+	})
+}
+
+func slotNum(id string) int {
+	if m := slotRe.FindStringSubmatch(id); m != nil {
+		n, _ := strconv.Atoi(m[1])
+		return n
+	}
+	return 1 << 30
 }
 
 func slotInfosList(list []rciInterface) []platform.SlotInfo {

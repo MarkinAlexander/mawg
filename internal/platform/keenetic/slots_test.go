@@ -45,6 +45,17 @@ func TestParseSlotsCaseInsensitivePrefix(t *testing.T) {
 	}
 }
 
+func TestParseSlotsDigitlessName(t *testing.T) {
+	body := []byte(`{"WireguardFoo":{"id":"WireguardFoo"},"Wireguard2":{"id":"Wireguard2"},"Wireguard10":{"id":"Wireguard10"}}`)
+	out, err := parseSlots(body)
+	if err != nil || len(out) != 3 {
+		t.Fatalf("slots = %+v err=%v", out, err)
+	}
+	if out[2].ID != "WireguardFoo" || out[0].ID != "Wireguard2" || out[1].ID != "Wireguard10" {
+		t.Fatalf("order = %v %v %v", out[0].ID, out[1].ID, out[2].ID)
+	}
+}
+
 func TestParseSlotsGarbage(t *testing.T) {
 	if _, err := parseSlots([]byte("<html>")); err == nil {
 		t.Fatal("garbage must error")
