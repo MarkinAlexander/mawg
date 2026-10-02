@@ -197,7 +197,9 @@ type ifaceView struct {
 func (s *Server) allIfaces(ctx context.Context) []platform.SlotInfo {
 	slots, err := s.backend.Slots()
 	if err != nil {
-		return nil
+		// RCI может не ответить: панель не должна пустовать, добираем
+		// интерфейсы из туннелей системы, реестра и групп magitrickle
+		slots = nil
 	}
 	seen := map[string]bool{}
 	for _, sl := range slots {
@@ -209,6 +211,13 @@ func (s *Server) allIfaces(ctx context.Context) []platform.SlotInfo {
 				slots = append(slots, sl)
 				seen[sl.Device] = true
 			}
+		}
+	}
+	for _, p := range s.store.Pools() {
+		dev := p.DeviceName()
+		if dev != "" && !seen[dev] {
+			slots = append(slots, platform.SlotInfo{Device: dev, Description: p.Name})
+			seen[dev] = true
 		}
 	}
 	if groups, err := s.mtClient().GroupsWithRules(ctx); err == nil {
@@ -540,6 +549,10 @@ func (s *Server) createPool(w http.ResponseWriter, r *http.Request) {
 		if settings.OpenwrtProto == "" {
 			settings.OpenwrtProto = "wireguard"
 		}
+	}
+	if s.backend.Name() == store.PlatformKeenetic && settings.KeeneticSlot == "" {
+		writeErr(w, fmt.Errorf("не выбран слот Keenetic: не удалось получить список слотов, повторите позже"))
+		return
 	}
 	if err := s.validFallback(req.Name, settings.Fallback); err != nil {
 		writeErr(w, err)
