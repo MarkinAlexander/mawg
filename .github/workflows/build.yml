@@ -7,7 +7,21 @@ on:
       - v[0-9]+*
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.6'
+      - name: Test and vet
+        run: |
+          go test ./...
+          go vet ./...
+          sh -n install.sh
+
   build:
+    needs: test
     name: linux ${{ matrix.arch }}
     runs-on: ubuntu-latest
     strategy:
@@ -84,7 +98,7 @@ jobs:
           body: |
             mawg ${{ github.ref_name }}
 
-            Установка: curl -o /tmp/mawg.sh https://raw.githubusercontent.com/MarkinAlexander/mawg/main/install.sh && sh /tmp/mawg.sh
+            Установка: curl -o /tmp/mawg.sh https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh && MAWG_REPO=${{ github.repository }} sh /tmp/mawg.sh
           files: |
             dist/mawg-linux-*
             dist/sha256sum.txt

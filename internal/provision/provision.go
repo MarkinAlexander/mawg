@@ -52,13 +52,25 @@ func shellRun(script string, timeout time.Duration) (string, error) {
 	}
 }
 
-func opkgHasPackage(pkg string) bool {
-	out, _ := shellRun("opkg list 2>/dev/null | grep -m1 '^"+pkg+" '", 20*time.Second)
-	return strings.TrimSpace(out) != ""
+func opkgHasPackage(run Runner, pkg string) bool {
+	out, err := run("opkg list 2>/dev/null | grep -m1 '^"+pkg+" '", 20*time.Second)
+	return err == nil && strings.TrimSpace(out) != ""
 }
 
 func opkgInstalled(pkg string) (bool, string) {
 	out, _ := shellRun("opkg list-installed 2>/dev/null | grep '^"+pkg+" '", 15*time.Second)
+	return parseOpkgInstalled(out)
+}
+
+func opkgInstalledWithRunner(run Runner, pkg string) (bool, string) {
+	out, err := run("opkg list-installed 2>/dev/null | grep '^"+pkg+" '", 15*time.Second)
+	if err != nil {
+		return false, ""
+	}
+	return parseOpkgInstalled(out)
+}
+
+func parseOpkgInstalled(out string) (bool, string) {
 	line := strings.TrimSpace(out)
 	if line == "" {
 		return false, ""
@@ -73,8 +85,8 @@ func opkgInstalled(pkg string) (bool, string) {
 	return true, ""
 }
 
-func openwrtRelease() string {
-	out, _ := shellRun(". /etc/openwrt_release 2>/dev/null; echo $DISTRIB_RELEASE", 5*time.Second)
+func openwrtRelease(run Runner) string {
+	out, _ := run(". /etc/openwrt_release 2>/dev/null; echo $DISTRIB_RELEASE", 5*time.Second)
 	return strings.TrimSpace(out)
 }
 
@@ -100,29 +112,110 @@ func awgAction(release string) string {
 	return awgDirectAction
 }
 
-func CheckOpenwrt() Result {
-	res := Result{Platform: "openwrt", Items: []Item{}}
+type openwrtPackages struct {
+	run  Runner
+	name string
+}
 
-	if ok, ver := opkgInstalled("kmod-wireguard"); ok {
+func (p openwrtPackages) awgAction(release string) string {
+	if p.name == "apk" {
+		return awgScriptAction
+	}
+	return awgAction(release)
+}
+
+func (p openwrtPackages) install(pkgs string) string {
+	if p.name == "apk" {
+		return "apk update && apk add " + pkgs
+	}
+	return "opkg update && opkg install " + pkgs
+}
+
+func (p openwrtPackages) hasPackage(pkg string) bool {
+	if p.name != "apk" {
+		return opkgHasPackage(p.run, pkg)
+	}
+	out, err := p.run("apk search -x "+pkg, 20*time.Second)
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(out, "\n") {
+		version, ok := strings.CutPrefix(strings.TrimSpace(line), pkg+"-")
+		if ok && len(version) > 0 && version[0] >= '0' && version[0] <= '9' && len(strings.Fields(version)) == 1 {
+			return true
+		}
+	}
+	return false
+}
+
+func detectOpenwrtPackages(run Runner) openwrtPackages {
+	if _, err := run("test -x /bin/opkg", 5*time.Second); err == nil {
+		return openwrtPackages{run: run, name: "opkg"}
+	}
+	for _, name := range []string{"apk", "opkg"} {
+		if _, err := run("command -v "+name+" >/dev/null 2>&1", 5*time.Second); err == nil {
+			return openwrtPackages{run: run, name: name}
+		}
+	}
+	return openwrtPackages{run: run}
+}
+
+func (p openwrtPackages) installed(pkg string) (bool, string) {
+	if p.name != "apk" {
+		return opkgInstalledWithRunner(p.run, pkg)
+	}
+	out, err := p.run("apk list --installed --manifest", 15*time.Second)
+	if err != nil {
+		return false, ""
+	}
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && fields[0] == pkg {
+			return true, fields[1]
+		}
+	}
+	return false, ""
+}
+
+func CheckOpenwrt() Result {
+	return checkOpenwrt(shellRun)
+}
+
+func checkOpenwrt(run Runner) Result {
+	res := Result{Platform: "openwrt", Items: []Item{}}
+	packages := detectOpenwrtPackages(run)
+	if packages.name == "" {
+		res.Items = []Item{
+			{ID: "wireguard", Title: "WireGuard (модуль ядра)"},
+			{ID: "awg", Title: "AmneziaWG (обфускация)"},
+			{ID: "magitrickle", Title: "MagiTrickle (маршрутизация по доменам)"},
+		}
+		for i := range res.Items {
+			res.Items[i].Note = "Не найден менеджер пакетов apk или opkg; проверить установленные пакеты и предложить установку невозможно."
+		}
+		return res
+	}
+
+	if ok, ver := packages.installed("kmod-wireguard"); ok {
 		res.Items = append(res.Items, Item{ID: "wireguard", Title: "WireGuard (модуль ядра)", Installed: true, Version: ver})
 	} else {
 		res.Items = append(res.Items, Item{
 			ID: "wireguard", Title: "WireGuard (модуль ядра)", Installed: false,
-			Action:  "opkg update && opkg install kmod-wireguard wireguard-tools luci-proto-wireguard",
+			Action:  packages.install("kmod-wireguard wireguard-tools luci-proto-wireguard"),
 			Confirm: "Установить пакеты WireGuard из официального репозитория?",
 		})
 	}
 
-	awgOk, awgVer := opkgInstalled("amneziawg-tools")
-	kmodOk, _ := opkgInstalled("kmod-amneziawg")
+	awgOk, awgVer := packages.installed("amneziawg-tools")
+	kmodOk, _ := packages.installed("kmod-amneziawg")
 	if awgOk && awgToolsVersion(awgVer) >= 3 {
 		res.Items = append(res.Items, Item{ID: "awg", Title: "AmneziaWG (обфускация)", Installed: true, Version: awgVer})
 	} else if awgOk {
-		release := openwrtRelease()
+		release := openwrtRelease(run)
 		note := "Установлена версия 1.x без I-пакетов: часть обфусцированных конфигов (Proton) не подключится."
 		action := ""
-		if strings.HasPrefix(release, "24.10") || strings.HasPrefix(release, "25.") {
-			action = awgAction(release)
+		if packages.name == "apk" || strings.HasPrefix(release, "24.10") || strings.HasPrefix(release, "25.") {
+			action = packages.awgAction(release)
 			note += " Доступно обновление до 3.1."
 		} else {
 			note += " Для обновления нужна прошивка 24.10 или новее (сейчас " + release + "), затем повторите проверку."
@@ -134,15 +227,15 @@ func CheckOpenwrt() Result {
 		res.Items = append(res.Items, Item{ID: "awg", Title: "AmneziaWG (обфускация)", Installed: true, Version: "kmod без утилит"})
 		res.Items = append(res.Items, Item{
 			ID: "awg-tools", Title: "Утилиты AmneziaWG", Installed: false,
-			Action:  "opkg update && opkg install amneziawg-tools",
+			Action:  packages.install("amneziawg-tools"),
 			Confirm: "Установить утилиты amneziawg-tools?",
 		})
 	} else {
-		action := "opkg update && opkg install kmod-amneziawg amneziawg-tools"
+		action := packages.install("kmod-amneziawg amneziawg-tools")
 		confirm := "Установить пакеты AmneziaWG из официального репозитория?"
 		note := "В официальном репозитории версия 1.x; для I-пакетов (AWG 2.0+) затем обновление до 3.1."
-		if !opkgHasPackage("amneziawg-tools") {
-			action = awgAction(openwrtRelease())
+		if !packages.hasPackage("amneziawg-tools") {
+			action = packages.awgAction(openwrtRelease(run))
 			confirm = "Установить AmneziaWG 3.1 из репозитория 2Grey/awg-openwrt? Заменяется модуль ядра, после установки нужна перезагрузка."
 			note = "Пакетов AmneziaWG в настроенных репозиториях нет; ставится сборка 3.1 (I-пакеты AWG 2.0/3.x) с заменой модуля ядра."
 		}
@@ -152,12 +245,12 @@ func CheckOpenwrt() Result {
 		})
 	}
 
-	if ok, ver := opkgInstalled("magitrickle"); ok {
+	if ok, ver := packages.installed("magitrickle"); ok {
 		res.Items = append(res.Items, Item{ID: "magitrickle", Title: "MagiTrickle (маршрутизация по доменам)", Installed: true, Version: ver})
 	} else {
 		res.Items = append(res.Items, Item{
 			ID: "magitrickle", Title: "MagiTrickle (маршрутизация по доменам)", Installed: false,
-			Action:  "wget -qO /tmp/mt-repo.sh http://bin.magitrickle.dev/packages/add_repo.sh && sh /tmp/mt-repo.sh && opkg update && opkg install magitrickle && (/etc/init.d/magitrickle enable && /etc/init.d/magitrickle start)",
+			Action:  "wget -qO /tmp/mt-repo.sh http://bin.magitrickle.dev/packages/add_repo.sh && sh /tmp/mt-repo.sh && " + packages.install("magitrickle") + " && (/etc/init.d/magitrickle enable && /etc/init.d/magitrickle start)",
 			Confirm: "Добавить репозиторий bin.magitrickle.dev и установить MagiTrickle с зависимостями?",
 		})
 	}
