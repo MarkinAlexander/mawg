@@ -33,4 +33,5 @@ type Backend interface {
 	IfaceHandshake(device string) int
 	ProbeDevice(device, target string) (ok bool, rttMs int)
 	RestartMagitrickle() error
+	SaveConfig() error
 }

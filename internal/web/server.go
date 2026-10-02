@@ -561,6 +561,9 @@ func (s *Server) createSlot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.store.LogEvent("slots", "create", "создан слот "+id)
+	if err := s.backend.SaveConfig(); err != nil {
+		s.store.LogEvent("slots", "create", "конфиг не сохранился: "+err.Error())
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"slot": id, "device": keenetic.DeviceName(id)})
 }
 

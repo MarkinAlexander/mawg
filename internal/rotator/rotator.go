@@ -268,6 +268,7 @@ func (e *Engine) RotateNow(pool string) error {
 		return fmt.Errorf("пул %q выключен, сначала включите его", pool)
 	}
 	e.rotate(p, e.store.State(pool), "")
+	e.saveRouterConfig(pool)
 	return nil
 }
 
@@ -287,7 +288,11 @@ func (e *Engine) SetActive(pool, file string) error {
 	e.store.MutateState(pool, func(s *store.PoolState) {
 		delete(s.Cooldowns, file)
 	})
-	return e.applyConfig(p, file)
+	if err := e.applyConfig(p, file); err != nil {
+		return err
+	}
+	e.saveRouterConfig(pool)
+	return nil
 }
 
 func (e *Engine) DisablePool(pool string) error {
@@ -317,7 +322,17 @@ func (e *Engine) DisablePool(pool string) error {
 	e.mu.Lock()
 	delete(e.lastApply, pool)
 	e.mu.Unlock()
+	e.saveRouterConfig(pool)
 	return nil
+}
+
+// saveRouterConfig сбрасывает running в сохраненный конфиг роутера: веб
+// Keenetic показывает тумблеры из сохраненного. Только ручные действия -
+// при ротациях флеш не дергаем.
+func (e *Engine) saveRouterConfig(pool string) {
+	if err := e.backend.SaveConfig(); err != nil {
+		e.store.LogEvent(pool, "save-config", "не сохранился: "+err.Error())
+	}
 }
 
 func (e *Engine) EnablePool(pool string) error {
@@ -346,7 +361,11 @@ func (e *Engine) EnablePool(pool string) error {
 		}
 	}
 	if len(eligible) > 0 {
-		return e.applyConfig(p, eligible[0].File)
+		if err := e.applyConfig(p, eligible[0].File); err != nil {
+			return err
+		}
+		e.saveRouterConfig(pool)
+		return nil
 	}
 	e.Wake(pool)
 	return nil

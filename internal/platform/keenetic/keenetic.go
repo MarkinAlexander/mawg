@@ -308,6 +308,14 @@ func slotInfosList(list []rciInterface) []platform.SlotInfo {
 	return out
 }
 
+// SaveConfig сбрасывает running-config в сохраненный: веб-интерфейс
+// Keenetic показывает состояние подключений из сохраненного конфига, без
+// сохранения его тумблеры врут после CLI-изменений.
+func (b *Backend) SaveConfig() error {
+	_, err := b.ndmc("system configuration save")
+	return err
+}
+
 // CreateSlot создает следующий слот WireguardN голой CLI-командой (грабли
 // №3: сначала создание, потом подккоманды) и возвращает его id.
 func (b *Backend) CreateSlot() (string, error) {

@@ -423,3 +423,7 @@ func (b *Backend) RestartMagitrickle() error {
 	_, err := runShell("/etc/init.d/magitrickle restart")
 	return err
 }
+
+// SaveConfig: mawg коммитит uci сразу в Apply/Up/Down, LuCI видит живое
+// состояние; отдельное сохранение не нужно.
+func (b *Backend) SaveConfig() error { return nil }

@@ -130,3 +130,5 @@ func (f *Fake) Applied() []string {
 }
 
 func (f *Fake) RestartMagitrickle() error { return nil }
+
+func (f *Fake) SaveConfig() error { return nil }
