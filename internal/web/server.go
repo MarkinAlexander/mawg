@@ -921,6 +921,20 @@ func (s *Server) mtCreateGroup(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, g)
 }
 
+// magitrickle 0.8.2 не пересоздаёт iptables-цепочку при одиночном PUT
+// группы, поэтому все правки идут массовым сохранением всего списка.
+func (s *Server) mtApplyGroups(ctx context.Context, mutate func(groups []magitrickle.Group) bool) error {
+	client := s.mtClient()
+	groups, err := client.GroupsWithRules(ctx)
+	if err != nil {
+		return err
+	}
+	if !mutate(groups) {
+		return nil
+	}
+	return client.UpdateGroups(ctx, groups, true)
+}
+
 func (s *Server) mtUpdateGroup(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name      string `json:"name"`
@@ -931,26 +945,37 @@ func (s *Server) mtUpdateGroup(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	client := s.mtClient()
-	g, err := client.GroupByID(r.Context(), r.PathValue("id"), true)
+	id := r.PathValue("id")
+	found := false
+	err := s.mtApplyGroups(r.Context(), func(groups []magitrickle.Group) bool {
+		for i := range groups {
+			g := &groups[i]
+			if g.ID != id {
+				continue
+			}
+			if req.Name != "" {
+				g.Name = req.Name
+			}
+			if req.Color != "" {
+				g.Color = req.Color
+			}
+			if req.Interface != "" {
+				g.Interface = req.Interface
+			}
+			found = true
+			return true
+		}
+		return false
+	})
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	if req.Name != "" {
-		g.Name = req.Name
-	}
-	if req.Color != "" {
-		g.Color = req.Color
-	}
-	if req.Interface != "" {
-		g.Interface = req.Interface
-	}
-	if err := client.UpdateGroup(r.Context(), g, true); err != nil {
-		writeErr(w, err)
+	if !found {
+		http.NotFound(w, r)
 		return
 	}
-	s.store.LogEvent("rules", "magitrickle", "изменена группа "+g.Name)
+	s.store.LogEvent("rules", "magitrickle", "изменена группа "+req.Name)
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "updated"})
 }
 
@@ -1012,23 +1037,37 @@ func (s *Server) mtRulesOrder(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	client := s.mtClient()
-	g, err := client.GroupByID(r.Context(), r.PathValue("id"), true)
+	id := r.PathValue("id")
+	found, mismatch := false, false
+	err := s.mtApplyGroups(r.Context(), func(groups []magitrickle.Group) bool {
+		for i := range groups {
+			if groups[i].ID != id {
+				continue
+			}
+			ordered, ok := reorderIDs(groups[i].Rules, func(rl magitrickle.Rule) string { return rl.ID }, req.IDs)
+			if !ok {
+				mismatch = true
+				return false
+			}
+			groups[i].Rules = ordered
+			found = true
+			return true
+		}
+		return false
+	})
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	ordered, ok := reorderIDs(g.Rules, func(rl magitrickle.Rule) string { return rl.ID }, req.IDs)
-	if !ok {
+	if mismatch {
 		writeErr(w, fmt.Errorf("список ids не совпадает с правилами группы"))
 		return
 	}
-	g.Rules = ordered
-	if err := client.UpdateGroup(r.Context(), g, true); err != nil {
-		writeErr(w, err)
+	if !found {
+		http.NotFound(w, r)
 		return
 	}
-	s.store.LogEvent("rules", "magitrickle", "изменён порядок правил в группе "+g.Name)
+	s.store.LogEvent("rules", "magitrickle", "изменён порядок правил в группе")
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "reordered"})
 }
 
@@ -1037,26 +1076,31 @@ func (s *Server) mtToggleGroup(w http.ResponseWriter, r *http.Request) {
 		Enable bool `json:"enable"`
 	}
 	json.NewDecoder(r.Body).Decode(&req)
-	client := s.mtClient()
-	groups, err := client.GroupsWithRules(r.Context())
+	id := r.PathValue("id")
+	found := false
+	err := s.mtApplyGroups(r.Context(), func(groups []magitrickle.Group) bool {
+		for i := range groups {
+			if groups[i].ID != id {
+				continue
+			}
+			found = true
+			if groups[i].Enable == req.Enable {
+				return false
+			}
+			groups[i].Enable = req.Enable
+			return true
+		}
+		return false
+	})
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	id := r.PathValue("id")
-	for _, g := range groups {
-		if g.ID != id {
-			continue
-		}
-		g.Enable = req.Enable
-		if err := client.UpdateGroup(r.Context(), g, true); err != nil {
-			writeErr(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]string{"ok": "ok"})
+	if !found {
+		http.NotFound(w, r)
 		return
 	}
-	http.NotFound(w, r)
+	writeJSON(w, http.StatusOK, map[string]string{"ok": "ok"})
 }
 
 func (s *Server) mtDeleteGroup(w http.ResponseWriter, r *http.Request) {

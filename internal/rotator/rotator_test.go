@@ -159,6 +159,13 @@ func TestFallbackDirectDisablesAndRecovers(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/groups":
 			json.NewEncoder(w).Encode(map[string]any{"groups": groups})
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/groups":
+			var req struct {
+				Groups []magitrickle.Group `json:"groups"`
+			}
+			json.NewDecoder(r.Body).Decode(&req)
+			groups = req.Groups
+			w.WriteHeader(200)
 		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/groups/g1":
 			var g magitrickle.Group
 			json.NewDecoder(r.Body).Decode(&g)
@@ -352,6 +359,13 @@ func TestFallbackPoolRebindsGroups(t *testing.T) {
 			q := r.URL.Query().Get("with_rules")
 			_ = q
 			json.NewEncoder(w).Encode(map[string]any{"groups": groups})
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/groups":
+			var req struct {
+				Groups []magitrickle.Group `json:"groups"`
+			}
+			json.NewDecoder(r.Body).Decode(&req)
+			groups = req.Groups
+			w.WriteHeader(200)
 		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/groups/g1":
 			var g magitrickle.Group
 			json.NewDecoder(r.Body).Decode(&g)

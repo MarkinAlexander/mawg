@@ -191,31 +191,25 @@ func (e *Engine) checkBundles() {
 
 func (e *Engine) switchBundle(b store.Bundle, device string) {
 	if e.mt != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		groups, err := e.mt.Groups(ctx)
-		if err != nil {
-			e.store.LogEvent("bundle:"+b.Name, "magitrickle", "groups query failed: "+err.Error())
-			return
-		}
-		byID := map[string]magitrickle.Group{}
-		for _, g := range groups {
-			byID[g.ID] = g
+		inBundle := map[string]bool{}
+		for _, id := range b.Groups {
+			inBundle[id] = true
 		}
 		var moved []string
-		for _, id := range b.Groups {
-			g, ok := byID[id]
-			if !ok || g.Interface == device {
-				continue
+		err := e.applyGroupChanges("bundle:"+b.Name, func(groups []magitrickle.Group) bool {
+			changed := false
+			for i := range groups {
+				if inBundle[groups[i].ID] && groups[i].Interface != device {
+					groups[i].Interface = device
+					moved = append(moved, groups[i].Name)
+					changed = true
+				}
 			}
-			g.Interface = device
-			if err := e.mt.UpdateGroup(ctx, g, true); err != nil {
-				e.store.LogEvent("bundle:"+b.Name, "magitrickle", "switch group "+id+" failed: "+err.Error())
-				continue
-			}
-			moved = append(moved, g.Name)
+			return changed
+		})
+		if err == nil {
+			e.store.LogEvent("bundle:"+b.Name, "switch", "member -> "+device+", groups: "+fmt.Sprint(moved))
 		}
-		e.store.LogEvent("bundle:"+b.Name, "switch", "member -> "+device+", groups: "+fmt.Sprint(moved))
 	}
 	e.store.MutateBundleState(b.Name, func(s *store.BundleState) {
 		s.Member = device
@@ -710,37 +704,53 @@ func (e *Engine) bundleGroupIDs() map[string]bool {
 	return out
 }
 
+// magitrickle 0.8.2: single-group PUT не пересоздаёт iptables-цепочку, если
+// рантайм группы уже выключен; пересборку даёт только массовый PUT списка.
+func (e *Engine) applyGroupChanges(key string, mutate func(groups []magitrickle.Group) bool) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	groups, err := e.mt.Groups(ctx)
+	if err != nil {
+		e.store.LogEvent(key, "magitrickle", "groups query failed: "+err.Error())
+		return err
+	}
+	if !mutate(groups) {
+		return nil
+	}
+	if err := e.mt.UpdateGroups(ctx, groups, true); err != nil {
+		e.store.LogEvent(key, "magitrickle", "groups save failed: "+err.Error())
+		return err
+	}
+	return nil
+}
+
 func (e *Engine) suspendGroups(p store.Pool) {
 	if e.mt == nil {
 		e.store.LogEvent(p.Name, "magitrickle", "client unavailable, groups not touched")
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	groups, err := e.mt.GroupsByInterface(ctx, p.DeviceName())
-	if err != nil {
-		e.store.LogEvent(p.Name, "magitrickle", "groups query failed: "+err.Error())
+	bundled := e.bundleGroupIDs()
+	dev := p.DeviceName()
+	var disabled []string
+	err := e.applyGroupChanges(p.Name, func(groups []magitrickle.Group) bool {
+		changed := false
+		for i := range groups {
+			g := &groups[i]
+			if g.Interface == dev && g.Enable && !bundled[g.ID] {
+				g.Enable = false
+				disabled = append(disabled, g.ID)
+				changed = true
+			}
+		}
+		return changed
+	})
+	if err != nil || len(disabled) == 0 {
 		return
 	}
-	bundled := e.bundleGroupIDs()
-	var disabled []string
-	for _, g := range groups {
-		if !g.Enable || bundled[g.ID] {
-			continue
-		}
-		g.Enable = false
-		if err := e.mt.UpdateGroup(ctx, g, true); err != nil {
-			e.store.LogEvent(p.Name, "magitrickle", "disable group "+g.Name+" failed: "+err.Error())
-			continue
-		}
-		disabled = append(disabled, g.ID)
-	}
-	if len(disabled) > 0 {
-		e.store.MutateState(p.Name, func(s *store.PoolState) {
-			s.DisabledGroups = append(s.DisabledGroups, disabled...)
-		})
-		e.store.LogEvent(p.Name, "magitrickle", "disabled groups: "+fmt.Sprint(disabled))
-	}
+	e.store.MutateState(p.Name, func(s *store.PoolState) {
+		s.DisabledGroups = append(s.DisabledGroups, disabled...)
+	})
+	e.store.LogEvent(p.Name, "magitrickle", "disabled groups: "+fmt.Sprint(disabled))
 }
 
 func (e *Engine) rebindGroups(p store.Pool, targetDevice string) {
@@ -748,28 +758,26 @@ func (e *Engine) rebindGroups(p store.Pool, targetDevice string) {
 		e.store.LogEvent(p.Name, "magitrickle", "client unavailable, groups not rebound")
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	groups, err := e.mt.GroupsByInterface(ctx, p.DeviceName())
-	if err != nil {
-		e.store.LogEvent(p.Name, "magitrickle", "groups query failed: "+err.Error())
+	dev := p.DeviceName()
+	var rebound []string
+	err := e.applyGroupChanges(p.Name, func(groups []magitrickle.Group) bool {
+		changed := false
+		for i := range groups {
+			if groups[i].Interface == dev {
+				groups[i].Interface = targetDevice
+				rebound = append(rebound, groups[i].ID)
+				changed = true
+			}
+		}
+		return changed
+	})
+	if err != nil || len(rebound) == 0 {
 		return
 	}
-	var rebound []string
-	for _, g := range groups {
-		g.Interface = targetDevice
-		if err := e.mt.UpdateGroup(ctx, g, true); err != nil {
-			e.store.LogEvent(p.Name, "magitrickle", "rebind group "+g.Name+" failed: "+err.Error())
-			continue
-		}
-		rebound = append(rebound, g.ID)
-	}
-	if len(rebound) > 0 {
-		e.store.MutateState(p.Name, func(s *store.PoolState) {
-			s.ReboundGroups = append(s.ReboundGroups, rebound...)
-		})
-		e.store.LogEvent(p.Name, "magitrickle", "groups rebound to "+targetDevice+": "+fmt.Sprint(rebound))
-	}
+	e.store.MutateState(p.Name, func(s *store.PoolState) {
+		s.ReboundGroups = append(s.ReboundGroups, rebound...)
+	})
+	e.store.LogEvent(p.Name, "magitrickle", "groups rebound to "+targetDevice+": "+fmt.Sprint(rebound))
 }
 
 func (e *Engine) restoreReboundGroups(p store.Pool) {
@@ -783,35 +791,32 @@ func (e *Engine) restoreReboundGroups(p store.Pool) {
 		})
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	groups, err := e.mt.Groups(ctx)
-	if err != nil {
-		e.store.LogEvent(p.Name, "magitrickle", "groups query failed: "+err.Error())
-		return
-	}
-	byID := map[string]magitrickle.Group{}
-	for _, g := range groups {
-		byID[g.ID] = g
+	dev := p.DeviceName()
+	restore := map[string]bool{}
+	for _, id := range st.ReboundGroups {
+		restore[id] = true
 	}
 	var restored []string
-	for _, id := range st.ReboundGroups {
-		g, ok := byID[id]
-		if !ok || g.Interface == p.DeviceName() {
-			continue
+	err := e.applyGroupChanges(p.Name, func(groups []magitrickle.Group) bool {
+		changed := false
+		for i := range groups {
+			g := &groups[i]
+			if restore[g.ID] && g.Interface != dev {
+				g.Interface = dev
+				restored = append(restored, g.ID)
+				changed = true
+			}
 		}
-		g.Interface = p.DeviceName()
-		if err := e.mt.UpdateGroup(ctx, g, true); err != nil {
-			e.store.LogEvent(p.Name, "magitrickle", "rebind back group "+id+" failed: "+err.Error())
-			continue
-		}
-		restored = append(restored, id)
+		return changed
+	})
+	if err != nil {
+		return
 	}
 	e.store.MutateState(p.Name, func(s *store.PoolState) {
 		s.ReboundGroups = nil
 	})
 	if len(restored) > 0 {
-		e.store.LogEvent(p.Name, "magitrickle", "groups rebound back to "+p.DeviceName()+": "+fmt.Sprint(restored))
+		e.store.LogEvent(p.Name, "magitrickle", "groups rebound back to "+dev+": "+fmt.Sprint(restored))
 	}
 }
 
@@ -825,29 +830,25 @@ func (e *Engine) restoreGroups(p store.Pool, s *store.PoolState) {
 		})
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	groups, err := e.mt.Groups(ctx)
-	if err != nil {
-		e.store.LogEvent(p.Name, "magitrickle", "groups query failed: "+err.Error())
-		return
-	}
-	byID := map[string]magitrickle.Group{}
-	for _, g := range groups {
-		byID[g.ID] = g
+	enable := map[string]bool{}
+	for _, id := range s.DisabledGroups {
+		enable[id] = true
 	}
 	var restored []string
-	for _, id := range s.DisabledGroups {
-		g, ok := byID[id]
-		if !ok || g.Enable {
-			continue
+	err := e.applyGroupChanges(p.Name, func(groups []magitrickle.Group) bool {
+		changed := false
+		for i := range groups {
+			g := &groups[i]
+			if enable[g.ID] && !g.Enable {
+				g.Enable = true
+				restored = append(restored, g.ID)
+				changed = true
+			}
 		}
-		g.Enable = true
-		if err := e.mt.UpdateGroup(ctx, g, true); err != nil {
-			e.store.LogEvent(p.Name, "magitrickle", "enable group "+id+" failed: "+err.Error())
-			continue
-		}
-		restored = append(restored, id)
+		return changed
+	})
+	if err != nil {
+		return
 	}
 	e.store.MutateState(p.Name, func(s2 *store.PoolState) {
 		s2.DisabledGroups = nil

@@ -141,7 +141,21 @@ func (c *Client) UpdateGroups(ctx context.Context, groups []Group, save bool) er
 	body := struct {
 		Groups []Group `json:"groups"`
 	}{Groups: groups}
-	return c.call(ctx, http.MethodPut, "/api/v1/groups?save="+strconv.FormatBool(save), body, nil)
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-time.After(500 * time.Millisecond):
+			case <-ctx.Done():
+				return lastErr
+			}
+		}
+		lastErr = c.call(ctx, http.MethodPut, "/api/v1/groups?save="+strconv.FormatBool(save), body, nil)
+		if lastErr == nil {
+			return nil
+		}
+	}
+	return lastErr
 }
 
 func (c *Client) GroupByID(ctx context.Context, id string, withRules bool) (Group, error) {
