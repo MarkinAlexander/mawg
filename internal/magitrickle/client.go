@@ -31,8 +31,9 @@ type Group struct {
 }
 
 type Client struct {
-	BaseURL string
-	HTTP    *http.Client
+	BaseURL    string
+	HTTP       *http.Client
+	peakGroups int
 }
 
 func New(baseURL string) *Client {
@@ -216,6 +217,12 @@ func (c *Client) MutateGroups(ctx context.Context, mutate func(groups []Group) b
 	if err != nil {
 		return err
 	}
+	if c.peakGroups > 0 && len(groups)*10 < c.peakGroups*6 {
+		return fmt.Errorf("magitrickle усечён: %d групп против пиковых %d, сохранение заблокировано, нужен рестарт magitrickle", len(groups), c.peakGroups)
+	}
+	if len(groups) > c.peakGroups {
+		c.peakGroups = len(groups)
+	}
 	if !mutate(groups) {
 		return nil
 	}
@@ -237,6 +244,12 @@ func (c *Client) MutateGroups(ctx context.Context, mutate func(groups []Group) b
 		return fmt.Errorf("magitrickle усёк список: %d групп и %d правил вместо %d и %d, нужен рестарт magitrickle", len(check), checkRules, len(groups), rules)
 	}
 	return nil
+}
+
+func (c *Client) ResetGroupBaseline() {
+	groupsMu.Lock()
+	defer groupsMu.Unlock()
+	c.peakGroups = 0
 }
 
 func (c *Client) Available(ctx context.Context) bool {

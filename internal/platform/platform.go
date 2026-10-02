@@ -32,4 +32,5 @@ type Backend interface {
 	Probe(pool store.Pool, host string) (ok bool, rttMs int, err error)
 	IfaceHandshake(device string) int
 	ProbeDevice(device, target string) (ok bool, rttMs int)
+	RestartMagitrickle() error
 }

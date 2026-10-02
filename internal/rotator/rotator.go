@@ -34,6 +34,7 @@ type Engine struct {
 	lastApply map[string]time.Time
 	extFails  map[string]int
 	wanCache  wanCacheEntry
+	mtHealAt  time.Time
 }
 
 func New(st *store.Store, b platform.Backend, mt *magitrickle.Client) *Engine {
@@ -707,13 +708,30 @@ func (e *Engine) bundleGroupIDs() map[string]bool {
 // magitrickle 0.8.2: single-group PUT не пересоздаёт iptables-цепочку, если
 // рантайм группы уже выключен; пересборку даёт только массовый PUT списка.
 func (e *Engine) applyGroupChanges(key string, mutate func(groups []magitrickle.Group) bool) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	err := e.mt.MutateGroups(ctx, mutate)
-	if err != nil {
-		e.store.LogEvent(key, "magitrickle", "groups save failed: "+err.Error())
+	if err == nil {
+		return nil
 	}
+	e.store.LogEvent(key, "magitrickle", "groups save failed: "+err.Error())
+	e.healMagitrickle(key)
 	return err
+}
+
+// сбой массового PUT оставляет рантайм magitrickle усечённым, но конфиг
+// на диске цел: рестарт демона собирает группы обратно.
+func (e *Engine) healMagitrickle(key string) {
+	if e.now().Sub(e.mtHealAt) < 10*time.Minute {
+		return
+	}
+	e.mtHealAt = e.now()
+	if err := e.backend.RestartMagitrickle(); err != nil {
+		e.store.LogEvent(key, "magitrickle", "автоперезапуск не удался: "+err.Error())
+		return
+	}
+	e.mt.ResetGroupBaseline()
+	e.store.LogEvent(key, "magitrickle", "автоперезапуск после сбоя сохранения")
 }
 
 func (e *Engine) suspendGroups(p store.Pool) {

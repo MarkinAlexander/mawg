@@ -418,3 +418,8 @@ func (b *Backend) IfaceHandshake(device string) int {
 	}
 	return -1
 }
+
+func (b *Backend) RestartMagitrickle() error {
+	_, err := runShell("/etc/init.d/magitrickle restart")
+	return err
+}

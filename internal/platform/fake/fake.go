@@ -128,3 +128,5 @@ func (f *Fake) Applied() []string {
 	copy(out, f.AppliedEndpoints)
 	return out
 }
+
+func (f *Fake) RestartMagitrickle() error { return nil }
