@@ -74,6 +74,15 @@ input[type=color] { padding: 1px 2px; width: 34px; height: 26px; }
 .switch .knob:before { content: ''; position: absolute; height: 12px; width: 12px; left: 3px; top: 3px; background: var(--bg); border-radius: 50%; transition: .15s; }
 .switch input:checked + .knob { background: var(--ok); }
 .switch input:checked + .knob:before { transform: translateX(14px); }
+button:disabled { opacity: .55; cursor: default; }
+button.busy { pointer-events: none; }
+button.busy::before { content: ''; display: inline-block; width: 11px; height: 11px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; margin-right: 7px; vertical-align: -2px; animation: spin .7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+#topbar { position: fixed; top: 0; left: 0; right: 0; height: 3px; z-index: 999; pointer-events: none; opacity: 0; transition: opacity .25s; overflow: hidden; }
+#topbar.on { opacity: 1; }
+#topbar.on::before { content: ''; position: absolute; left: -40%; width: 40%; height: 100%; background: var(--accent); animation: slide 1s ease-in-out infinite; }
+@keyframes slide { to { left: 100%; } }
+dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s; }
 .iconbtn { background: none; border: none; color: var(--dim); cursor: pointer; padding: 3px; border-radius: 5px; vertical-align: middle; }
 .iconbtn:hover { color: var(--err); border-color: transparent; }
 .iface-badge { display: inline-flex; align-items: center; gap: 6px; }
@@ -324,8 +333,19 @@ input[type=color] { padding: 1px 2px; width: 34px; height: 26px; }
         <option value="regex">регулярка (по одной на строку)</option>
       </select>
     </label>
-    <label class="f" style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="imStrip" checked> Очищать ссылки до домена (https://www.ozon.ru/path -> www.ozon.ru)</label>
-    <label class="f" style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="imSecond"> Усекать до второго уровня (www.ozon.ru -> ozon.ru, bbc.co.uk не трогается)</label>
+    <div class="muted" style="font-size:11px">Ссылки всегда очищаются до домена: https://www.ozon.ru/path -> www.ozon.ru, ftp://files.example.com/dir -> files.example.com</div>
+    <div class="f" style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+      <span style="flex:1">Усекать до второго уровня
+        <span class="muted" style="display:block;font-size:11px">www.ozon.ru -> ozon.ru, зоны вроде bbc.co.uk не трогаются</span>
+      </span>
+      <label class="switch" title="усекать до второго уровня"><input type="checkbox" id="imSecond"><span class="knob"></span></label>
+    </div>
+    <div class="f" style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+      <span style="flex:1">Импортировать включёнными
+        <span class="muted" style="display:block;font-size:11px">выключенное правило можно включить позже тумблером</span>
+      </span>
+      <label class="switch" title="импортировать включёнными"><input type="checkbox" id="imEnable" checked><span class="knob"></span></label>
+    </div>
     <label class="f">Список: по одному в строке, пробелы/запятые/точки с запятой тоже разделяют
       <textarea id="imText" rows="10" spellcheck="false" style="font:12px/1.5 ui-monospace,monospace;width:100%;box-sizing:border-box;margin-top:3px"></textarea>
     </label>
@@ -348,6 +368,7 @@ input[type=color] { padding: 1px 2px; width: 34px; height: 26px; }
   </form>
 </dialog>
 
+<div id="topbar"></div>
 <div class="msg" id="msg"></div>
 
 <script>
@@ -363,19 +384,47 @@ function fmtTime(iso) {
 function toast(text, isErr) {
   const m = $('#msg');
   m.textContent = text;
-  m.style.borderColor = isErr ? 'var(--err)' : 'var(--border)';
+  m.style.borderColor = isErr ? 'var(--err)' : 'var(--ok)';
   m.style.display = 'block';
-  setTimeout(() => m.style.display = 'none', 4000);
+  clearTimeout(m._t);
+  m._t = setTimeout(() => m.style.display = 'none', 4000);
+}
+
+let inflight = 0;
+function topbarStart() {
+  inflight++;
+  if (inflight === 1) $('#topbar').classList.add('on');
+}
+function topbarEnd() {
+  inflight = Math.max(0, inflight - 1);
+  if (!inflight) $('#topbar').classList.remove('on');
+}
+
+async function withBusy(btn, fn) {
+  if (!btn || btn.dataset.busy) return;
+  btn.dataset.busy = '1';
+  btn.disabled = true;
+  btn.classList.add('busy');
+  try { await fn(); } finally {
+    delete btn.dataset.busy;
+    btn.disabled = false;
+    btn.classList.remove('busy');
+  }
 }
 
 async function api(method, path, body, isForm) {
   const opts = { method };
   if (body !== undefined) opts.body = isForm ? body : JSON.stringify(body);
   if (!isForm) opts.headers = { 'Content-Type': 'application/json' };
-  const resp = await fetch('/api/v1' + path, opts);
-  const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) throw new Error(data.error || resp.status);
-  return data;
+  topbarStart();
+  try {
+    const resp = await fetch('/api/v1' + path, opts);
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.error || resp.status);
+    return data;
+  } finally {
+    topbarEnd();
+  }
 }
 
 function ensureCard(p) {
@@ -431,13 +480,13 @@ function ensureCard(p) {
   card.gear = q('.c-gear');
 
   root.querySelectorAll('button[data-act]').forEach(btn => {
-    btn.onclick = () => {
+    btn.onclick = e => withBusy(e.currentTarget, () => {
       const act = btn.dataset.act;
       if (act === 'delpool') return delPool(p.name);
       if (act === 'enable') return actPool(p.name, 'enable');
       if (act === 'disable') return actPool(p.name, 'disable');
-      actPool(p.name, act);
-    };
+      return actPool(p.name, act);
+    });
   });
   card.drop.onclick = () => card.fileInput.click();
   card.gear.onclick = () => openSettings(p.name);
@@ -992,22 +1041,28 @@ function openImportDlg(g) {
   document.getElementById('dlgImport').showModal();
 }
 document.getElementById('imCancel').onclick = () => document.getElementById('dlgImport').close();
-document.getElementById('imGo').onclick = async () => {
+document.getElementById('imGo').onclick = e => withBusy(e.currentTarget, async () => {
+  const dlg = document.getElementById('dlgImport');
   const text = document.getElementById('imText').value;
   if (!text.trim()) return toast('Вставьте список', true);
+  dlg.classList.add('busy');
   try {
     const r = await api('POST', `/mt/groups/${imGroupID}/rules/import`, {
       text,
       type: document.getElementById('imType').value,
-      stripUrl: document.getElementById('imStrip').checked,
       toSecond: document.getElementById('imSecond').checked,
+      enable: document.getElementById('imEnable').checked,
     });
-    document.getElementById('dlgImport').close();
-    toast(`Импортировано: ${r.added}, пропущено: ${r.skipped}`);
+    dlg.close();
+    toast(r.added ? `Импортировано: ${r.added}, пропущено: ${r.skipped}` : 'Нового ничего не добавлено, все дубликаты');
     lastMtJSON = '';
     refreshRules(true);
-  } catch (e) { toast(e.message, true); }
-};
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    dlg.classList.remove('busy');
+  }
+});
 
 function copyGroupRules(g) {
   const lines = (g.rules || []).map(r => r.rule);
@@ -1084,8 +1139,9 @@ function renderRules() {
       </details>`;
     el.querySelector('.mt-toggle').onchange = e => { mtApi('POST', `/mt/groups/${g.id}/enable`, { enable: e.target.checked }); };
     el.querySelector('.mt-edit').onclick = () => editGroupDlg(g);
-    el.querySelector('.mt-del').onclick = () => {
-      if (confirm(`Удалить группу ${g.name} со всеми правилами?`)) mtApi('DELETE', `/mt/groups/${g.id}`);
+    el.querySelector('.mt-del').onclick = e => {
+      if (!confirm(`Удалить группу ${g.name} со всеми правилами?`)) return;
+      withBusy(e.currentTarget, () => mtApi('DELETE', `/mt/groups/${g.id}`));
     };
     const det = el.querySelector('details');
     det.ontoggle = () => { if (det.open) openMtGroups.add(g.id); else openMtGroups.delete(g.id); };
@@ -1103,7 +1159,7 @@ function renderRules() {
           <button class="iconbtn r-del" title="удалить правило">${TRASH_SVG}</button></td>`;
       tr.querySelector('.r-tg').onchange = e => { mtApi('POST', `/mt/groups/${g.id}/rules/${rl.id}/enable`, { enable: e.target.checked }); };
       tr.querySelector('.r-edit').onclick = () => editRule(g, rl, tr);
-      tr.querySelector('.r-del').onclick = () => { mtApi('DELETE', `/mt/groups/${g.id}/rules/${rl.id}`); };
+      tr.querySelector('.r-del').onclick = e => withBusy(e.currentTarget, () => mtApi('DELETE', `/mt/groups/${g.id}/rules/${rl.id}`));
       attachDnD(tr, 'rules:' + g.id, (dragged, target, before) => {
         target.parentNode.insertBefore(dragged, before ? target : target.nextSibling);
         mtApi('POST', `/mt/groups/${g.id}/rules/order`, { ids: orderIDs(tbody, 'tr[data-id]') });
@@ -1117,13 +1173,13 @@ function renderRules() {
       nrHint.textContent = RULE_HINTS[nrType.value] || '';
       nrValue.placeholder = RULE_PLACEHOLDERS[nrType.value] || '';
     };
-    el.querySelector('.nr-add').onclick = () => {
+    el.querySelector('.nr-add').onclick = e => withBusy(e.currentTarget, () => {
       const type = el.querySelector('.nr-type').value;
       const value = nrValue.value.trim();
       if (!value) return toast('Введите значение правила', true);
-      mtApi('POST', `/mt/groups/${g.id}/rules`, { type, rule: value });
       openMtGroups.add(g.id);
-    };
+      return mtApi('POST', `/mt/groups/${g.id}/rules`, { type, rule: value });
+    });
     el.querySelector('.nr-import').onclick = () => openImportDlg(g);
     el.querySelector('.nr-copy').onclick = () => copyGroupRules(g);
     attachDnD(el, 'groups', (dragged, target, before) => {
@@ -1163,8 +1219,7 @@ document.getElementById('rgCreate').onclick = async () => {
 };
 
 document.querySelector('#dlgGroup button[value=cancel]').onclick = () => dlgGroup.close();
-$('#egSave').onclick = async e => {
-  e.preventDefault();
+$('#egSave').onclick = e => withBusy(e.currentTarget, async () => {
   const name = $('#egName').value.trim();
   if (!name || !editGroupID) return;
   try {
@@ -1172,7 +1227,7 @@ $('#egSave').onclick = async e => {
     dlgGroup.close();
     lastMtJSON = ''; refreshRules(true);
   } catch (err) { toast(err.message, true); }
-};
+});
 
 async function loadPresets() {
   try {
@@ -1304,8 +1359,7 @@ document.getElementById('bdAdd').onclick = () => {
 };
 document.querySelector('#dlgBundle button[value=cancel]').onclick = () => dlgBundle.close();
 document.getElementById('bCreate').onclick = () => openBundleDlg(null);
-document.getElementById('bdSave').onclick = async e => {
-  e.preventDefault();
+document.getElementById('bdSave').onclick = e => withBusy(e.currentTarget, async () => {
   const name = document.getElementById('bdName').value.trim() || bdEditing;
   if (!name) return toast('Укажите имя', true);
   if (!bdMembers.length) return toast('Добавьте хотя бы одного участника', true);
@@ -1318,7 +1372,7 @@ document.getElementById('bdSave').onclick = async e => {
     dlgBundle.close();
     lastBundlesJSON = ''; refreshBundles(true);
   } catch (err) { toast(err.message, true); }
-};
+});
 async function refreshSystem(force) {
   try {
     const r = await api('GET', '/system/check');

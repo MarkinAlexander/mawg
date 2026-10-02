@@ -1121,8 +1121,8 @@ func (s *Server) mtImportRules(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Text     string `json:"text"`
 		Type     string `json:"type"`
-		StripURL bool   `json:"stripUrl"`
 		ToSecond bool   `json:"toSecond"`
+		Enable   *bool  `json:"enable"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Text) == "" {
 		writeErr(w, fmt.Errorf("пустой список"))
@@ -1132,10 +1132,17 @@ func (s *Server) mtImportRules(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, fmt.Errorf("неизвестный тип правила"))
 		return
 	}
-	parsed, bad := magitrickle.ParseImport(req.Text, req.Type, req.StripURL, req.ToSecond)
+	enabled := true
+	if req.Enable != nil {
+		enabled = *req.Enable
+	}
+	parsed, bad := magitrickle.ParseImport(req.Text, req.Type, true, req.ToSecond)
 	if len(parsed) == 0 {
 		writeErr(w, fmt.Errorf("в списке не нашлось правил"))
 		return
+	}
+	for i := range parsed {
+		parsed[i].Enable = enabled
 	}
 	id := r.PathValue("id")
 	added, dup, found := 0, 0, false
