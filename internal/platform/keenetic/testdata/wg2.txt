@@ -1,0 +1,55 @@
+Interface, name = "Wireguard2"
+               id: Wireguard2
+            index: 2
+   interface-name: Wireguard2
+             type: Wireguard
+      description: warp
+           traits: Ip
+           traits: Ip6
+           traits: Wireguard
+             link: up
+        connected: yes
+            state: up
+              mtu: 1324
+  tx-queue-length: 50
+       admin-only: no
+          address: 172.16.0.2
+             mask: 255.255.255.255
+           uptime: 34993
+           global: no
+   security-level: public
+             ipv6: 
+        wireguard: 
+           public-key: GXDYRK4KwLXQhdexhrxxZIX8Ik+ao2kCNweMOYYXkG4=
+          listen-port: 42391
+               status: up
+          summary: 
+
+Interface, name = "Wireguard3"
+               id: Wireguard3
+            index: 3
+   interface-name: Wireguard3
+             type: Wireguard
+      description: rocket_moscow
+           traits: Ip
+           traits: Ip6
+           traits: Wireguard
+             link: down
+        connected: no
+            state: down
+              mtu: 1324
+  tx-queue-length: 50
+       admin-only: no
+           global: yes
+        defaultgw: no
+         priority: 350
+   security-level: public
+             ipv6: 
+            defaultgw: no
+        wireguard: 
+           public-key: 629pYXdOzTegb+KdAc3zV7ncnSVJPYFnXGQqH/ztdjo=
+          listen-port: 43202
+               status: down
+          summary: 
+
+Interface, name = "Wireguard4"

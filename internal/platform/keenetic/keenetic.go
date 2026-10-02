@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -132,14 +133,33 @@ func (b *Backend) rciGet(path string) (rciInterface, error) {
 	var out rciInterface
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Get(rciBase + path)
+	if err == nil {
+		defer resp.Body.Close()
+		err = json.NewDecoder(resp.Body).Decode(&out)
+	}
+	if err == nil {
+		return out, nil
+	}
+	// RCI недоступен (5.2 alpha: 401) - тот же интерфейс через CLI
+	slot := path[strings.LastIndex(path, "/")+1:]
+	iface, cerr := b.ndmcInterface(slot)
+	if cerr != nil {
+		return out, err
+	}
+	return iface, nil
+}
+
+func (b *Backend) ndmcInterface(slot string) (rciInterface, error) {
+	out, err := b.ndmc("show interface " + slot)
 	if err != nil {
-		return out, err
+		return rciInterface{}, err
 	}
-	defer resp.Body.Close()
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return out, err
+	ifaces := parseNDMCInterfaces(out)
+	iface, ok := ifaces[slot]
+	if !ok {
+		return rciInterface{}, fmt.Errorf("ndmc: interface %s not found", slot)
 	}
-	return out, nil
+	return iface, nil
 }
 
 func (b *Backend) slotOf(pool store.Pool) (string, int, error) {
@@ -154,15 +174,43 @@ func (b *Backend) slotOf(pool store.Pool) (string, int, error) {
 func (b *Backend) Slots() ([]platform.SlotInfo, error) {
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Get(rciBase + "/rci/show/interface")
-	if err != nil {
+	if err == nil {
+		body, rerr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if rerr == nil {
+			if out, perr := parseSlots(body); perr == nil {
+				return out, nil
+			}
+		}
+	}
+	// 5.2 alpha закрыла локальный RCI паролем (NDM-4515): CLI работает всегда
+	out, cerr := b.ndmc("show interface")
+	if cerr != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
+	return ndmcSlots(parseNDMCInterfaces(out)), nil
+}
+
+func ndmcSlots(ifaces map[string]rciInterface) []platform.SlotInfo {
+	var out []platform.SlotInfo
+	for id, ifc := range ifaces {
+		if slotRe.FindStringSubmatch(id) == nil {
+			continue
+		}
+		out = append(out, platform.SlotInfo{
+			ID:          id,
+			Device:      DeviceName(id),
+			Description: ifc.Description,
+			LinkUp:      ifc.Link == "up",
+			Connected:   ifc.Connected == "yes",
+		})
 	}
-	return parseSlots(body)
+	sort.Slice(out, func(i, j int) bool {
+		a, _ := strconv.Atoi(slotRe.FindStringSubmatch(out[i].ID)[1])
+		b, _ := strconv.Atoi(slotRe.FindStringSubmatch(out[j].ID)[1])
+		return a < b
+	})
+	return out
 }
 
 // RCI разных прошивок отдаёт список интерфейсов то объектом, то массивом;

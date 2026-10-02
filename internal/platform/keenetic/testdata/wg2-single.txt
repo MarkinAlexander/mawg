@@ -1,0 +1,56 @@
+[K
+               id: Wireguard2
+            index: 2
+   interface-name: Wireguard2
+             type: Wireguard
+      description: warp
+
+           traits: Ip
+
+           traits: Ip6
+
+           traits: Wireguard
+
+             link: up
+        connected: yes
+            state: up
+              mtu: 1324
+  tx-queue-length: 50
+       admin-only: no
+          address: 172.16.0.2
+             mask: 255.255.255.255
+           uptime: 35066
+           global: no
+   security-level: public
+             ipv6: 
+
+        wireguard: 
+           public-key: GXDYRK4KwLXQhdexhrxxZIX8Ik+ao2kCNweMOYYXkG4=
+          listen-port: 42391
+               status: up
+
+                 peer: 
+                      public-key: 
+                                  bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=
+                     description: 
+                      local-port: 42391
+                     remote-port: 1387
+                             via: GigabitEthernet1
+          local-endpoint-address: 79.174.36.109
+         remote-endpoint-address: 162.159.192.1
+                         rxbytes: 144368589
+                         txbytes: 7151852
+                  last-handshake: 54
+                          online: yes
+                         enabled: yes
+                          fwmark: 268434091
+
+          summary: 
+                layer: 
+                     conf: running
+                     link: running
+                     ipv4: running
+                     ipv6: disabled
+                     ctrl: running
+
+[K
