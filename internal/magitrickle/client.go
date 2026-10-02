@@ -364,11 +364,15 @@ func (c *Client) EnsureHealthy(ctx context.Context) error {
 }
 
 // RefreshShadow перечитывает список групп в тень после одиночных
-// операций (создание, удаление), чтобы тень не воскрешала удалённое.
+// операций (создание, удаление) и из периодического монитора. усечённый
+// рантайм тень не затирает: утерянным группам занимается ремонт.
 func (c *Client) RefreshShadow(ctx context.Context) {
 	groupsMu.Lock()
 	defer groupsMu.Unlock()
 	if groups, err := c.GroupsWithRules(ctx); err == nil {
+		if len(mtShadow) > 0 && len(groups)+2 < len(mtShadow) {
+			return
+		}
 		updateShadowLocked(groups)
 	}
 }

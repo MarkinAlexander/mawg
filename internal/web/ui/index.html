@@ -311,6 +311,43 @@ input[type=color] { padding: 1px 2px; width: 34px; height: 26px; }
   </form>
 </dialog>
 
+<dialog id="dlgImport">
+  <form method="dialog" style="display:grid; gap:6px; min-width:420px; max-width:560px">
+    <h3 style="margin:0 0 4px" id="imTitle">Импорт правил</h3>
+    <label class="f">Тип для доменов
+      <select id="imType">
+        <option value="auto">авто (IP и CIDR как подсети, остальное как домен+поддомены)</option>
+        <option value="namespace">домен+поддомены</option>
+        <option value="domain">домен (без поддоменов)</option>
+        <option value="wildcard">маска (* ?)</option>
+        <option value="subnet">подсеть</option>
+        <option value="regex">регулярка (по одной на строку)</option>
+      </select>
+    </label>
+    <label class="f" style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="imStrip" checked> Очищать ссылки до домена (https://www.ozon.ru/path -> www.ozon.ru)</label>
+    <label class="f" style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="imSecond"> Усекать до второго уровня (www.ozon.ru -> ozon.ru, bbc.co.uk не трогается)</label>
+    <label class="f">Список: по одному в строке, пробелы/запятые/точки с запятой тоже разделяют
+      <textarea id="imText" rows="10" spellcheck="false" style="font:12px/1.5 ui-monospace,monospace;width:100%;box-sizing:border-box;margin-top:3px"></textarea>
+    </label>
+    <div class="muted" style="font-size:11px">Дубликаты внутри списка и совпадения с существующими правилами пропускаются. Кириллические домены вставляйте в punycode.</div>
+    <div class="btnrow" style="justify-content:end;margin:0">
+      <button type="button" id="imCancel">отмена</button>
+      <button type="button" class="primary" id="imGo">импортировать</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="dlgCopy">
+  <form method="dialog" style="display:grid; gap:8px; min-width:420px; max-width:560px">
+    <h3 style="margin:0" id="cpTitle">Список правил</h3>
+    <textarea id="cpText" rows="12" readonly spellcheck="false" style="font:12px/1.5 ui-monospace,monospace;width:100%;box-sizing:border-box"></textarea>
+    <div class="muted" style="font-size:11px">Если не скопировалось само - выделено, нажмите Ctrl+C.</div>
+    <div class="btnrow" style="justify-content:end;margin:0">
+      <button class="primary" value="close">Закрыть</button>
+    </div>
+  </form>
+</dialog>
+
 <div class="msg" id="msg"></div>
 
 <script>
@@ -947,6 +984,53 @@ async function mtApi(method, path, body) {
   refreshRules(true);
 }
 
+let imGroupID = null;
+function openImportDlg(g) {
+  imGroupID = g.id;
+  document.getElementById('imTitle').textContent = 'Импорт правил в ' + g.name;
+  document.getElementById('imText').value = '';
+  document.getElementById('dlgImport').showModal();
+}
+document.getElementById('imCancel').onclick = () => document.getElementById('dlgImport').close();
+document.getElementById('imGo').onclick = async () => {
+  const text = document.getElementById('imText').value;
+  if (!text.trim()) return toast('Вставьте список', true);
+  try {
+    const r = await api('POST', `/mt/groups/${imGroupID}/rules/import`, {
+      text,
+      type: document.getElementById('imType').value,
+      stripUrl: document.getElementById('imStrip').checked,
+      toSecond: document.getElementById('imSecond').checked,
+    });
+    document.getElementById('dlgImport').close();
+    toast(`Импортировано: ${r.added}, пропущено: ${r.skipped}`);
+    lastMtJSON = '';
+    refreshRules(true);
+  } catch (e) { toast(e.message, true); }
+};
+
+function copyGroupRules(g) {
+  const lines = (g.rules || []).map(r => r.rule);
+  if (!lines.length) return toast('В группе нет правил', true);
+  const text = lines.join('\n');
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text)
+      .then(() => toast(`Скопировано: ${lines.length}`))
+      .catch(() => showCopyDlg(text, lines.length));
+    return;
+  }
+  showCopyDlg(text, lines.length);
+}
+function showCopyDlg(text, n) {
+  const ta = document.getElementById('cpText');
+  document.getElementById('cpTitle').textContent = `Список правил (${n})`;
+  ta.value = text;
+  document.getElementById('dlgCopy').showModal();
+  ta.focus();
+  ta.select();
+  try { document.execCommand('copy'); } catch (e) {}
+}
+
 async function refreshRules(force) {
   try {
     const r = await api('GET', '/mt/groups');
@@ -993,6 +1077,8 @@ function renderRules() {
           <select class="nr-type">${Object.entries(RULE_TYPES).map(([v,l])=>`<option value="${v}">${l}</option>`).join('')}</select>
           <input class="nr-value" placeholder="${RULE_PLACEHOLDERS.namespace}" style="flex:1;min-width:160px">
           <button class="nr-add">+ правило</button>
+          <button class="nr-import" title="вставить список доменов, подсетей или ссылок">импорт</button>
+          <button class="nr-copy" title="скопировать все правила группы списком">копировать</button>
         </div>
         <div class="muted nr-hint" style="font-size:11px;margin-top:2px">${RULE_HINTS.namespace}</div>
       </details>`;
@@ -1038,6 +1124,8 @@ function renderRules() {
       mtApi('POST', `/mt/groups/${g.id}/rules`, { type, rule: value });
       openMtGroups.add(g.id);
     };
+    el.querySelector('.nr-import').onclick = () => openImportDlg(g);
+    el.querySelector('.nr-copy').onclick = () => copyGroupRules(g);
     attachDnD(el, 'groups', (dragged, target, before) => {
       target.parentNode.insertBefore(dragged, before ? target : target.nextSibling);
       mtApi('POST', '/mt/groups/order', { ids: orderIDs(box, '.mtgroup') });

@@ -80,6 +80,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/mt/groups/{id}/enable", s.mtToggleGroup)
 	mux.HandleFunc("DELETE /api/v1/mt/groups/{id}", s.mtDeleteGroup)
 	mux.HandleFunc("POST /api/v1/mt/groups/{id}/rules", s.mtCreateRule)
+	mux.HandleFunc("POST /api/v1/mt/groups/{id}/rules/import", s.mtImportRules)
 	mux.HandleFunc("PUT /api/v1/mt/groups/{id}/rules/{rid}", s.mtUpdateRule)
 	mux.HandleFunc("POST /api/v1/mt/groups/{id}/rules/{rid}/enable", s.mtToggleRule)
 	mux.HandleFunc("DELETE /api/v1/mt/groups/{id}/rules/{rid}", s.mtDeleteRule)
@@ -1114,6 +1115,67 @@ func (s *Server) mtDeleteGroup(w http.ResponseWriter, r *http.Request) {
 
 var ruleTypes = map[string]bool{
 	"domain": true, "namespace": true, "wildcard": true, "regex": true, "subnet": true,
+}
+
+func (s *Server) mtImportRules(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Text     string `json:"text"`
+		Type     string `json:"type"`
+		StripURL bool   `json:"stripUrl"`
+		ToSecond bool   `json:"toSecond"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Text) == "" {
+		writeErr(w, fmt.Errorf("пустой список"))
+		return
+	}
+	if req.Type != "auto" && !ruleTypes[req.Type] {
+		writeErr(w, fmt.Errorf("неизвестный тип правила"))
+		return
+	}
+	parsed, bad := magitrickle.ParseImport(req.Text, req.Type, req.StripURL, req.ToSecond)
+	if len(parsed) == 0 {
+		writeErr(w, fmt.Errorf("в списке не нашлось правил"))
+		return
+	}
+	id := r.PathValue("id")
+	added, dup, found := 0, 0, false
+	groupName := id
+	err := s.mtApplyGroups(r.Context(), func(groups []magitrickle.Group) bool {
+		for i := range groups {
+			g := &groups[i]
+			if g.ID != id {
+				continue
+			}
+			found = true
+			groupName = g.Name
+			existing := map[string]bool{}
+			for _, rl := range g.Rules {
+				existing[rl.Type+" "+rl.Rule] = true
+			}
+			for _, rl := range parsed {
+				if existing[rl.Type+" "+rl.Rule] {
+					dup++
+					continue
+				}
+				g.Rules = append(g.Rules, rl)
+				added++
+			}
+			return true
+		}
+		return false
+	})
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if !found {
+		http.NotFound(w, r)
+		return
+	}
+	if added > 0 {
+		s.store.LogEvent("rules", "magitrickle", fmt.Sprintf("в группу %s импортировано правил: %d", groupName, added))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"added": added, "skipped": dup + bad})
 }
 
 func (s *Server) mtCreateRule(w http.ResponseWriter, r *http.Request) {
