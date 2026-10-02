@@ -1149,7 +1149,7 @@ function warnSvgFor(rule) {
 }
 function groupWarnSvg(g) {
   for (const rl of (g.rules || [])) {
-    if ((MT_DUPS[(rl.rule || '').toLowerCase()] || []).length) {
+    if (rl.enable && (MT_DUPS[(rl.rule || '').toLowerCase()] || []).length) {
       return '<span class="warn-badge" title="в группе есть правила, дублирующиеся в других группах">' + WARN_SVG_ICON + '</span>';
     }
   }
@@ -1244,7 +1244,7 @@ function renderRules() {
       if (!rl.enable) tr.style.opacity = .45;
       tr.innerHTML = `<td style="width:18px"><span class="grip" title="перетащите, чтобы изменить порядок">${GRIP_SVG}</span></td>
         <td><span class="badge cool">${RULE_TYPES[rl.type]||esc(rl.type)}</span></td>
-        <td style="word-break:break-all">${esc(rl.rule)}${warnSvgFor(rl.rule)}${rl.name?` <span class="muted">(${esc(rl.name)})</span>`:''}</td>
+        <td style="word-break:break-all">${esc(rl.rule)}${rl.enable ? warnSvgFor(rl.rule) : ''}${rl.name?` <span class="muted">(${esc(rl.name)})</span>`:''}</td>
         <td style="white-space:nowrap;display:flex;align-items:center;gap:8px;justify-content:flex-end">
           <label class="switch" title="${rl.enable ? 'выключить правило' : 'включить правило'}"><input type="checkbox" class="r-tg" ${rl.enable ? 'checked' : ''}><span class="knob"></span></label>
           <button class="iconbtn edit r-edit" title="изменить правило">${PENCIL_SVG}</button>
