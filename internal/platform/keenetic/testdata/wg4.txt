@@ -1,0 +1,27 @@
+Interface, name = "Wireguard4"
+               id: Wireguard4
+            index: 4
+   interface-name: Wireguard4
+             type: Wireguard
+      description: proton
+           traits: Ip
+           traits: Ip6
+           traits: Wireguard
+             link: up
+        connected: yes
+            state: up
+              mtu: 1324
+  tx-queue-length: 50
+       admin-only: no
+          address: 10.2.0.2
+             mask: 255.255.255.255
+           uptime: 5898
+           global: no
+   security-level: public
+             ipv6: 
+        wireguard: 
+           public-key: g5eF4chH9XCDyNzGKuj3w4Fo7YFIWLp6PUx86eYjyF0=
+          listen-port: 43839
+               status: up
+          summary: 
+
