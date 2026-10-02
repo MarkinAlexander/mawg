@@ -127,6 +127,7 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
       <select id="presetIface"></select>
       <button id="presetApply">шаблон на интерфейс</button>
     </div>
+    <div class="muted" id="presetSrc" style="font-size:11px;margin-top:4px"></div>
     <div id="mtgroups" style="margin-top:10px"></div>
   </div>
   <div class="card" id="bundcard" style="margin-top:16px">
@@ -1324,7 +1325,13 @@ $('#egSave').onclick = e => withBusy(e.currentTarget, async () => {
 async function loadPresets() {
   try {
     const r = await api('GET', '/mt/presets');
-    document.getElementById('presetSel').innerHTML = (r.presets||[]).map(p=>`<option value="${p.id}">${p.title}</option>`).join('');
+    document.getElementById('presetSel').innerHTML = (r.presets||[]).map(p=>`<option value="${p.id}">${p.title} (${p.rules.length})</option>`).join('');
+    const hint = document.getElementById('presetSrc');
+    if (r.sourceUrl) {
+      hint.innerHTML = 'Списки: <a href="' + r.sourceUrl + '" target="_blank" rel="noopener">github.com/itdoginfo/allow-domains</a>'
+        + (r.sourceNote ? ' (' + r.sourceNote + ')' : '')
+        + '. Более точные и свежие списки - в репозитории источника.';
+    }
   } catch {}
 }
 

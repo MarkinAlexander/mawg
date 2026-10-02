@@ -1076,7 +1076,11 @@ func (s *Server) mtGetInterfaces(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) mtGetPresets(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"presets": magitrickle.Presets})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"presets":    magitrickle.Presets,
+		"sourceUrl":  magitrickle.AllowDomainsURL,
+		"sourceNote": magitrickle.SourceNote(),
+	})
 }
 
 func (s *Server) mtCreateGroup(w http.ResponseWriter, r *http.Request) {
