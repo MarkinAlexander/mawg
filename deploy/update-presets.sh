@@ -22,6 +22,7 @@ domains/google_meet.lst=Services/google_meet.lst
 domains/google_play.lst=Services/google_play.lst
 categories/porn.lst=Categories/porn.lst
 categories/anime.lst=Categories/anime.lst
+categories/geoblock.lst=Categories/geoblock.lst
 subnets4/telegram.lst=Subnets/IPv4/telegram.lst
 subnets4/meta.lst=Subnets/IPv4/meta.lst
 subnets4/discord.lst=Subnets/IPv4/discord.lst

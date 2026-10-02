@@ -94,6 +94,11 @@ var presetSpecs = []presetSpec{
 		Title:   "Anime (домены)",
 		Domains: []string{"categories/anime.lst"},
 	},
+	{
+		ID:      "geoblock",
+		Title:   "GeoBlock: доступ из РФ через VPN (ChatGPT, Claude, новости и др.)",
+		Domains: []string{"categories/geoblock.lst"},
+	},
 }
 
 func loadManifest() listManifestInfo {
