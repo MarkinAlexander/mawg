@@ -386,3 +386,8 @@ func (b *Backend) IfaceHandshake(device string) int {
 	}
 	return best
 }
+
+func (b *Backend) RestartMagitrickle() error {
+	cmd := exec.Command("/bin/sh", "-c", "/opt/etc/init.d/S99magitrickle restart")
+	return cmd.Run()
+}

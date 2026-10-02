@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -28,15 +31,41 @@ type Group struct {
 }
 
 type Client struct {
-	BaseURL string
-	HTTP    *http.Client
+	BaseURL    string
+	HTTP       *http.Client
+	peakGroups int
 }
 
 func New(baseURL string) *Client {
 	return &Client{
 		BaseURL: baseURL,
-		HTTP:    &http.Client{Timeout: 5 * time.Second},
+		HTTP:    &http.Client{Timeout: 30 * time.Second},
 	}
+}
+
+type statusError struct {
+	method string
+	path   string
+	code   int
+}
+
+func (e *statusError) Error() string {
+	return fmt.Sprintf("%s %s: status %d", e.method, e.path, e.code)
+}
+
+// ретраить можно только ошибки до доставки запроса: ответ с ошибкой или
+// таймаут означают, что magitrickle уже начал обрабатывать PUT, и повтор
+// параллелится с ним (для массового PUT это добивает список групп).
+func retryable(err error) bool {
+	var se *statusError
+	if errors.As(err, &se) {
+		return false
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return false
+	}
+	return true
 }
 
 func (c *Client) call(ctx context.Context, method, path string, body any, out any) error {
@@ -61,7 +90,7 @@ func (c *Client) call(ctx context.Context, method, path string, body any, out an
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		return fmt.Errorf("%s %s: status %d", method, path, resp.StatusCode)
+		return &statusError{method: method, path: path, code: resp.StatusCode}
 	}
 	if out != nil {
 		return json.NewDecoder(resp.Body).Decode(out)
@@ -154,6 +183,9 @@ func (c *Client) UpdateGroups(ctx context.Context, groups []Group, save bool) er
 		if lastErr == nil {
 			return nil
 		}
+		if !retryable(lastErr) {
+			return lastErr
+		}
 	}
 	return lastErr
 }
@@ -168,6 +200,56 @@ func (c *Client) GroupByID(ctx context.Context, id string, withRules bool) (Grou
 		return Group{}, err
 	}
 	return g, nil
+}
+
+// массовый PUT в magitrickle не атомарен: конкурентные вызовы или сбой
+// iptables-restore посреди обработки усекают список групп. все мутации
+// mawg идут через этот метод: лок на весь цикл, правила в теле запроса
+// и контроль усечения после сохранения.
+var groupsMu sync.Mutex
+
+func (c *Client) MutateGroups(ctx context.Context, mutate func(groups []Group) bool) error {
+	groupsMu.Lock()
+	defer groupsMu.Unlock()
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	groups, err := c.GroupsWithRules(ctx)
+	if err != nil {
+		return err
+	}
+	if c.peakGroups > 0 && len(groups)*10 < c.peakGroups*6 {
+		return fmt.Errorf("magitrickle усечён: %d групп против пиковых %d, сохранение заблокировано, нужен рестарт magitrickle", len(groups), c.peakGroups)
+	}
+	if len(groups) > c.peakGroups {
+		c.peakGroups = len(groups)
+	}
+	if !mutate(groups) {
+		return nil
+	}
+	if err := c.UpdateGroups(ctx, groups, true); err != nil {
+		return err
+	}
+	check, err := c.GroupsWithRules(ctx)
+	if err != nil {
+		return nil
+	}
+	rules, checkRules := 0, 0
+	for _, g := range groups {
+		rules += len(g.Rules)
+	}
+	for _, g := range check {
+		checkRules += len(g.Rules)
+	}
+	if len(check) != len(groups) || checkRules != rules {
+		return fmt.Errorf("magitrickle усёк список: %d групп и %d правил вместо %d и %d, нужен рестарт magitrickle", len(check), checkRules, len(groups), rules)
+	}
+	return nil
+}
+
+func (c *Client) ResetGroupBaseline() {
+	groupsMu.Lock()
+	defer groupsMu.Unlock()
+	c.peakGroups = 0
 }
 
 func (c *Client) Available(ctx context.Context) bool {

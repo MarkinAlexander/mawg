@@ -34,6 +34,7 @@ type Engine struct {
 	lastApply map[string]time.Time
 	extFails  map[string]int
 	wanCache  wanCacheEntry
+	mtHealAt  time.Time
 }
 
 func New(st *store.Store, b platform.Backend, mt *magitrickle.Client) *Engine {
@@ -182,7 +183,7 @@ func (e *Engine) checkBundles() {
 				break
 			}
 		}
-		if sel == "" || sel == cur {
+		if sel == "" {
 			continue
 		}
 		e.switchBundle(b, sel)
@@ -207,7 +208,7 @@ func (e *Engine) switchBundle(b store.Bundle, device string) {
 			}
 			return changed
 		})
-		if err == nil {
+		if err == nil && len(moved) > 0 {
 			e.store.LogEvent("bundle:"+b.Name, "switch", "member -> "+device+", groups: "+fmt.Sprint(moved))
 		}
 	}
@@ -707,21 +708,30 @@ func (e *Engine) bundleGroupIDs() map[string]bool {
 // magitrickle 0.8.2: single-group PUT не пересоздаёт iptables-цепочку, если
 // рантайм группы уже выключен; пересборку даёт только массовый PUT списка.
 func (e *Engine) applyGroupChanges(key string, mutate func(groups []magitrickle.Group) bool) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	groups, err := e.mt.Groups(ctx)
-	if err != nil {
-		e.store.LogEvent(key, "magitrickle", "groups query failed: "+err.Error())
-		return err
-	}
-	if !mutate(groups) {
+	err := e.mt.MutateGroups(ctx, mutate)
+	if err == nil {
 		return nil
 	}
-	if err := e.mt.UpdateGroups(ctx, groups, true); err != nil {
-		e.store.LogEvent(key, "magitrickle", "groups save failed: "+err.Error())
-		return err
+	e.store.LogEvent(key, "magitrickle", "groups save failed: "+err.Error())
+	e.healMagitrickle(key)
+	return err
+}
+
+// сбой массового PUT оставляет рантайм magitrickle усечённым, но конфиг
+// на диске цел: рестарт демона собирает группы обратно.
+func (e *Engine) healMagitrickle(key string) {
+	if e.now().Sub(e.mtHealAt) < 10*time.Minute {
+		return
 	}
-	return nil
+	e.mtHealAt = e.now()
+	if err := e.backend.RestartMagitrickle(); err != nil {
+		e.store.LogEvent(key, "magitrickle", "автоперезапуск не удался: "+err.Error())
+		return
+	}
+	e.mt.ResetGroupBaseline()
+	e.store.LogEvent(key, "magitrickle", "автоперезапуск после сбоя сохранения")
 }
 
 func (e *Engine) suspendGroups(p store.Pool) {

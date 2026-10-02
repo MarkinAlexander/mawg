@@ -924,15 +924,7 @@ func (s *Server) mtCreateGroup(w http.ResponseWriter, r *http.Request) {
 // magitrickle 0.8.2 не пересоздаёт iptables-цепочку при одиночном PUT
 // группы, поэтому все правки идут массовым сохранением всего списка.
 func (s *Server) mtApplyGroups(ctx context.Context, mutate func(groups []magitrickle.Group) bool) error {
-	client := s.mtClient()
-	groups, err := client.GroupsWithRules(ctx)
-	if err != nil {
-		return err
-	}
-	if !mutate(groups) {
-		return nil
-	}
-	return client.UpdateGroups(ctx, groups, true)
+	return s.mtClient().MutateGroups(ctx, mutate)
 }
 
 func (s *Server) mtUpdateGroup(w http.ResponseWriter, r *http.Request) {
