@@ -953,7 +953,7 @@ document.getElementById('wanSave').onclick = async () => {
   } catch (e) { toast(e.message, true); }
 };
 
-const RULE_TYPES = { domain: 'домен', namespace: 'домен+поддомены', subnet: 'подсеть', wildcard: 'маска (* ?)', regex: 'регулярка' };
+const RULE_TYPES = { namespace: 'домен+поддомены', domain: 'домен', subnet: 'подсеть', wildcard: 'маска (* ?)', regex: 'регулярка' };
 const RULE_HINTS = {
   domain:    'Точный домен без поддоменов: sub.example.com покроет только его самого',
   namespace: 'Домен и все поддомены: example.com покроет также sub.example.com',
