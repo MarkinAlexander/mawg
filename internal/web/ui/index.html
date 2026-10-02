@@ -1131,7 +1131,21 @@ function showCopyDlg(text, n) {
   try { document.execCommand('copy'); } catch (e) {}
 }
 
-const WARN_SVG = '<span class="warn-badge" title="такое правило есть в другой группе: магитрикл применит только первое"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>';
+function warnTitle(refs) {
+  const others = refs.filter(r => true).map(r => `${r.groupName} (${RULE_TYPES[r.ruleType] || r.ruleType})`);
+  return 'Такой же паттерн в других группах: ' + others.join(', ') + '. Магитрикл применит только первое правило.';
+}
+function warnSvgFor(rule) {
+  const refs = MT_DUPS[(rule || '').toLowerCase()];
+  if (!refs || !refs.length) return '';
+  return '<span class="warn-badge" title="' + esc(warnTitle(refs)) + '"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>';
+}
+function editingRulesPanel() {
+  const box = document.getElementById('mtgroups');
+  const ae = document.activeElement;
+  if (ae && box.contains(ae) && (ae.tagName === 'INPUT' || ae.tagName === 'SELECT' || ae.tagName === 'TEXTAREA')) return true;
+  return box.contains(ae) && ae.closest && ae.closest('.er-menu');
+}
 async function refreshRules(force) {
   try {
     const r = await api('GET', '/mt/groups');
@@ -1140,16 +1154,15 @@ async function refreshRules(force) {
       return;
     }
     MT_GROUPS = r.groups || [];
-    api('GET', '/mt/duplicates').then(d => {
-      MT_DUPS = d.duplicates || {};
-      const json = JSON.stringify(MT_GROUPS);
-      if (json !== lastMtJSON) { lastMtJSON = json; renderRules(); }
-      else renderRules();
-    }).catch(() => { MT_DUPS = {}; });
     const json = JSON.stringify(MT_GROUPS);
     if (!force && json === lastMtJSON) return;
+    if (editingRulesPanel() && !force) { lastMtJSON = json; return; }
     lastMtJSON = json;
     renderRules();
+    api('GET', '/mt/duplicates').then(d => {
+      MT_DUPS = d.duplicates || {};
+      renderRules();
+    }).catch(() => { MT_DUPS = {}; });
   } catch (e) { console.warn(e); }
 }
 
@@ -1169,7 +1182,7 @@ function renderRules() {
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
         <span class="grip" title="перетащите, чтобы изменить порядок">${GRIP_SVG}</span>
         <span class="gcolor" style="background:${esc(g.color || '#4a9eff')}"></span>
-        <b>${esc(g.name)}</b>${(g.rules||[]).some(rl => (MT_DUPS[rl.rule]||[]).length) ? WARN_SVG : ''}
+        <b>${esc(g.name)}</b>${(g.rules||[]).some(rl => warnSvgFor(rl.rule)) ? WARN_SVG : ''}
         <span class="iface-badge"><span class="badge">${esc(g.interface)}</span>${g.interfaceTitle ? `<span class="iface-title">${esc(g.interfaceTitle)}</span>` : ''}</span>
         <span class="muted" style="font-size:12px">правил: ${(g.rules||[]).length}</span>
         <span style="flex:1"></span>
@@ -1204,7 +1217,7 @@ function renderRules() {
       if (!rl.enable) tr.style.opacity = .45;
       tr.innerHTML = `<td style="width:18px"><span class="grip" title="перетащите, чтобы изменить порядок">${GRIP_SVG}</span></td>
         <td><span class="badge cool">${RULE_TYPES[rl.type]||esc(rl.type)}</span></td>
-        <td style="word-break:break-all">${esc(rl.rule)}${(MT_DUPS[rl.rule]||[]).length?WARN_SVG:''}${rl.name?` <span class="muted">(${esc(rl.name)})</span>`:''}</td>
+        <td style="word-break:break-all">${esc(rl.rule)}${warnSvgFor(rl.rule)}${rl.name?` <span class="muted">(${esc(rl.name)})</span>`:''}</td>
         <td style="white-space:nowrap;display:flex;align-items:center;gap:8px;justify-content:flex-end">
           <label class="switch" title="${rl.enable ? 'выключить правило' : 'включить правило'}"><input type="checkbox" class="r-tg" ${rl.enable ? 'checked' : ''}><span class="knob"></span></label>
           <button class="iconbtn edit r-edit" title="изменить правило">${PENCIL_SVG}</button>
