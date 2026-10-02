@@ -182,7 +182,7 @@ func (e *Engine) checkBundles() {
 				break
 			}
 		}
-		if sel == "" || sel == cur {
+		if sel == "" {
 			continue
 		}
 		e.switchBundle(b, sel)
@@ -207,7 +207,7 @@ func (e *Engine) switchBundle(b store.Bundle, device string) {
 			}
 			return changed
 		})
-		if err == nil {
+		if err == nil && len(moved) > 0 {
 			e.store.LogEvent("bundle:"+b.Name, "switch", "member -> "+device+", groups: "+fmt.Sprint(moved))
 		}
 	}
@@ -709,19 +709,11 @@ func (e *Engine) bundleGroupIDs() map[string]bool {
 func (e *Engine) applyGroupChanges(key string, mutate func(groups []magitrickle.Group) bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	groups, err := e.mt.Groups(ctx)
+	err := e.mt.MutateGroups(ctx, mutate)
 	if err != nil {
-		e.store.LogEvent(key, "magitrickle", "groups query failed: "+err.Error())
-		return err
-	}
-	if !mutate(groups) {
-		return nil
-	}
-	if err := e.mt.UpdateGroups(ctx, groups, true); err != nil {
 		e.store.LogEvent(key, "magitrickle", "groups save failed: "+err.Error())
-		return err
 	}
-	return nil
+	return err
 }
 
 func (e *Engine) suspendGroups(p store.Pool) {
