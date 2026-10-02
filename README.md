@@ -7,7 +7,7 @@ Keenetic/NetCraze (прошивка 5.1+, Entware; NetCraze - продолжен
 
 ## Быстрая установка
 
-OpenWrt 24.10+:
+OpenWrt 24.10+ (`opkg`) и 25.x / snapshots (`apk`):
 
     curl -o /tmp/mawg.sh https://raw.githubusercontent.com/MarkinAlexander/mawg/main/install.sh && sh /tmp/mawg.sh
 
@@ -22,6 +22,9 @@ wget не умеет https):
 Флаги: -u (обновить), -r (удалить, --purge - с данными), --with-magitrickle /
 --without-magitrickle (не спрашивать про MagiTrickle), --with-awg3 (поднять
 AmneziaWG до 3.1 на OpenWrt).
+
+Пакетный менеджер определяется автоматически: `opkg` на OpenWrt 24.10
+и `apk` на OpenWrt 25.x. Поддержка Keenetic/Entware с `opkg` сохраняется.
 
 ## Что умеет
 
@@ -110,7 +113,8 @@ HTTP-запрос идет через туннель с привязкой к и
 
 Требуется OpenWrt 24.10+ (протокол amneziawg доступен из коробки в виде пакетов).
 
-1. Скопируйте бинарник на роутер (архитектуру смотрите в выводе opkg print-architecture):
+1. Скопируйте бинарник на роутер (архитектуру смотрите в `uname -m`,
+   `apk --print-arch` на OpenWrt 25.x или `opkg print-architecture` на 24.10):
 
        scp dist/mawg-386 root@роутер:/usr/bin/mawg
        ssh root@роутер chmod +x /usr/bin/mawg

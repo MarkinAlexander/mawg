@@ -7,7 +7,7 @@
 
 set -u
 
-REPO="MarkinAlexander/mawg"
+REPO="${MAWG_REPO:-MarkinAlexander/mawg}"
 DL_BASE="https://github.com/${REPO}/releases/latest/download"
 TMP="/tmp/mawg-install.$$"
 MODE="install"
@@ -47,12 +47,42 @@ fetch_ok() {
     return 1
 }
 
+detect_pkg_manager() {
+    if [ "$PLATFORM" = keenetic ]; then
+        echo /opt/bin/opkg
+    elif test -x /bin/opkg; then
+        echo /bin/opkg
+    elif command -v apk >/dev/null 2>&1; then
+        echo apk
+    elif command -v opkg >/dev/null 2>&1; then
+        echo opkg
+    else
+        die "не найден пакетный менеджер apk или opkg"
+    fi
+}
+
+pkg_update() { "$PKG_MANAGER" update; }
+
+pkg_install() {
+    case "$PKG_MANAGER" in
+        apk) apk add "$@";;
+        *) "$PKG_MANAGER" install "$@";;
+    esac
+}
+
+pkg_installed() {
+    case "$PKG_MANAGER" in
+        apk) apk info -e "$1" >/dev/null 2>&1;;
+        *) "$PKG_MANAGER" list-installed 2>/dev/null | grep -q "^$1 - ";;
+    esac
+}
+
 ensure_fetch() {
     fetch_ok && return 0
     say "wget не умеет https, устанавливаю curl"
-    opkg update >/dev/null 2>&1
-    opkg install curl >/dev/null 2>&1
-    fetch_ok || die "нужен curl или wget с https: opkg install curl"
+    pkg_update >/dev/null 2>&1
+    pkg_install curl >/dev/null 2>&1
+    fetch_ok || die "нужен curl или wget с https (установка curl через $PKG_MANAGER не удалась)"
 }
 
 ask() {
@@ -87,6 +117,12 @@ detect_arch() {
         x86_64|amd64) echo amd64; return;;
         riscv64) echo riscv64; return;;
     esac
+    if command -v apk >/dev/null 2>&1; then
+        case "$(apk --print-arch 2>/dev/null)" in
+            mipsel*|mipsle*) echo mipsle; return;;
+            mips|mips_*) echo mips; return;;
+        esac
+    fi
     if command -v opkg >/dev/null 2>&1; then
         archs=$(opkg print-architecture 2>/dev/null | awk '{print $2}')
         if echo "$archs" | grep -q '^mipsel'; then echo mipsle; return; fi
@@ -213,18 +249,17 @@ if [ "$MODE" = remove ] || [ "$MODE" = purge ]; then
     exit 0
 fi
 
-say "платформа: $PLATFORM, архитектура: $ARCH"
+PKG_MANAGER=$(detect_pkg_manager) || exit 1
+say "платформа: $PLATFORM, архитектура: $ARCH, пакеты: $PKG_MANAGER"
 
 ensure_fetch
 mkdir -p "$TMP" || die "не создать $TMP"
 
 if [ "$MODE" = install ]; then
-    opkg_update_ok=0
-    if command -v opkg >/dev/null 2>&1; then
-        say "opkg update"
-        opkg update >/dev/null 2>&1 && opkg_update_ok=1
-        [ "$opkg_update_ok" = 1 ] || warn "opkg update не удался, продолжаю без него"
-    fi
+    pkg_update_ok=0
+    say "$PKG_MANAGER update"
+    pkg_update >/dev/null 2>&1 && pkg_update_ok=1
+    [ "$pkg_update_ok" = 1 ] || warn "$PKG_MANAGER update не удался, продолжаю без него"
 
     if [ "$PLATFORM" = keenetic ]; then
         say "проверка компонента WireGuard"
@@ -238,18 +273,18 @@ if [ "$MODE" = install ]; then
         fi
     else
         say "проверка пакетов WireGuard"
-        if ! opkg list-installed 2>/dev/null | grep -q '^wireguard-tools'; then
-            [ "$opkg_update_ok" = 1 ] || die "нет wireguard-tools и opkg update не работал"
-            opkg install kmod-wireguard wireguard-tools luci-proto-wireguard >/dev/null 2>&1 \
+        if ! pkg_installed wireguard-tools; then
+            [ "$pkg_update_ok" = 1 ] || die "нет wireguard-tools и $PKG_MANAGER update не работал"
+            pkg_install kmod-wireguard wireguard-tools luci-proto-wireguard >/dev/null 2>&1 \
                 || warn "не удалось установить пакеты WireGuard"
         else
             echo "   wireguard-tools уже установлен"
         fi
         say "проверка AmneziaWG"
-        if opkg list-installed 2>/dev/null | grep -q '^amneziawg-tools'; then
+        if pkg_installed amneziawg-tools; then
             echo "   amneziawg-tools уже установлен"
         else
-            opkg install kmod-amneziawg amneziawg-tools >/dev/null 2>&1 \
+            [ "$pkg_update_ok" = 1 ] && pkg_install kmod-amneziawg amneziawg-tools >/dev/null 2>&1 \
                 || warn "в стоковом репозитории нет amneziawg. Для AWG 2.x/3.x серверов запустите позже: sh $0 --with-awg3"
         fi
         if [ "$WANT_AWG3" = yes ]; then
@@ -265,7 +300,7 @@ if [ "$MODE" = install ]; then
     fi
 
     mt_installed=0
-    if command -v opkg >/dev/null 2>&1 && opkg list-installed 2>/dev/null | grep -q '^magitrickle '; then
+    if pkg_installed magitrickle; then
         mt_installed=1
         echo "   magitrickle уже установлен"
     fi
@@ -279,19 +314,19 @@ if [ "$MODE" = install ]; then
                 do_mt=yes
             fi
         fi
-        if [ "$do_mt" = yes ] && [ "$opkg_update_ok" = 1 ]; then
+        if [ "$do_mt" = yes ] && [ "$pkg_update_ok" = 1 ]; then
             say "установка MagiTrickle"
             fetch "http://bin.magitrickle.dev/packages/add_repo.sh" "$TMP/mt.sh" || warn "не удалось скачать add_repo.sh"
             if [ -s "$TMP/mt.sh" ]; then
-                sh "$TMP/mt.sh" >/dev/null 2>&1
-                opkg update >/dev/null 2>&1
-                if [ "$PLATFORM" = keenetic ]; then
-                    opkg install magitrickle socat >/dev/null 2>&1 \
+                if ! sh "$TMP/mt.sh" >/dev/null 2>&1 || ! pkg_update >/dev/null 2>&1; then
+                    warn "не удалось добавить или обновить репозиторий MagiTrickle"
+                elif [ "$PLATFORM" = keenetic ]; then
+                    pkg_install magitrickle socat >/dev/null 2>&1 \
                         && chmod +x /opt/etc/init.d/S99magitrickle 2>/dev/null \
                         && /opt/etc/init.d/S99magitrickle start >/dev/null 2>&1 \
                         || warn "magitrickle не установился"
                 else
-                    opkg install magitrickle >/dev/null 2>&1 \
+                    pkg_install magitrickle >/dev/null 2>&1 \
                         && /etc/init.d/magitrickle enable >/dev/null 2>&1 \
                         && /etc/init.d/magitrickle start >/dev/null 2>&1 \
                         || warn "magitrickle не установился"
@@ -302,7 +337,11 @@ if [ "$MODE" = install ]; then
 fi
 
 say "загрузка mawg-linux-$ARCH"
-fetch "$DL_BASE/mawg-linux-$ARCH" "$TMP/mawg" || die "не удалось скачать mawg-linux-$ARCH (релизы: https://github.com/$REPO/releases)"
+if [ -n "${MAWG_BINARY:-}" ]; then
+    cp "$MAWG_BINARY" "$TMP/mawg" || die "не удалось скопировать MAWG_BINARY=$MAWG_BINARY"
+else
+    fetch "$DL_BASE/mawg-linux-$ARCH" "$TMP/mawg" || die "не удалось скачать mawg-linux-$ARCH (релизы: https://github.com/$REPO/releases)"
+fi
 size=$(wc -c < "$TMP/mawg" 2>/dev/null || echo 0)
 [ "$size" -gt 500000 ] || die "скачанный файл подозрительно мал ($size байт)"
 
