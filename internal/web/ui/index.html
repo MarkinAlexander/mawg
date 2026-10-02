@@ -569,7 +569,8 @@ function updateCard(p) {
     row.querySelector('.r-name').textContent = c.original;
     row.querySelector('.r-badges').innerHTML =
       (active ? '<span class="badge up">активен</span> ' : '') +
-      (c.coolForSec > 0 ? `<span class="badge cool">cooldown ${Math.ceil(c.coolForSec / 60)}м</span>` : '');
+      (c.coolForSec > 0 ? `<span class="badge cool">cooldown ${Math.ceil(c.coolForSec / 60)}м</span>` : '') +
+      (c.conflict ? `<span class="warn-badge" title="${esc(c.conflict)}: исключен из ротации, тумблер не включит">${WARN_SVG_ICON}</span>` : '');
     row.querySelector('.r-endpoint').textContent = c.endpoint;
     row.querySelector('.r-up').disabled = i === 0;
     row.querySelector('.r-down').disabled = i === cfgList.length - 1;
@@ -615,7 +616,10 @@ async function upload(pool, files) {
   for (const f of files) fd.append('files', f);
   try {
     const r = await api('POST', `/pools/${pool}/configs`, fd, true);
-    toast(`Добавлено ${r.added}. Дубликаты: ${(r.duplicates || []).length}. Ошибки: ${(r.errors || []).length}`);
+    let msg = `Добавлено ${r.added}. Дубликаты: ${(r.duplicates || []).length}. Ошибки: ${(r.errors || []).length}`;
+    if ((r.warnings || []).length) msg += '. Конфликты: ' + r.warnings.length;
+    toast(msg, false);
+    for (const w of (r.warnings || [])) toast(w, true);
     if ((r.errors || []).length) console.warn(r.errors);
   } catch (e) { toast(e.message, true); }
   refresh();

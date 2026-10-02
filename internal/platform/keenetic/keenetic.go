@@ -524,7 +524,7 @@ func slotFromDevice(device string) string {
 	return "Wireguard" + m[1]
 }
 
-var sysTunnelRe = regexp.MustCompile(`^(tun|tap|wg|awg)[0-9]+$`)
+var sysTunnelRe = regexp.MustCompile(`^(tun|tap|wg|awg|nwg)[0-9]+$`)
 
 func (b *Backend) SysTunnels() ([]platform.SlotInfo, error) {
 	return sysTunnelsImpl()
@@ -539,16 +539,37 @@ func sysTunnelsImpl() ([]platform.SlotInfo, error) {
 	var out []platform.SlotInfo
 	for _, e := range entries {
 		name := e.Name()
-		if !sysTunnelRe.MatchString(name) {
+		if !sysTunnelRe.MatchString(name) && !slotRe.MatchString(strings.ToLower(name)) {
 			continue
 		}
-		linkUp := false
-		if flags, err := os.ReadFile("/sys/class/net/" + name + "/flags"); err == nil {
-			linkUp = strings.HasPrefix(strings.TrimSpace(string(flags)), "1")
-		}
-		out = append(out, platform.SlotInfo{Device: name, LinkUp: linkUp})
+		linkUp := linkUpFlag(name)
+		out = append(out, platform.SlotInfo{Device: name, LinkUp: linkUp, Address: ifaceAddrCIDR(name)})
 	}
 	return out, nil
+}
+
+// linkUpFlag: IFF_UP из flags (значение в hex: 0x1...).
+func linkUpFlag(device string) bool {
+	flags, err := os.ReadFile("/sys/class/net/" + device + "/flags")
+	if err != nil {
+		return false
+	}
+	t := strings.TrimSpace(string(flags))
+	return strings.HasPrefix(t, "0x1") || strings.HasPrefix(t, "1")
+}
+
+// ifaceAddrCIDR - первый IPv4 с маской ("10.2.0.2/32").
+func ifaceAddrCIDR(device string) string {
+	out, err := exec.Command("ip", "-4", "-o", "addr", "show", "dev", device).CombinedOutput()
+	if err != nil {
+		return ""
+	}
+	for _, field := range strings.Fields(string(out)) {
+		if strings.Contains(field, "/") && net.ParseIP(strings.SplitN(field, "/", 2)[0]) != nil {
+			return field
+		}
+	}
+	return ""
 }
 
 func (b *Backend) IfaceHandshake(device string) int {

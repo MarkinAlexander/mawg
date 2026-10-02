@@ -107,11 +107,12 @@ func (s PoolSettings) WithDefaults() PoolSettings {
 }
 
 type ManagedConfig struct {
-	File      string `json:"file"`
-	Original  string `json:"original"`
-	Endpoint  string `json:"endpoint"`
-	PublicKey string `json:"publicKey"`
-	Enabled   bool   `json:"enabled"`
+	File      string   `json:"file"`
+	Original  string   `json:"original"`
+	Endpoint  string   `json:"endpoint"`
+	PublicKey string   `json:"publicKey"`
+	Enabled   bool     `json:"enabled"`
+	Addresses []string `json:"addresses,omitempty"`
 }
 
 type Pool struct {

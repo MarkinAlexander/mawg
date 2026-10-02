@@ -147,6 +147,7 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 			if until, ok := st.Cooldowns[c.File]; ok {
 				cv.CoolFor = until - now
 			}
+			cv.Conflict = s.configConflict(p.Name, p.DeviceName(), s.poolConfigAddrs(p.Name, c))
 			if c.File == st.ActiveFile {
 				view.ActiveEndpoint = c.Endpoint
 			}
@@ -163,6 +164,73 @@ type configView struct {
 	Endpoint string `json:"endpoint"`
 	Enabled  bool   `json:"enabled"`
 	CoolFor  int64  `json:"coolForSec,omitempty"`
+	Conflict string `json:"conflict,omitempty"`
+}
+
+// configConflict: первый занятый адрес конфига (не считая собственного
+// интерфейса пула) с описанием, пусто если конфликтов нет.
+func normAddr(a string) string {
+	return strings.TrimSpace(strings.SplitN(strings.TrimSpace(a), "/", 2)[0])
+}
+
+func (s *Server) configConflict(poolName, device string, addrs []string) string {
+	if len(addrs) == 0 {
+		return ""
+	}
+	for addr, dev := range s.engine.TunnelAddresses() {
+		if dev == device || dev == "" {
+			continue
+		}
+		for _, a := range addrs {
+			if normAddr(a) == normAddr(addr) {
+				return fmt.Sprintf("адрес %s уже занят интерфейсом %s", a, dev)
+			}
+		}
+	}
+	return ""
+}
+
+// poolConfigAddrs: адреса конфига из реестра, старые записи добираются из
+// файла и запоминаются.
+func (s *Server) poolConfigAddrs(poolName string, cfg store.ManagedConfig) []string {
+	if len(cfg.Addresses) > 0 {
+		return cfg.Addresses
+	}
+	parsed, err := s.store.LoadConfigFile(poolName, cfg.File)
+	if err != nil {
+		return nil
+	}
+	s.store.SetConfigAddresses(poolName, cfg.File, parsed.Addresses)
+	return parsed.Addresses
+}
+
+// liveAddressConflict: конфликт по свежим адресам интерфейсов (для ручных
+// действий: включение тумблером, активация).
+func (s *Server) liveAddressConflict(poolName, file string) error {
+	pool, ok := s.store.Pool(poolName)
+	if !ok {
+		return nil
+	}
+	cfg, err := s.store.LoadConfigFile(poolName, file)
+	if err != nil {
+		return nil
+	}
+	tunnels, err := s.backend.SysTunnels()
+	if err != nil {
+		return nil
+	}
+	own := pool.DeviceName()
+	for _, a := range cfg.Addresses {
+		for _, sl := range tunnels {
+			if sl.Device == own || sl.Address == "" {
+				continue
+			}
+			if normAddr(sl.Address) == normAddr(a) {
+				return fmt.Errorf("адрес %s из конфига уже занят интерфейсом %s: отключите его или выберите другой конфиг", a, sl.Device)
+			}
+		}
+	}
+	return nil
 }
 
 func (s *Server) getSlots(w http.ResponseWriter, r *http.Request) {
@@ -714,8 +782,28 @@ func (s *Server) uploadConfigs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dupes = append(dupes, storeDupes...)
+	// помечаем конфликтные: адрес занят другим интерфейсом сейчас ->
+	// в ротацию не попадает, пока конфликт не исчезнет
+	var warnings []string
+	if pool, ok := s.store.Pool(name); ok {
+		for _, c := range pool.Configs {
+			if !c.Enabled {
+				continue
+			}
+			if msg := s.configConflict(name, pool.DeviceName(), s.poolConfigAddrs(name, c)); msg != "" {
+				_ = s.store.SetConfigEnabled(name, c.File, false)
+				warnings = append(warnings, c.Original+": "+msg+", исключен из ротации")
+			}
+		}
+	}
+	for _, w := range warnings {
+		s.store.LogEvent(name, "conflict", w)
+	}
+	for _, w := range warnings {
+		s.store.LogEvent(name, "conflict", w)
+	}
 	s.engine.CheckNow(name)
-	writeJSON(w, http.StatusOK, map[string]any{"added": added, "duplicates": dupes, "errors": errors})
+	writeJSON(w, http.StatusOK, map[string]any{"added": added, "duplicates": dupes, "errors": errors, "warnings": warnings})
 }
 
 func (s *Server) deleteConfig(w http.ResponseWriter, r *http.Request) {
@@ -731,6 +819,12 @@ func (s *Server) enableConfig(w http.ResponseWriter, r *http.Request) {
 		Enabled bool `json:"enabled"`
 	}
 	json.NewDecoder(r.Body).Decode(&req)
+	if req.Enabled {
+		if err := s.liveAddressConflict(r.PathValue("name"), r.PathValue("file")); err != nil {
+			writeErr(w, err)
+			return
+		}
+	}
 	if err := s.store.SetConfigEnabled(r.PathValue("name"), r.PathValue("file"), req.Enabled); err != nil {
 		writeErr(w, err)
 		return
@@ -783,33 +877,6 @@ func (s *Server) postDisable(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "disabled"})
 }
 
-// addressConflicts проверяет адреса конфига против всех активных
-// интерфейсов системы: ndm/uci такой конфиг не поднимет (exit 122),
-// лучше сразу объяснить.
-func (s *Server) addressConflicts(pool, file string) error {
-	cfg, err := s.store.LoadConfigFile(pool, file)
-	if err != nil {
-		return nil
-	}
-	tunnels, err := s.backend.SysTunnels()
-	if err != nil {
-		return nil
-	}
-	taken := map[string]string{}
-	for _, sl := range tunnels {
-		if sl.Address == "" {
-			continue
-		}
-		taken[sl.Address] = sl.Device
-	}
-	for _, a := range cfg.Addresses {
-		if dev, ok := taken[a]; ok && dev != "" {
-			return fmt.Errorf("адрес %s из конфига уже занят интерфейсом %s: отключите его или выберите другой конфиг", a, dev)
-		}
-	}
-	return nil
-}
-
 func (s *Server) postActivate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		File string `json:"file"`
@@ -818,7 +885,7 @@ func (s *Server) postActivate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	if err := s.addressConflicts(r.PathValue("name"), req.File); err != nil {
+	if err := s.liveAddressConflict(r.PathValue("name"), req.File); err != nil {
 		writeErr(w, err)
 		return
 	}

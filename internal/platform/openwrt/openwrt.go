@@ -387,7 +387,8 @@ func sysTunnelsImpl() ([]platform.SlotInfo, error) {
 		}
 		linkUp := false
 		if flags, err := os.ReadFile("/sys/class/net/" + name + "/flags"); err == nil {
-			linkUp = strings.HasPrefix(strings.TrimSpace(string(flags)), "1")
+			t := strings.TrimSpace(string(flags))
+			linkUp = strings.HasPrefix(t, "0x1") || strings.HasPrefix(t, "1")
 		}
 		out = append(out, platform.SlotInfo{Device: name, LinkUp: linkUp, Address: ifaceAddr(name)})
 	}

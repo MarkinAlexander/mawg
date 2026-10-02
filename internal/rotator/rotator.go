@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -40,9 +41,11 @@ type Engine struct {
 
 	ifaceAt time.Time
 
-	probeMu    sync.Mutex
-	probeCache map[string]probeCacheEntry
-	probeBusy  map[string]bool
+	probeMu     sync.Mutex
+	probeCache  map[string]probeCacheEntry
+	probeBusy   map[string]bool
+	tunnelAddrs map[string]string
+	tunnelAt    time.Time
 }
 
 const probeStatusTTL = 30 * time.Second
@@ -59,6 +62,9 @@ func (e *Engine) ifaceTouched() {
 	e.mu.Lock()
 	e.ifaceAt = e.now()
 	e.mu.Unlock()
+	e.probeMu.Lock()
+	e.tunnelAt = time.Time{}
+	e.probeMu.Unlock()
 }
 
 func (e *Engine) settleAfterIfaceOp() {
@@ -81,8 +87,9 @@ func New(st *store.Store, b platform.Backend, mt *magitrickle.Client) *Engine {
 		wake:       make(chan string, 32),
 		lastApply:  map[string]time.Time{},
 		extFails:   map[string]int{},
-		probeCache: map[string]probeCacheEntry{},
-		probeBusy:  map[string]bool{},
+		probeCache:  map[string]probeCacheEntry{},
+		probeBusy:   map[string]bool{},
+		tunnelAddrs: map[string]string{},
 	}
 }
 
@@ -612,6 +619,39 @@ func (e *Engine) InvalidateProbeStatus(device string) {
 	e.refreshProbeStatus(device)
 }
 
+// TunnelAddresses: адрес -> устройство, кэш 30с. Для проверки конфигов
+// на коллизии без живых вызовов на каждый запрос.
+func (e *Engine) TunnelAddresses() map[string]string {
+	e.probeMu.Lock()
+	if e.tunnelAt.IsZero() || e.now().Sub(e.tunnelAt) >= 30*time.Second {
+		e.probeMu.Unlock()
+		m := map[string]string{}
+		if tunnels, err := e.backend.SysTunnels(); err == nil {
+			for _, sl := range tunnels {
+				if sl.Address != "" && sl.LinkUp {
+					m[normAddr(sl.Address)] = sl.Device
+				}
+			}
+		}
+		if slots, err := e.backend.Slots(); err == nil {
+			for _, sl := range slots {
+				if sl.Address != "" && sl.LinkUp {
+					if _, exists := m[normAddr(sl.Address)]; !exists {
+						m[normAddr(sl.Address)] = sl.Device
+					}
+				}
+			}
+		}
+		e.probeMu.Lock()
+		e.tunnelAddrs = m
+		e.tunnelAt = e.now()
+		e.probeMu.Unlock()
+		return m
+	}
+	defer e.probeMu.Unlock()
+	return e.tunnelAddrs
+}
+
 func (e *Engine) refreshProbedExternals() {
 	for _, dev := range e.store.ProbedExternals() {
 		e.refreshProbeStatus(dev)
@@ -663,6 +703,7 @@ func (e *Engine) probeStatus(device string) string {
 
 func (e *Engine) eligible(p store.Pool, st *store.PoolState) []store.ManagedConfig {
 	now := e.now().Unix()
+	own := p.DeviceName()
 	var out []store.ManagedConfig
 	for _, c := range p.Configs {
 		if !c.Enabled {
@@ -671,9 +712,43 @@ func (e *Engine) eligible(p store.Pool, st *store.PoolState) []store.ManagedConf
 		if until, ok := st.Cooldowns[c.File]; ok && now < until {
 			continue
 		}
+		if e.addressTaken(p.Name, own, c) {
+			continue
+		}
 		out = append(out, c)
 	}
 	return out
+}
+
+// addressTaken: внутренние адреса конфига держит чужой поднятый
+// интерфейс - ndm такой конфиг не поднимет, из ротации исключаем.
+func (e *Engine) addressTaken(poolName, ownDevice string, c store.ManagedConfig) bool {
+	addrs := c.Addresses
+	if len(addrs) == 0 {
+		parsed, err := e.store.LoadConfigFile(poolName, c.File)
+		if err != nil {
+			return false
+		}
+		addrs = parsed.Addresses
+		if len(addrs) > 0 {
+			e.store.SetConfigAddresses(poolName, c.File, addrs)
+		}
+	}
+	for addr, dev := range e.TunnelAddresses() {
+		if dev == ownDevice {
+			continue
+		}
+		for _, a := range addrs {
+			if normAddr(a) == normAddr(addr) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func normAddr(a string) string {
+	return strings.TrimSpace(strings.SplitN(strings.TrimSpace(a), "/", 2)[0])
 }
 
 func (e *Engine) rotate(p store.Pool, st *store.PoolState, failedActive string) {
