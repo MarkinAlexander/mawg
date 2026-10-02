@@ -1234,8 +1234,9 @@ function renderRules() {
     el.querySelector('.mt-toggle').onchange = e => { mtApi('POST', `/mt/groups/${g.id}/enable`, { enable: e.target.checked }); };
     el.querySelector('.mt-edit').onclick = () => editGroupDlg(g);
     el.querySelector('.mt-del').onclick = async e => {
+      const btn = e.currentTarget;
       if (!(await askModal('Удаление группы', `Удалить группу ${g.name} со всеми правилами?`, 'Удалить'))) return;
-      withBusy(e.currentTarget, () => mtApi('DELETE', `/mt/groups/${g.id}`));
+      withBusy(btn, () => mtApi('DELETE', `/mt/groups/${g.id}`));
     };
     const det = el.querySelector('details');
     det.ontoggle = () => { if (det.open) openMtGroups.add(g.id); else openMtGroups.delete(g.id); };
