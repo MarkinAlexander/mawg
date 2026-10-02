@@ -807,7 +807,7 @@ func (e *Engine) applyGroupChanges(key string, mutate func(groups []magitrickle.
 		return nil
 	}
 	e.store.LogEvent(key, "magitrickle", "groups save failed: "+err.Error())
-	e.healMagitrickle(key)
+	e.healMagitrickle(key, 10*time.Minute)
 	return err
 }
 
@@ -823,7 +823,7 @@ func (e *Engine) monitorMagitrickle() {
 	if !e.mt.Available(ctx) {
 		if e.mtEverAlive {
 			e.store.LogEvent("magitrickle", "monitor", "magitrickle не отвечает")
-			e.healMagitrickle("monitor")
+			e.healMagitrickle("monitor", time.Minute)
 		}
 		return
 	}
@@ -838,9 +838,10 @@ func (e *Engine) monitorMagitrickle() {
 }
 
 // сбой массового PUT оставляет рантайм magitrickle усечённым, но конфиг
-// на диске цел: рестарт демона собирает группы обратно.
-func (e *Engine) healMagitrickle(key string) {
-	if e.now().Sub(e.mtHealAt) < 10*time.Minute {
+// на диске цел: рестарт демона собирает группы обратно. мертвому демону
+// рестартим часто, живому после сбоя записи - редко.
+func (e *Engine) healMagitrickle(key string, cooldown time.Duration) {
+	if e.now().Sub(e.mtHealAt) < cooldown {
 		return
 	}
 	e.mtHealAt = e.now()

@@ -119,15 +119,33 @@ func (b *Backend) Detect() error {
 	return nil
 }
 
+var ndmcConflictRe = regexp.MustCompile(`network (\S+) conflicts with interface "([^"]+)"`)
+var ndmcErrorRe = regexp.MustCompile(`error\[\d+\]: ([^
+]+)`)
+var ndmcJunkRe = regexp.MustCompile(`\[K|\[K`)
+
+// cleanNdmcError превращает сырой вывод ndmc в понятную ошибку: известные
+// случаи получают готовый совет, управляющие символы вырезаются.
+func cleanNdmcError(command string, err error, text string) error {
+	text = ndmcJunkRe.ReplaceAllString(text, "")
+	if m := ndmcConflictRe.FindStringSubmatch(text); m != nil {
+		return fmt.Errorf("адрес %s из конфига уже занят интерфейсом %s: отключите его или выберите другой конфиг", m[1], m[2])
+	}
+	if m := ndmcErrorRe.FindStringSubmatch(text); m != nil {
+		return fmt.Errorf("ndmc %q: %s", command, strings.TrimSpace(m[1]))
+	}
+	if err != nil {
+		return fmt.Errorf("ndmc %q: %v: %s", command, err, strings.TrimSpace(text))
+	}
+	return fmt.Errorf("ndmc %q: %s", command, strings.TrimSpace(text))
+}
+
 func (b *Backend) ndmc(command string) (string, error) {
 	cmd := exec.Command("/bin/ndmc", "-c", command)
 	out, err := cmd.CombinedOutput()
-	text := string(out)
-	if err != nil {
-		return text, fmt.Errorf("ndmc %q: %v: %s", command, err, text)
-	}
-	if strings.Contains(text, "Error") || strings.Contains(text, "error:") {
-		return text, fmt.Errorf("ndmc %q: %s", command, text)
+	text := ndmcJunkRe.ReplaceAllString(string(out), "")
+	if err != nil || strings.Contains(text, "Error") || strings.Contains(text, "error:") {
+		return text, cleanNdmcError(command, err, text)
 	}
 	return text, nil
 }
