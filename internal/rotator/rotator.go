@@ -29,12 +29,14 @@ type Engine struct {
 
 	wake      chan string
 	stop      context.CancelFunc
-	mu        sync.Mutex
-	actMu     sync.Mutex
-	lastApply map[string]time.Time
-	extFails  map[string]int
-	wanCache  wanCacheEntry
-	mtHealAt  time.Time
+	mu          sync.Mutex
+	actMu       sync.Mutex
+	lastApply   map[string]time.Time
+	extFails    map[string]int
+	wanCache    wanCacheEntry
+	mtHealAt    time.Time
+	mtEverAlive bool
+	mtSyncAt    time.Time
 
 	ifaceAt time.Time
 }
@@ -172,6 +174,7 @@ func (e *Engine) CheckBundlesNow() {
 }
 
 func (e *Engine) checkBundles() {
+	e.monitorMagitrickle()
 	bundles := e.store.Bundles()
 	if len(bundles) == 0 {
 		return
@@ -743,11 +746,38 @@ func (e *Engine) applyGroupChanges(key string, mutate func(groups []magitrickle.
 	defer cancel()
 	err := e.mt.MutateGroups(ctx, mutate)
 	if err == nil {
+		e.mtEverAlive = true
 		return nil
 	}
 	e.store.LogEvent(key, "magitrickle", "groups save failed: "+err.Error())
 	e.healMagitrickle(key)
 	return err
+}
+
+// magitrickле падает сам по себе; раз в тик набора проверяем живость и
+// поднимаем, если он работал и умер. заодно подтягиваем в тень правки из
+// UI magitrickle, если список не усечён.
+func (e *Engine) monitorMagitrickle() {
+	if e.mt == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if !e.mt.Available(ctx) {
+		if e.mtEverAlive {
+			e.store.LogEvent("magitrickle", "monitor", "magitrickle не отвечает")
+			e.healMagitrickle("monitor")
+		}
+		return
+	}
+	if !e.mtEverAlive {
+		e.mtEverAlive = true
+		return
+	}
+	if e.now().Sub(e.mtSyncAt) >= time.Minute {
+		e.mtSyncAt = e.now()
+		e.mt.RefreshShadow(ctx)
+	}
 }
 
 // сбой массового PUT оставляет рантайм magitrickle усечённым, но конфиг
