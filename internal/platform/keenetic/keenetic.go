@@ -3,6 +3,7 @@ package keenetic
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -19,7 +20,7 @@ import (
 const rciBase = "http://127.0.0.1:79"
 
 var (
-	slotRe    = regexp.MustCompile(`^Wireguard(\d+)$`)
+	slotRe    = regexp.MustCompile(`(?i)^wireguard(\d+)$`)
 	releaseRe = regexp.MustCompile(`release:\s+(\d+)\.(\d+)`)
 	compRe    = regexp.MustCompile(`components:\s*(.+)`)
 )
@@ -157,13 +158,31 @@ func (b *Backend) Slots() ([]platform.SlotInfo, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	var raw map[string]rciInterface
-	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
 		return nil, err
 	}
+	return parseSlots(body)
+}
+
+// RCI разных прошивок отдаёт список интерфейсов то объектом, то массивом;
+// 5.2 alpha известна изменениями формата.
+func parseSlots(body []byte) ([]platform.SlotInfo, error) {
+	var raw map[string]rciInterface
+	if err := json.Unmarshal(body, &raw); err != nil {
+		var list []rciInterface
+		if err2 := json.Unmarshal(body, &list); err2 != nil {
+			return nil, err
+		}
+		return slotInfosList(list), nil
+	}
+	return slotInfos(raw), nil
+}
+
+func slotInfos(ifaces map[string]rciInterface) []platform.SlotInfo {
 	var out []platform.SlotInfo
-	for _, ifc := range raw {
-		if !strings.HasPrefix(ifc.ID, "Wireguard") {
+	for _, ifc := range ifaces {
+		if !strings.HasPrefix(strings.ToLower(ifc.ID), "wireguard") {
 			continue
 		}
 		out = append(out, platform.SlotInfo{
@@ -174,7 +193,24 @@ func (b *Backend) Slots() ([]platform.SlotInfo, error) {
 			Connected:   ifc.Connected == "yes",
 		})
 	}
-	return out, nil
+	return out
+}
+
+func slotInfosList(list []rciInterface) []platform.SlotInfo {
+	var out []platform.SlotInfo
+	for _, ifc := range list {
+		if !strings.HasPrefix(strings.ToLower(ifc.ID), "wireguard") {
+			continue
+		}
+		out = append(out, platform.SlotInfo{
+			ID:          ifc.ID,
+			Device:      DeviceName(ifc.ID),
+			Description: ifc.Description,
+			LinkUp:      ifc.Link == "up",
+			Connected:   ifc.Connected == "yes",
+		})
+	}
+	return out
 }
 
 func DeviceName(slot string) string {
