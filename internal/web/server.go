@@ -1515,20 +1515,21 @@ func (s *Server) mtApplyPreset(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	g, err := client.CreateGroup(r.Context(), magitrickle.Group{
-		Name: name, Interface: req.Interface, Enable: true,
-	})
-	if err != nil {
-		writeErr(w, err)
+	created := magitrickle.Group{Name: name, Interface: req.Interface, Enable: true, Rules: preset.Rules}
+	// один bulk PUT: атомарно, без save=true на каждое правило
+	// (N правил = N записей рантайма и рост счётчика партиями)
+	if err := client.AddGroup(r.Context(), created); err != nil {
+		writeErr(w, fmt.Errorf("группа не создана: %v", err))
 		return
 	}
-	for _, rl := range preset.Rules {
-		if _, err := client.CreateRule(r.Context(), g.ID, rl); err != nil {
-			writeErr(w, fmt.Errorf("группа создана, правило %s не добавилось: %v", rl.Rule, err))
-			return
+	gid := ""
+	if groups, err := client.GroupsWithRules(r.Context()); err == nil {
+		for _, g := range groups {
+			if g.Name == name && g.Interface == req.Interface {
+				gid = g.ID
+			}
 		}
 	}
-	client.RefreshShadow(r.Context())
 	s.store.LogEvent("rules", "magitrickle", "применён шаблон "+preset.ID+" на "+req.Interface)
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "groupId": g.ID, "rules": len(preset.Rules)})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "groupId": gid, "rules": len(preset.Rules)})
 }
