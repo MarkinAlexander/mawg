@@ -60,7 +60,7 @@ func parseNDMCInterfaces(out string) map[string]rciInterface {
 		key, val := m[1], strings.TrimSpace(m[2])
 		lastKey = key
 		switch key {
-		case "description", "link", "connected", "state":
+		case "description", "link", "connected", "state", "address", "mask":
 			if peer == nil && section == "" {
 				switch key {
 				case "description":
@@ -71,6 +71,10 @@ func parseNDMCInterfaces(out string) map[string]rciInterface {
 					cur.Connected = val
 				case "state":
 					cur.State = val
+				case "address":
+					cur.Address = val
+				case "mask":
+					cur.Mask = val
 				}
 			}
 		case "wireguard", "summary", "ipv6":

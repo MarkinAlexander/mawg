@@ -73,6 +73,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/v1/bundles/{name}", s.deleteBundle)
 
 	mux.HandleFunc("GET /api/v1/mt/groups", s.mtGetGroups)
+	mux.HandleFunc("GET /api/v1/mt/duplicates", s.mtDuplicates)
 	mux.HandleFunc("GET /api/v1/mt/interfaces", s.mtGetInterfaces)
 	mux.HandleFunc("GET /api/v1/mt/presets", s.mtGetPresets)
 	mux.HandleFunc("POST /api/v1/mt/groups", s.mtCreateGroup)
@@ -782,11 +783,42 @@ func (s *Server) postDisable(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "disabled"})
 }
 
+// addressConflicts проверяет адреса конфига против всех активных
+// интерфейсов системы: ndm/uci такой конфиг не поднимет (exit 122),
+// лучше сразу объяснить.
+func (s *Server) addressConflicts(pool, file string) error {
+	cfg, err := s.store.LoadConfigFile(pool, file)
+	if err != nil {
+		return nil
+	}
+	tunnels, err := s.backend.SysTunnels()
+	if err != nil {
+		return nil
+	}
+	taken := map[string]string{}
+	for _, sl := range tunnels {
+		if sl.Address == "" {
+			continue
+		}
+		taken[sl.Address] = sl.Device
+	}
+	for _, a := range cfg.Addresses {
+		if dev, ok := taken[a]; ok && dev != "" {
+			return fmt.Errorf("адрес %s из конфига уже занят интерфейсом %s: отключите его или выберите другой конфиг", a, dev)
+		}
+	}
+	return nil
+}
+
 func (s *Server) postActivate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		File string `json:"file"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.File == "" {
+		writeErr(w, err)
+		return
+	}
+	if err := s.addressConflicts(r.PathValue("name"), req.File); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -886,6 +918,53 @@ func (s *Server) mtInterfaceTitles() map[string]string {
 		}
 	}
 	return titles
+}
+
+// mtDuplicates: дубликаты правил по ключу тип:паттерн, как их считает
+// сам magitrickle (совпадение в разных группах или два включенных в одной).
+func (s *Server) mtDuplicates(w http.ResponseWriter, r *http.Request) {
+	groups, err := s.mtClient().GroupsWithRules(r.Context())
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	type ref struct {
+		GroupID   string `json:"groupId"`
+		GroupName string `json:"groupName"`
+		RuleID    string `json:"ruleId"`
+	}
+	byKey := map[string][]ref{}
+	for _, g := range groups {
+		seen := map[string]bool{}
+		for _, rl := range g.Rules {
+			if !rl.Enable || strings.TrimSpace(rl.Rule) == "" {
+				continue
+			}
+			key := rl.Type + ":" + strings.ToLower(strings.TrimSpace(rl.Rule))
+			byKey[key] = append(byKey[key], ref{GroupID: g.ID, GroupName: g.Name, RuleID: rl.ID})
+			seen[key] = true
+		}
+		_ = seen
+	}
+	dupKeys := map[string]bool{}
+	for key, refs := range byKey {
+		groupsOf := map[string]bool{}
+		for _, ref := range refs {
+			groupsOf[ref.GroupID] = true
+		}
+		if len(refs) > 1 && len(groupsOf) > 1 {
+			dupKeys[key] = true
+		}
+	}
+	out := map[string][]ref{}
+	for key, refs := range byKey {
+		if !dupKeys[key] {
+			continue
+		}
+		clean := key[strings.Index(key, ":")+1:]
+		out[clean] = refs
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"duplicates": out})
 }
 
 func (s *Server) mtGetGroups(w http.ResponseWriter, r *http.Request) {

@@ -18,6 +18,7 @@ type SlotInfo struct {
 	LinkUp      bool   `json:"linkUp"`
 	Connected   bool   `json:"connected"`
 	Managed     bool   `json:"managed"`
+	Address     string `json:"address,omitempty"`
 }
 
 type Backend interface {

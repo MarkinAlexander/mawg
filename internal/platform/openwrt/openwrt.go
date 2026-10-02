@@ -1,6 +1,7 @@
 package openwrt
 
 import (
+	"net"
 	"fmt"
 	"os"
 	"os/exec"
@@ -388,7 +389,7 @@ func sysTunnelsImpl() ([]platform.SlotInfo, error) {
 		if flags, err := os.ReadFile("/sys/class/net/" + name + "/flags"); err == nil {
 			linkUp = strings.HasPrefix(strings.TrimSpace(string(flags)), "1")
 		}
-		out = append(out, platform.SlotInfo{Device: name, LinkUp: linkUp})
+		out = append(out, platform.SlotInfo{Device: name, LinkUp: linkUp, Address: ifaceAddr(name)})
 	}
 	return out, nil
 }
@@ -427,3 +428,17 @@ func (b *Backend) RestartMagitrickle() error {
 // SaveConfig: mawg коммитит uci сразу в Apply/Up/Down, LuCI видит живое
 // состояние; отдельное сохранение не нужно.
 func (b *Backend) SaveConfig() error { return nil }
+
+// ifaceAddr - первый IPv4 с маской интерфейса (10.2.0.2/32).
+func ifaceAddr(device string) string {
+	out, err := run("ip", "-4", "-o", "addr", "show", "dev", device)
+	if err != nil {
+		return ""
+	}
+	for _, field := range strings.Fields(out) {
+		if net.ParseIP(strings.SplitN(field, "/", 2)[0]) != nil && strings.Contains(field, "/") {
+			return field
+		}
+	}
+	return ""
+}
