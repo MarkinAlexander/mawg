@@ -1074,6 +1074,8 @@ function mtInterfaces() {
 
 async function mtApi(method, path, body) {
   try { await api(method, path, body); } catch (e) { toast(e.message, true); }
+  const box = document.getElementById('mtgroups');
+  if (box.contains(document.activeElement) && document.activeElement.blur) document.activeElement.blur();
   lastMtJSON = '';
   refreshRules(true);
 }
@@ -1146,6 +1148,12 @@ function editingRulesPanel() {
   if (ae && box.contains(ae) && (ae.tagName === 'INPUT' || ae.tagName === 'SELECT' || ae.tagName === 'TEXTAREA')) return true;
   return box.contains(ae) && ae.closest && ae.closest('.er-menu');
 }
+let pendingRulesRender = false;
+function rulesRenderIfIdle() {
+  if (editingRulesPanel()) { pendingRulesRender = true; return; }
+  pendingRulesRender = false;
+  renderRules();
+}
 async function refreshRules(force) {
   try {
     const r = await api('GET', '/mt/groups');
@@ -1155,16 +1163,22 @@ async function refreshRules(force) {
     }
     MT_GROUPS = r.groups || [];
     const json = JSON.stringify(MT_GROUPS);
-    if (!force && json === lastMtJSON) return;
-    if (editingRulesPanel() && !force) { lastMtJSON = json; return; }
+    if (!force && json === lastMtJSON) {
+      if (pendingRulesRender && !editingRulesPanel()) rulesRenderIfIdle();
+      return;
+    }
+    if (editingRulesPanel() && !force) { lastMtJSON = json; pendingRulesRender = true; return; }
     lastMtJSON = json;
-    renderRules();
+    rulesRenderIfIdle();
     api('GET', '/mt/duplicates').then(d => {
       MT_DUPS = d.duplicates || {};
-      renderRules();
+      rulesRenderIfIdle();
     }).catch(() => { MT_DUPS = {}; });
   } catch (e) { console.warn(e); }
 }
+document.getElementById('mtgroups').addEventListener('focusout', () => {
+  setTimeout(() => { if (pendingRulesRender && !editingRulesPanel()) rulesRenderIfIdle(); }, 0);
+});
 
 function renderRules() {
   const box = document.getElementById('mtgroups');
