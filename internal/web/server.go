@@ -932,37 +932,33 @@ func (s *Server) mtDuplicates(w http.ResponseWriter, r *http.Request) {
 		GroupID   string `json:"groupId"`
 		GroupName string `json:"groupName"`
 		RuleID    string `json:"ruleId"`
+		RuleType  string `json:"ruleType"`
 	}
+	// ключ - только паттерн: domain и namespace на один домен перекрываются
+	// полностью, для владельца это тот же дубликат
 	byKey := map[string][]ref{}
 	for _, g := range groups {
-		seen := map[string]bool{}
 		for _, rl := range g.Rules {
 			if !rl.Enable || strings.TrimSpace(rl.Rule) == "" {
 				continue
 			}
-			key := rl.Type + ":" + strings.ToLower(strings.TrimSpace(rl.Rule))
-			byKey[key] = append(byKey[key], ref{GroupID: g.ID, GroupName: g.Name, RuleID: rl.ID})
-			seen[key] = true
-		}
-		_ = seen
-	}
-	dupKeys := map[string]bool{}
-	for key, refs := range byKey {
-		groupsOf := map[string]bool{}
-		for _, ref := range refs {
-			groupsOf[ref.GroupID] = true
-		}
-		if len(refs) > 1 && len(groupsOf) > 1 {
-			dupKeys[key] = true
+			key := strings.ToLower(strings.TrimSpace(rl.Rule))
+			byKey[key] = append(byKey[key], ref{GroupID: g.ID, GroupName: g.Name, RuleID: rl.ID, RuleType: rl.Type})
 		}
 	}
 	out := map[string][]ref{}
 	for key, refs := range byKey {
-		if !dupKeys[key] {
+		if len(refs) < 2 {
 			continue
 		}
-		clean := key[strings.Index(key, ":")+1:]
-		out[clean] = refs
+		groupsOf := map[string]bool{}
+		for _, ref := range refs {
+			groupsOf[ref.GroupID] = true
+		}
+		if len(groupsOf) < 2 {
+			continue
+		}
+		out[key] = refs
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"duplicates": out})
 }
