@@ -398,6 +398,7 @@ func (s *Store) AddConfigs(pool string, configs []wgconf.NamedConfig) (added int
 			Endpoint:  nc.Config.Endpoint(),
 			PublicKey: nc.Config.Peer.PublicKey,
 			Enabled:   true,
+			Addresses: nc.Config.Addresses,
 		})
 		added++
 	}
@@ -407,6 +408,25 @@ func (s *Store) AddConfigs(pool string, configs []wgconf.NamedConfig) (added int
 		}
 	}
 	return added, duplicates, nil
+}
+
+// SetConfigAddresses сохраняет внутренние адреса конфига в реестр: потом
+// коллизии проверяются без чтения файлов.
+func (s *Store) SetConfigAddresses(pool, file string, addrs []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.root.Pools {
+		if s.root.Pools[i].Name != pool {
+			continue
+		}
+		for j := range s.root.Pools[i].Configs {
+			if s.root.Pools[i].Configs[j].File == file && len(s.root.Pools[i].Configs[j].Addresses) == 0 {
+				s.root.Pools[i].Configs[j].Addresses = addrs
+				_ = s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
+				return
+			}
+		}
+	}
 }
 
 func (s *Store) LoadConfigFile(pool, file string) (wgconf.Config, error) {
