@@ -84,6 +84,7 @@ func (b *Backend) Slots() ([]platform.SlotInfo, error) {
 		info := platform.SlotInfo{ID: name, Device: name, Description: proto}
 		linkOut, _ := run("ip", "-o", "link", "show", "dev", name)
 		info.LinkUp = strings.Contains(linkOut, ",UP,") && strings.Contains(linkOut, "LOWER_UP")
+		info.Address = ifaceAddr(name)
 		out = append(out, info)
 	}
 	return out, nil
