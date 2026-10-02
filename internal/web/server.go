@@ -41,6 +41,7 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("GET /api/v1/status", s.getStatus)
 	mux.HandleFunc("GET /api/v1/slots", s.getSlots)
+	mux.HandleFunc("POST /api/v1/slots/create", s.createSlot)
 	mux.HandleFunc("GET /api/v1/ifaces", s.getIfaces)
 	mux.HandleFunc("POST /api/v1/ifaces/{device}/mode", s.setIfaceMode)
 	mux.HandleFunc("PUT /api/v1/ifaces/{device}/probe", s.setIfaceProbe)
@@ -546,6 +547,21 @@ func (s *Server) validFallback(name, fallback string) error {
 		cur = next
 	}
 	return fmt.Errorf("слишком длинная цепочка фоллбеков")
+}
+
+func (s *Server) createSlot(w http.ResponseWriter, r *http.Request) {
+	kb, ok := s.backend.(*keenetic.Backend)
+	if !ok {
+		writeErr(w, fmt.Errorf("создание слотов доступно только на Keenetic"))
+		return
+	}
+	id, err := kb.CreateSlot()
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	s.store.LogEvent("slots", "create", "создан слот "+id)
+	writeJSON(w, http.StatusOK, map[string]string{"slot": id, "device": keenetic.DeviceName(id)})
 }
 
 func (s *Server) createPool(w http.ResponseWriter, r *http.Request) {

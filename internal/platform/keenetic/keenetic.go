@@ -290,6 +290,28 @@ func slotInfosList(list []rciInterface) []platform.SlotInfo {
 	return out
 }
 
+// CreateSlot создает следующий слот WireguardN голой CLI-командой (грабли
+// №3: сначала создание, потом подккоманды) и возвращает его id.
+func (b *Backend) CreateSlot() (string, error) {
+	slots, err := b.Slots()
+	if err != nil {
+		return "", err
+	}
+	max := -1
+	for _, sl := range slots {
+		if m := slotRe.FindStringSubmatch(sl.ID); m != nil {
+			if n, e := strconv.Atoi(m[1]); e == nil && n > max {
+				max = n
+			}
+		}
+	}
+	id := fmt.Sprintf("Wireguard%d", max+1)
+	if _, err := b.ndmc("interface " + id); err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
 func DeviceName(slot string) string {
 	m := slotRe.FindStringSubmatch(slot)
 	if m == nil {

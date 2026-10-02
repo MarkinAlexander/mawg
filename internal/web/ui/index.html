@@ -170,7 +170,10 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
       <input id="pName" placeholder="proton" pattern="[a-z][a-z0-9-]{0,14}" required>
     </label>
     <label class="f" id="slotRow" style="display:none">Слот Keenetic
-      <select id="pSlot"></select>
+      <div class="btnrow" style="margin-top:3px">
+        <select id="pSlot" style="flex:1;min-width:180px"></select>
+        <button type="button" id="slotCreate" title="создать следующий слот WireguardN через CLI">+ слот</button>
+      </div>
       <div id="slotHint" style="display:none;font-size:11px;color:var(--warn);margin-top:4px"></div>
     </label>
     <label class="f" id="protoRow" style="display:none">Протокол (OpenWrt)
@@ -644,7 +647,10 @@ async function delPool(pool) {
 $('#pCreate').onclick = async e => {
   e.preventDefault();
   const body = { name: $('#pName').value.trim(), fallback: $('#pFallback').value };
-  if ($('#slotRow').style.display !== 'none') body.keeneticSlot = $('#pSlot').value;
+  if ($('#slotRow').style.display !== 'none') {
+    if (!$('#pSlot').value) return toast(slotsLoading ? 'Слоты ещё загружаются, секунду' : 'Слоты недоступны', true);
+    body.keeneticSlot = $('#pSlot').value;
+  }
   if ($('#protoRow').style.display !== 'none') body.openwrtProto = $('#pProto').value;
   try {
     await api('POST', '/pools', body);
@@ -654,6 +660,7 @@ $('#pCreate').onclick = async e => {
   } catch (err) { toast(err.message, true); }
 };
 
+let slotsLoading = false;
 async function loadSlots() {
   const platform = STATUS ? STATUS.platform : '';
   $('#protoRow').style.display = platform === 'openwrt' ? '' : 'none';
@@ -661,6 +668,10 @@ async function loadSlots() {
   if (platform !== 'keenetic') return;
   const sel = $('#pSlot');
   const hint = document.getElementById('slotHint');
+  slotsLoading = true;
+  sel.disabled = true;
+  sel.innerHTML = '<option value="">загружаю слоты...</option>';
+  hint.style.display = 'none';
   try {
     const r = await api('GET', '/slots');
     const mawgSlots = new Set((STATUS ? STATUS.pools : []).map(p => p.slot).filter(Boolean));
@@ -675,23 +686,34 @@ async function loadSlots() {
         const mark = busy ? ' - занят' : ' - свободен';
         return `<option value="${s.id}">${s.id} (${s.device})${s.description ? ' ' + s.description : ''}${mark}</option>`;
       }).join('');
+    sel.disabled = false;
     const preselect = firstFree || firstAny;
     if (preselect) sel.value = preselect;
     if (listed === 0) {
-      hint.textContent = 'Слоты WireGuard не найдены или все заняты. Удалите ненужное WireGuard-подключение в веб-интерфейсе Keenetic (Интернет - Другие подключения).';
+      hint.textContent = 'Слоты WireGuard не найдены. Создайте слот кнопкой "+ слот" или подключение WireGuard в веб-интерфейсе Keenetic (Интернет - Другие подключения).';
       hint.style.display = '';
     } else if (!firstFree) {
-      hint.textContent = 'Свободных слотов нет: все заняты другими интерфейсами. Удалите ненужное WireGuard-подключение в веб-интерфейсе Keenetic (Интернет - Другие подключения) или займите редко используемый слот из списка.';
+      hint.textContent = 'Свободных слотов нет - все заняты вашими подключениями. Создайте новый слот кнопкой "+ слот": лимита 10 на свежих прошивках больше нет.';
       hint.style.display = '';
     } else {
       hint.style.display = 'none';
     }
   } catch (e) {
     sel.innerHTML = '';
+    sel.disabled = false;
     hint.textContent = 'Не удалось получить список слотов: ' + e.message + '. Создание пула заблокировано до появления списка.';
     hint.style.display = '';
+  } finally {
+    slotsLoading = false;
   }
 }
+document.getElementById('slotCreate').onclick = e => withBusy(e.currentTarget, async () => {
+  try {
+    const r = await api('POST', '/slots/create', {});
+    toast('Создан слот ' + r.slot);
+    await loadSlots();
+  } catch (err) { toast(err.message, true); }
+});
 
 document.querySelector('#dlgPool button[value=cancel]').onclick = () => dlgPool.close();
 
