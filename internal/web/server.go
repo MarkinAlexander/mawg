@@ -1002,9 +1002,14 @@ func (s *Server) mtDuplicates(w http.ResponseWriter, r *http.Request) {
 		RuleType  string `json:"ruleType"`
 	}
 	// ключ - только паттерн: domain и namespace на один домен перекрываются
-	// полностью, для владельца это тот же дубликат
+	// полностью, для владельца это тот же дубликат.
+	// Не участвуют: выключенные правила и группы целиком - в маршрутизации
+	// их нет, пересечением они быть не могут.
 	byKey := map[string][]ref{}
 	for _, g := range groups {
+		if !g.Enable {
+			continue
+		}
 		for _, rl := range g.Rules {
 			if !rl.Enable || strings.TrimSpace(rl.Rule) == "" {
 				continue
