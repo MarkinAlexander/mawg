@@ -509,7 +509,7 @@ func (s *Store) Bundle(name string) (Bundle, bool) {
 }
 
 func (s *Store) CreateBundle(b Bundle) (Bundle, error) {
-	clean, err := wgconf.SanitizePoolName(b.Name)
+	clean, err := wgconf.SanitizeBundleName(b.Name)
 	if err != nil {
 		return Bundle{}, err
 	}

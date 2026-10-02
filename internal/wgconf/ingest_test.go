@@ -46,6 +46,21 @@ func TestSanitizePoolName(t *testing.T) {
 
 const toolongname16 = "aaaaaaaaaaaaaaaaaaaaaaaaa"
 
+func TestSanitizeBundleName(t *testing.T) {
+	ok := []string{"proton", "цепочка", "Запасной-Канал", "test-proton-chein", "канал2"}
+	for _, s := range ok {
+		if _, err := SanitizeBundleName(s); err != nil {
+			t.Fatalf("SanitizeBundleName(%q) err = %v", s, err)
+		}
+	}
+	bad := []string{"", "1abc", "has space", "under_score", "протон.", toolongname16}
+	for _, s := range bad {
+		if _, err := SanitizeBundleName(s); err == nil {
+			t.Fatalf("SanitizeBundleName(%q) must fail", s)
+		}
+	}
+}
+
 func TestIngestDedupe(t *testing.T) {
 	plain, err := os.ReadFile("../../testdata/plain-wg.conf")
 	if err != nil {

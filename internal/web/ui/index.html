@@ -243,7 +243,7 @@ input[type=color] { padding: 1px 2px; width: 34px; height: 26px; }
   <form method="dialog" style="display:grid; gap:4px; min-width:420px">
     <h3 style="margin:0 0 6px" id="bdTitle">Новый набор</h3>
     <label class="f">Имя
-      <input id="bdName" pattern="[a-z][a-z0-9-]{0,14}" required>
+      <input id="bdName" pattern="[a-zа-яё][a-zа-яё0-9-]{0,23}" maxlength="24" title="Строчные латиница или кириллица, цифры и дефисы" required>
     </label>
     <label class="f">Участники по приоритету (первый = основной)
       <div style="display:flex;gap:6px;margin-top:3px">

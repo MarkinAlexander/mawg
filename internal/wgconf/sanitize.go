@@ -8,6 +8,16 @@ import (
 
 var poolNameRe = regexp.MustCompile(`^[a-z][a-z0-9-]{0,14}$`)
 
+var bundleNameRe = regexp.MustCompile(`^[a-zа-яё][a-zа-яё0-9-]{0,23}$`)
+
+func SanitizeBundleName(s string) (string, error) {
+	name := strings.ToLower(strings.TrimSpace(s))
+	if !bundleNameRe.MatchString(name) {
+		return "", fmt.Errorf("имя набора: строчные латиница или кириллица, цифры и дефисы, до 24 символов")
+	}
+	return name, nil
+}
+
 func SanitizePoolName(s string) (string, error) {
 	name := strings.ToLower(strings.TrimSpace(s))
 	if !poolNameRe.MatchString(name) {
