@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"mawg/internal/magitrickle"
@@ -257,26 +256,10 @@ func (s *Server) getIfaces(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Device < out[j].Device })
 
-	var wg sync.WaitGroup
-	statuses := make([]string, len(out))
 	for i := range out {
-		if out[i].Mode != store.IfaceExternal || out[i].Probe == nil {
-			continue
+		if out[i].Mode == store.IfaceExternal && out[i].Probe != nil {
+			out[i].ProbeStatus = s.engine.DeviceProbeStatus(out[i].Device)
 		}
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			statuses[i] = s.engine.DeviceProbeStatus(out[i].Device)
-		}(i)
-	}
-	done := make(chan struct{})
-	go func() { wg.Wait(); close(done) }()
-	select {
-	case <-done:
-	case <-time.After(4 * time.Second):
-	}
-	for i := range out {
-		out[i].ProbeStatus = statuses[i]
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"interfaces": out})
 }
@@ -344,6 +327,9 @@ func (s *Server) setIfaceProbe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.store.LogEvent("ifaces", "probe", device+" probe "+map[bool]string{true: "set", false: "cleared"}[probe != nil])
+	if probe != nil {
+		s.engine.InvalidateProbeStatus(device)
+	}
 	s.engine.CheckBundlesNow()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "probe": probe})
 }

@@ -159,6 +159,20 @@ func (s *Store) IfaceProbe(device string) *ProbeConfig {
 	return nil
 }
 
+// ProbedExternals - внешние интерфейсы с настроенной пробой: их статусы
+// движок держит в кэше для мгновенной отдачи в /ifaces.
+func (s *Store) ProbedExternals() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []string
+	for _, e := range s.root.Settings.Ifaces {
+		if e.Device != "" && e.Mode == IfaceExternal && e.Probe != nil {
+			out = append(out, e.Device)
+		}
+	}
+	return out
+}
+
 func (s *Store) SetIfaceProbe(device string, p *ProbeConfig) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
