@@ -95,7 +95,7 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
   <h1>mawg</h1>
   <span class="meta" id="meta">загрузка...</span>
   <span style="flex:1"></span>
-  <button class="primary" onclick="dlgPool.showModal()">+ интерфейс</button>
+  <button class="primary" onclick="dlgPool.showModal(); loadSlots()">+ интерфейс</button>
 </header>
 <main>
   <div class="grid" id="pools"></div>
@@ -669,9 +669,12 @@ async function loadSlots() {
   const sel = $('#pSlot');
   const hint = document.getElementById('slotHint');
   slotsLoading = true;
-  sel.disabled = true;
-  sel.innerHTML = '<option value="">загружаю слоты...</option>';
-  hint.style.display = 'none';
+  const firstLoad = !sel.options.length;
+  if (firstLoad) {
+    sel.disabled = true;
+    sel.innerHTML = '<option value="">загружаю слоты...</option>';
+    hint.style.display = 'none';
+  }
   try {
     const r = await api('GET', '/slots');
     const mawgSlots = new Set((STATUS ? STATUS.pools : []).map(p => p.slot).filter(Boolean));
@@ -690,12 +693,9 @@ async function loadSlots() {
     const preselect = firstFree || firstAny;
     if (preselect) sel.value = preselect;
     if (listed === 0) {
-      hint.textContent = 'Слоты WireGuard не найдены. Создайте слот кнопкой "+ слот" или подключение WireGuard в веб-интерфейсе Keenetic (Интернет - Другие подключения).';
+      hint.textContent = 'Слоты WireGuard не найдены - создайте кнопкой "+ слот".';
       hint.style.display = '';
-    } else if (!firstFree) {
-      hint.textContent = 'Свободных слотов нет - все заняты вашими подключениями. Создайте новый слот кнопкой "+ слот": лимита 10 на свежих прошивках больше нет.';
-      hint.style.display = '';
-    } else {
+    } else if (hint.textContent.startsWith('Слоты WireGuard не найдены')) {
       hint.style.display = 'none';
     }
   } catch (e) {
