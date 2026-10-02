@@ -652,7 +652,7 @@ async function delCfg(pool, file) {
 }
 
 async function delPool(pool) {
-  if (!confirm(`Удалить пул ${pool}? Интерфейс будет выключен, конфиги удалены из mawg.`)) return;
+  if (!(await askModal('Удаление пула', `Удалить пул ${pool}? Интерфейс будет выключен, конфиги удалены из mawg.`, 'Удалить'))) return;
   try { await api('DELETE', '/pools/' + pool); } catch (e) { toast(e.message, true); }
   refresh();
 }
@@ -1232,8 +1232,8 @@ function renderRules() {
       </details>`;
     el.querySelector('.mt-toggle').onchange = e => { mtApi('POST', `/mt/groups/${g.id}/enable`, { enable: e.target.checked }); };
     el.querySelector('.mt-edit').onclick = () => editGroupDlg(g);
-    el.querySelector('.mt-del').onclick = e => {
-      if (!confirm(`Удалить группу ${g.name} со всеми правилами?`)) return;
+    el.querySelector('.mt-del').onclick = async e => {
+      if (!(await askModal('Удаление группы', `Удалить группу ${g.name} со всеми правилами?`, 'Удалить'))) return;
       withBusy(e.currentTarget, () => mtApi('DELETE', `/mt/groups/${g.id}`));
     };
     const det = el.querySelector('details');
@@ -1339,7 +1339,7 @@ document.getElementById('presetApply').onclick = async () => {
   const preset = document.getElementById('presetSel').value;
   const iface = document.getElementById('presetIface').value;
   if (!preset || !iface) return toast('Выберите шаблон и интерфейс', true);
-  if (!confirm(`Создать группу по шаблону на интерфейсе ${iface}?`)) return;
+  if (!(await askModal('Применение шаблона', `Создать группу по шаблону на интерфейсе ${iface}?`, 'Создать'))) return;
   try {
     const r = await api('POST', `/mt/presets/${preset}/apply`, { interface: iface });
     toast(`Группа создана, правил: ${r.rules}`);
@@ -1385,11 +1385,10 @@ function renderBundles() {
       <button class="iconbtn edit b-edit" title="изменить набор">${PENCIL_SVG}</button>
       <button class="iconbtn b-del" title="удалить набор">${TRASH_SVG}</button>`;
     el.querySelector('.b-edit').onclick = () => openBundleDlg(b);
-    el.querySelector('.b-del').onclick = () => {
-      if (confirm(`Удалить набор ${b.name}? Группы останутся на текущем интерфейсе.`)) {
-        api('DELETE', '/bundles/' + b.name).catch(e => toast(e.message, true));
-        lastBundlesJSON = ''; refreshBundles(true);
-      }
+    el.querySelector('.b-del').onclick = async () => {
+      if (!(await askModal('Удаление набора', `Удалить набор ${b.name}? Группы останутся на текущем интерфейсе.`, 'Удалить'))) return;
+      api('DELETE', '/bundles/' + b.name).catch(e => toast(e.message, true));
+      lastBundlesJSON = ''; refreshBundles(true);
     };
     box.appendChild(el);
   }
@@ -1494,16 +1493,22 @@ async function refreshSystem(force) {
   } catch (e) { console.warn(e); }
 }
 
-let confirmCb = null;
-function askModal(title, text, okLabel, cb) {
-  confirmCb = cb;
-  document.getElementById('cfTitle').textContent = title;
-  document.getElementById('cfText').textContent = text;
-  document.getElementById('cfOk').textContent = okLabel || 'ОК';
-  dlgConfirm.showModal();
+let confirmResolve = null, confirmOk = false;
+function askModal(title, text, okLabel) {
+  return new Promise(resolve => {
+    confirmResolve = resolve;
+    confirmOk = false;
+    document.getElementById('cfTitle').textContent = title;
+    document.getElementById('cfText').textContent = text;
+    document.getElementById('cfOk').textContent = okLabel || 'ОК';
+    dlgConfirm.showModal();
+  });
 }
 document.querySelector('#dlgConfirm button[value=cancel]').onclick = () => dlgConfirm.close();
-document.getElementById('cfOk').onclick = e => { e.preventDefault(); dlgConfirm.close(); if (confirmCb) confirmCb(); };
+document.getElementById('cfOk').onclick = e => { e.preventDefault(); confirmOk = true; dlgConfirm.close(); };
+dlgConfirm.addEventListener('close', () => {
+  if (confirmResolve) { confirmResolve(confirmOk); confirmResolve = null; }
+});
 
 function showResult(ok, output, errText) {
   document.getElementById('rsTitle').textContent = ok ? 'Установлено' : 'Ошибка установки';
@@ -1525,17 +1530,16 @@ async function installComp(id, btn) {
     item = (r.items || []).find(i => i.id === id);
   } catch (e) { return toast(e.message, true); }
   if (!item || !item.confirm) return;
-  askModal('Установка: ' + item.title, item.confirm, 'Установить', async () => {
-    btn.disabled = true; btn.textContent = 'установка...';
-    let res;
-    try {
-      res = await fetch('/api/v1/system/install', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id })
-      }).then(x => x.json());
-    } catch (e) { btn.disabled = false; btn.textContent = 'установить'; return showResult(false, '', e.message); }
-    btn.disabled = false; btn.textContent = 'установить';
-    showResult(!!res.ok, res.output, res.ok ? '' : (res.error || 'неизвестная ошибка'));
-  });
+  if (!(await askModal('Установка: ' + item.title, item.confirm, 'Установить'))) return;
+  btn.disabled = true; btn.textContent = 'установка...';
+  let res;
+  try {
+    res = await fetch('/api/v1/system/install', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id })
+    }).then(x => x.json());
+  } catch (e) { btn.disabled = false; btn.textContent = 'установить'; return showResult(false, '', e.message); }
+  btn.disabled = false; btn.textContent = 'установить';
+  showResult(!!res.ok, res.output, res.ok ? '' : (res.error || 'неизвестная ошибка'));
 }
 
 async function refreshRCIToken() {
