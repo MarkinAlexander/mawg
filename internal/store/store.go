@@ -148,6 +148,21 @@ func (s *Store) SetWANProbe(p *ProbeConfig) error {
 	return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
 }
 
+// RCIToken - токен локального API Keenetic 5.2+ (X-NDMA-TKN), на 5.1 и
+// старее не нужен.
+func (s *Store) RCIToken() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.root.Settings.RCIToken
+}
+
+func (s *Store) SetRCIToken(token string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.root.Settings.RCIToken = strings.TrimSpace(token)
+	return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
+}
+
 func (s *Store) IfaceProbe(device string) *ProbeConfig {
 	s.mu.Lock()
 	defer s.mu.Unlock()

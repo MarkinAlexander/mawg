@@ -121,6 +121,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("store: %v", err)
 	}
+	if kb, ok := backend.(*keenetic.Backend); ok {
+		kb.SetTokenProvider(st.RCIToken)
+	}
 	mt := magitrickle.New("http://127.0.0.1:8080")
 	shadowPath := filepath.Join(dir, "magitrickle-shadow.json")
 	magitrickle.OnRepair = func(names []string) {

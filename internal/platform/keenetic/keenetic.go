@@ -26,9 +26,34 @@ var (
 	compRe    = regexp.MustCompile(`components:\s*(.+)`)
 )
 
-type Backend struct{}
+type Backend struct {
+	token func() string
+}
 
 func New() *Backend { return &Backend{} }
+
+// SetTokenProvider подключает источник токена локального API: на Keenetic
+// 5.2+ RCI без него отдаёт 401 (NDM-4515), заголовок X-NDMA-TKN.
+func (b *Backend) SetTokenProvider(fn func() string) { b.token = fn }
+
+func (b *Backend) rciDo(path string) ([]byte, error) {
+	req, err := http.NewRequest(http.MethodGet, rciBase+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	if b.token != nil {
+		if tk := strings.TrimSpace(b.token()); tk != "" {
+			req.Header.Set("X-NDMA-TKN", tk)
+		}
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	return io.ReadAll(resp.Body)
+}
 
 func (b *Backend) Name() string { return store.PlatformKeenetic }
 
@@ -131,11 +156,9 @@ type rciInterface struct {
 
 func (b *Backend) rciGet(path string) (rciInterface, error) {
 	var out rciInterface
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get(rciBase + path)
+	body, err := b.rciDo(path)
 	if err == nil {
-		defer resp.Body.Close()
-		err = json.NewDecoder(resp.Body).Decode(&out)
+		err = json.Unmarshal(body, &out)
 	}
 	if err == nil {
 		return out, nil
@@ -172,15 +195,10 @@ func (b *Backend) slotOf(pool store.Pool) (string, int, error) {
 }
 
 func (b *Backend) Slots() ([]platform.SlotInfo, error) {
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get(rciBase + "/rci/show/interface")
+	body, err := b.rciDo("/rci/show/interface")
 	if err == nil {
-		body, rerr := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if rerr == nil {
-			if out, perr := parseSlots(body); perr == nil {
-				return out, nil
-			}
+		if out, perr := parseSlots(body); perr == nil {
+			return out, nil
 		}
 	}
 	// 5.2 alpha закрыла локальный RCI паролем (NDM-4515): CLI работает всегда
