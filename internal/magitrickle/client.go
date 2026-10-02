@@ -319,6 +319,21 @@ func dropFought(have map[string]bool) {
 }
 
 func (c *Client) MutateGroups(ctx context.Context, mutate func(groups []Group) bool) error {
+	return c.transformGroups(ctx, func(groups []Group) ([]Group, bool) {
+		return groups, mutate(groups)
+	})
+}
+
+// AddGroup добавляет группу с правилами одним bulk PUT: атомарно, одна
+// запись рантайма (mutate-путь append не поддерживает - срез в замыкании
+// уходит по значению).
+func (c *Client) AddGroup(ctx context.Context, g Group) error {
+	return c.transformGroups(ctx, func(groups []Group) ([]Group, bool) {
+		return append(groups, g), true
+	})
+}
+
+func (c *Client) transformGroups(ctx context.Context, transform func([]Group) ([]Group, bool)) error {
 	groupsMu.Lock()
 	defer groupsMu.Unlock()
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
@@ -328,7 +343,7 @@ func (c *Client) MutateGroups(ctx context.Context, mutate func(groups []Group) b
 		return err
 	}
 	groups, repaired := repairFromShadow(groups)
-	changed := mutate(groups)
+	groups, changed := transform(groups)
 	if !changed && !repaired {
 		updateShadowLocked(groups)
 		return nil
