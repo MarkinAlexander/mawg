@@ -542,3 +542,53 @@ func TestLossyDoesNotResetThresholdFailures(t *testing.T) {
 		t.Fatalf("ротация не произошла, applied = %v", fb.Applied())
 	}
 }
+
+func TestProbeStatusCacheServesIfaces(t *testing.T) {
+	st, fb, cl := setup(t, store.FallbackDirect)
+	if err := st.SetIfaceMode("nwg9", store.IfaceExternal); err != nil {
+		t.Fatal(err)
+	}
+	probe := store.ProbeConfig{Target: "8.8.8.8", MaxRTTms: 500}
+	if err := st.SetIfaceProbe("nwg9", &probe); err != nil {
+		t.Fatal(err)
+	}
+	fb.DeviceProbe["nwg9"] = fake.DevProbe{OK: true, RTTms: 183}
+
+	e := newEngine(st.Store, fb, cl, "")
+	if got := e.DeviceProbeStatus("nwg9"); got != "" {
+		t.Fatalf("status before refresh = %q", got)
+	}
+	e.refreshProbedExternals()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		got := e.DeviceProbeStatus("nwg9")
+		if got != "" {
+			if got != "проба: ок 183ms" {
+				t.Fatalf("status = %q", got)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("probe status never cached")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	fb.DeviceProbe["nwg9"] = fake.DevProbe{OK: true, RTTms: 100}
+	e.InvalidateProbeStatus("nwg9")
+	deadline = time.Now().Add(2 * time.Second)
+	for {
+		got := e.DeviceProbeStatus("nwg9")
+		if got == "проба: ок 100ms" {
+			break
+		}
+		if got != "" && got != "проба: ок 100ms" {
+			t.Fatalf("status after invalidate = %q", got)
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("status not refreshed after invalidate")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}

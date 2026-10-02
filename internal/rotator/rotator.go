@@ -39,6 +39,17 @@ type Engine struct {
 	mtSyncAt    time.Time
 
 	ifaceAt time.Time
+
+	probeMu    sync.Mutex
+	probeCache map[string]probeCacheEntry
+	probeBusy  map[string]bool
+}
+
+const probeStatusTTL = 30 * time.Second
+
+type probeCacheEntry struct {
+	status string
+	at     time.Time
 }
 
 // ifaceTouched отмечает момент нашей операции с интерфейсами: кинетик после
@@ -64,12 +75,14 @@ func (e *Engine) settleAfterIfaceOp() {
 
 func New(st *store.Store, b platform.Backend, mt *magitrickle.Client) *Engine {
 	return &Engine{
-		store:     st,
-		backend:   b,
-		mt:        mt,
-		wake:      make(chan string, 32),
-		lastApply: map[string]time.Time{},
-		extFails:  map[string]int{},
+		store:      st,
+		backend:    b,
+		mt:         mt,
+		wake:       make(chan string, 32),
+		lastApply:  map[string]time.Time{},
+		extFails:   map[string]int{},
+		probeCache: map[string]probeCacheEntry{},
+		probeBusy:  map[string]bool{},
 	}
 }
 
@@ -125,6 +138,7 @@ func (e *Engine) loop(ctx context.Context) {
 			e.checkPool(pool)
 		case <-bundleTicker.C:
 			e.checkBundles()
+			e.refreshProbedExternals()
 		case <-ticker.C:
 			for _, pool := range e.store.Pools() {
 				st := e.store.State(pool.Name)
@@ -563,7 +577,50 @@ func (e *Engine) deviceProbeOK(device string, cfg store.ProbeConfig) bool {
 	return cfg.MaxRTTms <= 0 || rtt <= cfg.MaxRTTms
 }
 
+// статусы проб внешних интерфейсов тяжелые (ping до 2с, http до 5с), поэтому
+// они живут в кэше с TTL и обновляются фоном: /ifaces отвечает мгновенно,
+// а строки проб не мигают из-за того, что чья-то проба не успела в бюджет.
 func (e *Engine) DeviceProbeStatus(device string) string {
+	e.probeMu.Lock()
+	defer e.probeMu.Unlock()
+	return e.probeCache[device].status
+}
+
+func (e *Engine) InvalidateProbeStatus(device string) {
+	e.probeMu.Lock()
+	delete(e.probeCache, device)
+	e.probeMu.Unlock()
+	e.refreshProbeStatus(device)
+}
+
+func (e *Engine) refreshProbedExternals() {
+	for _, dev := range e.store.ProbedExternals() {
+		e.refreshProbeStatus(dev)
+	}
+}
+
+func (e *Engine) refreshProbeStatus(device string) {
+	e.probeMu.Lock()
+	if c, ok := e.probeCache[device]; ok && e.now().Sub(c.at) < probeStatusTTL {
+		e.probeMu.Unlock()
+		return
+	}
+	if e.probeBusy[device] {
+		e.probeMu.Unlock()
+		return
+	}
+	e.probeBusy[device] = true
+	e.probeMu.Unlock()
+	go func() {
+		status := e.probeStatus(device)
+		e.probeMu.Lock()
+		e.probeCache[device] = probeCacheEntry{status: status, at: e.now()}
+		delete(e.probeBusy, device)
+		e.probeMu.Unlock()
+	}()
+}
+
+func (e *Engine) probeStatus(device string) string {
 	probe := e.store.IfaceProbe(device)
 	if probe == nil {
 		return ""
