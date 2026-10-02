@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -167,6 +168,8 @@ type rciInterface struct {
 	Link        string `json:"link"`
 	Connected   string `json:"connected"`
 	State       string `json:"state"`
+	Address     string `json:"address"`
+	Mask        string `json:"mask"`
 	Wireguard   struct {
 		Peers []rciPeer `json:"peer"`
 	} `json:"wireguard"`
@@ -239,10 +242,30 @@ func ndmcSlots(ifaces map[string]rciInterface) []platform.SlotInfo {
 			Description: ifc.Description,
 			LinkUp:      ifc.Link == "up",
 			Connected:   ifc.Connected == "yes",
+			Address:     cidrOf(ifc.Address, ifc.Mask),
 		})
 	}
 	sortSlots(out)
 	return out
+}
+
+func cidrOf(addr, mask string) string {
+	if addr == "" {
+		return ""
+	}
+	ip := net.ParseIP(addr)
+	if ip == nil {
+		return ""
+	}
+	if mask == "" {
+		return addr
+	}
+	m := net.ParseIP(mask)
+	if m == nil {
+		return addr
+	}
+	ones, _ := net.IPMask(m.To4()).Size()
+	return fmt.Sprintf("%s/%d", addr, ones)
 }
 
 // RCI разных прошивок отдаёт список интерфейсов то объектом, то массивом;
@@ -271,6 +294,7 @@ func slotInfos(ifaces map[string]rciInterface) []platform.SlotInfo {
 			Description: ifc.Description,
 			LinkUp:      ifc.Link == "up",
 			Connected:   ifc.Connected == "yes",
+			Address:     cidrOf(ifc.Address, ifc.Mask),
 		})
 	}
 	sortSlots(out)
