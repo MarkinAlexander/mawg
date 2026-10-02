@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"mawg/internal/magitrickle"
@@ -120,6 +122,37 @@ func main() {
 		log.Fatalf("store: %v", err)
 	}
 	mt := magitrickle.New("http://127.0.0.1:8080")
+	shadowPath := filepath.Join(dir, "magitrickle-shadow.json")
+	magitrickle.OnRepair = func(names []string) {
+		st.LogEvent("magitrickle", "repair", "magitrickle терял группы, возвращены: "+strings.Join(names, ", "))
+	}
+	magitrickle.SetShadowStorage(
+		func() []magitrickle.Group {
+			data, err := os.ReadFile(shadowPath)
+			if err != nil {
+				return nil
+			}
+			var out struct {
+				Groups []magitrickle.Group `json:"groups"`
+			}
+			if json.Unmarshal(data, &out) != nil {
+				return nil
+			}
+			return out.Groups
+		},
+		func(groups []magitrickle.Group) {
+			data, err := json.MarshalIndent(struct {
+				Groups []magitrickle.Group `json:"groups"`
+			}{Groups: groups}, "", " ")
+			if err != nil {
+				return
+			}
+			tmp := shadowPath + ".tmp"
+			if os.WriteFile(tmp, data, 0o600) == nil {
+				os.Rename(tmp, shadowPath)
+			}
+		},
+	)
 	engine := rotator.New(st, backend, mt)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
