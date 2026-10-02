@@ -1137,10 +1137,19 @@ function warnTitle(refs) {
   const others = refs.filter(r => true).map(r => `${r.groupName} (${RULE_TYPES[r.ruleType] || r.ruleType})`);
   return 'Такой же паттерн в других группах: ' + others.join(', ') + '. Магитрикл применит только первое правило.';
 }
+const WARN_SVG_ICON = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>';
 function warnSvgFor(rule) {
   const refs = MT_DUPS[(rule || '').toLowerCase()];
   if (!refs || !refs.length) return '';
-  return '<span class="warn-badge" title="' + esc(warnTitle(refs)) + '"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>';
+  return '<span class="warn-badge" title="' + esc(warnTitle(refs)) + '">' + WARN_SVG_ICON + '</span>';
+}
+function groupWarnSvg(g) {
+  for (const rl of (g.rules || [])) {
+    if ((MT_DUPS[(rl.rule || '').toLowerCase()] || []).length) {
+      return '<span class="warn-badge" title="в группе есть правила, дублирующиеся в других группах">' + WARN_SVG_ICON + '</span>';
+    }
+  }
+  return '';
 }
 function editingRulesPanel() {
   const box = document.getElementById('mtgroups');
@@ -1196,7 +1205,7 @@ function renderRules() {
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
         <span class="grip" title="перетащите, чтобы изменить порядок">${GRIP_SVG}</span>
         <span class="gcolor" style="background:${esc(g.color || '#4a9eff')}"></span>
-        <b>${esc(g.name)}</b>${(g.rules||[]).some(rl => warnSvgFor(rl.rule)) ? WARN_SVG : ''}
+        <b>${esc(g.name)}</b>${groupWarnSvg(g)}
         <span class="iface-badge"><span class="badge">${esc(g.interface)}</span>${g.interfaceTitle ? `<span class="iface-title">${esc(g.interfaceTitle)}</span>` : ''}</span>
         <span class="muted" style="font-size:12px">правил: ${(g.rules||[]).length}</span>
         <span style="flex:1"></span>
