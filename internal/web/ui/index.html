@@ -131,6 +131,14 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
     <h2>Система <span class="muted" id="sysrefresh" style="cursor:pointer">обновить</span></h2>
     <div class="sub">Проверка зависимостей: пакеты WireGuard/AmneziaWG, MagiTrickle, компоненты прошивки. Установка только по вашему подтверждению.</div>
     <table id="systable"><tr><th>компонент</th><th>версия</th><th>состояние</th><th></th></tr></table>
+    <div id="rciRow" style="display:none;margin-top:12px;border-top:1px solid var(--border);padding-top:10px">
+      <div style="font-size:13px;margin-bottom:4px">Токен локального API Keenetic</div>
+      <div class="muted" style="font-size:11px;margin-bottom:6px">На прошивках 5.2+ локальный RCI требует токен (NDM-4515): создайте его в веб-интерфейсе Keenetic и вставьте сюда. Без токена mawg работает через CLI медленнее. На 5.1 и старее не нужен.</div>
+      <div class="btnrow" style="align-items:center">
+        <input id="rciToken" placeholder="X-NDMA-TKN" style="flex:1;min-width:200px;font-family:ui-monospace,monospace">
+        <button id="rciSave">сохранить</button>
+      </div>
+    </div>
     <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px">
       <div style="font-size:13px;margin-bottom:4px">Проверка канала провайдера</div>
       <div class="muted" style="font-size:11px;margin-bottom:6px">Перед тем как засчитать отказ интерфейса, проверяется основной канал интернета той же пробой. Канал недоступен или деградировал - отказ интерфейса не засчитывается, ротация не запускается.</div>
@@ -1444,6 +1452,24 @@ async function installComp(id, btn) {
     showResult(!!res.ok, res.output, res.ok ? '' : (res.error || 'неизвестная ошибка'));
   });
 }
+
+async function refreshRCIToken() {
+  const row = document.getElementById('rciRow');
+  try {
+    const st = await api('GET', '/status');
+    row.style.display = st.platform === 'keenetic' ? '' : 'none';
+    if (st.platform !== 'keenetic') return;
+    const r = await api('GET', '/rcitoken');
+    document.getElementById('rciToken').value = r.token || '';
+  } catch (e) { console.warn(e); }
+}
+document.getElementById('rciSave').onclick = e => withBusy(e.currentTarget, async () => {
+  try {
+    await api('PUT', '/rcitoken', { token: document.getElementById('rciToken').value });
+    toast('Токен сохранен');
+  } catch (err) { toast(err.message, true); }
+});
+refreshRCIToken();
 
 $('#sysrefresh').onclick = () => { lastSysJSON = ''; refreshSystem(true);
 refreshRules(true);

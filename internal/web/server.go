@@ -46,6 +46,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/v1/ifaces/{device}/probe", s.setIfaceProbe)
 	mux.HandleFunc("GET /api/v1/wanprobe", s.getWANProbe)
 	mux.HandleFunc("PUT /api/v1/wanprobe", s.putWANProbe)
+	mux.HandleFunc("GET /api/v1/rcitoken", s.getRCIToken)
+	mux.HandleFunc("PUT /api/v1/rcitoken", s.putRCIToken)
 	mux.HandleFunc("POST /api/v1/pools/{name}/rename", s.renamePool)
 	mux.HandleFunc("GET /api/v1/events", s.getEvents)
 	mux.HandleFunc("POST /api/v1/pools", s.createPool)
@@ -341,6 +343,26 @@ func (s *Server) setIfaceProbe(w http.ResponseWriter, r *http.Request) {
 	}
 	s.engine.CheckBundlesNow()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "probe": probe})
+}
+
+func (s *Server) getRCIToken(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"token": s.store.RCIToken()})
+}
+
+func (s *Server) putRCIToken(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, err)
+		return
+	}
+	if err := s.store.SetRCIToken(req.Token); err != nil {
+		writeErr(w, err)
+		return
+	}
+	s.store.LogEvent("system", "rcitoken", "токен локального API обновлен")
+	writeJSON(w, http.StatusOK, map[string]string{"ok": "saved"})
 }
 
 func (s *Server) getWANProbe(w http.ResponseWriter, r *http.Request) {

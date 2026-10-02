@@ -148,6 +148,7 @@ type Settings struct {
 	WebPort  int           `json:"webPort"`
 	Ifaces   []IfaceEntry  `json:"ifaces,omitempty"`
 	WANProbe *ProbeConfig  `json:"wanProbe,omitempty"`
+	RCIToken string        `json:"rciToken,omitempty"`
 }
 
 func (s Settings) WithDefaults() Settings {
