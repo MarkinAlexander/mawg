@@ -35,6 +35,29 @@ type Engine struct {
 	extFails  map[string]int
 	wanCache  wanCacheEntry
 	mtHealAt  time.Time
+
+	ifaceAt time.Time
+}
+
+// ifaceTouched отмечает момент нашей операции с интерфейсами: кинетик после
+// этого перезагружает свой файрвол (хук netfilter.d), и iptables-restore
+// магитрикла в эти секунды падает. записи в магитрикл ждут паузу.
+func (e *Engine) ifaceTouched() {
+	e.mu.Lock()
+	e.ifaceAt = e.now()
+	e.mu.Unlock()
+}
+
+func (e *Engine) settleAfterIfaceOp() {
+	e.mu.Lock()
+	at := e.ifaceAt
+	e.mu.Unlock()
+	if at.IsZero() {
+		return
+	}
+	if d := 3*time.Second - e.now().Sub(at); d > 0 {
+		time.Sleep(d)
+	}
 }
 
 func New(st *store.Store, b platform.Backend, mt *magitrickle.Client) *Engine {
@@ -263,6 +286,7 @@ func (e *Engine) DisablePool(pool string) error {
 	if err := e.store.SetPoolDisabled(pool, true); err != nil {
 		return err
 	}
+	e.ifaceTouched()
 	if err := e.backend.Down(p); err != nil {
 		e.store.LogEvent(pool, "disable", "интерфейс не выключился: "+err.Error())
 	}
@@ -329,6 +353,7 @@ func (e *Engine) PoolUp(pool string) error {
 		}
 		return e.applyConfig(p, eligible[0].File)
 	}
+	e.ifaceTouched()
 	if err := e.backend.Up(p); err != nil {
 		return err
 	}
@@ -356,6 +381,7 @@ func (e *Engine) PoolDown(pool string) error {
 	if p.Disabled {
 		return fmt.Errorf("пул %q выключен, сначала включите его", pool)
 	}
+	e.ifaceTouched()
 	if err := e.backend.Down(p); err != nil {
 		return err
 	}
@@ -616,6 +642,7 @@ func (e *Engine) applyConfig(p store.Pool, file string) error {
 		})
 		return err
 	}
+	e.ifaceTouched()
 	if err := e.backend.Apply(p, cfg); err != nil {
 		e.store.MutateState(p.Name, func(s *store.PoolState) {
 			s.LastError = "apply: " + err.Error()
@@ -661,20 +688,23 @@ func (e *Engine) enterFallback(p store.Pool, st *store.PoolState) {
 		fbPool, exists := e.store.Pool(fbName)
 		if !exists || fbPool.Disabled {
 			e.store.LogEvent(p.Name, "fallback", "fallback pool "+fbName+" unavailable, going direct")
-			if err := e.backend.Down(p); err != nil {
+			e.ifaceTouched()
+	if err := e.backend.Down(p); err != nil {
 				log.Printf("pool %s: down failed: %v", p.Name, err)
 			}
 			e.suspendGroups(p)
 			return
 		}
-		if err := e.backend.Down(p); err != nil {
+		e.ifaceTouched()
+	if err := e.backend.Down(p); err != nil {
 			log.Printf("pool %s: down failed: %v", p.Name, err)
 		}
 		e.rebindGroups(p, fbPool.DeviceName())
 		return
 	}
 	if p.Settings.Fallback == store.FallbackDirect {
-		if err := e.backend.Down(p); err != nil {
+		e.ifaceTouched()
+	if err := e.backend.Down(p); err != nil {
 			log.Printf("pool %s: down failed: %v", p.Name, err)
 		}
 		e.suspendGroups(p)
@@ -708,6 +738,7 @@ func (e *Engine) bundleGroupIDs() map[string]bool {
 // magitrickle 0.8.2: single-group PUT не пересоздаёт iptables-цепочку, если
 // рантайм группы уже выключен; пересборку даёт только массовый PUT списка.
 func (e *Engine) applyGroupChanges(key string, mutate func(groups []magitrickle.Group) bool) error {
+	e.settleAfterIfaceOp()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	err := e.mt.MutateGroups(ctx, mutate)
@@ -730,7 +761,6 @@ func (e *Engine) healMagitrickle(key string) {
 		e.store.LogEvent(key, "magitrickle", "автоперезапуск не удался: "+err.Error())
 		return
 	}
-	e.mt.ResetGroupBaseline()
 	e.store.LogEvent(key, "magitrickle", "автоперезапуск после сбоя сохранения")
 }
 

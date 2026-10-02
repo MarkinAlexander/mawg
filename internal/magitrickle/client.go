@@ -31,9 +31,8 @@ type Group struct {
 }
 
 type Client struct {
-	BaseURL    string
-	HTTP       *http.Client
-	peakGroups int
+	BaseURL string
+	HTTP    *http.Client
 }
 
 func New(baseURL string) *Client {
@@ -203,10 +202,121 @@ func (c *Client) GroupByID(ctx context.Context, id string, withRules bool) (Grou
 }
 
 // массовый PUT в magitrickle не атомарен: конкурентные вызовы или сбой
-// iptables-restore посреди обработки усекают список групп. все мутации
-// mawg идут через этот метод: лок на весь цикл, правила в теле запроса
-// и контроль усечения после сохранения.
-var groupsMu sync.Mutex
+// iptables-restore посреди обработки усекают список групп в его рантайме.
+// mawg держит теневую копию полного списка и при обнаружении утери
+// возвращает пропавшие группы в очередном сохранении. все мутации идут
+// через MutateGroups: лок на весь цикл, правила в теле и контроль
+// усечения после записи. одиночные удаления (пользователь в UI
+// magitrickle) уважаются и переносятся в тень.
+var (
+	groupsMu     sync.Mutex
+	mtShadow     []Group
+	LoadShadow   func() []Group
+	SaveShadow   func(groups []Group)
+	OnRepair     func(restoredIDs []string)
+	restoredOnce map[string]int
+)
+
+func SetShadowStorage(load func() []Group, save func([]Group)) {
+	groupsMu.Lock()
+	defer groupsMu.Unlock()
+	LoadShadow = load
+	SaveShadow = save
+	restoredOnce = map[string]int{}
+	if mtShadow == nil && load != nil {
+		mtShadow = load()
+	}
+}
+
+func updateShadowLocked(groups []Group) {
+	mtShadow = append([]Group(nil), groups...)
+	if SaveShadow != nil {
+		SaveShadow(mtShadow)
+	}
+}
+
+// repairFromShadow дополняет усечённый список группами из тени, если
+// пропало сразу много (транкация). порядок берётся из тени, новые группы
+// дописываются в конец. группа, уже дважды спасённая и снова пропавшая,
+// считается удалённой пользователем и больше не возвращается.
+func repairFromShadow(groups []Group) ([]Group, bool) {
+	if len(mtShadow) == 0 {
+		return groups, false
+	}
+	have := make(map[string]bool, len(groups))
+	for _, g := range groups {
+		have[g.ID] = true
+	}
+	var lost []Group
+	fought := 0
+	for _, g := range mtShadow {
+		if !have[g.ID] {
+			if restoredOnce[g.ID] >= 2 {
+				fought++
+				continue
+			}
+			lost = append(lost, g)
+		}
+	}
+	if len(lost) == 0 {
+		if fought > 0 {
+			dropFought(have)
+		}
+		return groups, false
+	}
+	if len(lost) < 3 && len(lost)*2 < len(mtShadow) {
+		return groups, false
+	}
+	for _, g := range lost {
+		restoredOnce[g.ID]++
+	}
+	if OnRepair != nil {
+		ids := make([]string, 0, len(lost))
+		for _, g := range lost {
+			ids = append(ids, g.Name)
+		}
+		OnRepair(ids)
+	}
+	out := make([]Group, 0, len(groups)+len(lost))
+	for _, sg := range mtShadow {
+		for _, g := range groups {
+			if g.ID == sg.ID {
+				out = append(out, g)
+				break
+			}
+		}
+	}
+	for _, g := range lost {
+		out = append(out, g)
+	}
+	for _, g := range groups {
+		known := false
+		for _, sg := range mtShadow {
+			if sg.ID == g.ID {
+				known = true
+				break
+			}
+		}
+		if !known {
+			out = append(out, g)
+		}
+	}
+	return out, true
+}
+
+func dropFought(have map[string]bool) {
+	kept := mtShadow[:0]
+	for _, g := range mtShadow {
+		if !have[g.ID] && restoredOnce[g.ID] >= 2 {
+			continue
+		}
+		kept = append(kept, g)
+	}
+	mtShadow = kept
+	if SaveShadow != nil {
+		SaveShadow(mtShadow)
+	}
+}
 
 func (c *Client) MutateGroups(ctx context.Context, mutate func(groups []Group) bool) error {
 	groupsMu.Lock()
@@ -217,13 +327,10 @@ func (c *Client) MutateGroups(ctx context.Context, mutate func(groups []Group) b
 	if err != nil {
 		return err
 	}
-	if c.peakGroups > 0 && len(groups)*10 < c.peakGroups*6 {
-		return fmt.Errorf("magitrickle усечён: %d групп против пиковых %d, сохранение заблокировано, нужен рестарт magitrickle", len(groups), c.peakGroups)
-	}
-	if len(groups) > c.peakGroups {
-		c.peakGroups = len(groups)
-	}
-	if !mutate(groups) {
+	groups, repaired := repairFromShadow(groups)
+	changed := mutate(groups)
+	if !changed && !repaired {
+		updateShadowLocked(groups)
 		return nil
 	}
 	if err := c.UpdateGroups(ctx, groups, true); err != nil {
@@ -231,6 +338,7 @@ func (c *Client) MutateGroups(ctx context.Context, mutate func(groups []Group) b
 	}
 	check, err := c.GroupsWithRules(ctx)
 	if err != nil {
+		updateShadowLocked(groups)
 		return nil
 	}
 	rules, checkRules := 0, 0
@@ -243,13 +351,26 @@ func (c *Client) MutateGroups(ctx context.Context, mutate func(groups []Group) b
 	if len(check) != len(groups) || checkRules != rules {
 		return fmt.Errorf("magitrickle усёк список: %d групп и %d правил вместо %d и %d, нужен рестарт magitrickle", len(check), checkRules, len(groups), rules)
 	}
+	updateShadowLocked(groups)
 	return nil
 }
 
-func (c *Client) ResetGroupBaseline() {
+// EnsureHealthy чинит усечённый рантайм magitrickle до любой другой
+// нашей записи в него: одиночные PUT (создание группы, правило) тоже
+// сохраняют весь рантайм на диск, и усечённое состояние стало бы
+// постоянным.
+func (c *Client) EnsureHealthy(ctx context.Context) error {
+	return c.MutateGroups(ctx, func(groups []Group) bool { return false })
+}
+
+// RefreshShadow перечитывает список групп в тень после одиночных
+// операций (создание, удаление), чтобы тень не воскрешала удалённое.
+func (c *Client) RefreshShadow(ctx context.Context) {
 	groupsMu.Lock()
 	defer groupsMu.Unlock()
-	c.peakGroups = 0
+	if groups, err := c.GroupsWithRules(ctx); err == nil {
+		updateShadowLocked(groups)
+	}
 }
 
 func (c *Client) Available(ctx context.Context) bool {

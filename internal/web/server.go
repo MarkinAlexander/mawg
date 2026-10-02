@@ -910,13 +910,19 @@ func (s *Server) mtCreateGroup(w http.ResponseWriter, r *http.Request) {
 	if color == "" {
 		color = "#4a9eff"
 	}
-	g, err := s.mtClient().CreateGroup(r.Context(), magitrickle.Group{
+	client := s.mtClient()
+	if err := client.EnsureHealthy(r.Context()); err != nil {
+		writeErr(w, err)
+		return
+	}
+	g, err := client.CreateGroup(r.Context(), magitrickle.Group{
 		Name: req.Name, Interface: req.Interface, Color: color, Enable: true,
 	})
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
+	client.RefreshShadow(r.Context())
 	s.store.LogEvent("rules", "magitrickle", "создана группа "+req.Name+" на "+req.Interface)
 	writeJSON(w, http.StatusOK, g)
 }
@@ -1096,10 +1102,12 @@ func (s *Server) mtToggleGroup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) mtDeleteGroup(w http.ResponseWriter, r *http.Request) {
-	if err := s.mtClient().DeleteGroup(r.Context(), r.PathValue("id")); err != nil {
+	client := s.mtClient()
+	if err := client.DeleteGroup(r.Context(), r.PathValue("id")); err != nil {
 		writeErr(w, err)
 		return
 	}
+	client.RefreshShadow(r.Context())
 	s.store.LogEvent("rules", "magitrickle", "удалена группа "+r.PathValue("id"))
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "deleted"})
 }
@@ -1118,13 +1126,19 @@ func (s *Server) mtCreateRule(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, fmt.Errorf("нужны type (domain/namespace/wildcard/regex/subnet) и rule"))
 		return
 	}
-	rule, err := s.mtClient().CreateRule(r.Context(), r.PathValue("id"), magitrickle.Rule{
+	client := s.mtClient()
+	if err := client.EnsureHealthy(r.Context()); err != nil {
+		writeErr(w, err)
+		return
+	}
+	rule, err := client.CreateRule(r.Context(), r.PathValue("id"), magitrickle.Rule{
 		Type: req.Type, Rule: req.Rule, Name: req.Name, Enable: true,
 	})
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
+	client.RefreshShadow(r.Context())
 	writeJSON(w, http.StatusOK, rule)
 }
 
@@ -1139,6 +1153,10 @@ func (s *Server) mtUpdateRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	client := s.mtClient()
+	if err := client.EnsureHealthy(r.Context()); err != nil {
+		writeErr(w, err)
+		return
+	}
 	g, err := client.GroupByID(r.Context(), r.PathValue("id"), true)
 	if err != nil {
 		writeErr(w, err)
@@ -1156,6 +1174,7 @@ func (s *Server) mtUpdateRule(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, err)
 			return
 		}
+		client.RefreshShadow(r.Context())
 		writeJSON(w, http.StatusOK, map[string]string{"ok": "updated"})
 		return
 	}
@@ -1168,6 +1187,10 @@ func (s *Server) mtToggleRule(w http.ResponseWriter, r *http.Request) {
 	}
 	json.NewDecoder(r.Body).Decode(&req)
 	client := s.mtClient()
+	if err := client.EnsureHealthy(r.Context()); err != nil {
+		writeErr(w, err)
+		return
+	}
 	groups, err := client.GroupsWithRules(r.Context())
 	if err != nil {
 		writeErr(w, err)
@@ -1187,6 +1210,7 @@ func (s *Server) mtToggleRule(w http.ResponseWriter, r *http.Request) {
 				writeErr(w, err)
 				return
 			}
+			client.RefreshShadow(r.Context())
 			writeJSON(w, http.StatusOK, map[string]string{"ok": "ok"})
 			return
 		}
@@ -1195,10 +1219,16 @@ func (s *Server) mtToggleRule(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) mtDeleteRule(w http.ResponseWriter, r *http.Request) {
-	if err := s.mtClient().DeleteRule(r.Context(), r.PathValue("id"), r.PathValue("rid")); err != nil {
+	client := s.mtClient()
+	if err := client.EnsureHealthy(r.Context()); err != nil {
 		writeErr(w, err)
 		return
 	}
+	if err := client.DeleteRule(r.Context(), r.PathValue("id"), r.PathValue("rid")); err != nil {
+		writeErr(w, err)
+		return
+	}
+	client.RefreshShadow(r.Context())
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "deleted"})
 }
 
@@ -1221,6 +1251,10 @@ func (s *Server) mtApplyPreset(w http.ResponseWriter, r *http.Request) {
 		name = preset.ID
 	}
 	client := s.mtClient()
+	if err := client.EnsureHealthy(r.Context()); err != nil {
+		writeErr(w, err)
+		return
+	}
 	g, err := client.CreateGroup(r.Context(), magitrickle.Group{
 		Name: name, Interface: req.Interface, Enable: true,
 	})
@@ -1234,6 +1268,7 @@ func (s *Server) mtApplyPreset(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	client.RefreshShadow(r.Context())
 	s.store.LogEvent("rules", "magitrickle", "применён шаблон "+preset.ID+" на "+req.Interface)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "groupId": g.ID, "rules": len(preset.Rules)})
 }
