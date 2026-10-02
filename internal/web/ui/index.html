@@ -323,7 +323,7 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
 <dialog id="dlgConfirm">
   <form method="dialog" style="display:grid; gap:10px; min-width:380px">
     <h3 style="margin:0" id="cfTitle">Подтверждение</h3>
-    <div id="cfText" style="font-size:13px"></div>
+    <div id="cfText" style="font-size:13px;white-space:pre-line;line-height:1.5"></div>
     <div class="btnrow" style="justify-content:end;margin:0">
       <button value="cancel">Отмена</button>
       <button class="primary" id="cfOk">Установить</button>
@@ -1323,10 +1323,12 @@ $('#egSave').onclick = e => withBusy(e.currentTarget, async () => {
   } catch (err) { toast(err.message, true); }
 });
 
+let PRESETS = [];
 async function loadPresets() {
   try {
     const r = await api('GET', '/mt/presets');
-    document.getElementById('presetSel').innerHTML = (r.presets||[]).map(p=>`<option value="${p.id}">${p.title} (${p.rules.length})</option>`).join('');
+    PRESETS = r.presets || [];
+    document.getElementById('presetSel').innerHTML = PRESETS.map(p=>`<option value="${p.id}">${p.title} (${p.rules.length})</option>`).join('');
     const hint = document.getElementById('presetSrc');
     if (r.sourceUrl) {
       hint.innerHTML = 'Списки: <a href="' + r.sourceUrl + '" target="_blank" rel="noopener">github.com/itdoginfo/allow-domains</a>'
@@ -1336,11 +1338,21 @@ async function loadPresets() {
   } catch {}
 }
 
+const PRESET_TYPE_LABELS = { namespace: 'домен+поддомены', subnet: 'подсети IPv4', subnet6: 'подсети IPv6' };
 document.getElementById('presetApply').onclick = async () => {
   const preset = document.getElementById('presetSel').value;
   const iface = document.getElementById('presetIface').value;
   if (!preset || !iface) return toast('Выберите шаблон и интерфейс', true);
-  if (!(await askModal('Применение шаблона', `Создать группу по шаблону на интерфейсе ${iface}?`, 'Создать'))) return;
+  const p = PRESETS.find(x => x.id === preset);
+  const cnt = {};
+  ((p && p.rules) || []).forEach(rl => { cnt[rl.type] = (cnt[rl.type] || 0) + 1; });
+  const parts = Object.entries(cnt).map(([t, n]) => `${PRESET_TYPE_LABELS[t] || t}: ${n}`);
+  const rulesLine = p ? `${p.title} - правил: ${p.rules.length}${parts.length ? ' (' + parts.join(', ') + ')' : ''}` : `Шаблон: ${preset}`;
+  const ifaceOpt = document.getElementById('presetIface').selectedOptions[0];
+  const ifaceTxt = ifaceOpt ? ifaceOpt.textContent.trim() : iface;
+  const lines = [rulesLine, `Интерфейс: ${ifaceTxt}`];
+  if (p && p.source) lines.push(`Источник: ${p.source.replace(/^https?:\/\//, '')}`);
+  if (!(await askModal('Применение шаблона', lines.join('\n') + '\n\nСоздать группу?', 'Создать'))) return;
   try {
     const r = await api('POST', `/mt/presets/${preset}/apply`, { interface: iface });
     toast(`Группа создана, правил: ${r.rules}`);
