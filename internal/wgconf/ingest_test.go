@@ -47,13 +47,13 @@ func TestSanitizePoolName(t *testing.T) {
 const toolongname16 = "aaaaaaaaaaaaaaaaaaaaaaaaa"
 
 func TestSanitizeBundleName(t *testing.T) {
-	ok := []string{"proton", "цепочка", "Запасной-Канал", "test-proton-chein", "канал2"}
+	ok := []string{"proton", "цепочка", "Запасной-Канал", "test-proton-chein", "канал2", "2ip-цепочка"}
 	for _, s := range ok {
 		if _, err := SanitizeBundleName(s); err != nil {
 			t.Fatalf("SanitizeBundleName(%q) err = %v", s, err)
 		}
 	}
-	bad := []string{"", "1abc", "has space", "under_score", "протон.", toolongname16}
+	bad := []string{"", "has space", "under_score", "протон.", toolongname16}
 	for _, s := range bad {
 		if _, err := SanitizeBundleName(s); err == nil {
 			t.Fatalf("SanitizeBundleName(%q) must fail", s)
