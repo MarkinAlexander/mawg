@@ -11,6 +11,8 @@
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, sans-serif; }
+/* панель скрыта до проверки сессии: чёрный фон и модалка входа */
+body:not(.unlocked) header, body:not(.unlocked) main { display: none; }
 a { color: var(--accent); }
 header { display: flex; align-items: center; gap: 16px; padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
 header h1 { font-size: 16px; margin: 0; letter-spacing: 1px; }
@@ -1567,6 +1569,7 @@ let loginShown = false;
 function showLogin() {
   if (loginShown) return;
   loginShown = true;
+  document.body.classList.remove('unlocked');
   document.getElementById('authErr').style.display = 'none';
   document.getElementById('dlgAuth').showModal();
   setTimeout(() => document.getElementById('authPass').focus(), 50);
@@ -1709,17 +1712,21 @@ function startPanel() {
   fillIfaceSelects(); refreshIfaces(true); refreshBundles(true); refreshWAN();
 }
 
-// гейт: пока нет сессии, панель не опрашивается - висит оверлей входа
+// гейт: без сессии страница - чёрный фон и модалка входа, API не опрашивается
 async function startGate() {
+  let ok = false, authOff = false;
   try {
     const r = await fetch('/api/v1/status', { credentials: 'same-origin' });
     if (r.status === 401) { showLogin(); return; }
     if (r.ok) {
       const d = await r.json().catch(() => ({}));
-      if (d.authEnabled === false) showNoAuthBadge();
+      if (d.authEnabled === false) authOff = true;
     }
+    ok = true;
   } catch {}
-  startPanel();
+  document.body.classList.add('unlocked');
+  if (authOff) showNoAuthBadge();
+  if (ok) startPanel();
 }
 startGate();
 </script>
