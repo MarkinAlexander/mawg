@@ -228,6 +228,16 @@ func (a *Auth) writeErr(w http.ResponseWriter, code int, msg string) {
 	fmt.Fprintf(w, `{"error":%q}`, msg)
 }
 
+// current: свежая учётка. Файл перечитывается на каждом логине, чтобы
+// консольный сброс (mawg -reset-auth) действовал без рестарта демона.
+// Не читается - берём копию в памяти.
+func (a *Auth) current() (string, string) {
+	if c, err := a.load(); err == nil {
+		a.login, a.hash = c.Login, c.Hash
+	}
+	return a.login, a.hash
+}
+
 // HandleLogin: rate limit по IP, сессия в cookie + токен в ответе
 // (для скриптов, которые ходят с Authorization: Bearer).
 func (a *Auth) HandleLogin(w http.ResponseWriter, r *http.Request) {
@@ -241,13 +251,14 @@ func (a *Auth) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	ip := clientIP(r)
 	a.mu.Lock()
+	login, hash := a.current()
 	if f := a.fails[ip]; f != nil && time.Now().Before(f.until) {
 		left := int(time.Until(f.until).Seconds()) + 1
 		a.mu.Unlock()
 		a.writeErr(w, http.StatusTooManyRequests, fmt.Sprintf("слишком много попыток, подождите %dс", left))
 		return
 	}
-	ok := subtle.ConstantTimeCompare([]byte(req.Login), []byte(a.login)) == 1 && verifyHash(a.hash, req.Password)
+	ok := subtle.ConstantTimeCompare([]byte(req.Login), []byte(login)) == 1 && verifyHash(hash, req.Password)
 	if ok {
 		delete(a.fails, ip)
 	} else {
