@@ -234,6 +234,13 @@ report() {
     echo " лог:         $LOG"
     echo " веб:         http://${ip:-<ip-роутера>}:8090"
     echo "==============================="
+    if [ -f "$DATA/first-auth.txt" ]; then
+        echo
+        echo "-- ВНИМАНИЕ: включилась авторизация веб-панели"
+        cat "$DATA/first-auth.txt"
+        echo " смените пароль в веб-интерфейсе (Настройки) - подсказка удалится"
+        echo " сброс из терминала: $(basename "$BIN") -reset-auth"
+    fi
 }
 
 if [ "$MODE" = remove ] || [ "$MODE" = purge ]; then
