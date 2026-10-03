@@ -46,6 +46,10 @@ dialog select { max-width: 100%; }
 dialog::backdrop { background: rgba(0,0,0,.55); }
 label.f { display: block; margin: 8px 0; font-size: 13px; color: var(--dim); }
 label.f input, label.f select { display: block; margin-top: 3px; width: 100%; }
+label.f .pwrap { position: relative; margin-top: 3px; }
+label.f .pwrap input { margin-top: 0; padding-right: 32px; }
+.peye { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); background: none; border: none; padding: 2px; color: var(--dim); line-height: 0; }
+.peye:hover { color: var(--text); border-color: transparent; }
 #log { font: 11.5px/1.5 ui-monospace, monospace; color: var(--dim); max-height: 220px; overflow: auto; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px; }
 #log .k-rotate, #log .k-applied { color: var(--accent); }
 #log .k-fallback { color: var(--err); }
@@ -404,7 +408,7 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
   <form method="dialog" style="display:grid;gap:10px;min-width:380px">
     <h3 style="margin:0">Вход в панель</h3>
     <label class="f">логин<input id="authLogin" autocomplete="username"></label>
-    <label class="f">пароль<input type="password" id="authPass" autocomplete="current-password"></label>
+    <label class="f">пароль<div class="pwrap"><input type="password" id="authPass" autocomplete="current-password"><button type="button" class="peye" data-for="authPass" title="показать пароль"></button></div></label>
     <div class="muted" id="authErr" style="display:none;font-size:12px;color:var(--err)"></div>
     <div class="btnrow" style="justify-content:end;margin:0">
       <button class="primary" id="authGo">Войти</button>
@@ -416,9 +420,9 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
 <dialog id="dlgPass">
   <form method="dialog" style="display:grid;gap:10px;min-width:380px">
     <h3 style="margin:0">Смена пароля</h3>
-    <label class="f">старый пароль<input type="password" id="pwOld" autocomplete="current-password"></label>
-    <label class="f">новый пароль<input type="password" id="pwNew" autocomplete="new-password"></label>
-    <label class="f">повторите новый<input type="password" id="pwNew2" autocomplete="new-password"></label>
+    <label class="f">старый пароль<div class="pwrap"><input type="password" id="pwOld" autocomplete="current-password"><button type="button" class="peye" data-for="pwOld" title="показать пароль"></button></div></label>
+    <label class="f">новый пароль<div class="pwrap"><input type="password" id="pwNew" autocomplete="new-password"><button type="button" class="peye" data-for="pwNew" title="показать пароль"></button></div></label>
+    <label class="f">повторите новый<div class="pwrap"><input type="password" id="pwNew2" autocomplete="new-password"><button type="button" class="peye" data-for="pwNew2" title="показать пароль"></button></div></label>
     <div class="muted" style="font-size:11px">Минимум 8 символов. Подсказка с паролем первого входа после смены удаляется.</div>
     <div class="muted" id="pwErr" style="display:none;font-size:12px;color:var(--err)"></div>
     <div class="btnrow" style="justify-content:end;margin:0">
@@ -1565,6 +1569,19 @@ dlgConfirm.addEventListener('close', () => {
 });
 
 // авторизация: оверлей входа по 401, смена пароля, выход
+const EYE_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+const EYE_OFF_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+document.querySelectorAll('.peye').forEach(b => {
+  b.innerHTML = EYE_SVG;
+  b.onclick = () => {
+    const inp = document.getElementById(b.dataset.for);
+    const show = inp.type === 'password';
+    inp.type = show ? 'text' : 'password';
+    b.innerHTML = show ? EYE_OFF_SVG : EYE_SVG;
+    inp.focus();
+  };
+});
+
 let loginShown = false;
 function showLogin() {
   if (loginShown) return;
