@@ -50,6 +50,8 @@ label.f .pwrap { position: relative; margin-top: 3px; }
 label.f .pwrap input { margin-top: 0; padding-right: 32px; }
 .peye { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); background: none; border: none; padding: 2px; color: var(--dim); line-height: 0; }
 .peye:hover { color: var(--text); border-color: transparent; }
+.spin { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -2px; margin-right: 6px; }
+@keyframes spin { to { transform: rotate(360deg); } }
 #log { font: 11.5px/1.5 ui-monospace, monospace; color: var(--dim); max-height: 220px; overflow: auto; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px; }
 #log .k-rotate, #log .k-applied { color: var(--accent); }
 #log .k-fallback { color: var(--err); }
@@ -1594,8 +1596,11 @@ function showLogin() {
 document.getElementById('dlgAuth').addEventListener('cancel', e => e.preventDefault());
 document.getElementById('authGo').onclick = async e => {
   e.preventDefault();
+  const btn = e.currentTarget;
   const errEl = document.getElementById('authErr');
   errEl.style.display = 'none';
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin"></span>вход...';
   try {
     const r = await fetch('/api/v1/auth/login', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
@@ -1608,6 +1613,9 @@ document.getElementById('authGo').onclick = async e => {
   } catch (err) {
     errEl.textContent = 'ошибка сети: ' + err.message;
     errEl.style.display = '';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Войти';
   }
 };
 document.getElementById('authPass').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('authGo').click(); });
@@ -1619,17 +1627,24 @@ document.getElementById('setPassBtn').onclick = () => {
 };
 document.getElementById('pwSave').onclick = async e => {
   e.preventDefault();
+  const btn = e.currentTarget;
   const errEl = document.getElementById('pwErr');
   errEl.style.display = 'none';
   const old = document.getElementById('pwOld').value;
   const n1 = document.getElementById('pwNew').value, n2 = document.getElementById('pwNew2').value;
   if (n1.length < 8) { errEl.textContent = 'минимум 8 символов'; errEl.style.display = ''; return; }
   if (n1 !== n2) { errEl.textContent = 'пароли не совпадают'; errEl.style.display = ''; return; }
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin"></span>сохранение...';
   try {
     await api('POST', '/auth/password', { old, password: n1 });
     document.getElementById('dlgPass').close();
     toast('пароль изменён');
   } catch (err) { errEl.textContent = err.message; errEl.style.display = ''; }
+  finally {
+    btn.disabled = false;
+    btn.textContent = 'Сохранить';
+  }
 };
 document.getElementById('logoutBtn').onclick = async () => {
   try { await fetch('/api/v1/auth/logout', { method: 'POST', credentials: 'same-origin' }); } catch {}
