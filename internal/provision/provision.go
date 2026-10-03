@@ -250,7 +250,7 @@ func checkOpenwrt(run Runner) Result {
 	} else {
 		res.Items = append(res.Items, Item{
 			ID: "magitrickle", Title: "MagiTrickle (маршрутизация по доменам)", Installed: false,
-			Action:  "wget -qO /tmp/mt-repo.sh http://bin.magitrickle.dev/packages/add_repo.sh && sh /tmp/mt-repo.sh && " + packages.install("magitrickle") + " && (/etc/init.d/magitrickle enable && /etc/init.d/magitrickle start)",
+			Action:  "wget -qO /tmp/mt-repo.sh https://bin.magitrickle.dev/packages/add_repo.sh && sh /tmp/mt-repo.sh && " + packages.install("magitrickle") + " && (/etc/init.d/magitrickle enable && /etc/init.d/magitrickle start)",
 			Confirm: "Добавить репозиторий bin.magitrickle.dev и установить MagiTrickle с зависимостями?",
 		})
 	}
@@ -297,7 +297,7 @@ func CheckKeenetic(ndmc func(string) (string, error)) Result {
 	} else {
 		res.Items = append(res.Items, Item{
 			ID: "magitrickle", Title: "MagiTrickle (Entware)", Installed: false,
-			Action:  "wget -qO /tmp/mt-repo.sh http://bin.magitrickle.dev/packages/add_repo.sh && sh /tmp/mt-repo.sh && opkg update && opkg install magitrickle socat && chmod +x /opt/etc/init.d/S99magitrickle && /opt/etc/init.d/S99magitrickle start",
+			Action:  "wget -qO /tmp/mt-repo.sh https://bin.magitrickle.dev/packages/add_repo.sh && sh /tmp/mt-repo.sh && opkg update && opkg install magitrickle socat && chmod +x /opt/etc/init.d/S99magitrickle && /opt/etc/init.d/S99magitrickle start",
 			Confirm: "Добавить репозиторий bin.magitrickle.dev и установить MagiTrickle с socat?",
 		})
 	}
