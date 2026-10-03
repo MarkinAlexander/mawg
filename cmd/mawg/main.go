@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"flag"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"syscall"
 
+	"mawg/internal/auth"
 	"mawg/internal/magitrickle"
 	"mawg/internal/platform"
 	"mawg/internal/platform/keenetic"
@@ -49,7 +51,7 @@ type rotatingWriter struct {
 func (w *rotatingWriter) Write(p []byte) (int, error) {
 	if w.size+int64(len(p)) > logMaxBytes {
 		w.file.Close()
-		f, err := os.OpenFile(w.path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+		f, err := os.OpenFile(w.path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|logExtraFlags(), 0o600)
 		if err != nil {
 			return 0, err
 		}
@@ -70,7 +72,7 @@ func setupLogging(platform string) {
 		path = "/var/log/mawg.log"
 	}
 	os.MkdirAll(filepath.Dir(path), 0o755)
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND|logExtraFlags(), 0o600)
 	if err != nil {
 		return
 	}
@@ -82,10 +84,21 @@ func setupLogging(platform string) {
 	log.SetOutput(io.MultiWriter(os.Stderr, rw))
 }
 
+func readLine(r *bufio.Reader) string {
+	line, err := r.ReadString('\n')
+	if err != nil && line == "" {
+		log.Fatal("ввод прерван")
+	}
+	return line
+}
+
 func main() {
 	platformName := flag.String("platform", "", "platform override: openwrt | keenetic")
 	base := flag.String("base", "", "config directory")
 	port := flag.Int("port", 8090, "web ui port")
+	noAuth := flag.Bool("no-auth", false, "disable web panel authentication (open api)")
+	resetAuth := flag.Bool("reset-auth", false, "set a new panel password interactively and exit")
+	password := flag.String("password", "", "set panel password non-interactively and exit")
 	flag.Parse()
 
 	plat := *platformName
@@ -103,6 +116,29 @@ func main() {
 		log.Fatal("cannot detect platform, use -platform and -base")
 	}
 	setupLogging(plat)
+
+	// консольное управление паролем панели: root с SSH должен уметь
+	// сбросить пароль без веб-морды
+	if *resetAuth || *password != "" {
+		a := auth.Open(dir)
+		np := *password
+		if np == "" {
+		reader := bufio.NewReader(os.Stdin)
+		fmt.Print("новый пароль (минимум 8 символов, виден при вводе): ")
+		np = strings.TrimSpace(readLine(reader))
+		fmt.Print("повторите: ")
+		if strings.TrimSpace(readLine(reader)) != np {
+			log.Fatal("пароли не совпадают")
+		}
+		}
+		if err := a.ResetPassword(np); err != nil {
+			log.Fatal(err)
+		}
+		log.Printf("пароль панели обновлён (логин %s)", a.Login())
+		return
+	}
+
+	authenticator := auth.New(dir, !*noAuth)
 
 	var backend platform.Backend
 	switch plat {
@@ -161,7 +197,7 @@ func main() {
 	defer stop()
 	engine.Start(ctx)
 
-	srv := web.New(st, engine, backend, mt, version)
+	srv := web.New(st, engine, backend, mt, version, authenticator)
 	addr := fmt.Sprintf(":%d", *port)
 	log.Printf("mawg %s: platform=%s base=%s web=http://0.0.0.0:%d", version, plat, dir, *port)
 	httpServer := &http.Server{Addr: addr, Handler: srv.Handler()}
