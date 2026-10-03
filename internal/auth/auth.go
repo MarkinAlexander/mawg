@@ -290,6 +290,9 @@ func (a *Auth) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true, SameSite: http.SameSiteStrictMode,
 		MaxAge: int(sessionTTL.Seconds()),
 	})
+	// подсказка first-auth.txt нужна ровно до первого успешного входа:
+	// автогенерированный пароль считаем полноценным, дальше файл не нужен
+	os.Remove(filepath.Join(a.Base, "first-auth.txt"))
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"ok":true,"token":%q}`, token)
 }
@@ -309,7 +312,8 @@ func (a *Auth) HandleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandlePassword: смена пароля из веб-морды (middleware уже проверил
-// сессию). Успешная смена удаляет подсказку first-auth.txt.
+// сессию). Успешная смена тоже подчищает подсказку, если вход ещё
+// не случился.
 func (a *Auth) HandlePassword(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Old      string `json:"old"`
