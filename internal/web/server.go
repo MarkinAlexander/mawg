@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"mawg/internal/auth"
 	"mawg/internal/magitrickle"
 	"mawg/internal/platform"
 	"mawg/internal/platform/keenetic"
@@ -30,10 +31,11 @@ type Server struct {
 	backend platform.Backend
 	mt      *magitrickle.Client
 	version string
+	auth    *auth.Auth
 }
 
-func New(st *store.Store, e *rotator.Engine, b platform.Backend, mt *magitrickle.Client, version string) *Server {
-	return &Server{store: st, engine: e, backend: b, mt: mt, version: version}
+func New(st *store.Store, e *rotator.Engine, b platform.Backend, mt *magitrickle.Client, version string, a *auth.Auth) *Server {
+	return &Server{store: st, engine: e, backend: b, mt: mt, version: version, auth: a}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -94,7 +96,14 @@ func (s *Server) Handler() http.Handler {
 		panic(err)
 	}
 	mux.Handle("/", http.FileServer(http.FS(sub)))
-	return mux
+	if s.auth != nil {
+		mux.HandleFunc("POST /api/v1/auth/login", s.auth.HandleLogin)
+		mux.HandleFunc("POST /api/v1/auth/logout", s.auth.HandleLogout)
+		mux.HandleFunc("POST /api/v1/auth/password", s.auth.HandlePassword)
+	}
+	// авторизация снаружи, лимит тела внутри (статика без лимита не нужна -
+	// там нет тела)
+	return s.auth.Middleware(limitBody(mux))
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
@@ -107,8 +116,7 @@ func writeErr(w http.ResponseWriter, err error) {
 	writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 }
 
-func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
-	pools := s.store.Pools()
+func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {	pools := s.store.Pools()
 	type poolView struct {
 		Name           string             `json:"name"`
 		Platform       string             `json:"platform"`
@@ -129,8 +137,10 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 		Version     string     `json:"version"`
 		Platform    string     `json:"platform"`
 		BackendName string     `json:"backendName"`
+		AuthEnabled bool       `json:"authEnabled"`
 		Pools       []poolView `json:"pools"`
-	}{Version: s.version, Platform: s.backend.Name(), BackendName: s.backend.Name(), Pools: []poolView{}}
+	}{Version: s.version, Platform: s.backend.Name(), BackendName: s.backend.Name(),
+		AuthEnabled: s.auth == nil || s.auth.Enabled, Pools: []poolView{}}
 
 	for _, p := range pools {
 		st := s.store.State(p.Name)
@@ -416,7 +426,8 @@ func (s *Server) setIfaceProbe(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getRCIToken(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"token": s.store.RCIToken()})
+	// токен наружу не отдаём: это credential локального RCI Keenetic
+	writeJSON(w, http.StatusOK, map[string]bool{"configured": s.store.RCIToken() != ""})
 }
 
 func (s *Server) putRCIToken(w http.ResponseWriter, r *http.Request) {
@@ -799,9 +810,6 @@ func (s *Server) uploadConfigs(w http.ResponseWriter, r *http.Request) {
 	for _, w := range warnings {
 		s.store.LogEvent(name, "conflict", w)
 	}
-	for _, w := range warnings {
-		s.store.LogEvent(name, "conflict", w)
-	}
 	s.engine.CheckNow(name)
 	writeJSON(w, http.StatusOK, map[string]any{"added": added, "duplicates": dupes, "errors": errors, "warnings": warnings})
 }
@@ -1167,6 +1175,19 @@ func (s *Server) mtUpdateGroup(w http.ResponseWriter, r *http.Request) {
 	}
 	s.store.LogEvent("rules", "magitrickle", "изменена группа "+req.Name)
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "updated"})
+}
+
+// limitBody: JSON ограничен 1МБ, multipart 32МБ - безлимитное тело
+// на роутере это поверхность DoS.
+func limitBody(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		limit := int64(1 << 20)
+		if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/") {
+			limit = 32 << 20
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, limit)
+		next.ServeHTTP(w, r)
+	})
 }
 
 func reorderIDs[T any](items []T, idOf func(T) string, ids []string) ([]T, bool) {

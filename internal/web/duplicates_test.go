@@ -23,7 +23,7 @@ func newTestServerWithMT(t *testing.T, mtURL string) *httptest.Server {
 	}
 	fb := fake.New()
 	e := rotator.New(st, fb, magitrickle.New(mtURL))
-	srv := New(st, e, fb, magitrickle.New(mtURL), "test")
+	srv := New(st, e, fb, magitrickle.New(mtURL), "test", nil)
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	return ts

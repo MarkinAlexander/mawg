@@ -167,6 +167,15 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
       </div>
     </div>
   </div>
+  <div class="card" id="setcard" style="margin-top:16px">
+    <h2>Настройки</h2>
+    <div class="sub">Доступ к панели. Здесь же появятся новые настройки.</div>
+    <div class="btnrow" style="align-items:center">
+      <button id="setPassBtn">сменить пароль</button>
+      <button id="logoutBtn">выйти</button>
+      <span class="muted" id="authNote" style="display:none;font-size:11px">авторизация выключена (-no-auth): API открыт всем, кто достучался до порта</span>
+    </div>
+  </div>
   <details open>
     <summary>Журнал событий</summary>
     <div id="log"></div>
@@ -389,6 +398,34 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
   </form>
 </dialog>
 
+<dialog id="dlgAuth">
+  <form method="dialog" style="display:grid;gap:10px;min-width:380px">
+    <h3 style="margin:0">Вход в панель</h3>
+    <label class="f">логин<input id="authLogin" autocomplete="username"></label>
+    <label class="f">пароль<input type="password" id="authPass" autocomplete="current-password"></label>
+    <div class="muted" id="authErr" style="display:none;font-size:12px;color:var(--err)"></div>
+    <div class="btnrow" style="justify-content:end;margin:0">
+      <button class="primary" id="authGo">Войти</button>
+    </div>
+    <div class="muted" style="font-size:11px">Пароль первого входа выводится в консоль при установке и лежит в first-auth.txt. Сброс из терминала роутера: mawg -reset-auth</div>
+  </form>
+</dialog>
+
+<dialog id="dlgPass">
+  <form method="dialog" style="display:grid;gap:10px;min-width:380px">
+    <h3 style="margin:0">Смена пароля</h3>
+    <label class="f">старый пароль<input type="password" id="pwOld" autocomplete="current-password"></label>
+    <label class="f">новый пароль<input type="password" id="pwNew" autocomplete="new-password"></label>
+    <label class="f">повторите новый<input type="password" id="pwNew2" autocomplete="new-password"></label>
+    <div class="muted" style="font-size:11px">Минимум 8 символов. Подсказка с паролем первого входа после смены удаляется.</div>
+    <div class="muted" id="pwErr" style="display:none;font-size:12px;color:var(--err)"></div>
+    <div class="btnrow" style="justify-content:end;margin:0">
+      <button value="cancel">Отмена</button>
+      <button class="primary" id="pwSave">Сохранить</button>
+    </div>
+  </form>
+</dialog>
+
 <div id="topbar"></div>
 <div class="msg" id="msg"></div>
 
@@ -441,6 +478,7 @@ async function api(method, path, body, isForm) {
   try {
     const resp = await fetch('/api/v1' + path, opts);
     const data = await resp.json().catch(() => ({}));
+    if (resp.status === 401 && !path.startsWith('/auth/')) { showLogin(); await new Promise(() => {}); }
     if (!resp.ok) throw new Error(data.error || resp.status);
     return data;
   } finally {
@@ -1524,6 +1562,65 @@ dlgConfirm.addEventListener('close', () => {
   if (confirmResolve) { confirmResolve(confirmOk); confirmResolve = null; }
 });
 
+// авторизация: оверлей входа по 401, смена пароля, выход
+let loginShown = false;
+function showLogin() {
+  if (loginShown) return;
+  loginShown = true;
+  document.getElementById('authErr').style.display = 'none';
+  document.getElementById('dlgAuth').showModal();
+  setTimeout(() => document.getElementById('authPass').focus(), 50);
+}
+document.getElementById('dlgAuth').addEventListener('cancel', e => e.preventDefault());
+document.getElementById('authGo').onclick = async e => {
+  e.preventDefault();
+  const errEl = document.getElementById('authErr');
+  errEl.style.display = 'none';
+  try {
+    const r = await fetch('/api/v1/auth/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
+      body: JSON.stringify({ login: document.getElementById('authLogin').value.trim(), password: document.getElementById('authPass').value })
+    });
+    if (r.ok) { location.reload(); return; }
+    const d = await r.json().catch(() => ({}));
+    errEl.textContent = d.error || ('ошибка ' + r.status);
+    errEl.style.display = '';
+  } catch (err) {
+    errEl.textContent = 'ошибка сети: ' + err.message;
+    errEl.style.display = '';
+  }
+};
+document.getElementById('authPass').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('authGo').click(); });
+
+document.getElementById('setPassBtn').onclick = () => {
+  document.getElementById('pwErr').style.display = 'none';
+  ['pwOld', 'pwNew', 'pwNew2'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('dlgPass').showModal();
+};
+document.getElementById('pwSave').onclick = async e => {
+  e.preventDefault();
+  const errEl = document.getElementById('pwErr');
+  errEl.style.display = 'none';
+  const old = document.getElementById('pwOld').value;
+  const n1 = document.getElementById('pwNew').value, n2 = document.getElementById('pwNew2').value;
+  if (n1.length < 8) { errEl.textContent = 'минимум 8 символов'; errEl.style.display = ''; return; }
+  if (n1 !== n2) { errEl.textContent = 'пароли не совпадают'; errEl.style.display = ''; return; }
+  try {
+    await api('POST', '/auth/password', { old, password: n1 });
+    document.getElementById('dlgPass').close();
+    toast('пароль изменён');
+  } catch (err) { errEl.textContent = err.message; errEl.style.display = ''; }
+};
+document.getElementById('logoutBtn').onclick = async () => {
+  try { await fetch('/api/v1/auth/logout', { method: 'POST', credentials: 'same-origin' }); } catch {}
+  location.reload();
+};
+function showNoAuthBadge() {
+  document.getElementById('authNote').style.display = '';
+  document.getElementById('setPassBtn').style.display = 'none';
+  document.getElementById('logoutBtn').style.display = 'none';
+}
+
 function showResult(ok, output, errText) {
   document.getElementById('rsTitle').textContent = ok ? 'Установлено' : 'Ошибка установки';
   document.getElementById('rsTitle').style.color = ok ? 'var(--ok)' : 'var(--err)';
@@ -1563,7 +1660,9 @@ async function refreshRCIToken() {
     row.style.display = st.platform === 'keenetic' ? '' : 'none';
     if (st.platform !== 'keenetic') return;
     const r = await api('GET', '/rcitoken');
-    document.getElementById('rciToken').value = r.token || '';
+    const inp = document.getElementById('rciToken');
+    inp.value = '';
+    inp.placeholder = r.configured ? 'задан (скрыт) - введите новый для замены' : 'X-NDMA-TKN';
   } catch (e) { console.warn(e); }
 }
 document.getElementById('rciSave').onclick = e => withBusy(e.currentTarget, async () => {
@@ -1596,25 +1695,33 @@ async function refreshLog() {
   } catch {}
 }
 
-setInterval(refresh, 5000);
-setInterval(refreshLog, 5000);
-setInterval(() => { refreshMT(); loadSlots(); }, 30000);
-setInterval(() => refreshSystem(false), 60000);
-setInterval(() => refreshRules(false), 15000);
-setInterval(fillIfaceSelects, 10000);
-setInterval(() => refreshIfaces(false), 30000);
-setInterval(() => refreshBundles(false), 30000);
-refresh();
-refreshLog();
-refreshMT();
-loadSlots();
-refreshSystem(true);
-refreshRules(true);
-loadPresets();
-fillIfaceSelects();
-refreshIfaces(true);
-refreshBundles(true);
-refreshWAN();
+function startPanel() {
+  setInterval(refresh, 5000);
+  setInterval(refreshLog, 5000);
+  setInterval(() => { refreshMT(); loadSlots(); }, 30000);
+  setInterval(() => refreshSystem(false), 60000);
+  setInterval(() => refreshRules(false), 15000);
+  setInterval(fillIfaceSelects, 10000);
+  setInterval(() => refreshIfaces(false), 30000);
+  setInterval(() => refreshBundles(false), 30000);
+  refresh(); refreshLog(); refreshMT(); loadSlots();
+  refreshSystem(true); refreshRules(true); loadPresets();
+  fillIfaceSelects(); refreshIfaces(true); refreshBundles(true); refreshWAN();
+}
+
+// гейт: пока нет сессии, панель не опрашивается - висит оверлей входа
+async function startGate() {
+  try {
+    const r = await fetch('/api/v1/status', { credentials: 'same-origin' });
+    if (r.status === 401) { showLogin(); return; }
+    if (r.ok) {
+      const d = await r.json().catch(() => ({}));
+      if (d.authEnabled === false) showNoAuthBadge();
+    }
+  } catch {}
+  startPanel();
+}
+startGate();
 </script>
 </body>
 </html>

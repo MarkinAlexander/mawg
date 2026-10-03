@@ -28,7 +28,7 @@ func newTestServer(t *testing.T) *httptest.Server {
 	}
 	fb := fake.New()
 	e := rotator.New(st, fb, magitrickle.New("http://127.0.0.1:1"))
-	srv := New(st, e, fb, nil, "test")
+	srv := New(st, e, fb, nil, "test", nil)
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	return ts
