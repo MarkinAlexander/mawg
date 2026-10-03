@@ -174,3 +174,24 @@ func TestResetPasswordCLI(t *testing.T) {
 		t.Fatal("короткий пароль принят")
 	}
 }
+
+func TestLoginPicksUpExternalPasswordChange(t *testing.T) {
+	base := t.TempDir()
+	a := New(base, true)
+	_ = filePassword(t, base)
+	ts := httptest.NewServer(http.HandlerFunc(a.HandleLogin))
+	defer ts.Close()
+
+	// другой инстанс (как CLI -reset-auth) меняет файл
+	Open(base).ResetPassword("external-pass-1")
+
+	resp, err := http.Post(ts.URL, "application/json",
+		strings.NewReader(`{"login":"admin","password":"external-pass-1"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("логин со свежим файлом: %d (ждём 200 без рестарта)", resp.StatusCode)
+	}
+}
