@@ -171,7 +171,7 @@ func (s *Store) SetGroupPolicy(id string, p *GroupPolicy) error {
 	if s.root.Settings.GroupPolicies == nil {
 		s.root.Settings.GroupPolicies = map[string]GroupPolicy{}
 	}
-	if p == nil || p.OnDead == "" || (p.OnDead != "direct" && p.OnDead != "blackhole" && p.OnDead != "iface") {
+	if p == nil || p.OnDead == "" || (p.OnDead != "direct" && p.OnDead != "iface") {
 		delete(s.root.Settings.GroupPolicies, id)
 	} else {
 		s.root.Settings.GroupPolicies[id] = *p

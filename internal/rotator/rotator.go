@@ -1025,12 +1025,6 @@ func (e *Engine) suspendGroups(p store.Pool) {
 			}
 			pol := e.store.GroupPolicy(g.ID)
 			switch {
-			case pol.OnDead == store.PolicyBlackhole:
-				if g.Interface != "blackhole" {
-					degraded[g.ID] = store.DegradedGroup{OrigIface: g.Interface, Mode: store.PolicyBlackhole}
-					g.Interface = "blackhole"
-					changed = true
-				}
 			case pol.OnDead == store.PolicyIface && pol.Iface != "" && pol.Iface != dev:
 				degraded[g.ID] = store.DegradedGroup{OrigIface: g.Interface, Mode: store.PolicyIface + ":" + pol.Iface}
 				g.Interface = pol.Iface
@@ -1088,15 +1082,7 @@ func (e *Engine) rebindGroups(p store.Pool, targetDevice string) {
 			}
 			pol := e.store.GroupPolicy(g.ID)
 			if g.Enable {
-				switch {
-				case pol.OnDead == store.PolicyBlackhole:
-					if g.Interface != "blackhole" {
-						degraded[g.ID] = store.DegradedGroup{OrigIface: g.Interface, Mode: store.PolicyBlackhole}
-						g.Interface = "blackhole"
-						changed = true
-					}
-					continue
-				case pol.OnDead == store.PolicyIface && pol.Iface != "" && pol.Iface != dev:
+				if pol.OnDead == store.PolicyIface && pol.Iface != "" && pol.Iface != dev {
 					degraded[g.ID] = store.DegradedGroup{OrigIface: g.Interface, Mode: store.PolicyIface + ":" + pol.Iface}
 					g.Interface = pol.Iface
 					changed = true
@@ -1274,11 +1260,6 @@ func (e *Engine) checkGroupPolicies() {
 			if g.Enable {
 				acts[g.ID] = action{disable: true}
 				pending[g.ID] = store.DegradedGroup{OrigIface: g.Interface, Mode: store.PolicyDirect}
-			}
-		case store.PolicyBlackhole:
-			if g.Enable && g.Interface != "blackhole" {
-				acts[g.ID] = action{iface: "blackhole"}
-				pending[g.ID] = store.DegradedGroup{OrigIface: g.Interface, Mode: store.PolicyBlackhole}
 			}
 		case store.PolicyIface:
 			if pol.Iface != "" && pol.Iface != g.Interface && g.Enable {

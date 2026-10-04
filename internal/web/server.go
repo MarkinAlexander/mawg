@@ -1445,7 +1445,7 @@ func (s *Server) mtSetPolicy(w http.ResponseWriter, r *http.Request) {
 	switch req.OnDead {
 	case "":
 		p = nil
-	case store.PolicyDirect, store.PolicyBlackhole:
+	case store.PolicyDirect:
 		p = &store.GroupPolicy{OnDead: req.OnDead}
 	case store.PolicyIface:
 		if req.Iface == "" {

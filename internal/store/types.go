@@ -148,10 +148,11 @@ type PoolState struct {
 
 // GroupPolicy - поведение группы магитрикла при отвале её основного
 // интерфейса. Пустая политика = обычное поведение (выключение при
-// фоллбеке пула). Direct - прямой ход после проверки WAN, Blackhole -
-// резать трафик, Iface - переписать на запасной интерфейс.
+// фоллбеке пула). Direct - прямой ход после проверки WAN, Iface -
+// переписать на запасной интерфейс. Блокировка (blackhole) делается
+// выбором интерфейса группы, а не политикой.
 type GroupPolicy struct {
-	OnDead string `json:"onDead"`          // "" | "direct" | "blackhole" | "iface"
+	OnDead string `json:"onDead"`          // "" | "direct" | "iface"
 	Iface  string `json:"iface,omitempty"` // для OnDead == "iface"
 }
 
@@ -169,13 +170,12 @@ type CascadeEntry struct {
 
 type DegradedGroup struct {
 	OrigIface string `json:"origIface"`
-	Mode      string `json:"mode"` // "blackhole" | "iface" | "direct-pending"
+	Mode      string `json:"mode"` // "iface" | "direct" | "direct-pending"
 }
 
 const (
-	PolicyDirect    = "direct"
-	PolicyBlackhole = "blackhole"
-	PolicyIface     = "iface"
+	PolicyDirect = "direct"
+	PolicyIface  = "iface"
 )
 
 type IfaceEntry struct {

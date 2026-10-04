@@ -84,6 +84,7 @@ details summary { cursor: pointer; color: var(--dim); font-size: 12px; margin-to
 .cfgtable .r-badges { display: block; margin-top: 2px; white-space: nowrap; }
 .cfgtable .r-endpoint { display: block; margin-top: 1px; font-size: 11px; }
 .mtgroup.dragging { opacity: .4; }
+.mtgroup-block { border-color: var(--err); border-left-color: var(--err); }
 .mtgroup.drop-before { box-shadow: 0 -2px 0 0 var(--accent); }
 .mtgroup.drop-after { box-shadow: 0 2px 0 0 var(--accent); }
 .warn-badge { display: inline-flex; align-items: center; margin-left: 6px; color: var(--warn); cursor: help; }
@@ -256,7 +257,6 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
       <select id="egPolicy">
         <option value="">по умолчанию (как у пула)</option>
         <option value="direct">прямой ход (проверив интернет)</option>
-        <option value="blackhole">резать трафик (blackhole)</option>
         <option value="iface">переключить на запасной интерфейс</option>
       </select>
     </label>
@@ -1167,7 +1167,6 @@ let editGroupID = null;
 const POLICY_HINTS = {
   '': 'При отвале интерфейса группа ведет себя как обычно: на пуле выключится при его фоллбеке.',
   'direct': 'Если основной интерфейс умрет, трафик группы пойдет напрямую (проверив, что есть интернет) и вернется сам.',
-  'blackhole': 'Если основной интерфейс умрет, трафик группы будет резаться (kill-switch) и вернется сам.',
   'iface': 'Если основной интерфейс умрет, группа перейдет на запасной интерфейс и вернется сам.'
 };
 function editGroupDlg(g) {
@@ -1176,9 +1175,10 @@ function editGroupDlg(g) {
   $('#egColor').value = /^#[0-9a-fA-F]{6}$/.test(g.color || '') ? g.color : '#4a9eff';
   const sel = $('#egIface');
   const devices = MT_IFACES.map(i => i.device);
+  if (!devices.includes('blackhole')) devices.push('blackhole');
   if (!devices.includes(g.interface)) devices.push(g.interface);
   sel.innerHTML = devices.map(d => {
-    const t = (MT_IFACES.find(i => i.device === d) || {}).title;
+    const t = d === 'blackhole' ? '(блокировать трафик)' : ((MT_IFACES.find(i => i.device === d) || {}).title || '');
     return `<option value="${esc(d)}"${d === g.interface ? ' selected' : ''}>${esc(d)}${t ? ' - ' + esc(t) : ''}</option>`;
   }).join('');
   sel.disabled = !!g.cascade;
@@ -1330,24 +1330,24 @@ function renderRules() {
   box.innerHTML = '';
   for (const g of MT_GROUPS) {
     const el = document.createElement('div');
-    el.className = 'mtgroup';
+    el.className = 'mtgroup' + (g.interface === 'blackhole' ? ' mtgroup-block' : '');
     el.dataset.id = g.id;
     if (g.color) el.style.setProperty('--gcol', g.color);
-    const POLICY_SHORT = { direct: 'прямой ход', blackhole: 'резать трафик', iface: 'запасной интерфейс' };
+    const POLICY_SHORT = { direct: 'прямой ход', iface: 'запасной интерфейс' };
     const DEGRADED_TXT = {
       direct: 'идет напрямую: основной интерфейс умер, вернется сам',
       'direct-pending': 'ждет возврата интернета, потом пойдет напрямую',
-      blackhole: 'трафик группы режется: основной интерфейс умер',
       iface: 'временно переключена на запасной интерфейс'
     };
     const cascBadge = g.cascade ? '<span class="badge" style="border-color:#8a8f98;color:#aab0ba">каскад</span>' : '';
+    const blockBadge = g.interface === 'blackhole' ? '<span class="badge" style="border-color:var(--err);color:var(--err)">блокировка</span>' : '';
     const polBadge = g.policy ? `<span class="badge" style="border-color:#d9a032;color:#d9a032">при отвале: ${POLICY_SHORT[g.policy.onDead] || esc(g.policy.onDead)}</span>` : '';
     const degTxt = g.degraded ? (DEGRADED_TXT[g.degraded.split(':')[0]] || ('состояние: ' + esc(g.degraded))) : '';
     el.innerHTML = `
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
         <span class="grip" title="перетащите, чтобы изменить порядок">${GRIP_SVG}</span>
         <span class="gcolor" style="background:${esc(g.color || '#4a9eff')}"></span>
-        <b>${esc(g.name)}</b>${groupWarnSvg(g)}${cascBadge}${polBadge}
+        <b>${esc(g.name)}</b>${groupWarnSvg(g)}${cascBadge}${blockBadge}${polBadge}
         <span class="iface-badge"><span class="badge">${esc(g.interface)}</span>${g.interfaceTitle ? `<span class="iface-title">${esc(g.interfaceTitle)}</span>` : ''}</span>
         <span class="muted" style="font-size:12px">правил: ${(g.rules||[]).length}</span>
         <span style="flex:1"></span>
@@ -1443,7 +1443,7 @@ async function fillIfaceSelects() {
     const r = await api('GET', '/mt/interfaces');
     MT_IFACES = r.interfaces || [];
     const opts = MT_IFACES.map(i=>`<option value="${i.device}">${i.title ? i.device + ' - ' + i.title : i.device}</option>`).join('')
-      + '<option value="blackhole">blackhole (резать трафик)</option>';
+      + '<option value="blackhole">blackhole (блокировать трафик)</option>';
     if (opts) {
       const rg = document.getElementById('rgIface');
       const pi = document.getElementById('presetIface');
