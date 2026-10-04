@@ -22,18 +22,21 @@ var secondLevelZones = map[string]bool{
 
 const maxImportRules = 5000
 
-// ParseImport превращает вставленный текст в правила. Ссылки очищаются до
-// домена, при toSecond домен усекается до второго уровня, IP и CIDR всегда
-// становятся подсетями. typ задаёт тип доменных строк: auto означает
-// namespace, остальные типы проходят как выбрано. Регулярки берутся по одной
-// на строку без разбора. Возвращает правила и число отброшенных строк.
-func ParseImport(text, typ string, stripURL, toSecond bool) ([]Rule, int) {
+// ParseImport: вставленный текст -> правила, число отброшенных строк и
+// до трёх причин отбраковки.
+func ParseImport(text, typ string, stripURL, toSecond bool) ([]Rule, int, []string) {
 	if typ == "" {
 		typ = "auto"
 	}
 	seen := map[string]bool{}
 	var out []Rule
 	skipped := 0
+	var bad []string
+	note := func(reason string) {
+		if len(bad) < 3 {
+			bad = append(bad, reason)
+		}
+	}
 	add := func(r Rule) bool {
 		key := r.Type + " " + r.Rule
 		if seen[key] {
@@ -54,6 +57,11 @@ func ParseImport(text, typ string, stripURL, toSecond bool) ([]Rule, int) {
 				skipped++
 				continue
 			}
+			if strings.Contains(v, "://") || importDomainRe.MatchString(strings.ToLower(v)) {
+				note(v + " - похоже на URL или домен, исправьте регулярное выражение")
+				skipped++
+				continue
+			}
 			if !add(Rule{Type: "regex", Rule: v}) {
 				break
 			}
@@ -69,6 +77,7 @@ func ParseImport(text, typ string, stripURL, toSecond bool) ([]Rule, int) {
 					break
 				}
 			} else {
+				note(tok + " - не похоже на " + typeLabel(typ))
 				skipped++
 			}
 		}
@@ -76,13 +85,28 @@ func ParseImport(text, typ string, stripURL, toSecond bool) ([]Rule, int) {
 			break
 		}
 	}
-	return out, skipped
+	return out, skipped, bad
+}
+
+func typeLabel(typ string) string {
+	switch typ {
+	case "subnet":
+		return "подсеть (IP или IP/маска)"
+	case "domain":
+		return "домен"
+	case "wildcard":
+		return "маска"
+	}
+	return "домен"
 }
 
 func makeEntry(tok, typ string, stripURL, toSecond bool) (Rule, bool) {
 	tok = strings.Trim(tok, "\"'`")
 	if tok == "" {
 		return Rule{}, false
+	}
+	if i := strings.LastIndex(tok, "@"); i >= 0 {
+		tok = tok[i+1:]
 	}
 	if net.ParseIP(tok) != nil {
 		return Rule{Type: "subnet", Rule: tok}, true
@@ -147,4 +171,12 @@ func reduceToSecond(host string) string {
 		return strings.Join(labels[len(labels)-3:], ".")
 	}
 	return last2
+}
+
+func NormalizeRule(typ, value string, toSecond bool) (Rule, bool) {
+	rules, _, _ := ParseImport(value, typ, true, toSecond)
+	if len(rules) == 0 {
+		return Rule{}, false
+	}
+	return rules[0], true
 }

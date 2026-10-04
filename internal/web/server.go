@@ -1177,7 +1177,6 @@ func (s *Server) mtUpdateGroup(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "updated"})
 }
 
-// limitBody: JSON 1МБ, multipart 32МБ.
 func limitBody(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		limit := int64(1 << 20)
@@ -1347,9 +1346,13 @@ func (s *Server) mtImportRules(w http.ResponseWriter, r *http.Request) {
 	if req.Enable != nil {
 		enabled = *req.Enable
 	}
-	parsed, bad := magitrickle.ParseImport(req.Text, req.Type, true, req.ToSecond)
+	parsed, badCount, reasons := magitrickle.ParseImport(req.Text, req.Type, true, req.ToSecond)
 	if len(parsed) == 0 {
-		writeErr(w, fmt.Errorf("в списке не нашлось правил"))
+		msg := "в списке не нашлось правил"
+		if len(reasons) > 0 {
+			msg += ": " + strings.Join(reasons, "; ")
+		}
+		writeErr(w, fmt.Errorf("%s", msg))
 		return
 	}
 	for i := range parsed {
@@ -1393,7 +1396,7 @@ func (s *Server) mtImportRules(w http.ResponseWriter, r *http.Request) {
 	if added > 0 {
 		s.store.LogEvent("rules", "magitrickle", fmt.Sprintf("в группу %s импортировано правил: %d", groupName, added))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"added": added, "skipped": dup + bad})
+	writeJSON(w, http.StatusOK, map[string]any{"added": added, "skipped": dup + badCount, "bad": reasons})
 }
 
 func (s *Server) mtCreateRule(w http.ResponseWriter, r *http.Request) {
@@ -1411,10 +1414,20 @@ func (s *Server) mtCreateRule(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	rule, err := client.CreateRule(r.Context(), r.PathValue("id"), magitrickle.Rule{
-		Type: req.Type, Rule: req.Rule, Name: req.Name, Enable: true,
-	})
-	if err != nil {
+	rule := magitrickle.Rule{Type: req.Type, Rule: req.Rule, Name: req.Name, Enable: true}
+	if req.Type != "regex" {
+		norm, ok := magitrickle.NormalizeRule(req.Type, req.Rule, false)
+		if !ok {
+			writeErr(w, fmt.Errorf("значение не похоже на %s", req.Type))
+			return
+		}
+		norm.Name, norm.Enable = req.Name, true
+		rule = norm
+	} else if strings.Contains(req.Rule, "://") {
+		writeErr(w, fmt.Errorf("похоже на URL, а не на регулярку"))
+		return
+	}
+	if _, err := client.CreateRule(r.Context(), r.PathValue("id"), rule); err != nil {
 		writeErr(w, err)
 		return
 	}

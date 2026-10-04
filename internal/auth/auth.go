@@ -196,7 +196,7 @@ func (a *Auth) valid(r *http.Request) bool {
 	return true
 }
 
-// Middleware: под замком всё /api/, кроме login/logout; статика открыта.
+// Middleware: под замком всё /api/, кроме login/logout.
 func (a *Auth) Middleware(next http.Handler) http.Handler {
 	if a == nil || !a.Enabled {
 		return next
@@ -235,8 +235,6 @@ func (a *Auth) current() (string, string) {
 	return a.login, a.hash
 }
 
-// HandleLogin: rate limit по IP, сессия в cookie + токен в ответе
-// (для скриптов, которые ходят с Authorization: Bearer).
 func (a *Auth) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Login    string `json:"login"`
@@ -307,9 +305,7 @@ func (a *Auth) HandleLogout(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"ok":true}`))
 }
 
-// HandlePassword: смена пароля из веб-морды (middleware уже проверил
-// сессию). Успешная смена тоже подчищает подсказку, если вход ещё
-// не случился.
+// HandlePassword: подсказка подчищается, если вход ещё не случился.
 func (a *Auth) HandlePassword(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Old      string `json:"old"`
@@ -341,8 +337,8 @@ func (a *Auth) HandlePassword(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"ok":true}`))
 }
 
-// ResetPassword: консольный сброс (root на роутере). Подсказку
-// first-auth.txt не трогает - тот, кто сбрасывает, пароль и так знает.
+// ResetPassword: подсказку first-auth.txt не трогает - тот, кто сбрасывает,
+// пароль и так знает.
 func (a *Auth) ResetPassword(newPass string) error {
 	if len(newPass) < passwordMin {
 		return fmt.Errorf("пароль короче %d символов", passwordMin)

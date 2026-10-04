@@ -50,6 +50,12 @@ label.f .pwrap { position: relative; margin-top: 3px; }
 label.f .pwrap input { margin-top: 0; padding-right: 32px; }
 .peye { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); background: none; border: none; padding: 2px; color: var(--dim); line-height: 0; }
 .peye:hover { color: var(--text); border-color: transparent; }
+.xwrap { position: relative; display: flex; align-items: center; }
+.xwrap input { width: 100%; flex: 1 1 auto; min-width: 0; }
+.xwrap input:not(:placeholder-shown) { padding-right: 26px; }
+.clr { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); background: none; border: none; padding: 0 2px; color: var(--dim); line-height: 0; display: none; }
+.xwrap input:not(:placeholder-shown) ~ .clr { display: block; }
+.clr:hover { color: var(--text); border-color: transparent; }
 .spin { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -2px; margin-right: 6px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 #log { font: 11.5px/1.5 ui-monospace, monospace; color: var(--dim); max-height: 220px; overflow: auto; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px; }
@@ -982,6 +988,7 @@ async function refreshWAN() {
     const ptype = r.enabled ? (probe.type || probeTypeOf(probe.target || '')) : 'http';
     document.getElementById('wanType').value = ptype;
     document.getElementById('wanTarget').value = r.enabled ? (probe.target || '') : '';
+    if (ptype === 'http' && !document.getElementById('wanTarget').value) document.getElementById('wanTarget').value = PROBE_DEFAULTS.http;
     document.getElementById('wanTarget').placeholder = PROBE_DEFAULTS[ptype];
     document.getElementById('wanRttOn').checked = (probe.maxRttMs || 0) > 0;
     document.getElementById('wanRtt').value = (probe.maxRttMs || 0) > 0 ? probe.maxRttMs : 300;
@@ -991,10 +998,12 @@ async function refreshWAN() {
 wireProbeSwitch(document.getElementById('wanType'), document.getElementById('wanTarget'));
 document.getElementById('wanSave').onclick = async () => {
   const on = document.getElementById('wanOn').checked;
-  const target = document.getElementById('wanTarget').value.trim();
+  const wtype = document.getElementById('wanType').value;
+  let target = document.getElementById('wanTarget').value.trim();
+  if (on && !target && wtype === 'http') target = PROBE_DEFAULTS.http;
   if (on && !target) return toast('Укажите цель проверки канала', true);
   const body = on ? {
-    type: document.getElementById('wanType').value,
+    type: wtype,
     target,
     maxRttMs: document.getElementById('wanRttOn').checked ? (+document.getElementById('wanRtt').value || 0) : 0,
   } : { target: '' };
@@ -1153,7 +1162,8 @@ document.getElementById('imGo').onclick = e => withBusy(e.currentTarget, async (
       enable: document.getElementById('imEnable').checked,
     });
     dlg.close();
-    toast(r.added ? `Импортировано: ${r.added}, пропущено: ${r.skipped}` : 'Нового ничего не добавлено, все дубликаты');
+    const badNote = (r.bad && r.bad.length) ? ' Отброшено: ' + r.bad.join('; ') : '';
+    toast(r.added ? `Импортировано: ${r.added}, пропущено: ${r.skipped}.${badNote}` : 'Нового ничего не добавлено, все дубликаты' + badNote);
     lastMtJSON = '';
     refreshRules(true);
   } catch (err) {
@@ -1656,6 +1666,34 @@ function showNoAuthBadge() {
   document.getElementById('logoutBtn').style.display = 'none';
 }
 
+// крестик очистки на текстовых инпутах
+const X_SVG = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+function wireClearInputs(root) {
+  root.querySelectorAll('input').forEach(inp => {
+    const t = inp.type;
+    if (t === 'password' || t === 'color' || t === 'checkbox' || t === 'radio' || t === 'file' || t === 'hidden' || inp.closest('.xwrap')) return;
+    const wrap = document.createElement('span');
+    wrap.className = 'xwrap';
+    wrap.style.flex = inp.style.flex;
+    wrap.style.minWidth = inp.style.minWidth;
+    wrap.style.width = inp.style.width;
+    inp.style.flex = ''; inp.style.minWidth = ''; inp.style.width = '';
+    inp.parentNode.insertBefore(wrap, inp);
+    wrap.appendChild(inp);
+    const btn = document.createElement('button');
+    btn.type = 'button'; btn.className = 'clr'; btn.title = 'очистить'; btn.innerHTML = X_SVG;
+    wrap.appendChild(btn);
+    if (!inp.hasAttribute('placeholder')) inp.placeholder = ' ';
+    btn.onclick = () => { inp.value = ''; inp.dispatchEvent(new Event('input', { bubbles: true })); inp.focus(); };
+  });
+}
+let clrTimer = null;
+new MutationObserver(() => {
+  clearTimeout(clrTimer);
+  clrTimer = setTimeout(() => wireClearInputs(document), 50);
+}).observe(document.body, { childList: true, subtree: true });
+wireClearInputs(document);
+
 function showResult(ok, output, errText) {
   document.getElementById('rsTitle').textContent = ok ? 'Установлено' : 'Ошибка установки';
   document.getElementById('rsTitle').style.color = ok ? 'var(--ok)' : 'var(--err)';
@@ -1698,14 +1736,25 @@ async function refreshRCIToken() {
     const inp = document.getElementById('rciToken');
     inp.value = '';
     inp.placeholder = r.configured ? 'задан (скрыт) - введите новый для замены' : 'X-NDMA-TKN';
+    document.getElementById('rciSave').disabled = true;
   } catch (e) { console.warn(e); }
 }
-document.getElementById('rciSave').onclick = e => withBusy(e.currentTarget, async () => {
+const rciSaveBtn = document.getElementById('rciSave');
+const rciTokenInput = document.getElementById('rciToken');
+const rciSaveSync = () => { rciSaveBtn.disabled = !rciTokenInput.value.trim(); };
+rciTokenInput.addEventListener('input', rciSaveSync);
+rciSaveSync();
+document.getElementById('rciSave').onclick = async e => {
+  const token = rciTokenInput.value.trim();
+  if (!token) { rciSaveSync(); return; }
+  e.currentTarget.disabled = true;
   try {
-    await api('PUT', '/rcitoken', { token: document.getElementById('rciToken').value });
+    await api('PUT', '/rcitoken', { token });
     toast('Токен сохранен');
+    rciTokenInput.value = '';
   } catch (err) { toast(err.message, true); }
-});
+  rciSaveSync();
+};
 refreshRCIToken();
 
 $('#sysrefresh').onclick = () => { lastSysJSON = ''; refreshSystem(true);
