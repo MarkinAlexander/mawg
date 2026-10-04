@@ -130,6 +130,7 @@ type PoolState struct {
 	Cursor         int              `json:"cursor"`
 	DisabledGroups []string         `json:"disabledGroups"`
 	ReboundGroups  []string         `json:"reboundGroups,omitempty"`
+	SuspendPending bool             `json:"suspendPending,omitempty"`
 
 	Since       time.Time `json:"-"`
 	ConsecFails int       `json:"-"`
@@ -139,6 +140,38 @@ type PoolState struct {
 	GraceUntil  int64     `json:"-"`
 }
 
+// GroupPolicy - поведение группы магитрикла при отвале её основного
+// интерфейса. Пустая политика = обычное поведение (выключение при
+// фоллбеке пула). Direct - прямой ход после проверки WAN, Blackhole -
+// резать трафик, Iface - переписать на запасной интерфейс.
+type GroupPolicy struct {
+	OnDead string `json:"onDead"`          // "" | "direct" | "blackhole" | "iface"
+	Iface  string `json:"iface,omitempty"` // для OnDead == "iface"
+}
+
+func (p GroupPolicy) Default() bool { return p.OnDead == "" }
+
+// CascadeEntry - служебная группа-каскад: адреса эндпоинтов источника
+// направляются через интерфейс Via.
+type CascadeEntry struct {
+	Group   string   `json:"group"`
+	Name    string   `json:"name"`
+	Source  string   `json:"source"` // "pool:warp" | "iface:wg0"
+	Via     string   `json:"via"`    // "pool:proton" | "iface:wg0"
+	Domains []string `json:"domains,omitempty"`
+}
+
+type DegradedGroup struct {
+	OrigIface string `json:"origIface"`
+	Mode      string `json:"mode"` // "blackhole" | "iface" | "direct-pending"
+}
+
+const (
+	PolicyDirect    = "direct"
+	PolicyBlackhole = "blackhole"
+	PolicyIface     = "iface"
+)
+
 type IfaceEntry struct {
 	Device string       `json:"device"`
 	Mode   string       `json:"mode"`
@@ -146,10 +179,12 @@ type IfaceEntry struct {
 }
 
 type Settings struct {
-	WebPort  int           `json:"webPort"`
-	Ifaces   []IfaceEntry  `json:"ifaces,omitempty"`
-	WANProbe *ProbeConfig  `json:"wanProbe,omitempty"`
-	RCIToken string        `json:"rciToken,omitempty"`
+	WebPort       int                    `json:"webPort"`
+	Ifaces        []IfaceEntry           `json:"ifaces,omitempty"`
+	WANProbe      *ProbeConfig           `json:"wanProbe,omitempty"`
+	RCIToken      string                 `json:"rciToken,omitempty"`
+	GroupPolicies map[string]GroupPolicy `json:"groupPolicies,omitempty"`
+	Cascades      []CascadeEntry         `json:"cascades,omitempty"`
 }
 
 func (s Settings) WithDefaults() Settings {
@@ -177,8 +212,9 @@ type BundleState struct {
 }
 
 type StateFile struct {
-	Pools   map[string]*PoolState   `json:"pools"`
-	Bundles map[string]*BundleState `json:"bundles,omitempty"`
+	Pools          map[string]*PoolState   `json:"pools"`
+	Bundles        map[string]*BundleState `json:"bundles,omitempty"`
+	DegradedGroups map[string]DegradedGroup `json:"degradedGroups,omitempty"`
 }
 
 type Event struct {

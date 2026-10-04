@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"mawg/internal/cascade"
 	"mawg/internal/magitrickle"
 	"mawg/internal/platform"
 	"mawg/internal/store"
@@ -46,6 +47,10 @@ type Engine struct {
 	probeBusy   map[string]bool
 	tunnelAddrs map[string]string
 	tunnelAt    time.Time
+
+	casc  *cascade.Manager
+	tickN int
+	polFails map[string]int
 }
 
 const probeStatusTTL = 30 * time.Second
@@ -80,7 +85,7 @@ func (e *Engine) settleAfterIfaceOp() {
 }
 
 func New(st *store.Store, b platform.Backend, mt *magitrickle.Client) *Engine {
-	return &Engine{
+	e := &Engine{
 		store:      st,
 		backend:    b,
 		mt:         mt,
@@ -90,8 +95,16 @@ func New(st *store.Store, b platform.Backend, mt *magitrickle.Client) *Engine {
 		probeCache:  map[string]probeCacheEntry{},
 		probeBusy:   map[string]bool{},
 		tunnelAddrs: map[string]string{},
+		polFails:   map[string]int{},
 	}
+	if mt != nil {
+		e.casc = cascade.New(st, mt)
+	}
+	return e
 }
+
+// Cascade - менеджер служебных групп-каскадов (nil без magitrickle).
+func (e *Engine) Cascade() *cascade.Manager { return e.casc }
 
 func (e *Engine) applyAllowed(pool string) bool {
 	e.mu.Lock()
@@ -146,6 +159,8 @@ func (e *Engine) loop(ctx context.Context) {
 		case <-bundleTicker.C:
 			e.checkBundles()
 			e.refreshProbedExternals()
+			e.tickN++
+			e.checkGroupPolicies()
 		case <-ticker.C:
 			for _, pool := range e.store.Pools() {
 				st := e.store.State(pool.Name)
@@ -410,6 +425,7 @@ func (e *Engine) PoolUp(pool string) error {
 	if restored {
 		e.restoreGroups(p, e.store.State(pool))
 		e.restoreReboundGroups(p)
+		e.restoreDegraded(p.DeviceName())
 	}
 	return nil
 }
@@ -825,8 +841,12 @@ func (e *Engine) applyConfig(p store.Pool, file string) error {
 	if restored {
 		e.restoreGroups(p, e.store.State(p.Name))
 		e.restoreReboundGroups(p)
+		e.restoreDegraded(p.DeviceName())
 	}
 	e.store.LogEvent(p.Name, "applied", file+" -> "+cfg.Endpoint())
+	if e.casc != nil {
+		go e.casc.SyncSourceEndpoints(context.Background(), "pool:"+p.Name)
+	}
 	return nil
 }
 
@@ -896,9 +916,15 @@ func (e *Engine) bundleGroupIDs() map[string]bool {
 // рантайм группы уже выключен; пересборку даёт только массовый PUT списка.
 func (e *Engine) applyGroupChanges(key string, mutate func(groups []magitrickle.Group) bool) error {
 	e.settleAfterIfaceOp()
+	if e.casc != nil {
+		e.casc.BeforeMutate(mutate)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	err := e.mt.MutateGroups(ctx, mutate)
+	if e.casc != nil {
+		e.casc.AfterMutate()
+	}
 	if err == nil {
 		e.mtEverAlive = true
 		return nil
@@ -954,14 +980,39 @@ func (e *Engine) suspendGroups(p store.Pool) {
 		e.store.LogEvent(p.Name, "magitrickle", "client unavailable, groups not touched")
 		return
 	}
+	// WAN-гейт: при мёртвом провайдере откат в direct бессмысленен,
+	// Suspension переносится на тик, когда интернет вернется.
+	if e.wanDown() {
+		e.store.MutateState(p.Name, func(s *store.PoolState) {
+			s.SuspendPending = true
+		})
+		e.store.LogEvent(p.Name, "fallback", "провайдер без интернета, откат групп отложен")
+		return
+	}
 	bundled := e.bundleGroupIDs()
 	dev := p.DeviceName()
 	var disabled []string
+	degraded := map[string]store.DegradedGroup{}
 	err := e.applyGroupChanges(p.Name, func(groups []magitrickle.Group) bool {
 		changed := false
 		for i := range groups {
 			g := &groups[i]
-			if g.Interface == dev && g.Enable && !bundled[g.ID] {
+			if g.Interface != dev || !g.Enable || bundled[g.ID] {
+				continue
+			}
+			pol := e.store.GroupPolicy(g.ID)
+			switch {
+			case pol.OnDead == store.PolicyBlackhole:
+				if g.Interface != "blackhole" {
+					degraded[g.ID] = store.DegradedGroup{OrigIface: g.Interface, Mode: store.PolicyBlackhole}
+					g.Interface = "blackhole"
+					changed = true
+				}
+			case pol.OnDead == store.PolicyIface && pol.Iface != "" && pol.Iface != dev:
+				degraded[g.ID] = store.DegradedGroup{OrigIface: g.Interface, Mode: store.PolicyIface + ":" + pol.Iface}
+				g.Interface = pol.Iface
+				changed = true
+			default:
 				g.Enable = false
 				disabled = append(disabled, g.ID)
 				changed = true
@@ -969,13 +1020,32 @@ func (e *Engine) suspendGroups(p store.Pool) {
 		}
 		return changed
 	})
-	if err != nil || len(disabled) == 0 {
+	if err != nil || (len(disabled) == 0 && len(degraded) == 0) {
 		return
 	}
 	e.store.MutateState(p.Name, func(s *store.PoolState) {
 		s.DisabledGroups = append(s.DisabledGroups, disabled...)
+		s.SuspendPending = false
 	})
-	e.store.LogEvent(p.Name, "magitrickle", "disabled groups: "+fmt.Sprint(disabled))
+	if len(disabled) > 0 {
+		e.store.LogEvent(p.Name, "magitrickle", "disabled groups: "+fmt.Sprint(disabled))
+	}
+	if len(degraded) > 0 {
+		e.store.MutateDegraded(func(m map[string]store.DegradedGroup) {
+			for id, d := range degraded {
+				m[id] = d
+			}
+		})
+		e.store.LogEvent(p.Name, "policy", "группы уведены по политике: "+fmt.Sprint(keysOf(degraded)))
+	}
+}
+
+func keysOf(m map[string]store.DegradedGroup) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }
 
 func (e *Engine) rebindGroups(p store.Pool, targetDevice string) {
@@ -985,19 +1055,47 @@ func (e *Engine) rebindGroups(p store.Pool, targetDevice string) {
 	}
 	dev := p.DeviceName()
 	var rebound []string
+	degraded := map[string]store.DegradedGroup{}
 	err := e.applyGroupChanges(p.Name, func(groups []magitrickle.Group) bool {
 		changed := false
 		for i := range groups {
-			if groups[i].Interface == dev {
-				groups[i].Interface = targetDevice
-				rebound = append(rebound, groups[i].ID)
-				changed = true
+			g := &groups[i]
+			if g.Interface != dev {
+				continue
 			}
+			pol := e.store.GroupPolicy(g.ID)
+			if g.Enable {
+				switch {
+				case pol.OnDead == store.PolicyBlackhole:
+					if g.Interface != "blackhole" {
+						degraded[g.ID] = store.DegradedGroup{OrigIface: g.Interface, Mode: store.PolicyBlackhole}
+						g.Interface = "blackhole"
+						changed = true
+					}
+					continue
+				case pol.OnDead == store.PolicyIface && pol.Iface != "" && pol.Iface != dev:
+					degraded[g.ID] = store.DegradedGroup{OrigIface: g.Interface, Mode: store.PolicyIface + ":" + pol.Iface}
+					g.Interface = pol.Iface
+					changed = true
+					continue
+				}
+			}
+			g.Interface = targetDevice
+			rebound = append(rebound, g.ID)
+			changed = true
 		}
 		return changed
 	})
-	if err != nil || len(rebound) == 0 {
+	if err != nil || (len(rebound) == 0 && len(degraded) == 0) {
 		return
+	}
+	if len(degraded) > 0 {
+		e.store.MutateDegraded(func(m map[string]store.DegradedGroup) {
+			for id, d := range degraded {
+				m[id] = d
+			}
+		})
+		e.store.LogEvent(p.Name, "policy", "группы уведены по политике: "+fmt.Sprint(keysOf(degraded)))
 	}
 	e.store.MutateState(p.Name, func(s *store.PoolState) {
 		s.ReboundGroups = append(s.ReboundGroups, rebound...)
@@ -1043,6 +1141,225 @@ func (e *Engine) restoreReboundGroups(p store.Pool) {
 	if len(restored) > 0 {
 		e.store.LogEvent(p.Name, "magitrickle", "groups rebound back to "+dev+": "+fmt.Sprint(restored))
 	}
+}
+
+// checkGroupPolicies: политики групп на внешних интерфейсах и страховка
+// для групп пулов (ручной down, отложенный при мёртвом WAN откат), плюс
+// периодическая пере-резолюция доменов каскадов.
+func (e *Engine) checkGroupPolicies() {
+	if e.mt == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	for _, pool := range e.store.Pools() {
+		st := e.store.State(pool.Name)
+		if st.Mode == store.ModeFallback && st.SuspendPending && !e.wanDown() {
+			e.store.LogEvent(pool.Name, "fallback", "провайдер ожил, продолжаю откат групп")
+			e.suspendGroups(pool)
+		}
+	}
+
+	if e.casc != nil && e.tickN%10 == 0 {
+		e.casc.RefreshDNS(ctx)
+	}
+
+	groups, err := e.mt.GroupsWithRules(ctx)
+	if err != nil {
+		return
+	}
+	health := map[string]bool{}
+	for _, pool := range e.store.Pools() {
+		health[pool.DeviceName()] = !pool.Disabled && e.store.State(pool.Name).Mode == store.ModeUp
+	}
+	if slots, err := e.backend.Slots(); err == nil {
+		for _, sl := range slots {
+			if _, ok := health[sl.Device]; ok {
+				continue
+			}
+			ok := sl.LinkUp
+			if ok {
+				if probe := e.store.IfaceProbe(sl.Device); probe != nil {
+					ok = e.deviceProbeOK(sl.Device, *probe)
+				} else {
+					ok = sl.Connected
+					if !ok {
+						hs := e.backend.IfaceHandshake(sl.Device)
+						ok = hs >= 0 && hs < 180
+					}
+				}
+			}
+			health[sl.Device] = ok
+		}
+	}
+
+	degraded := e.store.DegradedGroups()
+	pending := map[string]store.DegradedGroup{}
+	type action struct {
+		disable, enable bool
+		iface           string
+		clearDeg        bool
+	}
+	acts := map[string]action{}
+	for i := range groups {
+		g := groups[i]
+		pol := e.store.GroupPolicy(g.ID)
+		if pol.Default() {
+			continue
+		}
+		dg, wasDegraded := degraded[g.ID]
+		if wasDegraded {
+			e.polFails[g.ID] = 0
+			if dg.Mode == "direct-pending" {
+				if !e.wanDown() && g.Enable {
+					acts[g.ID] = action{disable: true}
+					pending[g.ID] = store.DegradedGroup{OrigIface: dg.OrigIface, Mode: store.PolicyDirect}
+				}
+				continue
+			}
+			origHealthy, known := health[dg.OrigIface]
+			if !known || !origHealthy {
+				continue
+			}
+			if dg.Mode == store.PolicyDirect {
+				if !g.Enable {
+					acts[g.ID] = action{enable: true, clearDeg: true}
+				} else {
+					pending[g.ID] = store.DegradedGroup{OrigIface: dg.OrigIface, Mode: store.PolicyDirect}
+				}
+			} else if g.Interface != dg.OrigIface {
+				acts[g.ID] = action{iface: dg.OrigIface, clearDeg: true}
+			}
+			continue
+		}
+		healthy, known := health[g.Interface]
+		if !known || healthy {
+			e.polFails[g.ID] = 0
+			continue
+		}
+		e.polFails[g.ID]++
+		if e.polFails[g.ID] < 2 {
+			continue
+		}
+		switch pol.OnDead {
+		case store.PolicyDirect:
+			if e.wanDown() {
+				pending[g.ID] = store.DegradedGroup{OrigIface: g.Interface, Mode: "direct-pending"}
+				continue
+			}
+			if g.Enable {
+				acts[g.ID] = action{disable: true}
+				pending[g.ID] = store.DegradedGroup{OrigIface: g.Interface, Mode: store.PolicyDirect}
+			}
+		case store.PolicyBlackhole:
+			if g.Enable && g.Interface != "blackhole" {
+				acts[g.ID] = action{iface: "blackhole"}
+				pending[g.ID] = store.DegradedGroup{OrigIface: g.Interface, Mode: store.PolicyBlackhole}
+			}
+		case store.PolicyIface:
+			if pol.Iface != "" && pol.Iface != g.Interface && g.Enable {
+				acts[g.ID] = action{iface: pol.Iface}
+				pending[g.ID] = store.DegradedGroup{OrigIface: g.Interface, Mode: store.PolicyIface}
+			}
+		}
+	}
+	if len(acts) == 0 {
+		if len(pending) > 0 {
+			e.store.MutateDegraded(func(m map[string]store.DegradedGroup) {
+				for id, d := range pending {
+					m[id] = d
+				}
+			})
+		}
+		return
+	}
+	err = e.applyGroupChanges("policy", func(gs []magitrickle.Group) bool {
+		changed := false
+		for i := range gs {
+			a, ok := acts[gs[i].ID]
+			if !ok {
+				continue
+			}
+			if a.disable && gs[i].Enable {
+				gs[i].Enable = false
+				changed = true
+			}
+			if a.enable && !gs[i].Enable {
+				gs[i].Enable = true
+				changed = true
+			}
+			if a.iface != "" && gs[i].Interface != a.iface {
+				gs[i].Interface = a.iface
+				changed = true
+			}
+		}
+		return changed
+	})
+	if err != nil {
+		return
+	}
+	e.store.MutateDegraded(func(m map[string]store.DegradedGroup) {
+		for id, d := range pending {
+			m[id] = d
+		}
+		for id, a := range acts {
+			if a.clearDeg {
+				delete(m, id)
+			}
+		}
+	})
+	for id, a := range acts {
+		if a.disable {
+			e.store.LogEvent("policy", "degrade", "группа "+id+" уведена в direct: основной интерфейс умер")
+		}
+		if a.enable {
+			e.store.LogEvent("policy", "restore", "группа "+id+" вернулась в direct")
+		}
+		if a.iface != "" {
+			e.store.LogEvent("policy", "degrade", "группа "+id+" переписана на "+a.iface)
+		}
+	}
+}
+
+// restoreDegraded возвращает политики-группы на исходный интерфейс,
+// когда основной ожил.
+func (e *Engine) restoreDegraded(dev string) {
+	degraded := e.store.DegradedGroups()
+	var ids []string
+	for id, d := range degraded {
+		if d.OrigIface == dev && d.Mode != "direct" && d.Mode != "direct-pending" {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	restore := map[string]store.DegradedGroup{}
+	for _, id := range ids {
+		restore[id] = degraded[id]
+	}
+	err := e.applyGroupChanges("policy", func(groups []magitrickle.Group) bool {
+		changed := false
+		for i := range groups {
+			d, ok := restore[groups[i].ID]
+			if !ok || groups[i].Interface == d.OrigIface {
+				continue
+			}
+			groups[i].Interface = d.OrigIface
+			changed = true
+		}
+		return changed
+	})
+	if err != nil {
+		return
+	}
+	e.store.MutateDegraded(func(m map[string]store.DegradedGroup) {
+		for _, id := range ids {
+			delete(m, id)
+		}
+	})
+	e.store.LogEvent("policy", "restore", "основной интерфейс ожил, группы вернулись на "+dev)
 }
 
 func (e *Engine) restoreGroups(p store.Pool, s *store.PoolState) {

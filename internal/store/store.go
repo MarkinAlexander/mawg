@@ -148,6 +148,96 @@ func (s *Store) SetWANProbe(p *ProbeConfig) error {
 	return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
 }
 
+// GroupPolicy - политика поведения группы при отвале интерфейса.
+func (s *Store) GroupPolicy(id string) GroupPolicy {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.root.Settings.GroupPolicies[id]
+}
+
+func (s *Store) GroupPoliciesAll() map[string]GroupPolicy {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := map[string]GroupPolicy{}
+	for id, p := range s.root.Settings.GroupPolicies {
+		out[id] = p
+	}
+	return out
+}
+
+func (s *Store) SetGroupPolicy(id string, p *GroupPolicy) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.root.Settings.GroupPolicies == nil {
+		s.root.Settings.GroupPolicies = map[string]GroupPolicy{}
+	}
+	if p == nil || p.OnDead == "" || (p.OnDead != "direct" && p.OnDead != "blackhole" && p.OnDead != "iface") {
+		delete(s.root.Settings.GroupPolicies, id)
+	} else {
+		s.root.Settings.GroupPolicies[id] = *p
+	}
+	if len(s.root.Settings.GroupPolicies) == 0 {
+		s.root.Settings.GroupPolicies = nil
+	}
+	return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
+}
+
+func (s *Store) Cascades() []CascadeEntry {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]CascadeEntry, len(s.root.Settings.Cascades))
+	copy(out, s.root.Settings.Cascades)
+	return out
+}
+
+func (s *Store) CascadeByGroup(group string) (CascadeEntry, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, c := range s.root.Settings.Cascades {
+		if c.Group == group {
+			return c, true
+		}
+	}
+	return CascadeEntry{}, false
+}
+
+func (s *Store) SetCascades(c []CascadeEntry) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.root.Settings.Cascades = c
+	return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
+}
+
+// DegradedGroups - группы, у которых политика переписала интерфейс из-за
+// отвала основного, плюс группы с отложенным direct при мёртвом WAN.
+func (s *Store) MutateDegraded(fn func(map[string]DegradedGroup)) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state.DegradedGroups == nil {
+		s.state.DegradedGroups = map[string]DegradedGroup{}
+	}
+	fn(s.state.DegradedGroups)
+	data, err := json.Marshal(&s.state)
+	if err != nil {
+		return err
+	}
+	if string(data) == s.lastStateJSON {
+		return nil
+	}
+	s.lastStateJSON = string(data)
+	return s.saveLocked(filepath.Join(s.base, "state.json"), &s.state)
+}
+
+func (s *Store) DegradedGroups() map[string]DegradedGroup {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := map[string]DegradedGroup{}
+	for k, v := range s.state.DegradedGroups {
+		out[k] = v
+	}
+	return out
+}
+
 // RCIToken - токен локального API Keenetic 5.2+ (X-NDMA-TKN), на 5.1 и
 // старее не нужен.
 func (s *Store) RCIToken() string {

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"mawg/internal/auth"
+	"mawg/internal/cascade"
 	"mawg/internal/magitrickle"
 	"mawg/internal/platform"
 	"mawg/internal/platform/keenetic"
@@ -36,6 +37,13 @@ type Server struct {
 
 func New(st *store.Store, e *rotator.Engine, b platform.Backend, mt *magitrickle.Client, version string, a *auth.Auth) *Server {
 	return &Server{store: st, engine: e, backend: b, mt: mt, version: version, auth: a}
+}
+
+func (s *Server) casc() *cascade.Manager {
+	if s.engine == nil {
+		return nil
+	}
+	return s.engine.Cascade()
 }
 
 func (s *Server) Handler() http.Handler {
@@ -90,6 +98,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/mt/groups/{id}/rules/{rid}/enable", s.mtToggleRule)
 	mux.HandleFunc("DELETE /api/v1/mt/groups/{id}/rules/{rid}", s.mtDeleteRule)
 	mux.HandleFunc("POST /api/v1/mt/presets/{id}/apply", s.mtApplyPreset)
+	mux.HandleFunc("GET /api/v1/cascades", s.cascList)
+	mux.HandleFunc("POST /api/v1/cascades", s.cascCreate)
+	mux.HandleFunc("DELETE /api/v1/cascades/{group}", s.cascDelete)
+	mux.HandleFunc("PUT /api/v1/mt/groups/{id}/policy", s.mtSetPolicy)
 
 	sub, err := fs.Sub(uiFS, "ui")
 	if err != nil {
@@ -1052,14 +1064,35 @@ func (s *Server) mtGetGroups(w http.ResponseWriter, r *http.Request) {
 	titles := s.mtInterfaceTitles()
 	type groupView struct {
 		magitrickle.Group
-		InterfaceTitle string `json:"interfaceTitle,omitempty"`
+		InterfaceTitle string              `json:"interfaceTitle,omitempty"`
+		Policy         *store.GroupPolicy  `json:"policy,omitempty"`
+		Cascade        *store.CascadeEntry `json:"cascade,omitempty"`
+		Degraded       string              `json:"degraded,omitempty"`
 	}
+	policies := map[string]store.GroupPolicy{}
+	for id, p := range s.store.GroupPoliciesAll() {
+		policies[id] = p
+	}
+	cascades := map[string]store.CascadeEntry{}
+	for _, c := range s.store.Cascades() {
+		cascades[c.Group] = c
+	}
+	degraded := s.store.DegradedGroups()
 	out := make([]groupView, 0, len(groups))
 	seen := map[string]bool{}
 	for _, g := range groups {
 		gv := groupView{Group: g}
 		if t, ok := titles[g.Interface]; ok && t != g.Interface {
 			gv.InterfaceTitle = t
+		}
+		if p, ok := policies[g.ID]; ok {
+			gv.Policy = &p
+		}
+		if c, ok := cascades[g.ID]; ok {
+			gv.Cascade = &c
+		}
+		if d, ok := degraded[g.ID]; ok {
+			gv.Degraded = d.Mode
 		}
 		seen[g.Interface] = true
 		out = append(out, gv)
@@ -1130,6 +1163,10 @@ func (s *Server) mtCreateGroup(w http.ResponseWriter, r *http.Request) {
 // magitrickle 0.8.2 не пересоздаёт iptables-цепочку при одиночном PUT
 // группы, поэтому все правки идут массовым сохранением всего списка.
 func (s *Server) mtApplyGroups(ctx context.Context, mutate func(groups []magitrickle.Group) bool) error {
+	if c := s.casc(); c != nil {
+		c.BeforeMutate(mutate)
+		defer c.AfterMutate()
+	}
 	return s.mtClient().MutateGroups(ctx, mutate)
 }
 
@@ -1144,6 +1181,12 @@ func (s *Server) mtUpdateGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
+	if req.Interface != "" {
+		if _, isCasc := s.store.CascadeByGroup(id); isCasc {
+			writeErr(w, fmt.Errorf("интерфейс каскадной группы задается при создании каскада"))
+			return
+		}
+	}
 	found := false
 	err := s.mtApplyGroups(r.Context(), func(groups []magitrickle.Group) bool {
 		for i := range groups {
@@ -1286,6 +1329,16 @@ func (s *Server) mtToggleGroup(w http.ResponseWriter, r *http.Request) {
 	}
 	json.NewDecoder(r.Body).Decode(&req)
 	id := r.PathValue("id")
+	if c := s.casc(); c != nil {
+		if _, isCasc := s.store.CascadeByGroup(id); isCasc {
+			if err := c.SetEnabled(r.Context(), id, req.Enable); err != nil {
+				writeErr(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]string{"ok": "ok"})
+			return
+		}
+	}
 	found := false
 	err := s.mtApplyGroups(r.Context(), func(groups []magitrickle.Group) bool {
 		for i := range groups {
@@ -1313,6 +1366,16 @@ func (s *Server) mtToggleGroup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) mtDeleteGroup(w http.ResponseWriter, r *http.Request) {
+	if c := s.casc(); c != nil {
+		if _, isCasc := s.store.CascadeByGroup(r.PathValue("id")); isCasc {
+			if err := c.Delete(r.Context(), r.PathValue("id")); err != nil {
+				writeErr(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]string{"ok": "deleted"})
+			return
+		}
+	}
 	client := s.mtClient()
 	if err := client.DeleteGroup(r.Context(), r.PathValue("id")); err != nil {
 		writeErr(w, err)
@@ -1321,6 +1384,89 @@ func (s *Server) mtDeleteGroup(w http.ResponseWriter, r *http.Request) {
 	client.RefreshShadow(r.Context())
 	s.store.LogEvent("rules", "magitrickle", "удалена группа "+r.PathValue("id"))
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "deleted"})
+}
+
+func (s *Server) cascList(w http.ResponseWriter, r *http.Request) {
+	c := s.casc()
+	if c == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"available": false})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"available": true, "cascades": c.Infos(r.Context())})
+}
+
+func (s *Server) cascCreate(w http.ResponseWriter, r *http.Request) {
+	c := s.casc()
+	if c == nil {
+		writeErr(w, fmt.Errorf("magitrickle недоступен"))
+		return
+	}
+	var req struct {
+		Source string   `json:"source"`
+		Via    string   `json:"via"`
+		Hosts  []string `json:"hosts"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Source == "" || req.Via == "" {
+		writeErr(w, fmt.Errorf("нужны source и via"))
+		return
+	}
+	g, err := c.Create(r.Context(), req.Source, req.Via, req.Hosts)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, g)
+}
+
+func (s *Server) cascDelete(w http.ResponseWriter, r *http.Request) {
+	c := s.casc()
+	if c == nil {
+		writeErr(w, fmt.Errorf("magitrickle недоступен"))
+		return
+	}
+	if err := c.Delete(r.Context(), r.PathValue("group")); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"ok": "deleted"})
+}
+
+func (s *Server) mtSetPolicy(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		OnDead string `json:"onDead"`
+		Iface  string `json:"iface"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, err)
+		return
+	}
+	var p *store.GroupPolicy
+	switch req.OnDead {
+	case "":
+		p = nil
+	case store.PolicyDirect, store.PolicyBlackhole:
+		p = &store.GroupPolicy{OnDead: req.OnDead}
+	case store.PolicyIface:
+		if req.Iface == "" {
+			writeErr(w, fmt.Errorf("укажите запасной интерфейс"))
+			return
+		}
+		p = &store.GroupPolicy{OnDead: req.OnDead, Iface: req.Iface}
+	default:
+		writeErr(w, fmt.Errorf("неизвестный режим %q", req.OnDead))
+		return
+	}
+	id := r.PathValue("id")
+	if err := s.store.SetGroupPolicy(id, p); err != nil {
+		writeErr(w, err)
+		return
+	}
+	if p == nil {
+		s.store.LogEvent("policy", "set", "группа "+id+": политика сброшена")
+	} else {
+		s.store.LogEvent("policy", "set", "группа "+id+": при отвале - "+p.OnDead)
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"ok": "ok"})
 }
 
 var ruleTypes = map[string]bool{
