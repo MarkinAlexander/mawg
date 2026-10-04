@@ -36,6 +36,13 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 button.danger:hover { border-color: var(--err); color: var(--err); }
 button:disabled { opacity: .5; cursor: default; }
 input, select { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; font-size: 13px; }
+.psel { position: relative; }
+.psel-btn { width: 100%; text-align: left; font-size: 13px; padding: 5px 8px; }
+.psel-list { position: absolute; top: calc(100% + 2px); left: 0; right: 0; z-index: 60; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; max-height: 340px; overflow: auto; box-shadow: 0 10px 28px rgba(0,0,0,.55); }
+.psel-item { display: flex; gap: 8px; align-items: baseline; width: 100%; text-align: left; background: none; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; color: var(--text); padding: 7px 10px; font-size: 13px; cursor: pointer; }
+.psel-item:last-child { border-bottom: 0; }
+.psel-item:hover { background: var(--panel2); }
+.psel-item .cnt { margin-left: auto; flex: none; color: var(--dim); font-size: 11px; }
 table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 8px; }
 th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--border); word-break: break-all; }
 th { color: var(--dim); font-weight: normal; }
@@ -138,7 +145,11 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
       <button class="primary" id="rgCreate">+ группа</button>
     </div>
     <div class="btnrow" style="margin-top:6px">
-      <select id="presetSel" style="flex:1;min-width:260px"></select>
+      <div class="psel" id="presetWrap" style="flex:1;min-width:260px">
+        <button type="button" class="psel-btn" id="presetBtn">выберите шаблон</button>
+        <div class="psel-list" id="presetList" hidden></div>
+      </div>
+      <input type="hidden" id="presetSel">
       <select id="presetIface"></select>
       <button id="presetApply">шаблон на интерфейс</button>
     </div>
@@ -1385,7 +1396,10 @@ async function loadPresets() {
   try {
     const r = await api('GET', '/mt/presets');
     PRESETS = r.presets || [];
-    document.getElementById('presetSel').innerHTML = PRESETS.map(p=>`<option value="${p.id}">${p.title} (${p.rules.length})</option>`).join('');
+    const sel = document.getElementById('presetSel');
+    sel.value = PRESETS.length ? PRESETS[0].id : '';
+    document.getElementById('presetList').innerHTML = PRESETS.map(p=>`<button type="button" class="psel-item" data-id="${p.id}"><span>${p.title}</span><span class="cnt">${p.rules.length}</span></button>`).join('');
+    updatePresetBtn();
     const hint = document.getElementById('presetSrc');
     if (r.sourceUrl) {
       hint.innerHTML = 'Списки: <a href="' + r.sourceUrl + '" target="_blank" rel="noopener">github.com/itdoginfo/allow-domains</a>'
@@ -1394,6 +1408,30 @@ async function loadPresets() {
     }
   } catch {}
 }
+
+function updatePresetBtn() {
+  const p = PRESETS.find(x => x.id === document.getElementById('presetSel').value);
+  document.getElementById('presetBtn').textContent = p ? p.title : 'выберите шаблон';
+}
+document.getElementById('presetBtn').addEventListener('click', e => {
+  e.stopPropagation();
+  const l = document.getElementById('presetList');
+  l.hidden = !l.hidden;
+});
+document.getElementById('presetList').addEventListener('click', e => {
+  const b = e.target.closest('.psel-item');
+  if (!b) return;
+  document.getElementById('presetSel').value = b.dataset.id;
+  document.getElementById('presetList').hidden = true;
+  updatePresetBtn();
+});
+document.addEventListener('click', e => {
+  const w = document.getElementById('presetWrap');
+  if (w && !w.contains(e.target)) document.getElementById('presetList').hidden = true;
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') document.getElementById('presetList').hidden = true;
+});
 
 const PRESET_TYPE_LABELS = { namespace: 'домен+поддомены', subnet: 'подсети IPv4', subnet6: 'подсети IPv6' };
 document.getElementById('presetApply').onclick = async () => {
