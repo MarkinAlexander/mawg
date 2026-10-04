@@ -143,6 +143,7 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
       <input type="color" id="rgColor" value="#4a9eff" title="цвет группы">
       <select id="rgIface"></select>
       <button class="primary" id="rgCreate">+ группа</button>
+      <button id="rgCascade" title="направить трафик одного подключения через другое">+ каскад</button>
     </div>
     <div class="btnrow" style="margin-top:6px">
       <div class="psel" id="presetWrap" style="flex:1;min-width:260px">
@@ -251,9 +252,41 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
     <label class="f">Интерфейс
       <select id="egIface"></select>
     </label>
+    <label class="f">Если основной интерфейс недоступен
+      <select id="egPolicy">
+        <option value="">по умолчанию (как у пула)</option>
+        <option value="direct">прямой ход (проверив интернет)</option>
+        <option value="blackhole">резать трафик (blackhole)</option>
+        <option value="iface">переключить на запасной интерфейс</option>
+      </select>
+    </label>
+    <label class="f" id="egPolicyIfaceWrap" style="display:none">Запасной интерфейс
+      <select id="egPolicyIface"></select>
+    </label>
+    <div class="muted" id="egPolicyHint" style="font-size:11px"></div>
     <div class="btnrow" style="justify-content:end">
       <button value="cancel">Отмена</button>
       <button class="primary" id="egSave">Сохранить</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="dlgCascade">
+  <form method="dialog" style="display:grid; gap:4px; min-width:420px">
+    <h3 style="margin:0 0 4px">Каскад</h3>
+    <div class="muted" style="font-size:12px;margin-bottom:6px">Создается служебная группа: трафик к эндпоинтам источника направляется через путь-посредник. Включается и выключается обычным тумблером группы; при ротации источника адреса добавляются сами.</div>
+    <label class="f">Что гоняем (источник эндпоинтов)
+      <select id="csSource"></select>
+    </label>
+    <label class="f" id="csHostsWrap" style="display:none">Адреса или домены его эндпоинтов (по одному в строке)
+      <textarea id="csHosts" rows="3" placeholder="8.39.125.1&#10;engage.cloudflareclient.com"></textarea>
+    </label>
+    <label class="f">Через что (путь)
+      <select id="csVia"></select>
+    </label>
+    <div class="btnrow" style="justify-content:end">
+      <button value="cancel">Отмена</button>
+      <button class="primary" id="csCreate">Создать каскад</button>
     </div>
   </form>
 </dialog>
@@ -1124,6 +1157,12 @@ function editRule(g, rl, tr) {
 }
 
 let editGroupID = null;
+const POLICY_HINTS = {
+  '': 'При отвале интерфейса группа ведет себя как обычно: на пуле выключится при его фоллбеке.',
+  'direct': 'Если основной интерфейс умрет, трафик группы пойдет напрямую (проверив, что есть интернет) и вернется сам.',
+  'blackhole': 'Если основной интерфейс умрет, трафик группы будет резаться (kill-switch) и вернется сам.',
+  'iface': 'Если основной интерфейс умрет, группа перейдет на запасной интерфейс и вернется сам.'
+};
 function editGroupDlg(g) {
   editGroupID = g.id;
   $('#egName').value = g.name;
@@ -1135,8 +1174,21 @@ function editGroupDlg(g) {
     const t = (MT_IFACES.find(i => i.device === d) || {}).title;
     return `<option value="${esc(d)}"${d === g.interface ? ' selected' : ''}>${esc(d)}${t ? ' - ' + esc(t) : ''}</option>`;
   }).join('');
+  sel.disabled = !!g.cascade;
+  const pol = g.policy || { onDead: '', iface: '' };
+  const pdev = MT_IFACES.map(i => i.device);
+  if (pol.iface && !pdev.includes(pol.iface)) pdev.push(pol.iface);
+  $('#egPolicyIface').innerHTML = pdev.map(d => `<option value="${esc(d)}">${esc(d)}</option>`).join('');
+  $('#egPolicy').value = pol.onDead || '';
+  $('#egPolicyIface').value = pol.iface || '';
+  $('#egPolicyIfaceWrap').style.display = $('#egPolicy').value === 'iface' ? '' : 'none';
+  $('#egPolicyHint').textContent = POLICY_HINTS[$('#egPolicy').value] || '';
   dlgGroup.showModal();
 }
+document.getElementById('egPolicy').onchange = () => {
+  $('#egPolicyIfaceWrap').style.display = $('#egPolicy').value === 'iface' ? '' : 'none';
+  $('#egPolicyHint').textContent = POLICY_HINTS[$('#egPolicy').value] || '';
+};
 
 function mtInterfaces() {
   const ifs = [];
@@ -1274,17 +1326,28 @@ function renderRules() {
     el.className = 'mtgroup';
     el.dataset.id = g.id;
     if (g.color) el.style.setProperty('--gcol', g.color);
+    const POLICY_SHORT = { direct: 'прямой ход', blackhole: 'резать трафик', iface: 'запасной интерфейс' };
+    const DEGRADED_TXT = {
+      direct: 'идет напрямую: основной интерфейс умер, вернется сам',
+      'direct-pending': 'ждет возврата интернета, потом пойдет напрямую',
+      blackhole: 'трафик группы режется: основной интерфейс умер',
+      iface: 'временно переключена на запасной интерфейс'
+    };
+    const cascBadge = g.cascade ? '<span class="badge" style="border-color:#8a8f98;color:#aab0ba">каскад</span>' : '';
+    const polBadge = g.policy ? `<span class="badge" style="border-color:#d9a032;color:#d9a032">при отвале: ${POLICY_SHORT[g.policy.onDead] || esc(g.policy.onDead)}</span>` : '';
+    const degTxt = g.degraded ? (DEGRADED_TXT[g.degraded.split(':')[0]] || ('состояние: ' + esc(g.degraded))) : '';
     el.innerHTML = `
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
         <span class="grip" title="перетащите, чтобы изменить порядок">${GRIP_SVG}</span>
         <span class="gcolor" style="background:${esc(g.color || '#4a9eff')}"></span>
-        <b>${esc(g.name)}</b>${groupWarnSvg(g)}
+        <b>${esc(g.name)}</b>${groupWarnSvg(g)}${cascBadge}${polBadge}
         <span class="iface-badge"><span class="badge">${esc(g.interface)}</span>${g.interfaceTitle ? `<span class="iface-title">${esc(g.interfaceTitle)}</span>` : ''}</span>
         <span class="muted" style="font-size:12px">правил: ${(g.rules||[]).length}</span>
         <span style="flex:1"></span>
         <label class="switch" title="${g.enable ? 'выключить группу' : 'включить группу'}"><input type="checkbox" class="mt-toggle" ${g.enable ? 'checked' : ''}><span class="knob"></span></label>
         <button class="iconbtn edit mt-edit" title="изменить группу">${PENCIL_SVG}</button>
         <button class="iconbtn mt-del" title="удалить группу">${TRASH_SVG}</button>
+        ${degTxt ? `<div class="muted" style="flex-basis:100%;font-size:11px">${degTxt}</div>` : ''}
       </div>
       <details ${openMtGroups.has(g.id) ? 'open' : ''}>
         <summary>правила</summary>
@@ -1357,7 +1420,8 @@ async function fillIfaceSelects() {
   try {
     const r = await api('GET', '/mt/interfaces');
     MT_IFACES = r.interfaces || [];
-    const opts = MT_IFACES.map(i=>`<option value="${i.device}">${i.title ? i.device + ' - ' + i.title : i.device}</option>`).join('');
+    const opts = MT_IFACES.map(i=>`<option value="${i.device}">${i.title ? i.device + ' - ' + i.title : i.device}</option>`).join('')
+      + '<option value="blackhole">blackhole (резать трафик)</option>';
     if (opts) {
       const rg = document.getElementById('rgIface');
       const pi = document.getElementById('presetIface');
@@ -1368,6 +1432,46 @@ async function fillIfaceSelects() {
     }
   } catch {}
 }
+
+let CASC_OPEN = { source: '', via: '' };
+async function fillCascadeSelects() {
+  try {
+    if (!MT_IFACES.length) await fillIfaceSelects();
+    const pools = (STATUS && STATUS.pools ? STATUS.pools : []).map(p => ({ ref: 'pool:' + p.name, label: 'пул ' + p.name }));
+    const ifaces = MT_IFACES.filter(i => i.device !== 'blackhole').map(i => ({ ref: 'iface:' + i.device, label: 'интерфейс ' + i.device }));
+    const srcOpts = pools.concat(ifaces).map(o => `<option value="${o.ref}">${o.label}</option>`).join('');
+    const viaOpts = pools.concat(ifaces).map(o => `<option value="${o.ref}">${o.label}</option>`).join('');
+    document.getElementById('csSource').innerHTML = srcOpts;
+    document.getElementById('csVia').innerHTML = viaOpts;
+    if (CASC_OPEN.source && [...document.getElementById('csSource').options].some(o => o.value === CASC_OPEN.source)) document.getElementById('csSource').value = CASC_OPEN.source;
+    if (CASC_OPEN.via && [...document.getElementById('csVia').options].some(o => o.value === CASC_OPEN.via)) document.getElementById('csVia').value = CASC_OPEN.via;
+    document.getElementById('csHostsWrap').style.display = document.getElementById('csSource').value.startsWith('iface:') ? '' : 'none';
+  } catch {}
+}
+document.getElementById('rgCascade').onclick = () => { fillCascadeSelects(); dlgCascade.showModal(); };
+document.getElementById('csSource').onchange = () => {
+  document.getElementById('csHostsWrap').style.display = document.getElementById('csSource').value.startsWith('iface:') ? '' : 'none';
+};
+document.getElementById('csCreate').onclick = async e => {
+  const btn = e.currentTarget;
+  const source = document.getElementById('csSource').value;
+  const via = document.getElementById('csVia').value;
+  if (!source || !via) return toast('Выберите источник и путь', true);
+  if (source === via) return toast('Источник и путь совпадают', true);
+  const hosts = document.getElementById('csHosts').value.split(/\n+/).map(x => x.trim()).filter(Boolean);
+  btn.disabled = true;
+  try {
+    await api('POST', '/cascades', { source, via, hosts });
+    CASC_OPEN = { source, via };
+    dlgCascade.close();
+    toast('Каскад создан и включен');
+    refreshRules(true);
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+};
 
 document.getElementById('rgCreate').onclick = async () => {
   const name = document.getElementById('rgName').value.trim();
@@ -1386,6 +1490,7 @@ $('#egSave').onclick = e => withBusy(e.currentTarget, async () => {
   if (!name || !editGroupID) return;
   try {
     await api('PUT', '/mt/groups/' + editGroupID, { name, color: $('#egColor').value, interface: $('#egIface').value });
+    await api('PUT', '/mt/groups/' + editGroupID + '/policy', { onDead: $('#egPolicy').value, iface: $('#egPolicyIface').value });
     dlgGroup.close();
     lastMtJSON = ''; refreshRules(true);
   } catch (err) { toast(err.message, true); }
