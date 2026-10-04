@@ -1105,6 +1105,10 @@ func (s *Server) mtGetInterfaces(w http.ResponseWriter, r *http.Request) {
 	groups, err := s.mtClient().GroupsWithRules(r.Context())
 	if err == nil {
 		for _, g := range groups {
+			// blackhole - служебное имя блокировки, UI добавляет его сам
+			if g.Interface == "blackhole" {
+				continue
+			}
 			if _, ok := titles[g.Interface]; !ok {
 				titles[g.Interface] = ""
 			}
