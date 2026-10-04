@@ -30,11 +30,25 @@ func bindToDevice(device string) func(string, string, syscall.RawConn) error {
 
 func httpProbe(device, target string, timeout time.Duration) (ok bool, rttMs int, err error) {
 	dialer := &net.Dialer{Timeout: timeout, Control: bindToDevice(device)}
+	base := dialer.DialContext
 	client := &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{
-			DialContext:       dialer.DialContext,
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				host, port, err := net.SplitHostPort(addr)
+				if err != nil {
+					return nil, err
+				}
+				safe, err := safeAddr(host, port)
+				if err != nil {
+					return nil, err
+				}
+				return base(ctx, network, safe)
+			},
 			DisableKeepAlives: true,
+		},
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return fmt.Errorf("redirects disabled for probe")
 		},
 	}
 	start := time.Now()

@@ -774,6 +774,9 @@ func (e *Engine) rotate(p store.Pool, st *store.PoolState, failedActive string) 
 			if until, ok := state.Cooldowns[c.File]; ok && e.now().Unix() < until {
 				continue
 			}
+			if e.addressTaken(p.Name, p.DeviceName(), c) {
+				continue
+			}
 			chosen = idx
 			break
 		}

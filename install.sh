@@ -348,6 +348,19 @@ if [ -n "${MAWG_BINARY:-}" ]; then
     cp "$MAWG_BINARY" "$TMP/mawg" || die "не удалось скопировать MAWG_BINARY=$MAWG_BINARY"
 else
     fetch "$DL_BASE/mawg-linux-$ARCH" "$TMP/mawg" || die "не удалось скачать mawg-linux-$ARCH (релизы: https://github.com/$REPO/releases)"
+    if fetch "$DL_BASE/sha256sum.txt" "$TMP/sha256sum.txt" 2>/dev/null; then
+        want=$(grep "mawg-linux-$ARCH\$" "$TMP/sha256sum.txt" | awk '{print $1}')
+        got=$(sha256sum "$TMP/mawg" | awk '{print $1}')
+        if [ -z "$want" ]; then
+            warn "в sha256sum.txt нет строки для mawg-linux-$ARCH"
+        elif [ "$want" != "$got" ]; then
+            die "контрольная сумма не совпала: $got, ожидалось $want"
+        else
+            say "checksum ok"
+        fi
+    else
+        warn "sha256sum.txt недоступен, проверка суммы пропущена"
+    fi
 fi
 size=$(wc -c < "$TMP/mawg" 2>/dev/null || echo 0)
 [ "$size" -gt 500000 ] || die "скачанный файл подозрительно мал ($size байт)"
