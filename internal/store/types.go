@@ -6,9 +6,10 @@ import (
 )
 
 const (
-	FallbackDirect     = "direct"
-	FallbackHold       = "hold"
-	FallbackPoolPrefix = "pool:"
+	FallbackDirect      = "direct"
+	FallbackHold        = "hold"
+	FallbackPoolPrefix  = "pool:"
+	FallbackIfacePrefix = "iface:"
 
 	PlatformKeenetic = "keenetic"
 	PlatformOpenwrt  = "openwrt"
@@ -24,6 +25,11 @@ const (
 func FallbackPoolName(fallback string) (string, bool) {
 	name := strings.TrimPrefix(fallback, FallbackPoolPrefix)
 	return name, strings.HasPrefix(fallback, FallbackPoolPrefix) && name != ""
+}
+
+func FallbackIfaceName(fallback string) (string, bool) {
+	name := strings.TrimPrefix(fallback, FallbackIfacePrefix)
+	return name, strings.HasPrefix(fallback, FallbackIfacePrefix) && name != ""
 }
 
 const (
@@ -97,7 +103,7 @@ func (s PoolSettings) WithDefaults() PoolSettings {
 	if out.CooldownMin <= 0 {
 		out.CooldownMin = 10
 	}
-	if out.Fallback != FallbackHold && !strings.HasPrefix(out.Fallback, FallbackPoolPrefix) {
+	if out.Fallback != FallbackHold && !strings.HasPrefix(out.Fallback, FallbackPoolPrefix) && !strings.HasPrefix(out.Fallback, FallbackIfacePrefix) {
 		out.Fallback = FallbackDirect
 	}
 	if out.Keepalive <= 0 {

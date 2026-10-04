@@ -1118,6 +1118,7 @@ func (s *Server) mtGetInterfaces(w http.ResponseWriter, r *http.Request) {
 	for dev, title := range titles {
 		out = append(out, ifaceView{Device: dev, Title: title})
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Device < out[j].Device })
 	writeJSON(w, http.StatusOK, map[string]any{"interfaces": out})
 }
 

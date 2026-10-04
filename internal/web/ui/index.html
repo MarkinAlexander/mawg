@@ -329,6 +329,7 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
         <option value="hold">держать последний конфиг</option>
       </select>
     </label>
+    <div class="muted" id="fbHint" style="font-size:11px;margin-top:2px"></div>
     <div class="btnrow" style="justify-content:end">
       <button value="cancel">Отмена</button>
       <button class="primary" id="spSave">Сохранить</button>
@@ -874,8 +875,14 @@ function openSettings(name) {
   for (const other of STATUS.pools) {
     if (other.name !== p.name) fbOpts += `<option value="pool:${other.name}">перевести группы на пул ${other.name}</option>`;
   }
+  for (const i of (IFACES || [])) {
+    if (i.device === p.device || i.mode === 'managed') continue;
+    fbOpts += `<option value="iface:${i.device}">перевести группы на интерфейс ${esc(ifaceLabel(i.device))}${i.probe ? '' : ' (без проверки)'}</option>`;
+  }
   fbSel.innerHTML = fbOpts;
   fbSel.value = [...fbSel.options].some(o => o.value === (p.settings.fallback || 'direct')) ? (p.settings.fallback || 'direct') : 'direct';
+  updateFbHint(p.device);
+  fbSel.onchange = () => updateFbHint(p.device);
   dlgSettings.showModal();
 }
 wireProbeSwitch($('#spProbeType'), $('#spProbe'));
@@ -937,7 +944,7 @@ function renderIfaces() {
   for (const it of visible) {
     const row = document.createElement('div');
     row.style.cssText = 'display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:5px 0;border-bottom:1px solid var(--border)';
-    const hs = it.handshakeAgo >= 0 ? `handshake ${it.handshakeAgo}с назад` : 'handshake нет';
+    const hs = it.mode === 'managed' ? '' : (it.handshakeAgo >= 0 ? `handshake ${it.handshakeAgo}с назад` : 'handshake нет');
     const badge = it.linkUp
       ? `<span class="badge up">up</span>`
       : `<span class="badge ${it.mode === 'hidden' ? 'cool' : 'fallback'}">down</span>`;
@@ -946,7 +953,7 @@ function renderIfaces() {
       <b style="min-width:64px">${esc(it.device)}</b>
       <span class="muted" style="font-size:12px">${title}</span>
       ${badge}
-      <span class="muted" style="font-size:11px">${hs}</span>
+      ${hs ? `<span class="muted" style="font-size:11px">${hs}</span>` : ''}
       ${it.probeStatus ? (it.probeStatus.includes('ок')
         ? `<span class="badge up">${esc(it.probeStatus)}</span>`
         : `<span class="badge fallback">${esc(it.probeStatus)}</span>`) : ''}
@@ -1178,7 +1185,7 @@ function editGroupDlg(g) {
   const pol = g.policy || { onDead: '', iface: '' };
   const pdev = MT_IFACES.map(i => i.device);
   if (pol.iface && !pdev.includes(pol.iface)) pdev.push(pol.iface);
-  $('#egPolicyIface').innerHTML = pdev.map(d => `<option value="${esc(d)}">${esc(d)}</option>`).join('');
+  $('#egPolicyIface').innerHTML = pdev.map(d => `<option value="${esc(d)}">${esc(ifaceLabel(d))}</option>`).join('');
   $('#egPolicy').value = pol.onDead || '';
   $('#egPolicyIface').value = pol.iface || '';
   $('#egPolicyIfaceWrap').style.display = $('#egPolicy').value === 'iface' ? '' : 'none';
@@ -1416,6 +1423,21 @@ function renderRules() {
 }
 
 let MT_IFACES = [];
+function ifaceLabel(dev) {
+  const i = MT_IFACES.find(x => x.device === dev);
+  return i && i.title ? dev + ' - ' + i.title : dev;
+}
+function updateFbHint() {
+  const el = document.getElementById('fbHint');
+  if (!el) return;
+  const v = document.getElementById('spFallback').value;
+  if (!v.startsWith('iface:')) { el.textContent = ''; return; }
+  const dev = v.slice('iface:'.length);
+  const info = (IFACES || []).find(i => i.device === dev);
+  el.textContent = info && info.probe
+    ? 'Группы будут переведены на ' + ifaceLabel(dev) + ' при провале всех конфигов и вернутся, когда пул оживет.'
+    : 'Внимание: у интерфейса ' + ifaceLabel(dev) + ' нет проверки здоровья. Задайте её в разделе Интерфейсы роутера, иначе момент отката и возврата будет определяться неточно.';
+}
 async function fillIfaceSelects() {
   try {
     const r = await api('GET', '/mt/interfaces');
@@ -1434,23 +1456,45 @@ async function fillIfaceSelects() {
 }
 
 let CASC_OPEN = { source: '', via: '' };
+function cascadeOptions() {
+  const pools = (STATUS && STATUS.pools ? STATUS.pools : []).map(p => ({ ref: 'pool:' + p.name, label: 'пул ' + p.name }));
+  const ifaces = MT_IFACES.filter(i => i.device !== 'blackhole').map(i => ({ ref: 'iface:' + i.device, label: 'интерфейс ' + ifaceLabel(i.device) }));
+  return pools.concat(ifaces);
+}
+// fillCascadeSel наполняет список каскада, выключая вариант, выбранный
+// в соседнем списке: источник и путь не должны совпадать.
+function fillCascadeSel(sel, otherValue) {
+  sel.innerHTML = cascadeOptions().map(o => `<option value="${o.ref}"${o.ref === otherValue ? ' disabled' : ''}>${o.label}</option>`).join('');
+  if (![...sel.options].some(o => o.value === sel.value && !o.disabled)) {
+    const first = [...sel.options].find(o => !o.disabled);
+    sel.value = first ? first.value : '';
+  }
+}
+function cascadeHostsVisible() {
+  document.getElementById('csHostsWrap').style.display = document.getElementById('csSource').value.startsWith('iface:') ? '' : 'none';
+}
 async function fillCascadeSelects() {
   try {
     if (!MT_IFACES.length) await fillIfaceSelects();
-    const pools = (STATUS && STATUS.pools ? STATUS.pools : []).map(p => ({ ref: 'pool:' + p.name, label: 'пул ' + p.name }));
-    const ifaces = MT_IFACES.filter(i => i.device !== 'blackhole').map(i => ({ ref: 'iface:' + i.device, label: 'интерфейс ' + i.device }));
-    const srcOpts = pools.concat(ifaces).map(o => `<option value="${o.ref}">${o.label}</option>`).join('');
-    const viaOpts = pools.concat(ifaces).map(o => `<option value="${o.ref}">${o.label}</option>`).join('');
-    document.getElementById('csSource').innerHTML = srcOpts;
-    document.getElementById('csVia').innerHTML = viaOpts;
-    if (CASC_OPEN.source && [...document.getElementById('csSource').options].some(o => o.value === CASC_OPEN.source)) document.getElementById('csSource').value = CASC_OPEN.source;
-    if (CASC_OPEN.via && [...document.getElementById('csVia').options].some(o => o.value === CASC_OPEN.via)) document.getElementById('csVia').value = CASC_OPEN.via;
-    document.getElementById('csHostsWrap').style.display = document.getElementById('csSource').value.startsWith('iface:') ? '' : 'none';
+    fillCascadeSel(document.getElementById('csSource'), CASC_OPEN.via);
+    const s = document.getElementById('csSource');
+    if (CASC_OPEN.source && [...s.options].some(o => o.value === CASC_OPEN.source && !o.disabled)) s.value = CASC_OPEN.source;
+    fillCascadeSel(document.getElementById('csVia'), s.value);
+    const v = document.getElementById('csVia');
+    if (CASC_OPEN.via && [...v.options].some(o => o.value === CASC_OPEN.via && !o.disabled)) v.value = CASC_OPEN.via;
+    CASC_OPEN = { source: s.value, via: v.value };
+    cascadeHostsVisible();
   } catch {}
 }
 document.getElementById('rgCascade').onclick = () => { fillCascadeSelects(); dlgCascade.showModal(); };
 document.getElementById('csSource').onchange = () => {
-  document.getElementById('csHostsWrap').style.display = document.getElementById('csSource').value.startsWith('iface:') ? '' : 'none';
+  fillCascadeSel(document.getElementById('csVia'), document.getElementById('csSource').value);
+  CASC_OPEN = { source: document.getElementById('csSource').value, via: document.getElementById('csVia').value };
+  cascadeHostsVisible();
+};
+document.getElementById('csVia').onchange = () => {
+  fillCascadeSel(document.getElementById('csSource'), document.getElementById('csVia').value);
+  CASC_OPEN = { source: document.getElementById('csSource').value, via: document.getElementById('csVia').value };
 };
 document.getElementById('csCreate').onclick = async e => {
   const btn = e.currentTarget;

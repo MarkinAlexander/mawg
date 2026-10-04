@@ -861,6 +861,29 @@ func (e *Engine) enterFallback(p store.Pool, st *store.PoolState) {
 	if was == store.ModeFallback {
 		return
 	}
+	if fbDev, ok := store.FallbackIfaceName(p.Settings.Fallback); ok {
+		exists := false
+		if slots, err := e.backend.Slots(); err == nil {
+			for _, sl := range slots {
+				if sl.Device == fbDev {
+					exists = true
+					break
+				}
+			}
+		}
+		e.ifaceTouched()
+		if err := e.backend.Down(p); err != nil {
+			log.Printf("pool %s: down failed: %v", p.Name, err)
+		}
+		if !exists {
+			e.store.LogEvent(p.Name, "fallback", "fallback iface "+fbDev+" не найден, группы идут напрямую")
+			e.suspendGroups(p)
+			return
+		}
+		e.store.LogEvent(p.Name, "fallback", "группы переведены на интерфейс "+fbDev)
+		e.rebindGroups(p, fbDev)
+		return
+	}
 	if fbName, ok := store.FallbackPoolName(p.Settings.Fallback); ok {
 		fbPool, exists := e.store.Pool(fbName)
 		if !exists || fbPool.Disabled {
