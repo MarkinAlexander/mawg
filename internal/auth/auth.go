@@ -51,7 +51,7 @@ type Auth struct {
 	FirstRun bool
 }
 
-// Open загружает существующую учётку без генерации (CLI-сброс пароля).
+// Open загружает учётку без генерации (CLI-сброс пароля).
 func Open(base string) *Auth {
 	a := &Auth{Enabled: true, Base: base, login: "admin", sessions: map[string]time.Time{}, fails: map[string]*failState{}}
 	if c, err := a.load(); err == nil {
@@ -60,9 +60,8 @@ func Open(base string) *Auth {
 	return a
 }
 
-// New загружает учётку из base/auth.json; если её нет (обновление со
-// старой версии или первый запуск) - генерирует admin + случайный пароль,
-// пишет подсказку в first-auth.txt и баннер в консоль/лог.
+// New при отсутствии auth.json генерирует admin + случайный пароль,
+// подсказку first-auth.txt и баннер в лог.
 func New(base string, enabled bool) *Auth {
 	a := &Auth{Enabled: enabled, Base: base, login: "admin", sessions: map[string]time.Time{}, fails: map[string]*failState{}}
 	if !enabled {
@@ -228,9 +227,7 @@ func (a *Auth) writeErr(w http.ResponseWriter, code int, msg string) {
 	fmt.Fprintf(w, `{"error":%q}`, msg)
 }
 
-// current: свежая учётка. Файл перечитывается на каждом логине, чтобы
-// консольный сброс (mawg -reset-auth) действовал без рестарта демона.
-// Не читается - берём копию в памяти.
+// current: файл перечитывается, чтобы CLI-сброс действовал без рестарта.
 func (a *Auth) current() (string, string) {
 	if c, err := a.load(); err == nil {
 		a.login, a.hash = c.Login, c.Hash
@@ -290,8 +287,7 @@ func (a *Auth) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true, SameSite: http.SameSiteStrictMode,
 		MaxAge: int(sessionTTL.Seconds()),
 	})
-	// подсказка first-auth.txt нужна ровно до первого успешного входа:
-	// автогенерированный пароль считаем полноценным, дальше файл не нужен
+	// подсказка живёт до первого входа
 	os.Remove(filepath.Join(a.Base, "first-auth.txt"))
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"ok":true,"token":%q}`, token)

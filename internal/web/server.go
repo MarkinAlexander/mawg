@@ -1177,8 +1177,7 @@ func (s *Server) mtUpdateGroup(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "updated"})
 }
 
-// limitBody: JSON ограничен 1МБ, multipart 32МБ - безлимитное тело
-// на роутере это поверхность DoS.
+// limitBody: JSON 1МБ, multipart 32МБ.
 func limitBody(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		limit := int64(1 << 20)
@@ -1537,8 +1536,6 @@ func (s *Server) mtApplyPreset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	created := magitrickle.Group{Name: name, Interface: req.Interface, Enable: true, Rules: preset.Rules}
-	// один bulk PUT: атомарно, без save=true на каждое правило
-	// (N правил = N записей рантайма и рост счётчика партиями)
 	if err := client.AddGroup(r.Context(), created); err != nil {
 		writeErr(w, fmt.Errorf("группа не создана: %v", err))
 		return

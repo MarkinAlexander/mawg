@@ -228,8 +228,18 @@ func SetShadowStorage(load func() []Group, save func([]Group)) {
 	}
 }
 
+var lastShadowJSON string
+
 func updateShadowLocked(groups []Group) {
+	data, err := json.Marshal(groups)
+	if err != nil {
+		return
+	}
+	if string(data) == lastShadowJSON {
+		return
+	}
 	mtShadow = append([]Group(nil), groups...)
+	lastShadowJSON = string(data)
 	if SaveShadow != nil {
 		SaveShadow(mtShadow)
 	}
