@@ -1183,19 +1183,24 @@ function editGroupDlg(g) {
   }).join('');
   sel.disabled = !!g.cascade;
   const pol = g.policy || { onDead: '', iface: '' };
-  const pdev = MT_IFACES.map(i => i.device);
+  const pdev = MT_IFACES.map(i => i.device).filter(d => d !== 'blackhole');
   if (pol.iface && !pdev.includes(pol.iface)) pdev.push(pol.iface);
   $('#egPolicyIface').innerHTML = pdev.map(d => `<option value="${esc(d)}">${esc(ifaceLabel(d))}</option>`).join('');
   $('#egPolicy').value = pol.onDead || '';
   $('#egPolicyIface').value = pol.iface || '';
-  $('#egPolicyIfaceWrap').style.display = $('#egPolicy').value === 'iface' ? '' : 'none';
-  $('#egPolicyHint').textContent = POLICY_HINTS[$('#egPolicy').value] || '';
+  egPolicyVisibility();
   dlgGroup.showModal();
 }
-document.getElementById('egPolicy').onchange = () => {
-  $('#egPolicyIfaceWrap').style.display = $('#egPolicy').value === 'iface' ? '' : 'none';
-  $('#egPolicyHint').textContent = POLICY_HINTS[$('#egPolicy').value] || '';
-};
+// блокировка (blackhole) - самостоятельное поведение группы, политика
+// отвала к ней не применяется
+function egPolicyVisibility() {
+  const block = $('#egIface').value === 'blackhole';
+  $('#egPolicy').closest('label').style.display = block ? 'none' : '';
+  $('#egPolicyIface').closest('label').style.display = block || $('#egPolicy').value !== 'iface' ? 'none' : '';
+  $('#egPolicyHint').textContent = block ? '' : (POLICY_HINTS[$('#egPolicy').value] || '');
+}
+document.getElementById('egPolicy').onchange = egPolicyVisibility;
+document.getElementById('egIface').onchange = egPolicyVisibility;
 
 function mtInterfaces() {
   const ifs = [];
@@ -1497,35 +1502,39 @@ document.getElementById('csVia').onchange = () => {
   CASC_OPEN = { source: document.getElementById('csSource').value, via: document.getElementById('csVia').value };
 };
 document.getElementById('csCreate').onclick = async e => {
-  const btn = e.currentTarget;
   const source = document.getElementById('csSource').value;
   const via = document.getElementById('csVia').value;
   if (!source || !via) return toast('Выберите источник и путь', true);
   if (source === via) return toast('Источник и путь совпадают', true);
   const hosts = document.getElementById('csHosts').value.split(/\n+/).map(x => x.trim()).filter(Boolean);
-  btn.disabled = true;
-  try {
-    await api('POST', '/cascades', { source, via, hosts });
-    CASC_OPEN = { source, via };
-    dlgCascade.close();
-    toast('Каскад создан и включен');
-    refreshRules(true);
-  } catch (err) {
-    toast(err.message, true);
-  } finally {
-    btn.disabled = false;
-  }
+  await withBusy(e.currentTarget, async () => {
+    try {
+      await api('POST', '/cascades', { source, via, hosts });
+      CASC_OPEN = { source, via };
+      dlgCascade.close();
+      toast('Каскад создан и включен');
+      await refreshRules(true);
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
 };
 
-document.getElementById('rgCreate').onclick = async () => {
+document.getElementById('rgCreate').onclick = async e => {
   const name = document.getElementById('rgName').value.trim();
   const iface = document.getElementById('rgIface').value;
   if (!name || !iface) return toast('Укажите имя группы и интерфейс', true);
-  try {
-    await api('POST', '/mt/groups', { name, interface: iface, color: document.getElementById('rgColor').value });
-    document.getElementById('rgName').value = '';
-    lastMtJSON = ''; refreshRules(true);
-  } catch (e) { toast(e.message, true); }
+  await withBusy(e.currentTarget, async () => {
+    try {
+      const g = await api('POST', '/mt/groups', { name, interface: iface, color: document.getElementById('rgColor').value });
+      document.getElementById('rgName').value = '';
+      openMtGroups.add(g.id);
+      lastMtJSON = '';
+      await refreshRules(true);
+      const card = document.querySelector('.mtgroup[data-id="' + (window.CSS && CSS.escape ? CSS.escape(g.id) : g.id) + '"]');
+      if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    } catch (err) { toast(err.message, true); }
+  });
 };
 
 document.querySelector('#dlgGroup button[value=cancel]').onclick = () => dlgGroup.close();
@@ -1534,7 +1543,9 @@ $('#egSave').onclick = e => withBusy(e.currentTarget, async () => {
   if (!name || !editGroupID) return;
   try {
     await api('PUT', '/mt/groups/' + editGroupID, { name, color: $('#egColor').value, interface: $('#egIface').value });
-    await api('PUT', '/mt/groups/' + editGroupID + '/policy', { onDead: $('#egPolicy').value, iface: $('#egPolicyIface').value });
+    await api('PUT', '/mt/groups/' + editGroupID + '/policy', $('#egIface').value === 'blackhole'
+      ? { onDead: '' }
+      : { onDead: $('#egPolicy').value, iface: $('#egPolicyIface').value });
     dlgGroup.close();
     lastMtJSON = ''; refreshRules(true);
   } catch (err) { toast(err.message, true); }
