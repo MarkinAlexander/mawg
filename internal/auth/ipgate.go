@@ -8,9 +8,6 @@ import (
 	"sync"
 )
 
-// IPGate режет доступ к панели (API и статика) по allowlist IP/подсетей.
-// Пустой список = доступ всем. Адрес берётся из TCP-соединения: за реверс-
-// прокси всё будет выглядеть как его адрес, учитывайте при настройке.
 type IPGate struct {
 	mu    sync.RWMutex
 	rules []*net.IPNet
@@ -71,15 +68,13 @@ func (g *IPGate) allowed(ip net.IP) bool {
 	return false
 }
 
-// Allowed - входит ли адрес в allowlist (для самопроверок перед сохранением).
 func (g *IPGate) Allowed(ip net.IP) bool {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	return g.allowed(ip)
 }
 
-// Middleware пускает localhost всегда: CLI-проверки (mawg status) и локальный
-// curl не должны ломаться allowlist'ом.
+// Middleware пускает loopback всегда: CLI и локальные проверки не должны ломаться.
 func (g *IPGate) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if g.Empty() {

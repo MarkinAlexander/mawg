@@ -3,6 +3,8 @@ package main
 import (
 	"bufio"
 	"context"
+	"net"
+	"strconv"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -16,7 +18,13 @@ import (
 	"mawg/internal/store"
 )
 
-// initScript - скрипт управления сервисом на платформе.
+func platLabel() string {
+	if _, err := os.Stat("/etc/openwrt_release"); err == nil {
+		return store.PlatformOpenwrt
+	}
+	return store.PlatformKeenetic
+}
+
 func initScript(plat string) string {
 	if plat == store.PlatformKeenetic {
 		return "/opt/etc/init.d/S99mawg"
@@ -44,13 +52,11 @@ func runServiceCmd(plat, action string) int {
 	return 0
 }
 
-// cmdStatus показывает живость демона и снимок состояния панелью на 127.0.0.1.
 func cmdStatus(plat, dir string, portOverride int) int {
 	script := initScript(plat)
 	alive := false
 	if out, err := exec.Command(script, "status").CombinedOutput(); err == nil {
 		low := strings.ToLower(string(out))
-		// keenetic echo'ит running/stopped; procd на openwrt молчит у живого
 		alive = strings.Contains(low, "running") || !strings.Contains(low, "stopped")
 	}
 	status := "stopped"
@@ -170,4 +176,142 @@ func cmdAuth(dir, action string) int {
 		fmt.Println("использование: mawg auth off|on")
 		return 2
 	}
+}
+
+func cmdSettings(dir string) int {
+	st, err := store.Open(dir)
+	if err != nil {
+		fmt.Println("store:", err)
+		return 1
+	}
+	addr, port, allowed, authOff := st.ServerSettings()
+	a := auth.Open(dir)
+	fmt.Printf("платформа:      %s\n", platLabel())
+	fmt.Printf("версия:         %s\n", version)
+	fmt.Printf("панель:         http://%s:%d (после mawg restart)\n", addr, port)
+	fmt.Printf("авторизация:    %s\n", map[bool]string{true: "ВЫКЛЮЧЕНА (панель открыта всем)", false: "включена"}[authOff])
+	if !authOff && !a.HasCreds() {
+		fmt.Println("                учётной записи нет - задайте пароль: mawg -reset-auth")
+	}
+	if len(allowed) == 0 {
+		fmt.Println("доступ:         с любого адреса")
+	} else {
+		fmt.Println("доступ:         только с:")
+		for _, e := range allowed {
+			fmt.Printf("                %s%s\n", e.Value, map[bool]string{true: "", false: " (выключено)"}[e.On])
+		}
+	}
+	return 0
+}
+
+func cmdSetPort(dir, arg string) int {
+	n, err := strconv.Atoi(strings.TrimSpace(arg))
+	if err != nil || n < 1 || n > 65535 {
+		fmt.Println("использование: mawg port <1-65535>")
+		return 2
+	}
+	st, err := store.Open(dir)
+	if err != nil {
+		fmt.Println("store:", err)
+		return 1
+	}
+	addr, _, allowed, authOff := st.ServerSettings()
+	if err := st.SetServerSettings(addr, n, allowed, authOff); err != nil {
+		fmt.Println(err)
+		return 1
+	}
+	st.LogEvent("settings", "server", fmt.Sprintf("порт панели из консоли: %d", n))
+	fmt.Printf("порт панели: %d; перезапустите сервис: mawg restart\n", n)
+	return 0
+}
+
+func cmdSetListen(dir, arg string) int {
+	ip := strings.TrimSpace(arg)
+	if net.ParseIP(ip) == nil {
+		fmt.Println("использование: mawg listen <ip>  (0.0.0.0 - все, 127.0.0.1 - только локально)")
+		return 2
+	}
+	st, err := store.Open(dir)
+	if err != nil {
+		fmt.Println("store:", err)
+		return 1
+	}
+	_, port, allowed, authOff := st.ServerSettings()
+	if err := st.SetServerSettings(ip, port, allowed, authOff); err != nil {
+		fmt.Println(err)
+		return 1
+	}
+	st.LogEvent("settings", "server", "адрес панели из консоли: "+ip)
+	fmt.Printf("адрес панели: %s; перезапустите сервис: mawg restart\n", ip)
+	return 0
+}
+
+func cmdResetAccess(dir, arg string) int {
+	if arg != "access" {
+		fmt.Println("использование: mawg reset access  (порт 8090, адрес 0.0.0.0, разрешённые IP очищены)")
+		return 2
+	}
+	st, err := store.Open(dir)
+	if err != nil {
+		fmt.Println("store:", err)
+		return 1
+	}
+	_, _, _, authOff := st.ServerSettings()
+	if err := st.SetServerSettings("0.0.0.0", 8090, nil, authOff); err != nil {
+		fmt.Println(err)
+		return 1
+	}
+	st.LogEvent("settings", "server", "сброс доступа из консоли: 0.0.0.0:8090, allowlist очищен")
+	fmt.Println("доступ сброшен: адрес 0.0.0.0, порт 8090, разрешённые IP очищены.")
+	fmt.Println("авторизация не тронута; перезапустите сервис: mawg restart")
+	return 0
+}
+
+func cmdAllow(dir, arg string) int {
+	st, err := store.Open(dir)
+	if err != nil {
+		fmt.Println("store:", err)
+		return 1
+	}
+	addr, port, allowed, authOff := st.ServerSettings()
+	switch arg {
+	case "", "list":
+		if len(allowed) == 0 {
+			fmt.Println("список пуст: доступ с любого адреса")
+			return 0
+		}
+		for _, e := range allowed {
+			fmt.Printf("%s%s\n", e.Value, map[bool]string{true: "", false: "\t(выключено)"}[e.On])
+		}
+		return 0
+	case "clear":
+		if err := st.SetServerSettings(addr, port, nil, authOff); err != nil {
+			fmt.Println(err)
+			return 1
+		}
+		st.LogEvent("settings", "server", "allowlist очищен из консоли")
+		fmt.Println("список разрешённых адресов очищен; перезапустите сервис: mawg restart")
+		return 0
+	}
+	v := strings.TrimSpace(arg)
+	if net.ParseIP(v) == nil {
+		if _, _, err := net.ParseCIDR(v); err != nil {
+			fmt.Printf("%q не IP и не подсеть\n", v)
+			return 2
+		}
+	}
+	for _, e := range allowed {
+		if e.Value == v {
+			fmt.Println("такой адрес уже есть в списке")
+			return 0
+		}
+	}
+	next := append(allowed, store.IPAllow{Value: v, On: true})
+	if err := st.SetServerSettings(addr, port, next, authOff); err != nil {
+		fmt.Println(err)
+		return 1
+	}
+	st.LogEvent("settings", "server", "allowlist + "+v+" из консоли")
+	fmt.Printf("добавлен %s; перезапустите сервис: mawg restart\n", v)
+	return 0
 }

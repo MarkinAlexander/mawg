@@ -103,20 +103,27 @@ const usage = `mawg - Multi-AWG Changer ` + `
   mawg stop               остановить сервис
   mawg restart            перезапустить сервис
   mawg update             проверить и установить обновление с GitHub
+  mawg settings           текущие настройки панели (авторизация, порт, адрес, доступ)
+  mawg port <1-65535>     сменить порт веб-панели
+  mawg listen <ip>        сменить адрес прослушивания (0.0.0.0 | 127.0.0.1 | IP)
+  mawg reset access       сбросить доступ: порт 8090, адрес 0.0.0.0, разрешённые IP очищены
   mawg auth off           выключить авторизацию панели (НЕБЕЗОПАСНО)
   mawg auth on            включить авторизацию панели
+  mawg allow <ip|cidr>    добавить адрес в список разрешённых к панели
+  mawg allow list         показать разрешённые адреса
+  mawg allow clear        очистить список разрешённых адресов
   mawg -reset-auth        задать новый пароль панели интерактивно
   mawg -password <pass>   задать пароль без вопросов
+
+Смена порта, адреса, allowlist и авторизации вступает в силу после
+"mawg restart". Всё то же настраивается в веб-панели: Настройки.
 
 Флаги демона:
   -platform openwrt|keenetic   платформа (по умолчанию определяется сама)
   -base <dir>                  каталог данных
-  -port <n>                    порт веб-панели (по умолчанию из настроек, 8090)
-  -listen <ip>                 адрес прослушивания (по умолчанию из настроек)
-  -no-auth                     разово запустить без авторизации (аварийный)
-
-Адрес прослушивания, разрешённые IP и авторизация настраиваются также
-в веб-панели: Настройки.`
+  -port <n>                    порт веб-панели (перекрывает настройки)
+  -listen <ip>                 адрес прослушивания (перекрывает настройки)
+  -no-auth                     разово запустить без авторизации (аварийный)`
 
 func main() {
 	platformName := flag.String("platform", "", "platform override: openwrt | keenetic")
@@ -159,14 +166,22 @@ func main() {
 		os.Exit(cmdUpdate())
 	case "auth":
 		os.Exit(cmdAuth(dir, flag.Arg(1)))
+	case "settings":
+		os.Exit(cmdSettings(dir))
+	case "port":
+		os.Exit(cmdSetPort(dir, flag.Arg(1)))
+	case "listen":
+		os.Exit(cmdSetListen(dir, flag.Arg(1)))
+	case "reset":
+		os.Exit(cmdResetAccess(dir, flag.Arg(1)))
+	case "allow":
+		os.Exit(cmdAllow(dir, flag.Arg(1)))
 	case "":
 	default:
 		fmt.Fprintf(os.Stderr, "неизвестная команда %q\n\n%s", cmd, usage)
 		os.Exit(2)
 	}
 
-	// консольное управление паролем панели: root с SSH должен уметь
-	// сбросить пароль без веб-морды
 	if *resetAuth || *password != "" {
 		a := auth.Open(dir)
 		np := *password
@@ -244,7 +259,6 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// сетевые настройки панели: адрес/порт/allowlist/авторизация
 	listenAddr, cfgPort, _, authDisabled := st.ServerSettings()
 	if *port != 0 {
 		cfgPort = *port

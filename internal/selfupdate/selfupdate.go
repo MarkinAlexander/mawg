@@ -1,5 +1,3 @@
-// Package selfupdate проверяет и ставит обновления mawg с GitHub,
-// переиспользуя install.sh релиза (платформу и пути определяет он сам).
 package selfupdate
 
 import (
@@ -36,7 +34,6 @@ func httpGet(ctx context.Context, url string) (*http.Response, error) {
 	return http.DefaultClient.Do(req)
 }
 
-// Latest тянет последний релиз с GitHub. current передаётся как "v0.3.3".
 func Latest(ctx context.Context) (Release, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
@@ -58,7 +55,6 @@ func Latest(ctx context.Context) (Release, error) {
 	return rel, nil
 }
 
-// newer сравнивает семверы v0.3.3 vs v0.3.4 без внешних библиотек.
 func newer(current, latest string) bool {
 	c := strings.TrimPrefix(strings.TrimSpace(current), "v")
 	l := strings.TrimPrefix(strings.TrimSpace(latest), "v")
@@ -84,7 +80,6 @@ func newer(current, latest string) bool {
 	return false
 }
 
-// CheckInfo - результат проверки обновления.
 type CheckInfo struct {
 	Current    string `json:"current"`
 	Latest     string `json:"latest"`
@@ -106,9 +101,7 @@ func Check(ctx context.Context, current string) CheckInfo {
 	}
 }
 
-// Run качает install.sh последней ветки main и запускает его: он сам
-// определит платформу, скачает бинарник релиза с проверкой sha256,
-// положит на место и перезапустит сервис.
+// Run ставит обновление через install.sh релиза (sha256 проверяется им).
 func Run(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()

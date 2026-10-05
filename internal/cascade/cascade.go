@@ -1,8 +1,3 @@
-// Package cascade управляет служебными группами-каскадами: адреса
-// эндпоинтов одного пула или интерфейса направляются через другой.
-// Каскад - обычная группа magitrickle плюс OUTPUT-хук iptables, без
-// которого локальный трафик самих туннелей не попадает под правила
-// magitrickle (его цепочки висят только на PREROUTING).
 package cascade
 
 import (
@@ -36,8 +31,6 @@ func (m *Manager) log(pool, kind, msg string) {
 	m.Store.LogEvent(pool, kind, msg)
 }
 
-// --- хуки iptables ---
-
 func (m *Manager) chainName(groupID string) string {
 	return "MT_" + groupID
 }
@@ -48,7 +41,6 @@ func (m *Manager) ipt(args ...string) (string, error) {
 	return string(out), err
 }
 
-// HookPresent - стоит ли прыжок OUTPUT на цепочку группы.
 func (m *Manager) HookPresent(groupID string) bool {
 	out, err := m.ipt("-t", "mangle", "-S", "OUTPUT")
 	if err != nil {
@@ -57,7 +49,6 @@ func (m *Manager) HookPresent(groupID string) bool {
 	return strings.Contains(out, "-j "+m.chainName(groupID)+"\n") || strings.HasSuffix(strings.TrimSpace(out), "-j "+m.chainName(groupID))
 }
 
-// ChainExists - создана ли цепочка группы (есть только у включенной).
 func (m *Manager) ChainExists(groupID string) bool {
 	_, err := m.ipt("-t", "mangle", "-L", m.chainName(groupID), "-n")
 	return err == nil
@@ -88,9 +79,8 @@ func (m *Manager) HookRemove(groupID string) error {
 	return err
 }
 
-// BeforeMutate снимает хуки каскадных групп, которые массовый PUT
-// выключит или перепишет: атомарный restore magitrickle удалит их
-// цепочки, и ссылка OUTPUT уронит весь батч.
+// BeforeMutate снимает хуки групп, которые запись удалит или выключит:
+// атомарный restore magitrickle роняет батч об удаляемую цепочку.
 func (m *Manager) BeforeMutate(mutate func([]magitrickle.Group) bool) {
 	casc := m.Store.Cascades()
 	if len(casc) == 0 {
@@ -135,12 +125,10 @@ func (m *Manager) BeforeMutate(mutate func([]magitrickle.Group) bool) {
 	}
 }
 
-// AfterMutate приводит хуки в соответствие с рантаймом.
 func (m *Manager) AfterMutate() {
 	m.SyncHooks()
 }
 
-// SyncHooks включает хуки включенным каскадам и снимает у выключенных.
 func (m *Manager) SyncHooks() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -169,9 +157,7 @@ func (m *Manager) SyncHooks() {
 	}
 }
 
-// FlushConns сбрасывает conntrack-соединения на адреса: после снятия
-// каскада Keenetic может тащить поток по залипшему connmark в мёртвый
-// путь.
+// FlushConns чистит conntrack: залипший connmark тащит поток в мёртвый путь.
 func (m *Manager) FlushConns(hosts []string) {
 	if _, err := exec.LookPath("conntrack"); err != nil {
 		return
@@ -185,8 +171,6 @@ func (m *Manager) FlushConns(hosts []string) {
 	}
 	m.log("cascade", "conntrack", "сброшены соединения каскадируемых эндпоинтов")
 }
-
-// --- сборка и жизненный цикл каскадов ---
 
 func parseSource(ref string) (kind, name string, err error) {
 	parts := strings.SplitN(ref, ":", 2)
@@ -218,9 +202,7 @@ func normalizeHost(h string) string {
 	return strings.ToLower(h)
 }
 
-// BuildRules: адреса и домены -> правила группы. Для домена ставится
-// domain-правило плюс текущие A-записи подсетями: локальный трафик
-// туннеля идёт мимо DNS-перехвата.
+// BuildRules: домены дублируются A-записями - трафик туннеля идёт мимо DNS.
 func BuildRules(hosts []string, resolutions map[string][]string) []magitrickle.Rule {
 	seen := map[string]bool{}
 	var rules []magitrickle.Rule
@@ -269,8 +251,6 @@ func (m *Manager) resolve(ctx context.Context, host string) []string {
 	return ips
 }
 
-// poolEndpoints: адреса всех конфигов пула; доменные эндпоинты
-// возвращаются отдельным списком.
 func (m *Manager) poolEndpoints(pool store.Pool) (hosts, domains []string) {
 	seen := map[string]bool{}
 	for _, c := range pool.Configs {
@@ -303,8 +283,6 @@ func viaDevice(m *Manager, via string) (device string, title string, err error) 
 	return p.DeviceName(), name, nil
 }
 
-// Create собирает служебную группу и ставит хук. hosts используется,
-// когда источник - внешний интерфейс (у того нет списка конфигов).
 func (m *Manager) Create(ctx context.Context, source, via string, hosts []string) (magitrickle.Group, error) {
 	srcKind, srcName, err := parseSource(source)
 	if err != nil {
@@ -392,8 +370,7 @@ func (m *Manager) Create(ctx context.Context, source, via string, hosts []string
 	return created, nil
 }
 
-// guardLoop запрещает встречные каскады: включенный "A через B" вместе с
-// "B через A" зацикливает инкапсуляцию.
+// guardLoop не даёт включить встречные каскады - зациклят инкапсуляцию.
 func (m *Manager) guardLoop(source, via string, enabling bool) error {
 	if !enabling {
 		return nil
@@ -423,7 +400,6 @@ func (m *Manager) RefreshShadowSafe(ctx context.Context) {
 	m.MT.RefreshShadow(ctx)
 }
 
-// Delete снимает хук, удаляет группу и запись реестра.
 func (m *Manager) Delete(ctx context.Context, groupID string) error {
 	if _, ok := m.Store.CascadeByGroup(groupID); !ok {
 		return fmt.Errorf("каскад %s не найден", groupID)
@@ -455,8 +431,7 @@ func (m *Manager) Delete(ctx context.Context, groupID string) error {
 	return nil
 }
 
-// SetEnabled: выключение снимает хук ДО записи и чистит conntrack,
-// включение ставит хук после.
+// SetEnabled: хук снимается ДО выключения и ставится ПОСЛЕ включения группы.
 func (m *Manager) SetEnabled(ctx context.Context, groupID string, enable bool) error {
 	entry, ok := m.Store.CascadeByGroup(groupID)
 	if !ok {
@@ -519,8 +494,6 @@ func (m *Manager) cascadeHosts(ctx context.Context, entry store.CascadeEntry) []
 	return hosts
 }
 
-// SyncSourceEndpoints добавляет в каскадные группы адреса, появившиеся у
-// конфигов источника (ротация, новые конфиги).
 func (m *Manager) SyncSourceEndpoints(ctx context.Context, source string) {
 	for _, entry := range m.Store.Cascades() {
 		if entry.Source != source {
@@ -539,8 +512,6 @@ func (m *Manager) SyncSourceEndpoints(ctx context.Context, source string) {
 	}
 }
 
-// RefreshDNS пере-резолвит доменные эндпоинты каскадов и добавляет новые
-// адреса.
 func (m *Manager) RefreshDNS(ctx context.Context) {
 	for _, entry := range m.Store.Cascades() {
 		if len(entry.Domains) == 0 {
@@ -604,7 +575,6 @@ func (m *Manager) syncRules(ctx context.Context, entry store.CascadeEntry, hosts
 	m.Store.LogEvent("cascade", "sync", entry.Name+": добавлено адресов "+strconv.Itoa(len(added)))
 }
 
-// Registry: сводка по каскадам для API.
 type Info struct {
 	store.CascadeEntry
 	Enabled bool   `json:"enabled"`
