@@ -245,14 +245,14 @@ func main() {
 	defer stop()
 
 	// сетевые настройки панели: адрес/порт/allowlist/авторизация
-	listenAddr, cfgPort, allowedIPs, authDisabled := st.ServerSettings()
+	listenAddr, cfgPort, _, authDisabled := st.ServerSettings()
 	if *port != 0 {
 		cfgPort = *port
 	}
 	authenticator.SetEnabled(!authDisabled && !*noAuth)
 
 	srv := web.New(st, engine, backend, mt, version, authenticator)
-	srv.IPGate = auth.NewIPGate(allowedIPs)
+	srv.IPGate = auth.NewIPGate(st.AllowedIPList())
 	engine.Start(ctx)
 
 	bind := fmt.Sprintf("%s:%d", listenAddr, cfgPort)

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/json"
 	"strings"
 	"time"
 )
@@ -184,10 +185,36 @@ type IfaceEntry struct {
 	Probe  *ProbeConfig `json:"probe,omitempty"`
 }
 
+// IPAllow - запись allowlist панели с тумблером: выключенная запись
+// хранится, но не применяется. JSON совместим со старым форматом
+// (простая строка = включённая запись).
+type IPAllow struct {
+	Value string `json:"v"`
+	On    bool   `json:"on"`
+}
+
+func (e *IPAllow) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		e.Value, e.On = s, true
+		return nil
+	}
+	var obj struct {
+		Value string `json:"v"`
+		On    *bool  `json:"on"`
+	}
+	if err := json.Unmarshal(data, &obj); err != nil {
+		return err
+	}
+	e.Value = obj.Value
+	e.On = obj.On == nil || *obj.On
+	return nil
+}
+
 type Settings struct {
 	WebPort       int                    `json:"webPort"`
 	ListenAddr    string                 `json:"listenAddr,omitempty"`
-	AllowedIPs    []string               `json:"allowedIps,omitempty"`
+	AllowedIPs    []IPAllow              `json:"allowedIps,omitempty"`
 	AuthDisabled  bool                   `json:"authDisabled,omitempty"`
 	Ifaces        []IfaceEntry           `json:"ifaces,omitempty"`
 	WANProbe      *ProbeConfig           `json:"wanProbe,omitempty"`

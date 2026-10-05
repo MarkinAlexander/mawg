@@ -104,6 +104,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/v1/mt/groups/{id}/rules/{rid}", s.mtDeleteRule)
 	mux.HandleFunc("POST /api/v1/mt/presets/{id}/apply", s.mtApplyPreset)
 	mux.HandleFunc("GET /api/v1/settings/server", s.getServerSettings)
+	mux.HandleFunc("GET /api/v1/lan/clients", s.lanClients)
 	mux.HandleFunc("PUT /api/v1/settings/server", s.putServerSettings)
 	mux.HandleFunc("GET /api/v1/system/update/check", s.updateCheck)
 	mux.HandleFunc("POST /api/v1/system/update/run", s.updateRun)
@@ -134,6 +135,15 @@ func (s *Server) Handler() http.Handler {
 
 func (s *Server) getServerSettings(w http.ResponseWriter, r *http.Request) {
 	addr, port, allowed, authOff := s.store.ServerSettings()
+	if allowed == nil {
+		allowed = []store.IPAllow{}
+	}
+	clientIp := ""
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		clientIp = host
+	} else {
+		clientIp = r.RemoteAddr
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"listenAddr":   addr,
 		"port":         port,
@@ -141,15 +151,67 @@ func (s *Server) getServerSettings(w http.ResponseWriter, r *http.Request) {
 		"authDisabled": authOff,
 		"authEnabled":  s.auth == nil || s.auth.Enabled,
 		"hasCreds":     s.auth != nil && s.auth.HasCreds(),
+		"clientIp":     clientIp,
 	})
+}
+
+// lanClients - известные устройства локальной сети: DHCP-аренды (с
+// именами, где сервер их ведёт) плюс живые соседи из ARP. Только
+// приватные диапазоны - шлюз провайдера и прочий WAN не предлагаются.
+func (s *Server) lanClients(w http.ResponseWriter, r *http.Request) {
+	type client struct {
+		IP   string `json:"ip"`
+		MAC  string `json:"mac,omitempty"`
+		Name string `json:"name,omitempty"`
+	}
+	byIP := map[string]client{}
+	if data, err := os.ReadFile("/tmp/dhcp.leases"); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			f := strings.Fields(line)
+			if len(f) < 3 {
+				continue
+			}
+			ip := net.ParseIP(f[2])
+			if ip == nil || !ip.IsPrivate() {
+				continue
+			}
+			c := client{IP: f[2], MAC: strings.ToLower(f[1])}
+			if len(f) >= 4 && f[3] != "*" {
+				c.Name = f[3]
+			}
+			byIP[f[2]] = c
+		}
+	}
+	if data, err := os.ReadFile("/proc/net/arp"); err == nil {
+		for _, line := range strings.Split(string(data), "\n")[1:] {
+			f := strings.Fields(line)
+			if len(f) < 4 || f[2] == "0x0" || f[3] == "00:00:00:00:00:00" {
+				continue
+			}
+			ip := net.ParseIP(f[0])
+			if ip == nil || !ip.IsPrivate() {
+				continue
+			}
+			if _, ok := byIP[f[0]]; ok {
+				continue
+			}
+			byIP[f[0]] = client{IP: f[0], MAC: strings.ToLower(f[3])}
+		}
+	}
+	out := make([]client, 0, len(byIP))
+	for _, c := range byIP {
+		out = append(out, c)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].IP < out[j].IP })
+	writeJSON(w, http.StatusOK, map[string]any{"clients": out})
 }
 
 func (s *Server) putServerSettings(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ListenAddr   string   `json:"listenAddr"`
-		Port         int      `json:"port"`
-		AllowedIPs   []string `json:"allowedIps"`
-		AuthDisabled *bool    `json:"authDisabled"`
+		ListenAddr   string          `json:"listenAddr"`
+		Port         int             `json:"port"`
+		AllowedIPs   []store.IPAllow `json:"allowedIps"`
+		AuthDisabled *bool           `json:"authDisabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, err)
@@ -175,7 +237,13 @@ func (s *Server) putServerSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	// не даю вырезать собственный адрес из allowlist - иначе кнопка
 	// "сохранить" станет последней, что владелец нажал
-	if gate := auth.NewIPGate(req.AllowedIPs); !gate.Empty() {
+	var enabledIPs []string
+	for _, e := range req.AllowedIPs {
+		if e.On {
+			enabledIPs = append(enabledIPs, e.Value)
+		}
+	}
+	if gate := auth.NewIPGate(enabledIPs); !gate.Empty() {
 		host, _, err := net.SplitHostPort(r.RemoteAddr)
 		if err != nil {
 			host = r.RemoteAddr
@@ -191,7 +259,7 @@ func (s *Server) putServerSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.IPGate != nil {
-		s.IPGate.Set(req.AllowedIPs)
+		s.IPGate.Set(enabledIPs)
 	}
 	if s.auth != nil {
 		s.auth.Enabled = !authOff

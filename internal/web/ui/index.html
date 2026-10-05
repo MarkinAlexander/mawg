@@ -216,8 +216,16 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
       </div>
       <div class="muted" style="font-size:11px;margin-top:2px">0.0.0.0 - все интерфейсы, 127.0.0.1 - только локально (для nginx-прокси), конкретный IP - один интерфейс. Авторизация и разрешённые адреса применяются сразу, адрес и порт - после перезапуска демона (кнопка появится здесь же).</div>
       <div style="font-size:13px;margin-top:8px">Разрешённые адреса</div>
-      <textarea id="ssAllowed" rows="3" placeholder="192.168.0.82&#10;192.168.0.0/24" style="width:100%"></textarea>
-      <div class="muted" style="font-size:11px;margin-top:2px">IP или подсети, с которых открыт доступ к панели (по одному в строке). Пусто - доступ всем. Роутер всегда может открыть панель сам. За реверс-прокси фильтруется адрес прокси, учитывайте. Список текущих клиентов LAN: Интерфейсы роутера.</div>
+      <div id="ssChips" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px"></div>
+      <div class="btnrow" style="align-items:center;margin-top:6px">
+        <input id="ssAllowed" placeholder="192.168.0.82 или 192.168.0.0/24" style="flex:1;min-width:170px">
+        <button id="ssAdd">добавить</button>
+      </div>
+      <div class="btnrow" style="align-items:center;margin-top:4px">
+        <select id="ssDevices" style="flex:1;min-width:170px"><option value="">устройства сети...</option></select>
+        <button id="ssAddMine" title="добавить адрес, с которого вы открыли панель">мой адрес</button>
+      </div>
+      <div class="muted" style="font-size:11px;margin-top:2px">IP или подсеть, с которых открыт доступ к панели. Пусто - доступ всем. Роутер всегда может открыть панель сам. За реверс-прокси фильтруется адрес прокси, учитывайте.</div>
       <div class="btnrow" style="margin-top:8px;justify-content:flex-end">
         <button id="ssSave">сохранить</button>
       </div>
@@ -1895,7 +1903,55 @@ function showNoAuthBadge() {
 }
 
 // --- настройки панели ---
-let SSRV = null;
+let SSRV = null, ALLOW = [];
+function renderAllowChips() {
+  const box = document.getElementById('ssChips');
+  if (!ALLOW.length) {
+    box.innerHTML = '<span class="muted" style="font-size:12px">список пуст - доступ с любого адреса</span>';
+    return;
+  }
+  box.innerHTML = '';
+  for (const e of ALLOW) {
+    const chip = document.createElement('span');
+    chip.style.cssText = 'display:inline-flex;align-items:center;gap:6px;border:1px solid ' + (e.on ? 'var(--ok)' : 'var(--border)') + ';border-radius:14px;padding:2px 6px 2px 10px;font-size:12px' + (e.on ? '' : ';opacity:.5');
+    chip.innerHTML = esc(e.v) +
+      '<label class="switch" style="margin:0" title="' + (e.on ? 'выключить запись (не применялась бы после сохранения)' : 'включить запись') + '"><input type="checkbox"' + (e.on ? ' checked' : '') + '><span class="knob"></span></label>' +
+      '<button type="button" class="iconbtn" title="удалить запись" style="padding:0 3px">' + X_SVG + '</button>';
+    chip.querySelector('input').onchange = ev => { e.on = ev.target.checked; renderAllowChips(); };
+    chip.querySelector('button').onclick = () => { ALLOW = ALLOW.filter(x => x !== e); renderAllowChips(); };
+    box.appendChild(chip);
+  }
+}
+function ipValid(v) {
+  const cidr = v.split('/');
+  if (cidr.length > 2) return false;
+  const parts = cidr[0].split('.');
+  if (parts.length !== 4) return false;
+  for (const p of parts) if (!/^\d{1,3}$/.test(p) || +p > 255) return false;
+  if (cidr.length === 2) {
+    if (!/^\d{1,2}$/.test(cidr[1]) || +cidr[1] < 8 || +cidr[1] > 32) return false;
+  }
+  return true;
+}
+function subnet24(v) { return v.replace(/\.\d+(\.\d+)?(\/\d+)?$/, ''); }
+async function allowAdd(value) {
+  const v = (value || '').trim();
+  if (!v) return;
+  if (!ipValid(v)) return toast('"' + v + '" не похоже на IP или подсеть - проверьте опечатки', true);
+  if (ALLOW.some(e => e.v === v)) return toast('Такой адрес уже есть в списке', true);
+  // защита от чужой подсети: сравниваем с адресом клиента и уже
+  // добавленными записями
+  const mine = SSRV && SSRV.clientIp;
+  const known = ALLOW.map(e => subnet24(e.v)).concat(mine ? [subnet24(mine)] : []);
+  const sub = subnet24(v);
+  if (known.length && !known.includes(sub)) {
+    if (!(await askModal('Другая подсеть',
+      'Адрес ' + v + ' из подсети ' + subnet24(v) + '.*, а вы сейчас в ' + (mine ? subnet24(mine) + '.*' : 'другой подсети') + '. Обычно так бывает из-за опечатки. Точно добавить?',
+      'Добавить'))) return;
+  }
+  ALLOW.push({ v, on: true });
+  renderAllowChips();
+}
 async function loadServerSettings() {
   try {
     SSRV = await api('GET', '/settings/server');
@@ -1905,7 +1961,16 @@ async function loadServerSettings() {
     updateAuthHint();
     document.getElementById('ssAddr').value = SSRV.listenAddr || '0.0.0.0';
     document.getElementById('ssPort').value = SSRV.port || 8090;
-    document.getElementById('ssAllowed').value = (SSRV.allowedIps || []).join('\n');
+    ALLOW = (SSRV.allowedIps || []).map(e => ({ v: e.v, on: e.on !== false }));
+    renderAllowChips();
+    api('GET', '/lan/clients').then(r => {
+      const sel = document.getElementById('ssDevices');
+      const cur = sel.value;
+      const list = (r && r.clients) || [];
+      sel.innerHTML = '<option value="">устройства сети (' + list.length + ')...</option>' +
+        list.map(c => `<option value="${esc(c.ip)}">${esc(c.ip)}${c.name ? ' - ' + esc(c.name) : ''}${c.mac ? ' (' + esc(c.mac) + ')' : ''}</option>`).join('');
+      if ([...sel.options].some(o => o.value === cur)) sel.value = cur;
+    }).catch(() => {});
   } catch {}
 }
 function updateAuthHint() {
@@ -1914,6 +1979,20 @@ function updateAuthHint() {
     ? 'Вход по паролю включён. Панель и API закрыты сессией или токеном.'
     : 'ВНИМАНИЕ: авторизация выключена. Панель и API открыты любому, кто достучится до порта. Это небезопасно, если порт доступен из интернета или большой сети. Разрешённые адреса ниже частично компенсируют риск.';
 }
+document.getElementById('ssAdd').onclick = () => {
+  const inp = document.getElementById('ssAllowed');
+  allowAdd(inp.value).then(() => { inp.value = ''; inp.focus(); });
+};
+document.getElementById('ssAllowed').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); document.getElementById('ssAdd').click(); }
+});
+document.getElementById('ssDevices').onchange = e => {
+  if (e.target.value) allowAdd(e.target.value).then(() => { e.target.value = ''; });
+};
+document.getElementById('ssAddMine').onclick = () => {
+  if (SSRV && SSRV.clientIp) allowAdd(SSRV.clientIp);
+  else toast('Адрес не определён', true);
+};
 document.getElementById('ssAuthOn').onchange = () => {
   if (!document.getElementById('ssAuthOn').checked) return updateAuthHint();
   if (SSRV && !SSRV.hasCreds) {
@@ -1935,7 +2014,7 @@ document.getElementById('ssSave').onclick = e => withBusy(e.currentTarget, async
   const body = {
     listenAddr: document.getElementById('ssAddr').value.trim() || '0.0.0.0',
     port: +document.getElementById('ssPort').value,
-    allowedIps: document.getElementById('ssAllowed').value.split(/\n+/).map(x => x.trim()).filter(Boolean),
+    allowedIps: ALLOW.map(e => ({ v: e.v, on: e.on })),
     authDisabled: off
   };
   try {

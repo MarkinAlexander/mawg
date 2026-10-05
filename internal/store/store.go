@@ -127,15 +127,28 @@ func (s *Store) SetIfaceMode(device, mode string) error {
 }
 
 // ServerSettings - сетевые настройки панели, применяются на старте демона.
-func (s *Store) ServerSettings() (addr string, port int, allowed []string, authDisabled bool) {
+func (s *Store) ServerSettings() (addr string, port int, allowed []IPAllow, authDisabled bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	st := s.root.Settings.WithDefaults()
-	return st.ListenAddr, st.WebPort, append([]string(nil), st.AllowedIPs...), st.AuthDisabled
+	return st.ListenAddr, st.WebPort, append([]IPAllow(nil), st.AllowedIPs...), st.AuthDisabled
+}
+
+// AllowedIPList - включённые записи allowlist (для IPGate).
+func (s *Store) AllowedIPList() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []string
+	for _, e := range s.root.Settings.AllowedIPs {
+		if e.On {
+			out = append(out, e.Value)
+		}
+	}
+	return out
 }
 
 // SetServerSettings валидирует и сохраняет адрес/порт/allowlist/авторизацию.
-func (s *Store) SetServerSettings(addr string, port int, allowed []string, authDisabled bool) error {
+func (s *Store) SetServerSettings(addr string, port int, allowed []IPAllow, authDisabled bool) error {
 	addr = strings.TrimSpace(addr)
 	if addr == "" {
 		addr = "0.0.0.0"
@@ -147,9 +160,9 @@ func (s *Store) SetServerSettings(addr string, port int, allowed []string, authD
 		return fmt.Errorf("порт должен быть 1-65535")
 	}
 	seen := map[string]bool{}
-	clean := allowed[:0:0]
-	for _, raw := range allowed {
-		c := strings.TrimSpace(raw)
+	clean := make([]IPAllow, 0, len(allowed))
+	for _, e := range allowed {
+		c := strings.TrimSpace(e.Value)
 		if c == "" || seen[c] {
 			continue
 		}
@@ -159,7 +172,7 @@ func (s *Store) SetServerSettings(addr string, port int, allowed []string, authD
 			}
 		}
 		seen[c] = true
-		clean = append(clean, c)
+		clean = append(clean, IPAllow{Value: c, On: e.On})
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
