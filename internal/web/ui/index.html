@@ -214,12 +214,17 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
         <input id="ssPort" type="number" min="1" max="65535" style="width:90px" title="порт">
         <span class="muted" style="font-size:11px">адрес и порт панели</span>
       </div>
-      <div class="muted" style="font-size:11px;margin-top:2px">0.0.0.0 - все интерфейсы, 127.0.0.1 - только локально (для nginx-прокси), конкретный IP - один интерфейс. Применяется после перезапуска демона.</div>
+      <div class="muted" style="font-size:11px;margin-top:2px">0.0.0.0 - все интерфейсы, 127.0.0.1 - только локально (для nginx-прокси), конкретный IP - один интерфейс. Авторизация и разрешённые адреса применяются сразу, адрес и порт - после перезапуска демона (кнопка появится здесь же).</div>
       <div style="font-size:13px;margin-top:8px">Разрешённые адреса</div>
       <textarea id="ssAllowed" rows="3" placeholder="192.168.0.82&#10;192.168.0.0/24" style="width:100%"></textarea>
       <div class="muted" style="font-size:11px;margin-top:2px">IP или подсети, с которых открыт доступ к панели (по одному в строке). Пусто - доступ всем. Роутер всегда может открыть панель сам. За реверс-прокси фильтруется адрес прокси, учитывайте. Список текущих клиентов LAN: Интерфейсы роутера.</div>
       <div class="btnrow" style="margin-top:8px;justify-content:flex-end">
         <button id="ssSave">сохранить</button>
+      </div>
+      <div class="btnrow" id="ssRestartRow" style="display:none;margin-top:6px;align-items:center;border:1px solid var(--warn);border-radius:8px;padding:8px 10px">
+        <span style="font-size:12px;color:var(--warn)">адрес или порт изменён - нужен перезапуск демона</span>
+        <span style="flex:1"></span>
+        <button class="primary" id="ssRestart">перезапустить панель</button>
       </div>
     </div>
     <div class="btnrow" style="align-items:center;margin-top:12px;border-top:1px solid var(--border);padding-top:10px">
@@ -1935,8 +1940,13 @@ document.getElementById('ssSave').onclick = e => withBusy(e.currentTarget, async
   };
   try {
     const r = await api('PUT', '/settings/server', body);
-    if (r.needRestart) toast('Сохранено. Новый адрес/порт применятся после перезапуска демона');
-    else toast('Сохранено');
+    if (r.needRestart) {
+      document.getElementById('ssRestartRow').style.display = '';
+      toast('Сохранено. Новый адрес/порт вступят в силу после перезапуска демона');
+    } else {
+      document.getElementById('ssRestartRow').style.display = 'none';
+      toast('Сохранено');
+    }
     loadServerSettings();
   } catch (err) { toast(err.message, true); }
 });
@@ -1965,6 +1975,34 @@ async function checkUpdates(manual) {
   } catch (err) { if (manual) toast(err.message, true); }
 }
 document.getElementById('updCheckBtn').onclick = e => withBusy(e.currentTarget, () => checkUpdates(true));
+
+// перезапуск демона из панели: подтверждение, спиннер, ожидание возврата
+function waitForPanel(cb, tries) {
+  fetch('/api/v1/status', { credentials: 'same-origin' }).then(r => {
+    if (r.status === 401 || r.ok) cb(true);
+    else if (tries > 0) setTimeout(() => waitForPanel(cb, tries - 1), 2000);
+    else cb(false);
+  }).catch(() => {
+    if (tries > 0) setTimeout(() => waitForPanel(cb, tries - 1), 2000);
+    else cb(false);
+  });
+}
+document.getElementById('ssRestart').onclick = async e => {
+  const btn = e.currentTarget;
+  if (!(await askModal('Перезапуск панели',
+    'Демон mawg будет перезапущен: панель на 10-30 секунд пропадёт, туннели и маршруты не трогаются (конфиги остаются применёнными). Страница сама вернётся, когда панель оживёт. Перезапустить?',
+    'Перезапустить'))) return;
+  await withBusy(btn, async () => {
+    try {
+      await api('POST', '/system/restart');
+    } catch (err) { toast(err.message, true); return; }
+    btn.innerHTML = '<span class="spin"></span>панель перезапускается, ждём возврата...';
+    setTimeout(() => waitForPanel(ok => {
+      if (ok) location.reload();
+      else { btn.textContent = 'перезапустить панель'; toast('Панель не вернулась за отведённое время - проверьте её вручную', true); }
+    }, 30), 4000);
+  });
+};
 document.getElementById('updBadge').onclick = async e => {
   const badge = e.currentTarget;
   if (!UPD || !UPD.update) return;

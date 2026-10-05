@@ -9,6 +9,8 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"os"
+	"os/exec"
 	"sort"
 	"strings"
 	"time"
@@ -105,6 +107,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/v1/settings/server", s.putServerSettings)
 	mux.HandleFunc("GET /api/v1/system/update/check", s.updateCheck)
 	mux.HandleFunc("POST /api/v1/system/update/run", s.updateRun)
+	mux.HandleFunc("POST /api/v1/system/restart", s.postSystemRestart)
 	mux.HandleFunc("GET /api/v1/cascades", s.cascList)
 	mux.HandleFunc("POST /api/v1/cascades", s.cascCreate)
 	mux.HandleFunc("DELETE /api/v1/cascades/{group}", s.cascDelete)
@@ -224,6 +227,28 @@ func (s *Server) updateRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "started", "to": info.Latest})
+}
+
+// postSystemRestart перезапускает сервис: ответ уходит раньше, чем
+// демон снимется.
+func (s *Server) postSystemRestart(w http.ResponseWriter, r *http.Request) {
+	script := "/etc/init.d/mawg"
+	if s.backend.Name() == store.PlatformKeenetic {
+		script = "/opt/etc/init.d/S99mawg"
+	}
+	if _, err := os.Stat(script); err != nil {
+		writeErr(w, fmt.Errorf("init-скрипт не найден: %s", script))
+		return
+	}
+	s.store.LogEvent("settings", "server", "перезапуск панели из веб-интерфейса")
+	go func() {
+		time.Sleep(700 * time.Millisecond)
+		cmd := exec.Command(script, "restart")
+		cmd.Stdout = nil
+		cmd.Stderr = nil
+		cmd.Run()
+	}()
+	writeJSON(w, http.StatusOK, map[string]string{"ok": "restarting"})
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
