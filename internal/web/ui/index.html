@@ -224,8 +224,10 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
     </div>
     <div class="btnrow" style="align-items:center;margin-top:12px;border-top:1px solid var(--border);padding-top:10px">
       <button id="setPassBtn">сменить пароль</button>
+      <button id="updCheckBtn" title="сравнить версию с последним релизом на GitHub">проверить обновления</button>
       <button id="logoutBtn">выйти</button>
     </div>
+    <div class="muted" id="updInfo" style="font-size:11px;margin-top:4px"></div>
   </div>
   <details open>
     <summary>Журнал событий</summary>
@@ -1944,19 +1946,25 @@ let UPD = null;
 async function checkUpdates(manual) {
   try {
     const r = await api('GET', '/system/update/check');
-    if (r.error) { if (manual) toast('Проверка обновления: ' + r.error, true); return; }
+    if (r.error) {
+      document.getElementById('updInfo').textContent = 'проверка обновления не удалась: ' + r.error;
+      if (manual) toast('Проверка обновления: ' + r.error, true);
+      return;
+    }
     UPD = r;
     const badge = document.getElementById('updBadge');
     if (r.update) {
       badge.style.display = '';
       badge.textContent = 'обновиться до ' + r.latest;
       badge.title = 'текущая ' + r.current + '; нажать - обновить (install.sh с проверкой sha256, сервис перезапустится)';
+      document.getElementById('updInfo').textContent = 'есть обновление: текущая ' + r.current + ', последняя ' + r.latest + ' (кнопка в шапке или здесь по проверке)';
     } else {
       badge.style.display = 'none';
-      if (manual) toast('Обновлений нет (текущая ' + r.current + ')');
+      document.getElementById('updInfo').textContent = 'обновлений нет: текущая ' + r.current + ', последняя ' + r.latest;
     }
   } catch (err) { if (manual) toast(err.message, true); }
 }
+document.getElementById('updCheckBtn').onclick = e => withBusy(e.currentTarget, () => checkUpdates(true));
 document.getElementById('updBadge').onclick = async e => {
   const badge = e.currentTarget;
   if (!UPD || !UPD.update) return;
