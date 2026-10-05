@@ -92,14 +92,47 @@ func readLine(r *bufio.Reader) string {
 	return line
 }
 
+const usage = `mawg - Multi-AWG Changer ` + `
+управление пулами WireGuard/AmneziaWG с ротацией и фоллбеком
+
+Использование:
+  mawg                    запустить демона (обычно это делает init-скрипт)
+  mawg help               эта справка
+  mawg status             состояние демона и пулов
+  mawg start              запустить сервис (init-скрипт платформы)
+  mawg stop               остановить сервис
+  mawg restart            перезапустить сервис
+  mawg update             проверить и установить обновление с GitHub
+  mawg auth off           выключить авторизацию панели (НЕБЕЗОПАСНО)
+  mawg auth on            включить авторизацию панели
+  mawg -reset-auth        задать новый пароль панели интерактивно
+  mawg -password <pass>   задать пароль без вопросов
+
+Флаги демона:
+  -platform openwrt|keenetic   платформа (по умолчанию определяется сама)
+  -base <dir>                  каталог данных
+  -port <n>                    порт веб-панели (по умолчанию из настроек, 8090)
+  -listen <ip>                 адрес прослушивания (по умолчанию из настроек)
+  -no-auth                     разово запустить без авторизации (аварийный)
+
+Адрес прослушивания, разрешённые IP и авторизация настраиваются также
+в веб-панели: Настройки.`
+
 func main() {
 	platformName := flag.String("platform", "", "platform override: openwrt | keenetic")
 	base := flag.String("base", "", "config directory")
-	port := flag.Int("port", 8090, "web ui port")
+	port := flag.Int("port", 0, "web ui port (0 = из настроек)")
 	noAuth := flag.Bool("no-auth", false, "disable web panel authentication (open api)")
 	resetAuth := flag.Bool("reset-auth", false, "set a new panel password interactively and exit")
 	password := flag.String("password", "", "set panel password non-interactively and exit")
+	flag.Usage = func() { fmt.Print(usage) }
 	flag.Parse()
+
+	cmd := strings.TrimSpace(flag.Arg(0))
+	if cmd == "help" || cmd == "-h" {
+		fmt.Print(usage)
+		return
+	}
 
 	plat := *platformName
 	dir := *base
@@ -116,6 +149,21 @@ func main() {
 		log.Fatal("cannot detect platform, use -platform and -base")
 	}
 	setupLogging(plat)
+
+	switch cmd {
+	case "start", "stop", "restart":
+		os.Exit(runServiceCmd(plat, cmd))
+	case "status":
+		os.Exit(cmdStatus(plat, dir, *port))
+	case "update":
+		os.Exit(cmdUpdate())
+	case "auth":
+		os.Exit(cmdAuth(dir, flag.Arg(1)))
+	case "":
+	default:
+		fmt.Fprintf(os.Stderr, "неизвестная команда %q\n\n%s", cmd, usage)
+		os.Exit(2)
+	}
 
 	// консольное управление паролем панели: root с SSH должен уметь
 	// сбросить пароль без веб-морды
@@ -195,12 +243,21 @@ func main() {
 	engine := rotator.New(st, backend, mt)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	engine.Start(ctx)
+
+	// сетевые настройки панели: адрес/порт/allowlist/авторизация
+	listenAddr, cfgPort, allowedIPs, authDisabled := st.ServerSettings()
+	if *port != 0 {
+		cfgPort = *port
+	}
+	authenticator.SetEnabled(!authDisabled && !*noAuth)
 
 	srv := web.New(st, engine, backend, mt, version, authenticator)
-	addr := fmt.Sprintf(":%d", *port)
-	log.Printf("mawg %s: platform=%s base=%s web=http://0.0.0.0:%d", version, plat, dir, *port)
-	httpServer := &http.Server{Addr: addr, Handler: srv.Handler()}
+	srv.IPGate = auth.NewIPGate(allowedIPs)
+	engine.Start(ctx)
+
+	bind := fmt.Sprintf("%s:%d", listenAddr, cfgPort)
+	log.Printf("mawg %s: platform=%s base=%s web=http://%s:%d", version, plat, dir, listenAddr, cfgPort)
+	httpServer := &http.Server{Addr: bind, Handler: srv.Handler()}
 	go func() {
 		<-ctx.Done()
 		httpServer.Close()

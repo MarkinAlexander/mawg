@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"sort"
 	"strings"
@@ -19,6 +20,7 @@ import (
 	"mawg/internal/platform/keenetic"
 	"mawg/internal/provision"
 	"mawg/internal/rotator"
+	"mawg/internal/selfupdate"
 	"mawg/internal/store"
 	"mawg/internal/wgconf"
 )
@@ -33,6 +35,7 @@ type Server struct {
 	mt      *magitrickle.Client
 	version string
 	auth    *auth.Auth
+	IPGate  *auth.IPGate
 }
 
 func New(st *store.Store, e *rotator.Engine, b platform.Backend, mt *magitrickle.Client, version string, a *auth.Auth) *Server {
@@ -98,6 +101,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/mt/groups/{id}/rules/{rid}/enable", s.mtToggleRule)
 	mux.HandleFunc("DELETE /api/v1/mt/groups/{id}/rules/{rid}", s.mtDeleteRule)
 	mux.HandleFunc("POST /api/v1/mt/presets/{id}/apply", s.mtApplyPreset)
+	mux.HandleFunc("GET /api/v1/settings/server", s.getServerSettings)
+	mux.HandleFunc("PUT /api/v1/settings/server", s.putServerSettings)
+	mux.HandleFunc("GET /api/v1/system/update/check", s.updateCheck)
+	mux.HandleFunc("POST /api/v1/system/update/run", s.updateRun)
 	mux.HandleFunc("GET /api/v1/cascades", s.cascList)
 	mux.HandleFunc("POST /api/v1/cascades", s.cascCreate)
 	mux.HandleFunc("DELETE /api/v1/cascades/{group}", s.cascDelete)
@@ -114,8 +121,109 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("POST /api/v1/auth/password", s.auth.HandlePassword)
 	}
 	// авторизация снаружи, лимит тела внутри (статика без лимита не нужна -
-	// там нет тела)
-	return s.auth.Middleware(limitBody(mux))
+	// там нет тела); allowlist режет всё самым внешним слоем
+	var h http.Handler = s.auth.Middleware(limitBody(mux))
+	if s.IPGate != nil {
+		h = s.IPGate.Middleware(h)
+	}
+	return h
+}
+
+func (s *Server) getServerSettings(w http.ResponseWriter, r *http.Request) {
+	addr, port, allowed, authOff := s.store.ServerSettings()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"listenAddr":   addr,
+		"port":         port,
+		"allowedIps":   allowed,
+		"authDisabled": authOff,
+		"authEnabled":  s.auth == nil || s.auth.Enabled,
+		"hasCreds":     s.auth != nil && s.auth.HasCreds(),
+	})
+}
+
+func (s *Server) putServerSettings(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ListenAddr   string   `json:"listenAddr"`
+		Port         int      `json:"port"`
+		AllowedIPs   []string `json:"allowedIps"`
+		AuthDisabled *bool    `json:"authDisabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, err)
+		return
+	}
+	curAddr, curPort, curAllowed, curAuthOff := s.store.ServerSettings()
+	if req.ListenAddr == "" {
+		req.ListenAddr = curAddr
+	}
+	if req.Port == 0 {
+		req.Port = curPort
+	}
+	if req.AllowedIPs == nil {
+		req.AllowedIPs = curAllowed
+	}
+	authOff := curAuthOff
+	if req.AuthDisabled != nil {
+		authOff = *req.AuthDisabled
+	}
+	if !authOff && s.auth != nil && !s.auth.HasCreds() {
+		writeErr(w, fmt.Errorf("нет сохранённой учётки: сначала задайте пароль"))
+		return
+	}
+	// не даю вырезать собственный адрес из allowlist - иначе кнопка
+	// "сохранить" станет последней, что владелец нажал
+	if gate := auth.NewIPGate(req.AllowedIPs); !gate.Empty() {
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			host = r.RemoteAddr
+		}
+		ip := net.ParseIP(host)
+		if ip == nil || (!ip.IsLoopback() && !gate.Allowed(ip)) {
+			writeErr(w, fmt.Errorf("в новом списке нет вашего адреса %s - сохранение заблокировано, чтобы не потерять доступ к панели", host))
+			return
+		}
+	}
+	if err := s.store.SetServerSettings(req.ListenAddr, req.Port, req.AllowedIPs, authOff); err != nil {
+		writeErr(w, err)
+		return
+	}
+	if s.IPGate != nil {
+		s.IPGate.Set(req.AllowedIPs)
+	}
+	if s.auth != nil {
+		s.auth.Enabled = !authOff
+	}
+	addrChanged := req.ListenAddr != curAddr || req.Port != curPort
+	if addrChanged {
+		s.store.LogEvent("settings", "server", "панель перейдёт на "+req.ListenAddr+":"+fmt.Sprint(req.Port)+" после перезапуска демона")
+	}
+	if authOff != curAuthOff {
+		s.store.LogEvent("settings", "server", map[bool]string{true: "авторизация ВЫКЛЮЧЕНА", false: "авторизация включена"}[authOff])
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "needRestart": addrChanged})
+}
+
+func (s *Server) updateCheck(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, selfupdate.Check(r.Context(), s.version))
+}
+
+func (s *Server) updateRun(w http.ResponseWriter, r *http.Request) {
+	info := selfupdate.Check(r.Context(), s.version)
+	if info.Error != "" {
+		writeErr(w, fmt.Errorf("%s", info.Error))
+		return
+	}
+	if !info.Update {
+		writeErr(w, fmt.Errorf("обновлений нет (текущая %s, последняя %s)", info.Current, info.Latest))
+		return
+	}
+	s.store.LogEvent("system", "update", "запуск обновления до "+info.Latest)
+	go func() {
+		if err := selfupdate.Run(context.Background()); err != nil {
+			s.store.LogEvent("system", "update", "обновление не удалось: "+err.Error())
+		}
+	}()
+	writeJSON(w, http.StatusOK, map[string]string{"ok": "started", "to": info.Latest})
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {

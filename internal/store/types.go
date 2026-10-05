@@ -186,6 +186,9 @@ type IfaceEntry struct {
 
 type Settings struct {
 	WebPort       int                    `json:"webPort"`
+	ListenAddr    string                 `json:"listenAddr,omitempty"`
+	AllowedIPs    []string               `json:"allowedIps,omitempty"`
+	AuthDisabled  bool                   `json:"authDisabled,omitempty"`
 	Ifaces        []IfaceEntry           `json:"ifaces,omitempty"`
 	WANProbe      *ProbeConfig           `json:"wanProbe,omitempty"`
 	RCIToken      string                 `json:"rciToken,omitempty"`
@@ -197,6 +200,9 @@ func (s Settings) WithDefaults() Settings {
 	out := s
 	if out.WebPort <= 0 {
 		out.WebPort = 8090
+	}
+	if out.ListenAddr == "" {
+		out.ListenAddr = "0.0.0.0"
 	}
 	return out
 }

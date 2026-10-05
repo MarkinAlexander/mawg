@@ -61,14 +61,16 @@ func Open(base string) *Auth {
 }
 
 // New при отсутствии auth.json генерирует admin + случайный пароль,
-// подсказку first-auth.txt и баннер в лог.
+// подсказку first-auth.txt и баннер в лог. При выключенной авторизации
+// учётка всё равно подгружается, если файл есть - чтобы её можно было
+// включить обратно без рестарта.
 func New(base string, enabled bool) *Auth {
 	a := &Auth{Enabled: enabled, Base: base, login: "admin", sessions: map[string]time.Time{}, fails: map[string]*failState{}}
-	if !enabled {
-		return a
-	}
 	if c, err := a.load(); err == nil {
 		a.login, a.hash = c.Login, c.Hash
+		return a
+	}
+	if !enabled {
 		return a
 	}
 	pass, err := genPassword(10)
@@ -353,4 +355,21 @@ func (a *Auth) Login() string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.login
+}
+
+// HasCreds - есть ли сохранённая учётка (можно включить авторизацию).
+func (a *Auth) HasCreds() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.hash != ""
+}
+
+// SetEnabled включает/выключает проверку входа в рантайме.
+func (a *Auth) SetEnabled(enabled bool) {
+	a.mu.Lock()
+	a.Enabled = enabled
+	if !enabled {
+		a.sessions = map[string]time.Time{}
+	}
+	a.mu.Unlock()
 }

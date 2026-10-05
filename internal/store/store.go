@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -122,6 +123,50 @@ func (s *Store) SetIfaceMode(device, mode string) error {
 		}
 	}
 	s.root.Settings.Ifaces = append(s.root.Settings.Ifaces, IfaceEntry{Device: device, Mode: mode})
+	return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
+}
+
+// ServerSettings - сетевые настройки панели, применяются на старте демона.
+func (s *Store) ServerSettings() (addr string, port int, allowed []string, authDisabled bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st := s.root.Settings.WithDefaults()
+	return st.ListenAddr, st.WebPort, append([]string(nil), st.AllowedIPs...), st.AuthDisabled
+}
+
+// SetServerSettings валидирует и сохраняет адрес/порт/allowlist/авторизацию.
+func (s *Store) SetServerSettings(addr string, port int, allowed []string, authDisabled bool) error {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		addr = "0.0.0.0"
+	}
+	if net.ParseIP(addr) == nil {
+		return fmt.Errorf("%q не похож на IP-адрес", addr)
+	}
+	if port < 1 || port > 65535 {
+		return fmt.Errorf("порт должен быть 1-65535")
+	}
+	seen := map[string]bool{}
+	clean := allowed[:0:0]
+	for _, raw := range allowed {
+		c := strings.TrimSpace(raw)
+		if c == "" || seen[c] {
+			continue
+		}
+		if ip := net.ParseIP(c); ip == nil {
+			if _, _, err := net.ParseCIDR(c); err != nil {
+				return fmt.Errorf("%q не IP и не подсеть", c)
+			}
+		}
+		seen[c] = true
+		clean = append(clean, c)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.root.Settings.ListenAddr = addr
+	s.root.Settings.WebPort = port
+	s.root.Settings.AllowedIPs = clean
+	s.root.Settings.AuthDisabled = authDisabled
 	return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
 }
 

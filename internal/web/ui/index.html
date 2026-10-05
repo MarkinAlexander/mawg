@@ -124,6 +124,7 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
 <header>
   <h1>mawg</h1>
   <span class="meta" id="meta">загрузка...</span>
+  <span class="badge" id="updBadge" style="display:none;cursor:pointer;border-color:var(--ok);color:var(--ok)" title="проверить обновления">обновление</span>
   <span style="flex:1"></span>
   <button class="primary" onclick="dlgPool.showModal(); loadSlots()">+ интерфейс</button>
 </header>
@@ -196,11 +197,34 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
   </div>
   <div class="card" id="setcard" style="margin-top:16px">
     <h2>Настройки</h2>
-    <div class="sub">Доступ к панели. Здесь же появятся новые настройки.</div>
-    <div class="btnrow" style="align-items:center">
+    <div class="sub">Доступ к панели, сетевые параметры, обновление.</div>
+    <div id="serverSettingsBox" style="margin-top:6px">
+      <div class="btnrow" style="align-items:center">
+        <b style="font-size:13px">Авторизация</b>
+        <span style="flex:1"></span>
+        <label class="switch" title="включить или выключить вход по паролю"><input type="checkbox" id="ssAuthOn"><span class="knob"></span></label>
+      </div>
+      <div class="muted" style="font-size:11px;margin-top:2px" id="ssAuthHint"></div>
+      <div class="btnrow" style="align-items:center;margin-top:10px">
+        <b style="font-size:13px">Сеть</b>
+      </div>
+      <div class="btnrow" style="align-items:center">
+        <input id="ssAddr" placeholder="0.0.0.0" style="width:130px" title="адрес прослушивания">
+        <span class="muted">:</span>
+        <input id="ssPort" type="number" min="1" max="65535" style="width:90px" title="порт">
+        <span class="muted" style="font-size:11px">адрес и порт панели</span>
+      </div>
+      <div class="muted" style="font-size:11px;margin-top:2px">0.0.0.0 - все интерфейсы, 127.0.0.1 - только локально (для nginx-прокси), конкретный IP - один интерфейс. Применяется после перезапуска демона.</div>
+      <div style="font-size:13px;margin-top:8px">Разрешённые адреса</div>
+      <textarea id="ssAllowed" rows="3" placeholder="192.168.0.82&#10;192.168.0.0/24" style="width:100%"></textarea>
+      <div class="muted" style="font-size:11px;margin-top:2px">IP или подсети, с которых открыт доступ к панели (по одному в строке). Пусто - доступ всем. Роутер всегда может открыть панель сам. За реверс-прокси фильтруется адрес прокси, учитывайте. Список текущих клиентов LAN: Интерфейсы роутера.</div>
+      <div class="btnrow" style="margin-top:8px;justify-content:flex-end">
+        <button id="ssSave">сохранить</button>
+      </div>
+    </div>
+    <div class="btnrow" style="align-items:center;margin-top:12px;border-top:1px solid var(--border);padding-top:10px">
       <button id="setPassBtn">сменить пароль</button>
       <button id="logoutBtn">выйти</button>
-      <span class="muted" id="authNote" style="display:none;font-size:11px">авторизация выключена (-no-auth): API открыт всем, кто достучался до порта</span>
     </div>
   </div>
   <details open>
@@ -1859,10 +1883,92 @@ document.getElementById('logoutBtn').onclick = async () => {
   location.reload();
 };
 function showNoAuthBadge() {
-  document.getElementById('authNote').style.display = '';
   document.getElementById('setPassBtn').style.display = 'none';
   document.getElementById('logoutBtn').style.display = 'none';
 }
+
+// --- настройки панели ---
+let SSRV = null;
+async function loadServerSettings() {
+  try {
+    SSRV = await api('GET', '/settings/server');
+    const box = document.getElementById('serverSettingsBox');
+    if (!SSRV || !box) return;
+    document.getElementById('ssAuthOn').checked = SSRV.authEnabled;
+    updateAuthHint();
+    document.getElementById('ssAddr').value = SSRV.listenAddr || '0.0.0.0';
+    document.getElementById('ssPort').value = SSRV.port || 8090;
+    document.getElementById('ssAllowed').value = (SSRV.allowedIps || []).join('\n');
+  } catch {}
+}
+function updateAuthHint() {
+  const on = document.getElementById('ssAuthOn').checked;
+  document.getElementById('ssAuthHint').textContent = on
+    ? 'Вход по паролю включён. Панель и API закрыты сессией или токеном.'
+    : 'ВНИМАНИЕ: авторизация выключена. Панель и API открыты любому, кто достучится до порта. Это небезопасно, если порт доступен из интернета или большой сети. Разрешённые адреса ниже частично компенсируют риск.';
+}
+document.getElementById('ssAuthOn').onchange = () => {
+  if (!document.getElementById('ssAuthOn').checked) return updateAuthHint();
+  if (SSRV && !SSRV.hasCreds) {
+    document.getElementById('ssAuthOn').checked = false;
+    toast('Нет сохранённой учётки: сначала задайте пароль', true);
+    return;
+  }
+  updateAuthHint();
+};
+document.getElementById('ssSave').onclick = e => withBusy(e.currentTarget, async () => {
+  const off = !document.getElementById('ssAuthOn').checked;
+  if (off && !(await askModal('Отключение авторизации',
+    'Панель и API будут открыты ЛЮБОМУ, кто достучится до порта. Если порт доступен из интернета или большой сети - это небезопасно. Продолжить?',
+    'Отключить'))) {
+    document.getElementById('ssAuthOn').checked = true;
+    updateAuthHint();
+    return;
+  }
+  const body = {
+    listenAddr: document.getElementById('ssAddr').value.trim() || '0.0.0.0',
+    port: +document.getElementById('ssPort').value,
+    allowedIps: document.getElementById('ssAllowed').value.split(/\n+/).map(x => x.trim()).filter(Boolean),
+    authDisabled: off
+  };
+  try {
+    const r = await api('PUT', '/settings/server', body);
+    if (r.needRestart) toast('Сохранено. Новый адрес/порт применятся после перезапуска демона');
+    else toast('Сохранено');
+    loadServerSettings();
+  } catch (err) { toast(err.message, true); }
+});
+
+// --- проверка обновлений в шапке ---
+let UPD = null;
+async function checkUpdates(manual) {
+  try {
+    const r = await api('GET', '/system/update/check');
+    if (r.error) { if (manual) toast('Проверка обновления: ' + r.error, true); return; }
+    UPD = r;
+    const badge = document.getElementById('updBadge');
+    if (r.update) {
+      badge.style.display = '';
+      badge.textContent = 'обновиться до ' + r.latest;
+      badge.title = 'текущая ' + r.current + '; нажать - обновить (install.sh с проверкой sha256, сервис перезапустится)';
+    } else {
+      badge.style.display = 'none';
+      if (manual) toast('Обновлений нет (текущая ' + r.current + ')');
+    }
+  } catch (err) { if (manual) toast(err.message, true); }
+}
+document.getElementById('updBadge').onclick = async e => {
+  const badge = e.currentTarget;
+  if (!UPD || !UPD.update) return;
+  if (!(await askModal('Обновление mawg', 'Скачать и установить ' + UPD.latest + '? Бинарник качается с проверкой sha256, сервис перезапустится, панель на минуту уйдёт.', 'Обновить'))) return;
+  await withBusy(badge, async () => {
+    try {
+      await api('POST', '/system/update/run');
+      toast('Обновление запущено; панель вернётся сама после перезапуска');
+      setTimeout(() => location.reload(), 15000);
+    } catch (err) { toast(err.message, true); }
+  });
+};
 
 // крестик очистки на текстовых инпутах
 const X_SVG = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
@@ -1989,6 +2095,7 @@ function startPanel() {
   refresh(); refreshLog(); refreshMT(); loadSlots();
   refreshSystem(true); refreshRules(true); loadPresets();
   fillIfaceSelects(); refreshIfaces(true); refreshBundles(true); refreshWAN();
+  loadServerSettings(); checkUpdates(false);
 }
 
 // гейт: без сессии страница - чёрный фон и модалка входа, API не опрашивается
