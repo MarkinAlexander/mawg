@@ -1963,6 +1963,12 @@ async function loadServerSettings() {
     document.getElementById('ssPort').value = SSRV.port || 8090;
     ALLOW = (SSRV.allowedIps || []).map(e => ({ v: e.v, on: e.on !== false }));
     renderAllowChips();
+    // рассинхрон: конфиг уже на другом порту/адресе, а демон работает
+    // на старом - сразу предлагаем перезапуск
+    if ((SSRV.runningPort && +SSRV.port !== +SSRV.runningPort) ||
+        (SSRV.runningAddr && SSRV.listenAddr && SSRV.listenAddr !== SSRV.runningAddr)) {
+      document.getElementById('ssRestartRow').style.display = '';
+    }
     api('GET', '/lan/clients').then(r => {
       const sel = document.getElementById('ssDevices');
       const cur = sel.value;
@@ -2056,30 +2062,53 @@ async function checkUpdates(manual) {
 document.getElementById('updCheckBtn').onclick = e => withBusy(e.currentTarget, () => checkUpdates(true));
 
 // перезапуск демона из панели: подтверждение, спиннер, ожидание возврата
-function waitForPanel(cb, tries) {
-  fetch('/api/v1/status', { credentials: 'same-origin' }).then(r => {
-    if (r.status === 401 || r.ok) cb(true);
-    else if (tries > 0) setTimeout(() => waitForPanel(cb, tries - 1), 2000);
-    else cb(false);
+// waitForPanel ждёт возврата панели; при смене порта/адреса опрашивает
+// НОВЫЙ origin (no-cors: кросс-портовый fetch читает только факт ответа,
+// этого достаточно - connection refused роняет промис)
+function waitForPanel(cb, tries, origin) {
+  const url = (origin || '') + '/api/v1/status';
+  const opts = origin && origin !== location.origin
+    ? { mode: 'no-cors' }
+    : { credentials: 'same-origin' };
+  fetch(url, opts).then(r => {
+    if (opts.mode !== 'no-cors' && r.status !== 401 && !r.ok) {
+      if (tries > 0) return setTimeout(() => waitForPanel(cb, tries - 1, origin), 2000);
+      return cb(false);
+    }
+    cb(true);
   }).catch(() => {
-    if (tries > 0) setTimeout(() => waitForPanel(cb, tries - 1), 2000);
+    if (tries > 0) setTimeout(() => waitForPanel(cb, tries - 1, origin), 2000);
     else cb(false);
   });
+}
+// panelTargetOrigin - куда переедет панель по текущим полям настроек;
+// null = остаётся на этом же адресе
+function panelTargetOrigin() {
+  const newPort = +document.getElementById('ssPort').value || 8090;
+  const addr = (document.getElementById('ssAddr').value.trim() || '0.0.0.0');
+  let host = location.hostname;
+  if (addr !== '0.0.0.0' && addr !== '::' && addr !== location.hostname) host = addr;
+  const target = location.protocol + '//' + host + ':' + newPort;
+  return target === location.origin ? null : target;
 }
 document.getElementById('ssRestart').onclick = async e => {
   const btn = e.currentTarget;
   if (!(await askModal('Перезапуск панели',
     'Демон mawg будет перезапущен: панель на 10-30 секунд пропадёт, туннели и маршруты не трогаются (конфиги остаются применёнными). Страница сама вернётся, когда панель оживёт. Перезапустить?',
     'Перезапустить'))) return;
+  const target = panelTargetOrigin();
+  if (target && target.startsWith(location.protocol + '//127.0.0.1') && !location.hostname.includes('127.0.0.1')) {
+    toast('Панель переедет на 127.0.0.1 - с этого компьютера она будет недоступна напрямую (нужен доступ с роутера или прокси)', true);
+  }
   await withBusy(btn, async () => {
     try {
       await api('POST', '/system/restart');
     } catch (err) { toast(err.message, true); return; }
-    btn.innerHTML = '<span class="spin"></span>панель перезапускается, ждём возврата...';
+    btn.innerHTML = '<span class="spin"></span>панель перезапускается, ждём возврата' + (target ? ' на ' + target.replace(location.protocol + '//', '') : '') + '...';
     setTimeout(() => waitForPanel(ok => {
-      if (ok) location.reload();
-      else { btn.textContent = 'перезапустить панель'; toast('Панель не вернулась за отведённое время - проверьте её вручную', true); }
-    }, 30), 4000);
+      if (ok) location.href = (target || location.origin) + location.pathname;
+      else { btn.textContent = 'перезапустить панель'; toast('Панель не вернулась за отведённое время - проверьте её вручную' + (target ? ' по адресу ' + target.replace(location.protocol + '//', '') : ''), true); }
+    }, 30, target), 4000);
   });
 };
 document.getElementById('updBadge').onclick = async e => {

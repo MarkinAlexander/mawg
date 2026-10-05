@@ -38,6 +38,10 @@ type Server struct {
 	version string
 	auth    *auth.Auth
 	IPGate  *auth.IPGate
+	// фактически забинденные адрес/порт демона: UI отличает
+	// "сохранено, но не перезапущено" от "уже применяется"
+	BindAddr string
+	BindPort int
 }
 
 func New(st *store.Store, e *rotator.Engine, b platform.Backend, mt *magitrickle.Client, version string, a *auth.Auth) *Server {
@@ -152,6 +156,8 @@ func (s *Server) getServerSettings(w http.ResponseWriter, r *http.Request) {
 		"authEnabled":  s.auth == nil || s.auth.Enabled,
 		"hasCreds":     s.auth != nil && s.auth.HasCreds(),
 		"clientIp":     clientIp,
+		"runningAddr":  s.BindAddr,
+		"runningPort":  s.BindPort,
 	})
 }
 
@@ -264,7 +270,7 @@ func (s *Server) putServerSettings(w http.ResponseWriter, r *http.Request) {
 	if s.auth != nil {
 		s.auth.Enabled = !authOff
 	}
-	addrChanged := req.ListenAddr != curAddr || req.Port != curPort
+	addrChanged := req.ListenAddr != s.BindAddr || req.Port != s.BindPort
 	if addrChanged {
 		s.store.LogEvent("settings", "server", "панель перейдёт на "+req.ListenAddr+":"+fmt.Sprint(req.Port)+" после перезапуска демона")
 	}

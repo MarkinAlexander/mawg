@@ -253,6 +253,7 @@ func main() {
 
 	srv := web.New(st, engine, backend, mt, version, authenticator)
 	srv.IPGate = auth.NewIPGate(st.AllowedIPList())
+	srv.BindAddr, srv.BindPort = listenAddr, cfgPort
 	engine.Start(ctx)
 
 	bind := fmt.Sprintf("%s:%d", listenAddr, cfgPort)
