@@ -33,10 +33,10 @@ func (b *Backend) Name() string { return store.PlatformOpenwrt }
 
 func (b *Backend) Detect() error {
 	if _, err := os.Stat("/etc/openwrt_release"); err != nil {
-		return fmt.Errorf("not an openwrt system")
+		return fmt.Errorf("это не OpenWrt")
 	}
 	if _, err := run("uci", "show", "network"); err != nil {
-		return fmt.Errorf("uci unavailable: %v", err)
+		return fmt.Errorf("uci недоступен: %v", err)
 	}
 	return nil
 }
@@ -311,7 +311,7 @@ func (b *Backend) Status(pool store.Pool) (platform.TunnelStatus, error) {
 	var st platform.TunnelStatus
 	linkOut, err := run("ip", "-o", "link", "show", "dev", pool.Name)
 	if err != nil {
-		return st, fmt.Errorf("interface %s not found", pool.Name)
+		return st, fmt.Errorf("интерфейс %s не найден", pool.Name)
 	}
 	st.LinkUp = strings.Contains(linkOut, ",UP,") && strings.Contains(linkOut, "LOWER_UP")
 	out, err := run(b.toolFor(pool), "show", pool.Name, "latest-handshakes")

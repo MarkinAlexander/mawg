@@ -284,7 +284,7 @@ func (e *Engine) RotateNow(pool string) error {
 	defer e.actMu.Unlock()
 	p, ok := e.store.Pool(pool)
 	if !ok {
-		return fmt.Errorf("pool %q not found", pool)
+		return fmt.Errorf("пул %q не найден", pool)
 	}
 	if p.Disabled {
 		return fmt.Errorf("пул %q выключен, сначала включите его", pool)
@@ -299,13 +299,13 @@ func (e *Engine) SetActive(pool, file string) error {
 	defer e.actMu.Unlock()
 	p, ok := e.store.Pool(pool)
 	if !ok {
-		return fmt.Errorf("pool %q not found", pool)
+		return fmt.Errorf("пул %q не найден", pool)
 	}
 	if p.Disabled {
 		return fmt.Errorf("пул %q выключен, сначала включите его", pool)
 	}
 	if _, ok := p.ConfigByFile(file); !ok {
-		return fmt.Errorf("config %q not found in pool %q", file, pool)
+		return fmt.Errorf("конфиг %q не найден в пуле %q", file, pool)
 	}
 	e.store.MutateState(pool, func(s *store.PoolState) {
 		delete(s.Cooldowns, file)
@@ -322,7 +322,7 @@ func (e *Engine) DisablePool(pool string) error {
 	defer e.actMu.Unlock()
 	p, ok := e.store.Pool(pool)
 	if !ok {
-		return fmt.Errorf("pool %q not found", pool)
+		return fmt.Errorf("пул %q не найден", pool)
 	}
 	if p.Disabled {
 		return nil
@@ -362,7 +362,7 @@ func (e *Engine) EnablePool(pool string) error {
 	defer e.actMu.Unlock()
 	p, ok := e.store.Pool(pool)
 	if !ok {
-		return fmt.Errorf("pool %q not found", pool)
+		return fmt.Errorf("пул %q не найден", pool)
 	}
 	if !p.Disabled {
 		return nil
@@ -398,7 +398,7 @@ func (e *Engine) PoolUp(pool string) error {
 	defer e.actMu.Unlock()
 	p, ok := e.store.Pool(pool)
 	if !ok {
-		return fmt.Errorf("pool %q not found", pool)
+		return fmt.Errorf("пул %q не найден", pool)
 	}
 	if p.Disabled {
 		return fmt.Errorf("пул %q выключен, сначала включите его", pool)
@@ -407,7 +407,7 @@ func (e *Engine) PoolUp(pool string) error {
 	if st.ActiveFile == "" {
 		eligible := e.eligible(p, st)
 		if len(eligible) == 0 {
-			return fmt.Errorf("pool %q has no eligible configs", pool)
+			return fmt.Errorf("в пуле %q нет конфигов, пригодных для ротации", pool)
 		}
 		return e.applyConfig(p, eligible[0].File)
 	}
@@ -435,7 +435,7 @@ func (e *Engine) PoolDown(pool string) error {
 	defer e.actMu.Unlock()
 	p, ok := e.store.Pool(pool)
 	if !ok {
-		return fmt.Errorf("pool %q not found", pool)
+		return fmt.Errorf("пул %q не найден", pool)
 	}
 	if p.Disabled {
 		return fmt.Errorf("пул %q выключен, сначала включите его", pool)

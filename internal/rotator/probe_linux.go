@@ -48,7 +48,7 @@ func httpProbe(device, target string, timeout time.Duration) (ok bool, rttMs int
 			DisableKeepAlives: true,
 		},
 		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return fmt.Errorf("redirects disabled for probe")
+			return fmt.Errorf("проба не следует редиректам")
 		},
 	}
 	start := time.Now()

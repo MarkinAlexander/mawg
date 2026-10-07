@@ -823,7 +823,7 @@ func (s *Server) validFallback(name, fallback string) error {
 	}
 	fbName, ok := store.FallbackPoolName(fallback)
 	if !ok {
-		return fmt.Errorf("fallback must be direct, hold or pool:<имя>")
+		return fmt.Errorf("фоллбек должен быть direct, hold или pool:<имя пула>")
 	}
 	if fbName == name {
 		return fmt.Errorf("фоллбек на самого себя")
@@ -1065,7 +1065,7 @@ func (s *Server) moveConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	json.NewDecoder(r.Body).Decode(&req)
 	if req.Delta != -1 && req.Delta != 1 {
-		writeErr(w, fmt.Errorf("delta must be -1 or 1"))
+		writeErr(w, fmt.Errorf("смещение должно быть -1 или 1"))
 		return
 	}
 	if err := s.store.MoveConfig(r.PathValue("name"), r.PathValue("file"), req.Delta); err != nil {
@@ -1154,7 +1154,7 @@ func (s *Server) postSystemInstall(w http.ResponseWriter, r *http.Request) {
 		ID string `json:"id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ID == "" {
-		writeErr(w, fmt.Errorf("missing id"))
+		writeErr(w, fmt.Errorf("не указан id компонента"))
 		return
 	}
 	check := s.systemCheck()

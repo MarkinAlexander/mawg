@@ -107,11 +107,11 @@ func (s *Store) IfaceModes() map[string]string {
 
 func (s *Store) SetIfaceMode(device, mode string) error {
 	if mode != IfaceExternal && mode != IfaceHidden {
-		return fmt.Errorf("mode must be external or hidden")
+		return fmt.Errorf("режим должен быть external (внешний) или hidden (скрытый)")
 	}
 	for _, p := range s.root.Pools {
 		if p.DeviceName() == device {
-			return fmt.Errorf("device %s is managed by pool %q", device, p.Name)
+			return fmt.Errorf("устройством %s управляет пул %q", device, p.Name)
 		}
 	}
 	s.mu.Lock()
@@ -365,11 +365,11 @@ func (s *Store) RenamePool(oldName, newName string) (Pool, error) {
 				return p, nil
 			}
 		}
-		return Pool{}, fmt.Errorf("pool %q not found", oldName)
+		return Pool{}, fmt.Errorf("пул %q не найден", oldName)
 	}
 	for _, p := range s.root.Pools {
 		if p.Name == clean {
-			return Pool{}, fmt.Errorf("pool %q already exists", clean)
+			return Pool{}, fmt.Errorf("пул %q уже существует", clean)
 		}
 	}
 	found := false
@@ -381,7 +381,7 @@ func (s *Store) RenamePool(oldName, newName string) (Pool, error) {
 		}
 	}
 	if !found {
-		return Pool{}, fmt.Errorf("pool %q not found", oldName)
+		return Pool{}, fmt.Errorf("пул %q не найден", oldName)
 	}
 	if st := s.state.Pools[oldName]; st != nil {
 		delete(s.state.Pools, oldName)
@@ -445,18 +445,18 @@ func (s *Store) CreatePool(name string, settings PoolSettings) (Pool, error) {
 		return Pool{}, err
 	}
 	if !ValidProbeTarget(settings.WithDefaults().ProbeHost) {
-		return Pool{}, fmt.Errorf("probe target must be a public IPv4 address or http(s) URL, got %q", settings.ProbeHost)
+		return Pool{}, fmt.Errorf("цель пробы должна быть публичным IPv4-адресом или http(s)-ссылкой, получено: %q", settings.ProbeHost)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, p := range s.root.Pools {
 		if p.Name == clean {
-			return Pool{}, fmt.Errorf("pool %q already exists", clean)
+			return Pool{}, fmt.Errorf("пул %q уже существует", clean)
 		}
 		if p.Settings.Platform == settings.Platform &&
 			settings.Platform == PlatformKeenetic &&
 			p.Settings.KeeneticSlot == settings.KeeneticSlot && settings.KeeneticSlot != "" {
-			return Pool{}, fmt.Errorf("keenetic slot %s already bound to pool %q", settings.KeeneticSlot, p.Name)
+			return Pool{}, fmt.Errorf("слот %s уже занят пулом %q", settings.KeeneticSlot, p.Name)
 		}
 	}
 	if err := os.MkdirAll(s.PoolDir(clean), 0o700); err != nil {
@@ -473,7 +473,7 @@ func (s *Store) CreatePool(name string, settings PoolSettings) (Pool, error) {
 
 func (s *Store) UpdatePool(name string, settings PoolSettings) error {
 	if !ValidProbeTarget(settings.WithDefaults().ProbeHost) {
-		return fmt.Errorf("probe target must be a public IPv4 address or http(s) URL, got %q", settings.ProbeHost)
+		return fmt.Errorf("цель пробы должна быть публичным IPv4-адресом или http(s)-ссылкой, получено: %q", settings.ProbeHost)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -483,7 +483,7 @@ func (s *Store) UpdatePool(name string, settings PoolSettings) error {
 			return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
 		}
 	}
-	return fmt.Errorf("pool %q not found", name)
+	return fmt.Errorf("пул %q не найден", name)
 }
 
 func (s *Store) DeletePool(name string) error {
@@ -502,7 +502,7 @@ func (s *Store) DeletePool(name string) error {
 			return os.RemoveAll(s.PoolDir(name))
 		}
 	}
-	return fmt.Errorf("pool %q not found", name)
+	return fmt.Errorf("пул %q не найден", name)
 }
 
 func (s *Store) AddConfigs(pool string, configs []wgconf.NamedConfig) (added int, duplicates []string, err error) {
@@ -516,7 +516,7 @@ func (s *Store) AddConfigs(pool string, configs []wgconf.NamedConfig) (added int
 		}
 	}
 	if pi < 0 {
-		return 0, nil, fmt.Errorf("pool %q not found", pool)
+		return 0, nil, fmt.Errorf("пул %q не найден", pool)
 	}
 	dir := s.PoolDir(pool)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -579,7 +579,7 @@ func (s *Store) SetConfigAddresses(pool, file string, addrs []string) {
 
 func (s *Store) LoadConfigFile(pool, file string) (wgconf.Config, error) {
 	if filepath.Base(file) != file || !strings.HasSuffix(file, ".conf") {
-		return wgconf.Config{}, fmt.Errorf("bad config file name %q", file)
+		return wgconf.Config{}, fmt.Errorf("недопустимое имя файла конфига: %q", file)
 	}
 	data, err := os.ReadFile(filepath.Join(s.PoolDir(pool), file))
 	if err != nil {
@@ -604,9 +604,9 @@ func (s *Store) RemoveConfig(pool, file string) error {
 				return os.Remove(filepath.Join(s.PoolDir(pool), file))
 			}
 		}
-		return fmt.Errorf("config %q not found in pool %q", file, pool)
+		return fmt.Errorf("конфиг %q не найден в пуле %q", file, pool)
 	}
-	return fmt.Errorf("pool %q not found", pool)
+	return fmt.Errorf("пул %q не найден", pool)
 }
 
 func (s *Store) SetConfigEnabled(pool, file string, enabled bool) error {
@@ -622,9 +622,9 @@ func (s *Store) SetConfigEnabled(pool, file string, enabled bool) error {
 				return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
 			}
 		}
-		return fmt.Errorf("config %q not found", file)
+		return fmt.Errorf("конфиг %q не найден", file)
 	}
-	return fmt.Errorf("pool %q not found", pool)
+	return fmt.Errorf("пул %q не найден", pool)
 }
 
 func (s *Store) MoveConfig(pool, file string, delta int) error {
@@ -641,7 +641,7 @@ func (s *Store) MoveConfig(pool, file string, delta int) error {
 			}
 			k := j + delta
 			if k < 0 || k >= len(cfgs) {
-				return fmt.Errorf("config %q already at edge", file)
+				return fmt.Errorf("конфиг %q уже крайний в списке", file)
 			}
 			cfgs[j], cfgs[k] = cfgs[k], cfgs[j]
 			if err := s.saveLocked(filepath.Join(s.base, "config.json"), s.root); err != nil {
@@ -649,9 +649,9 @@ func (s *Store) MoveConfig(pool, file string, delta int) error {
 			}
 			return nil
 		}
-		return fmt.Errorf("config %q not found", file)
+		return fmt.Errorf("конфиг %q не найден", file)
 	}
-	return fmt.Errorf("pool %q not found", pool)
+	return fmt.Errorf("пул %q не найден", pool)
 }
 
 func (s *Store) SetPoolDisabled(pool string, disabled bool) error {
@@ -663,7 +663,7 @@ func (s *Store) SetPoolDisabled(pool string, disabled bool) error {
 			return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
 		}
 	}
-	return fmt.Errorf("pool %q not found", pool)
+	return fmt.Errorf("пул %q не найден", pool)
 }
 
 func (s *Store) MutateState(pool string, fn func(*PoolState)) error {
@@ -715,7 +715,7 @@ func (s *Store) CreateBundle(b Bundle) (Bundle, error) {
 	defer s.mu.Unlock()
 	for _, existing := range s.root.Bundles {
 		if existing.Name == clean {
-			return Bundle{}, fmt.Errorf("bundle %q already exists", clean)
+			return Bundle{}, fmt.Errorf("набор %q уже существует", clean)
 		}
 	}
 	s.root.Bundles = append(s.root.Bundles, b)
@@ -739,7 +739,7 @@ func (s *Store) UpdateBundle(name string, b Bundle) error {
 			return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
 		}
 	}
-	return fmt.Errorf("bundle %q not found", name)
+	return fmt.Errorf("набор %q не найден", name)
 }
 
 func (s *Store) DeleteBundle(name string) error {
@@ -755,7 +755,7 @@ func (s *Store) DeleteBundle(name string) error {
 			return s.saveLocked(filepath.Join(s.base, "state.json"), &s.state)
 		}
 	}
-	return fmt.Errorf("bundle %q not found", name)
+	return fmt.Errorf("набор %q не найден", name)
 }
 
 func (s *Store) BundleState(name string) BundleState {

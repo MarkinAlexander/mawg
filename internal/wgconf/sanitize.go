@@ -21,7 +21,7 @@ func SanitizeBundleName(s string) (string, error) {
 func SanitizePoolName(s string) (string, error) {
 	name := strings.ToLower(strings.TrimSpace(s))
 	if !poolNameRe.MatchString(name) {
-		return "", fmt.Errorf("pool name must match %s", poolNameRe.String())
+		return "", fmt.Errorf("имя пула: строчная латиница, цифры и дефисы, начинается с буквы, до 15 символов")
 	}
 	return name, nil
 }

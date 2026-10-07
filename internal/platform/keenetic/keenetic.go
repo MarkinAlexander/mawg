@@ -101,7 +101,7 @@ func collectComponents(dst map[string]bool, list string) {
 
 func (b *Backend) Detect() error {
 	if _, err := os.Stat("/bin/ndmc"); err != nil {
-		return fmt.Errorf("ndmc not found, not a keenetic router")
+		return fmt.Errorf("ndmc не найден: это не Keenetic")
 	}
 	out, err := b.ndmc("show version")
 	if err != nil {
@@ -109,13 +109,13 @@ func (b *Backend) Detect() error {
 	}
 	info := b.parseVersion(out)
 	if info.major == 0 {
-		return fmt.Errorf("cannot parse firmware version from: %s", out)
+		return fmt.Errorf("не удалось разобрать версию прошивки: %s", out)
 	}
 	if info.major < 5 || (info.major == 5 && info.minor < 1) {
-		return fmt.Errorf("firmware %d.%d is below 5.1, wireguard asc extended params unsupported", info.major, info.minor)
+		return fmt.Errorf("прошивка %d.%d ниже 5.1: расширенные AWG-параметры asc не поддерживаются", info.major, info.minor)
 	}
 	if !info.components["wireguard"] {
-		return fmt.Errorf("wireguard component is not installed: install it in web ui (System - Component Options) and retry")
+		return fmt.Errorf("компонент WireGuard не установлен: установите его в веб-интерфейсе кинетика (Система - Настройки компонентов) и повторите")
 	}
 	return nil
 }
@@ -201,7 +201,7 @@ func (b *Backend) ndmcInterface(slot string) (rciInterface, error) {
 	ifaces := parseNDMCInterfaces(out)
 	iface, ok := ifaces[slot]
 	if !ok {
-		return rciInterface{}, fmt.Errorf("ndmc: interface %s not found", slot)
+		return rciInterface{}, fmt.Errorf("интерфейс %s не найден в ndmc", slot)
 	}
 	return iface, nil
 }
@@ -209,7 +209,7 @@ func (b *Backend) ndmcInterface(slot string) (rciInterface, error) {
 func (b *Backend) slotOf(pool store.Pool) (string, int, error) {
 	m := slotRe.FindStringSubmatch(pool.Settings.KeeneticSlot)
 	if m == nil {
-		return "", -1, fmt.Errorf("pool %q has invalid keenetic slot %q", pool.Name, pool.Settings.KeeneticSlot)
+		return "", -1, fmt.Errorf("у пула %q неверный слот keenetic: %q", pool.Name, pool.Settings.KeeneticSlot)
 	}
 	idx, _ := strconv.Atoi(m[1])
 	return m[0], idx, nil

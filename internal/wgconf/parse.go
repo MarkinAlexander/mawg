@@ -20,12 +20,12 @@ func parseInt(s string) (int, error) {
 func parseEndpoint(s string) (string, int, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
-		return "", 0, fmt.Errorf("empty endpoint")
+		return "", 0, fmt.Errorf("пустой endpoint")
 	}
 	if strings.HasPrefix(s, "[") {
 		end := strings.LastIndex(s, "]")
 		if end < 0 {
-			return "", 0, fmt.Errorf("bad ipv6 endpoint %q", s)
+			return "", 0, fmt.Errorf("некорректный ipv6-endpoint: %q", s)
 		}
 		host := s[:end+1]
 		rest := s[end+1:]
@@ -33,18 +33,18 @@ func parseEndpoint(s string) (string, int, error) {
 			return host, 0, nil
 		}
 		if !strings.HasPrefix(rest, ":") {
-			return "", 0, fmt.Errorf("bad ipv6 endpoint %q", s)
+			return "", 0, fmt.Errorf("некорректный ipv6-endpoint: %q", s)
 		}
 		port, err := parseInt(rest[1:])
 		if err != nil {
-			return "", 0, fmt.Errorf("bad port in endpoint %q", s)
+			return "", 0, fmt.Errorf("некорректный порт в endpoint: %q", s)
 		}
 		return host, port, nil
 	}
 	if i := strings.LastIndex(s, ":"); i >= 0 {
 		port, err := parseInt(s[i+1:])
 		if err != nil {
-			return "", 0, fmt.Errorf("bad port in endpoint %q", s)
+			return "", 0, fmt.Errorf("некорректный порт в endpoint: %q", s)
 		}
 		return s[:i], port, nil
 	}
@@ -140,7 +140,7 @@ func Parse(data []byte) (Config, error) {
 			if section == "peer" {
 				peers++
 				if peers > 1 {
-					return cfg, fmt.Errorf("line %d: multiple [Peer] sections not supported", lineno+1)
+					return cfg, fmt.Errorf("строка %d: несколько секций [Peer] не поддерживаются", lineno+1)
 				}
 			}
 			continue
@@ -192,22 +192,22 @@ func Parse(data []byte) (Config, error) {
 	}
 
 	if !validKey(cfg.PrivateKey) {
-		return cfg, fmt.Errorf("missing or invalid Interface PrivateKey")
+		return cfg, fmt.Errorf("нет или неверный PrivateKey в [Interface]")
 	}
 	if !validKey(cfg.Peer.PublicKey) {
-		return cfg, fmt.Errorf("missing or invalid Peer PublicKey")
+		return cfg, fmt.Errorf("нет или неверный PublicKey в [Peer]")
 	}
 	if cfg.Peer.PresharedKey != "" && !validKey(cfg.Peer.PresharedKey) {
-		return cfg, fmt.Errorf("invalid Peer PresharedKey")
+		return cfg, fmt.Errorf("неверный PresharedKey в [Peer]")
 	}
 	if cfg.Peer.EndpointHost == "" {
-		return cfg, fmt.Errorf("missing Peer Endpoint")
+		return cfg, fmt.Errorf("нет Endpoint в [Peer]")
 	}
 	if cfg.Peer.EndpointPort <= 0 || cfg.Peer.EndpointPort > 65535 {
-		return cfg, fmt.Errorf("missing or invalid Endpoint port")
+		return cfg, fmt.Errorf("нет или неверный порт в Endpoint")
 	}
 	if len(cfg.Addresses) == 0 {
-		return cfg, fmt.Errorf("missing Interface Address")
+		return cfg, fmt.Errorf("нет Address в [Interface]")
 	}
 	return cfg, nil
 }

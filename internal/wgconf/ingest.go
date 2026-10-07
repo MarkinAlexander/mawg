@@ -28,7 +28,7 @@ func IngestFile(filename string, data []byte) ([]NamedConfig, error) {
 		return IngestZip(data)
 	}
 	if !IsConfName(filename) {
-		return nil, fmt.Errorf("%s: not a .conf or .zip file", filename)
+		return nil, fmt.Errorf("%s: не .conf и не .zip файл", filename)
 	}
 	cfg, err := Parse(data)
 	if err != nil {
@@ -69,9 +69,9 @@ func IngestZip(data []byte) ([]NamedConfig, error) {
 	}
 	if len(out) == 0 {
 		if len(errs) > 0 {
-			return nil, fmt.Errorf("no valid configs in zip: %s", strings.Join(errs, "; "))
+			return nil, fmt.Errorf("в zip нет валидных конфигов: %s", strings.Join(errs, "; "))
 		}
-		return nil, fmt.Errorf("no .conf files in zip")
+		return nil, fmt.Errorf("в zip нет .conf файлов")
 	}
 	return out, nil
 }

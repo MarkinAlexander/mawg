@@ -253,7 +253,7 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
   <form method="dialog" style="display:grid; gap:4px">
     <h3 style="margin:0 0 6px">Новый интерфейс (пул)</h3>
     <label class="f">Имя (латиница, цифры, дефис)
-      <input id="pName" placeholder="proton" pattern="[a-z][a-z0-9-]{0,14}" required>
+      <input id="pName" placeholder="proton" pattern="[a-z][a-z0-9-]{0,14}" title="строчная латиница, цифры и дефисы, начинается с буквы, до 15 символов" required>
     </label>
     <label class="f" id="slotRow" style="display:none">Слот Keenetic
       <div class="btnrow" style="margin-top:3px">
@@ -335,7 +335,7 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
   <form method="dialog" style="display:grid; gap:4px">
     <h3 style="margin:0 0 6px">Настройки пула <span class="muted" id="spName"></span></h3>
     <label class="f" id="spRenameRow">Имя (переименование)
-      <input id="spRename" pattern="[a-z][a-z0-9-]{0,14}">
+      <input id="spRename" pattern="[a-z][a-z0-9-]{0,14}" title="строчная латиница, цифры и дефисы, начинается с буквы, до 15 символов">
     </label>
     <label class="f">Тип пробы через туннель
       <select id="spProbeType">

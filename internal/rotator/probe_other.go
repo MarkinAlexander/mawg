@@ -8,5 +8,5 @@ import (
 )
 
 func httpProbe(device, target string, timeout time.Duration) (bool, int, error) {
-	return false, 0, fmt.Errorf("http probe supported only on linux")
+	return false, 0, fmt.Errorf("http-проба поддерживается только на linux")
 }
