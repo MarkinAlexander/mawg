@@ -53,7 +53,9 @@ th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--bord
 th { color: var(--dim); font-weight: normal; }
 .drop { border: 1px dashed var(--border); border-radius: 8px; padding: 14px; text-align: center; color: var(--dim); margin-top: 10px; cursor: pointer; }
 .drop.hover { border-color: var(--accent); color: var(--accent); }
-dialog { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 18px; min-width: 360px; max-width: min(92vw, 480px); max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); overflow-y: auto; }
+dialog { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 18px; min-width: 360px; max-width: min(92vw, 480px); max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); overflow-y: auto; overflow-x: hidden; }
+dialog .cfgscroll { max-height: none; overflow: visible; }
+dialog .psel-list { max-width: 100%; }
 dialog select { max-width: 100%; }
 dialog::backdrop { background: rgba(0,0,0,.55); }
 label.f { display: block; margin: 8px 0; font-size: 13px; color: var(--dim); }
@@ -140,7 +142,7 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
     <h2>Интерфейсы роутера <span class="muted" id="ifacecount" style="font-size:12px;font-weight:normal"></span>
       <button id="ifShowHidden" style="font-size:11px"></button></h2>
     <div class="sub">WireGuard-интерфейсы системы. Пулы управляются mawg, внешние только показываются (статус, привязка групп), скрытые не видны нигде.</div>
-    <div id="ifacelist"></div>
+    <div id="ifacelist"><div class="muted"><span class="spin"></span>загружаю интерфейсы роутера...</div></div>
   </div>
   <div class="card" id="rulescard" style="margin-top:16px">
     <h2>Правила маршрутизации <span class="muted">через MagiTrickle</span></h2>
@@ -395,7 +397,7 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
     </label>
     <div id="bdMembers" style="margin-top:2px"></div>
     <div class="f" style="margin-top:10px">Группы MagiTrickle в наборе
-      <div id="bdGroups" style="max-height:160px;overflow:auto;border:1px solid var(--border);border-radius:6px;padding:6px;margin-top:3px"></div>
+      <div id="bdGroups" style="border:1px solid var(--border);border-radius:6px;padding:6px;margin-top:3px"></div>
     </div>
     <div class="btnrow" style="justify-content:end">
       <button value="cancel">Отмена</button>
@@ -446,7 +448,7 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
 <dialog id="dlgResult">
   <form method="dialog" style="display:grid; gap:10px; min-width:460px; max-width:640px">
     <h3 style="margin:0" id="rsTitle">Результат</h3>
-    <pre id="rsOut" style="max-height:300px;overflow:auto;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;font:11.5px/1.5 ui-monospace,monospace;margin:0;white-space:pre-wrap;word-break:break-word"></pre>
+    <pre id="rsOut" style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;font:11.5px/1.5 ui-monospace,monospace;margin:0;white-space:pre-wrap;word-break:break-word"></pre>
     <div class="btnrow" style="justify-content:end;margin:0">
       <button class="primary" value="ok">Закрыть</button>
     </div>
@@ -1002,7 +1004,10 @@ async function refreshIfaces(force) {
     if (!force && json === lastIfacesJSON) return;
     lastIfacesJSON = json;
     renderIfaces();
-  } catch (e) { console.warn(e); }
+  } catch (e) {
+    if (!IFACES) document.getElementById('ifacelist').innerHTML = '<div class="muted">интерфейсы недоступны: ' + esc(e.message) + '</div>';
+    console.warn(e);
+  }
 }
 
 function renderIfaces() {
