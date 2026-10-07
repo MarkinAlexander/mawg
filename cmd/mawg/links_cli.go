@@ -92,7 +92,7 @@ func parseFile(path string) int {
 	}
 	name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	if strings.EqualFold(filepath.Ext(path), ".conf") {
-		n, err := links.NodeFromConf(name, name, data)
+		n, err := links.NodeFromConf(name, "", data)
 		if err != nil {
 			fmt.Println("ошибка:", err)
 			return 1

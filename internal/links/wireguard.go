@@ -140,6 +140,18 @@ type vpnExport struct {
 	} `json:"containers"`
 }
 
+type vpnLastConfig struct {
+	Config string `json:"config"`
+}
+
+func vpnConfText(lastConfig string) string {
+	var lc vpnLastConfig
+	if err := json.Unmarshal([]byte(lastConfig), &lc); err == nil && lc.Config != "" {
+		return lc.Config
+	}
+	return lastConfig
+}
+
 func parseVPN(source, raw string) (Node, error) {
 	payload, err := decodeBase64URL(strings.TrimSpace(strings.TrimPrefix(raw, "vpn://")))
 	if err != nil {
@@ -165,12 +177,10 @@ func parseVPN(source, raw string) (Node, error) {
 		if c.AWG.LastConfig == "" {
 			continue
 		}
-		node, err := NodeFromConf(source, "", []byte(c.AWG.LastConfig))
+		conf := vpnConfText(c.AWG.LastConfig)
+		node, err := NodeFromConf(source, "", []byte(conf))
 		if err != nil {
 			return Node{}, fmt.Errorf("vpn://: %w", err)
-		}
-		if strings.Contains(c.Container, "awg") || node.AWG != nil {
-			node.Type = "amneziawg"
 		}
 		node.Raw = raw
 		return node, nil

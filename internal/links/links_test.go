@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -191,10 +192,17 @@ func TestNodeFromConfPlain(t *testing.T) {
 
 func encodeVPNFixture(t *testing.T, conf string) string {
 	t.Helper()
+	lastConfig, err := json.Marshal(map[string]any{
+		"H1": "24294-85973", "Jc": "6",
+		"config": conf,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	doc, err := json.Marshal(map[string]any{
 		"containers": []any{map[string]any{
 			"container": "amnezia-awg",
-			"awg":       map[string]any{"last_config": conf, "port": 789},
+			"awg":       map[string]any{"last_config": string(lastConfig), "port": 789},
 		}},
 	})
 	if err != nil {
@@ -229,6 +237,27 @@ func TestParseVPN(t *testing.T) {
 	}
 	if n.Host != "203.0.113.30" || n.Port != 789 {
 		t.Fatalf("endpoint: %+v", n)
+	}
+}
+
+func TestParseVPNRawConfFallback(t *testing.T) {
+	var zbuf bytes.Buffer
+	zw := zlib.NewWriter(&zbuf)
+	doc := []byte(`{"containers":[{"container":"amnezia-awg","awg":{"last_config":` + strconv.Quote(plainWgConf) + `}}]}`)
+	if _, err := zw.Write(doc); err != nil {
+		t.Fatal(err)
+	}
+	zw.Close()
+	payload := make([]byte, 4)
+	binary.BigEndian.PutUint32(payload, uint32(len(doc)))
+	payload = append(payload, zbuf.Bytes()...)
+	link := "vpn://" + base64.RawURLEncoding.EncodeToString(payload)
+	n, err := ParseLink("s4", link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n.Type != "wireguard" || n.Host != "203.0.113.40" || n.Port != 51820 {
+		t.Fatalf("сырой .conf в last_config: %+v", n)
 	}
 }
 
