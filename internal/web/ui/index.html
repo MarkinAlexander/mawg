@@ -44,15 +44,17 @@ input, select { background: var(--bg); color: var(--text); border: 1px solid var
 .psel-item:last-child { border-bottom: 0; }
 .psel-item:hover { background: var(--panel2); }
 .psel-item .cnt { margin-left: auto; flex: none; color: var(--dim); font-size: 11px; }
-#pSlotList { right: auto; width: max-content; min-width: 100%; max-width: 460px; }
-#pSlotList .psel-item span { white-space: normal; word-break: break-word; }
+.psel-list { right: auto; width: max-content; min-width: 100%; max-width: 460px; }
+.psel-item span { white-space: normal; word-break: break-word; }
+label.f .psel { margin-top: 3px; }
+[hidden] { display: none !important; }
 table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 8px; }
 th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--border); word-break: break-all; }
 th { color: var(--dim); font-weight: normal; }
 .drop { border: 1px dashed var(--border); border-radius: 8px; padding: 14px; text-align: center; color: var(--dim); margin-top: 10px; cursor: pointer; }
 .drop.hover { border-color: var(--accent); color: var(--accent); }
 dialog { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 18px; min-width: 360px; max-width: min(92vw, 480px); }
-#dlgPool { overflow: visible; }
+#dlgPool, #dlgGroup, #dlgSettings, #dlgCascade, #dlgBundle { overflow: visible; }
 dialog select { max-width: 100%; }
 dialog::backdrop { background: rgba(0,0,0,.55); }
 label.f { display: block; margin: 8px 0; font-size: 13px; color: var(--dim); }
@@ -259,14 +261,10 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
       <input id="pName" placeholder="proton" pattern="[a-z][a-z0-9-]{0,14}" title="строчная латиница, цифры и дефисы, начинается с буквы, до 15 символов" required>
     </label>
     <label class="f" id="slotRow" style="display:none">Слот Keenetic
-      <div class="psel" id="slotWrap" style="margin-top:3px">
-        <div class="btnrow">
-          <button type="button" class="psel-btn" id="pSlotBtn" style="flex:1;min-width:180px">загружаю слоты...</button>
-          <button type="button" id="slotCreate" title="создать следующий слот WireguardN через CLI">+ слот</button>
-        </div>
-        <div class="psel-list" id="pSlotList" hidden></div>
+      <div class="btnrow" style="margin-top:3px">
+        <select id="pSlot" style="flex:1;min-width:180px"></select>
+        <button type="button" id="slotCreate" title="создать следующий слот WireguardN через CLI">+ слот</button>
       </div>
-      <select id="pSlot" hidden></select>
       <div id="slotHint" style="display:none;font-size:11px;color:var(--warn);margin-top:4px"></div>
     </label>
     <label class="f" id="protoRow" style="display:none">Протокол (OpenWrt)
@@ -825,36 +823,6 @@ $('#pCreate').onclick = async e => {
 };
 
 let slotsLoading = false;
-function updateSlotSel() {
-  const sel = $('#pSlot');
-  const btn = document.getElementById('pSlotBtn');
-  const list = document.getElementById('pSlotList');
-  btn.disabled = sel.disabled;
-  const opt = sel.selectedOptions[0];
-  btn.textContent = opt ? opt.textContent : 'нет слотов';
-  btn.title = opt ? opt.textContent : '';
-  list.innerHTML = [...sel.options].map(o => `<button type="button" class="psel-item" data-id="${o.value}"><span>${esc(o.textContent)}</span></button>`).join('');
-}
-document.getElementById('pSlotBtn').addEventListener('click', e => {
-  e.stopPropagation();
-  const l = document.getElementById('pSlotList');
-  l.hidden = !l.hidden;
-});
-document.getElementById('pSlotList').addEventListener('click', e => {
-  const b = e.target.closest('.psel-item');
-  if (!b) return;
-  $('#pSlot').value = b.dataset.id;
-  document.getElementById('pSlotList').hidden = true;
-  $('#pSlot').dispatchEvent(new Event('change'));
-  updateSlotSel();
-});
-document.addEventListener('click', e => {
-  const w = document.getElementById('slotWrap');
-  if (w && !w.contains(e.target)) document.getElementById('pSlotList').hidden = true;
-});
-document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') document.getElementById('pSlotList').hidden = true;
-});
 function slotBusyHint() {
   const sel = $('#pSlot');
   const hint = document.getElementById('slotHint');
@@ -880,7 +848,6 @@ async function loadSlots() {
     sel.disabled = true;
     sel.innerHTML = '<option value="">загружаю слоты...</option>';
     hint.style.display = 'none';
-    updateSlotSel();
   }
   try {
     const r = await api('GET', '/slots');
@@ -906,11 +873,9 @@ async function loadSlots() {
     } else {
       slotBusyHint();
     }
-    updateSlotSel();
   } catch (e) {
     sel.innerHTML = '';
     sel.disabled = false;
-    updateSlotSel();
     hint.textContent = 'Не удалось получить список слотов: ' + e.message + '. Создание пула заблокировано до появления списка.';
     hint.style.display = '';
   } finally {
@@ -1700,6 +1665,55 @@ document.addEventListener('click', e => {
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') document.getElementById('presetList').hidden = true;
 });
+
+// нативный попап select в Chromium режет длинные опции: селекты с длинными
+// текстами рисуем сами (кнопка + список), нативный остаётся скрытым хранилищем
+function upgradeSelect(sel) {
+  if (!sel || sel.dataset.pselUp) return;
+  sel.dataset.pselUp = '1';
+  const wrap = document.createElement('div');
+  wrap.className = 'psel';
+  if (sel.closest('.btnrow')) {
+    wrap.style.cssText = sel.style.cssText;
+    sel.style.cssText = '';
+  }
+  const btn = document.createElement('button');
+  btn.type = 'button'; btn.className = 'psel-btn';
+  const list = document.createElement('div');
+  list.className = 'psel-list'; list.hidden = true;
+  wrap.append(btn, list);
+  sel.parentNode.insertBefore(wrap, sel);
+  sel.hidden = true;
+  const sync = () => {
+    btn.disabled = sel.disabled;
+    const opt = sel.selectedOptions[0];
+    btn.textContent = opt ? opt.textContent : '';
+    btn.title = opt ? opt.textContent : '';
+    list.innerHTML = [...sel.options].map(o => `<button type="button" class="psel-item" data-id="${o.value}"${o.disabled ? ' disabled' : ''}><span>${esc(o.textContent)}</span></button>`).join('');
+  };
+  new MutationObserver(sync).observe(sel, { childList: true, attributes: true, attributeFilter: ['disabled'] });
+  const valueDesc = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value');
+  Object.defineProperty(sel, 'value', { get: valueDesc.get, set(v) { valueDesc.set.call(this, v); sync(); } });
+  btn.addEventListener('click', e => { e.stopPropagation(); list.hidden = !list.hidden; });
+  list.addEventListener('click', e => {
+    const b = e.target.closest('.psel-item');
+    if (!b || b.disabled) return;
+    list.hidden = true;
+    sel.value = b.dataset.id;
+    sel.dispatchEvent(new Event('change'));
+  });
+  sync();
+}
+document.addEventListener('click', e => {
+  document.querySelectorAll('.psel-list:not([hidden])').forEach(l => {
+    if (!l.parentElement.contains(e.target)) l.hidden = true;
+  });
+});
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  document.querySelectorAll('.psel-list:not([hidden])').forEach(l => { l.hidden = true; });
+});
+['rgIface', 'presetIface', 'egIface', 'egPolicyIface', 'spFallback', 'csSource', 'csVia', 'bdAddSel', 'ssDevices', 'pSlot'].forEach(id => upgradeSelect(document.getElementById(id)));
 
 const PRESET_TYPE_LABELS = { namespace: 'домен+поддомены', subnet: 'подсети IPv4', subnet6: 'подсети IPv6' };
 document.getElementById('presetApply').onclick = async () => {
