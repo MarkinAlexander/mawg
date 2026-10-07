@@ -112,6 +112,10 @@ const usage = `mawg - Multi-AWG Changer ` + `
   mawg allow <ip|cidr>    добавить адрес в список разрешённых к панели
   mawg allow list         показать разрешённые адреса
   mawg allow clear        очистить список разрешённых адресов
+  mawg links parse <x>    разобрать ссылку/.conf/подписку в модель узлов (JSON);
+                          x = url | файл | - (stdin)
+  mawg links fetch <url>  скачать подписку: заголовки + модель узлов
+  mawg singbox discover   релизы ядра sing-box-lx: матрица arch x flavor обоих источников
   mawg -reset-auth        задать новый пароль панели интерактивно
   mawg -password <pass>   задать пароль без вопросов
 
@@ -139,6 +143,13 @@ func main() {
 	if cmd == "help" || cmd == "-h" {
 		fmt.Print(usage)
 		return
+	}
+
+	switch cmd {
+	case "links":
+		os.Exit(cmdLinks(flag.Args()[1:]))
+	case "singbox":
+		os.Exit(cmdSingbox(flag.Args()[1:]))
 	}
 
 	plat := *platformName
@@ -186,13 +197,13 @@ func main() {
 		a := auth.Open(dir)
 		np := *password
 		if np == "" {
-		reader := bufio.NewReader(os.Stdin)
-		fmt.Print("новый пароль (минимум 8 символов, виден при вводе): ")
-		np = strings.TrimSpace(readLine(reader))
-		fmt.Print("повторите: ")
-		if strings.TrimSpace(readLine(reader)) != np {
-			log.Fatal("пароли не совпадают")
-		}
+			reader := bufio.NewReader(os.Stdin)
+			fmt.Print("новый пароль (минимум 8 символов, виден при вводе): ")
+			np = strings.TrimSpace(readLine(reader))
+			fmt.Print("повторите: ")
+			if strings.TrimSpace(readLine(reader)) != np {
+				log.Fatal("пароли не совпадают")
+			}
 		}
 		if err := a.ResetPassword(np); err != nil {
 			log.Fatal(err)
