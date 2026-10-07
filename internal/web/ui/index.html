@@ -454,6 +454,20 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
   </form>
 </dialog>
 
+<dialog id="dlgUpdate">
+  <div style="display:grid;gap:10px;min-width:380px">
+    <h3 style="margin:0">Обновление mawg</h3>
+    <div class="btnrow" style="justify-content:flex-start;align-items:center;margin:0">
+      <span class="spin" id="updWaitSpin"></span>
+      <span id="updWaitText">скачиваем и устанавливаем; панель перезапустится, страница обновится сама</span>
+    </div>
+    <div class="muted" style="font-size:11px">прошло <span id="updWaitSec">0</span> с; скачивание и установка на роутере могут занять пару минут</div>
+    <div class="btnrow" style="justify-content:end;margin:0">
+      <button id="updWaitClose" style="display:none">закрыть</button>
+    </div>
+  </div>
+</dialog>
+
 <dialog id="dlgImport">
   <form method="dialog" style="display:grid; gap:6px; min-width:420px; max-width:560px">
     <h3 style="margin:0 0 4px" id="imTitle">Импорт правил</h3>
@@ -2201,11 +2215,54 @@ document.getElementById('updBadge').onclick = async e => {
   await withBusy(badge, async () => {
     try {
       await api('POST', '/system/update/run');
-      toast('Обновление запущено; панель вернётся сама после перезапуска');
-      setTimeout(() => location.reload(), 15000);
-    } catch (err) { toast(err.message, true); }
+    } catch (err) { toast(err.message, true); return; }
+    // установка идёт в фоне после ответа: ждём возврата панели с новой
+    // версией и перезагружаем страницу сами, иначе версия и бейдж
+    // отстают от реальности
+    const wasVersion = UPD.current;
+    const dlg = document.getElementById('dlgUpdate');
+    const txt = document.getElementById('updWaitText');
+    const sec = document.getElementById('updWaitSec');
+    const spin = document.getElementById('updWaitSpin');
+    const closeBtn = document.getElementById('updWaitClose');
+    txt.textContent = 'скачиваем и устанавливаем ' + UPD.latest + '; панель перезапустится, страница обновится сама';
+    spin.style.display = '';
+    closeBtn.style.display = 'none';
+    dlg.showModal();
+    const t0 = Date.now();
+    const tick = setInterval(() => { sec.textContent = Math.round((Date.now() - t0) / 1000); }, 1000);
+    let done = false;
+    const finish = msg => {
+      if (done) return;
+      done = true;
+      clearInterval(tick);
+      if (!msg) { location.reload(); return; }
+      txt.textContent = msg;
+      spin.style.display = 'none';
+      closeBtn.style.display = '';
+    };
+    closeBtn.onclick = () => dlg.close();
+    const poll = n => {
+      if (done) return;
+      fetch('/api/v1/status', { credentials: 'same-origin' }).then(r => {
+        if (r.status === 401) return finish(); // панель уже перезапустилась, сессия сброшена
+        if (!r.ok) throw 0;
+        return r.json().then(j => {
+          if (j.version && j.version !== wasVersion) finish();
+          else txt.textContent = 'устанавливаем ' + UPD.latest + ' (панель ещё работает на ' + wasVersion + ')...';
+        });
+      }).catch(() => {
+        if (!done) txt.textContent = 'панель перезапускается, ждём возврата...';
+      }).finally(() => {
+        if (done) return;
+        if (n <= 0) return finish('Не дождались возврата панели за 5 минут. Обновление могло затянуться: обновите страницу вручную и проверьте версию в разделе Настройки.');
+        setTimeout(() => poll(n - 1), 2000);
+      });
+    };
+    setTimeout(() => poll(150), 3000);
   });
 };
+document.getElementById('dlgUpdate').addEventListener('cancel', e => e.preventDefault());
 
 // крестик очистки на текстовых инпутах
 const X_SVG = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
