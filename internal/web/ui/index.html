@@ -1210,7 +1210,7 @@ function editRule(g, rl, tr) {
   typeSel.onchange = () => {
     edit.querySelector('.er-hint').textContent = RULE_HINTS[typeSel.value] || '';
   };
-  edit.querySelector('.er-cancel').onclick = () => { edit.remove(); tr.style.display = ''; };
+  edit.querySelector('.er-cancel').onclick = () => { edit.remove(); tr.style.display = ''; if (pendingRulesRender) rulesRenderIfIdle(); };
   edit.querySelector('.er-save').onclick = async () => {
     const value = edit.querySelector('.er-value').value.trim();
     if (!value) return toast('Введите значение правила', true);
@@ -1348,10 +1348,15 @@ function groupWarnSvg(g) {
   return '';
 }
 function editingRulesPanel() {
+  // перетаскивание или открытая строка редактора: перерисовка сносит ввод
+  if (dragEl) {
+    if (dragEl.isConnected) return true;
+    dragEl = null;
+  }
   const box = document.getElementById('mtgroups');
+  if (box.querySelector('.er-value')) return true;
   const ae = document.activeElement;
-  if (ae && box.contains(ae) && (ae.tagName === 'INPUT' || ae.tagName === 'SELECT' || ae.tagName === 'TEXTAREA')) return true;
-  return box.contains(ae) && ae.closest && ae.closest('.er-menu');
+  return !!(ae && box.contains(ae) && (ae.tagName === 'INPUT' || ae.tagName === 'SELECT' || ae.tagName === 'TEXTAREA'));
 }
 let pendingRulesRender = false;
 function rulesRenderIfIdle() {
@@ -1487,6 +1492,7 @@ function renderRules() {
 }
 
 let MT_IFACES = [];
+let lastIfaceOptsJSON = '';
 function ifaceLabel(dev) {
   const i = MT_IFACES.find(x => x.device === dev);
   return i && i.title ? dev + ' - ' + i.title : dev;
@@ -1506,6 +1512,9 @@ async function fillIfaceSelects() {
   try {
     const r = await api('GET', '/mt/interfaces');
     MT_IFACES = r.interfaces || [];
+    const json = JSON.stringify(MT_IFACES);
+    if (json === lastIfaceOptsJSON) return;
+    lastIfaceOptsJSON = json;
     const opts = MT_IFACES.map(i=>`<option value="${i.device}">${i.title ? i.device + ' - ' + i.title : i.device}</option>`).join('')
       + '<option value="blackhole">blackhole (блокировать трафик)</option>';
     if (opts) {
