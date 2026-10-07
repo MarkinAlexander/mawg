@@ -17,21 +17,6 @@ func parseInt(s string) (int, error) {
 	return strconv.Atoi(strings.TrimSpace(s))
 }
 
-// parseAWGNumber понимает и одиночные значения, и диапазоны N-M из
-// конфигов AmneziaWG 2.0: Keenetic asc принимает одиночное число, берём
-// нижнюю границу - любое значение из диапазона валидно для сервера.
-func parseAWGNumber(s string) (int, bool) {
-	s = strings.TrimSpace(s)
-	if i := strings.Index(s, "-"); i > 0 {
-		s = s[:i]
-	}
-	n, err := strconv.Atoi(s)
-	if err != nil || n < 0 {
-		return 0, false
-	}
-	return n, true
-}
-
 func parseEndpoint(s string) (string, int, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -77,8 +62,8 @@ func splitList(s string) []string {
 	return out
 }
 
-func setAWG(p *AWGParams, key string, v int) {
-	var slot **int
+func setAWG(p *AWGParams, key, raw string) {
+	var slot **string
 	switch strings.ToLower(key) {
 	case "jc":
 		slot = &p.Jc
@@ -105,8 +90,21 @@ func setAWG(p *AWGParams, key string, v int) {
 	default:
 		return
 	}
-	n := v
-	*slot = &n
+	v := strings.TrimSpace(raw)
+	if !awgNumberValid(v) {
+		return
+	}
+	*slot = &v
+}
+
+var awgNumberRe = regexp.MustCompile(`^\d+(-\d+)?$`)
+
+func awgNumberValid(v string) bool {
+	if !strings.Contains(v, "-") {
+		_, err := strconv.Atoi(v)
+		return err == nil
+	}
+	return awgNumberRe.MatchString(v)
 }
 
 func setInitPacket(p *AWGParams, key, raw string) bool {
@@ -171,9 +169,7 @@ func Parse(data []byte) (Config, error) {
 				if setInitPacket(&cfg.AWG, lower, value) {
 					continue
 				}
-				if v, ok := parseAWGNumber(value); ok {
-					setAWG(&cfg.AWG, lower, v)
-				}
+				setAWG(&cfg.AWG, lower, value)
 			}
 		case "peer":
 			switch lower {

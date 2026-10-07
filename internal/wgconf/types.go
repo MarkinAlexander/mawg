@@ -6,9 +6,9 @@ import (
 )
 
 type AWGParams struct {
-	Jc, Jmin, Jmax     *int
-	S1, S2, S3, S4     *int
-	H1, H2, H3, H4     *int
+	Jc, Jmin, Jmax     *string
+	S1, S2, S3, S4     *string
+	H1, H2, H3, H4     *string
 	I1, I2, I3, I4, I5 *string
 }
 
@@ -27,15 +27,11 @@ func (p AWGParams) HasExtended() bool {
 	return p.S3 != nil || p.S4 != nil || p.anyInitPacket()
 }
 
-func val(p *int) int {
-	if p == nil {
-		return 0
+func awgVal(p *string) string {
+	if p == nil || strings.TrimSpace(*p) == "" {
+		return "0"
 	}
-	return *p
-}
-
-func (p AWGParams) ClassicValues() []int {
-	return []int{val(p.Jc), val(p.Jmin), val(p.Jmax), val(p.S1), val(p.S2), val(p.H1), val(p.H2), val(p.H3), val(p.H4)}
+	return strings.TrimSpace(*p)
 }
 
 func initArg(v *string) string {
@@ -46,13 +42,13 @@ func initArg(v *string) string {
 }
 
 func (p AWGParams) AscArgs() []string {
-	classic := p.ClassicValues()
-	out := make([]string, len(classic))
-	for i, v := range classic {
-		out[i] = strconv.Itoa(v)
+	classic := []*string{p.Jc, p.Jmin, p.Jmax, p.S1, p.S2, p.H1, p.H2, p.H3, p.H4}
+	out := make([]string, 0, len(classic)+7)
+	for _, v := range classic {
+		out = append(out, awgVal(v))
 	}
 	if p.HasExtended() {
-		out = append(out, strconv.Itoa(val(p.S3)), strconv.Itoa(val(p.S4)))
+		out = append(out, awgVal(p.S3), awgVal(p.S4))
 		out = append(out, initArg(p.I1), initArg(p.I2), initArg(p.I3), initArg(p.I4), initArg(p.I5))
 	}
 	return out

@@ -398,6 +398,12 @@ func (b *Backend) Apply(pool store.Pool, cfg wgconf.Config) error {
 	} else {
 		steps = append(steps, "interface "+slot+" no wireguard asc")
 	}
+	if cfg.MTU > 0 {
+		steps = append(steps,
+			"interface "+slot+" ip mtu "+strconv.Itoa(cfg.MTU),
+			"interface "+slot+" ip tcp adjust-mss pmtu",
+		)
+	}
 	if v4 := cfg.FirstIPv4(); v4 != "" {
 		if !strings.Contains(v4, "/") {
 			v4 += "/32"
@@ -417,6 +423,12 @@ func (b *Backend) Apply(pool store.Pool, cfg wgconf.Config) error {
 		peer+" allow-ips 0.0.0.0/0",
 		peer+" endpoint "+cfg.Endpoint(),
 	)
+	for _, ip := range cfg.Peer.AllowedIPs {
+		if strings.HasPrefix(ip, "::") {
+			steps = append(steps, peer+" allow-ips "+ip)
+			break
+		}
+	}
 	if cfg.Peer.PresharedKey != "" {
 		steps = append(steps, peer+" preshared-key "+cfg.Peer.PresharedKey)
 	}

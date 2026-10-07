@@ -43,11 +43,11 @@ func TestParseAWGClassic(t *testing.T) {
 	if cfg.AWG.HasExtended() {
 		t.Fatal("no extended params expected")
 	}
-	got := cfg.AWG.ClassicValues()
-	want := []int{4, 40, 70, 15, 16, 1, 2, 3, 4}
+	got := cfg.AWG.AscArgs()
+	want := []string{"4", "40", "70", "15", "16", "1", "2", "3", "4"}
 	for i := range want {
 		if got[i] != want[i] {
-			t.Fatalf("classic[%d] = %d, want %d", i, got[i], want[i])
+			t.Fatalf("classic[%d] = %q, want %q", i, got[i], want[i])
 		}
 	}
 	if cfg.Peer.PresharedKey == "" {
@@ -137,7 +137,7 @@ func TestParseRealServiceConfigs(t *testing.T) {
 			if !cfg.AWG.Present() {
 				t.Fatalf("%s/%s: awg params missing", dir, e.Name())
 			}
-			t.Logf("%s/%s: endpoint=%s asc=%d args, jc=%d", dir, e.Name(), cfg.Endpoint(), len(cfg.AWG.AscArgs()), *cfg.AWG.Jc)
+			t.Logf("%s/%s: endpoint=%s asc=%d args, jc=%s", dir, e.Name(), cfg.Endpoint(), len(cfg.AWG.AscArgs()), *cfg.AWG.Jc)
 		}
 	}
 	_ = files

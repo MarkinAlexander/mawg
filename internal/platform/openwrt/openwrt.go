@@ -185,27 +185,22 @@ func probeRoute(probeHost, name string) []string {
 
 func awgUci(ifRef string, p wgconf.AWGParams) []string {
 	var out []string
-	setInt := func(key string, v *int) {
-		if v != nil {
-			out = append(out, "set "+ifRef+"awg_"+key+"='"+strconv.Itoa(*v)+"'")
-		}
-	}
 	setStr := func(key string, v *string) {
 		if v != nil {
 			out = append(out, "set "+ifRef+"awg_"+key+"='"+*v+"'")
 		}
 	}
-	setInt("jc", p.Jc)
-	setInt("jmin", p.Jmin)
-	setInt("jmax", p.Jmax)
-	setInt("s1", p.S1)
-	setInt("s2", p.S2)
-	setInt("s3", p.S3)
-	setInt("s4", p.S4)
-	setInt("h1", p.H1)
-	setInt("h2", p.H2)
-	setInt("h3", p.H3)
-	setInt("h4", p.H4)
+	setStr("jc", p.Jc)
+	setStr("jmin", p.Jmin)
+	setStr("jmax", p.Jmax)
+	setStr("s1", p.S1)
+	setStr("s2", p.S2)
+	setStr("s3", p.S3)
+	setStr("s4", p.S4)
+	setStr("h1", p.H1)
+	setStr("h2", p.H2)
+	setStr("h3", p.H3)
+	setStr("h4", p.H4)
 	setStr("i1", p.I1)
 	setStr("i2", p.I2)
 	setStr("i3", p.I3)
