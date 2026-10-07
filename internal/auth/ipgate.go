@@ -6,13 +6,18 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 )
 
 type IPGate struct {
-	mu    sync.RWMutex
-	rules []*net.IPNet
+	mu     sync.RWMutex
+	rules  []*net.IPNet
 	single []net.IP
-	raw   []string
+	raw    []string
+
+	ownMu      sync.Mutex
+	ownIPs     []net.IP
+	ownRefresh time.Time
 }
 
 func NewIPGate(allowed []string) *IPGate {
@@ -74,7 +79,31 @@ func (g *IPGate) Allowed(ip net.IP) bool {
 	return g.allowed(ip)
 }
 
-// Middleware пускает loopback всегда: CLI и локальные проверки не должны ломаться.
+// OwnAddress - источник является адресом самого хоста: роутер открывает
+// свою панель через любой из своих IP, не только loopback.
+func (g *IPGate) OwnAddress(ip net.IP) bool {
+	g.ownMu.Lock()
+	defer g.ownMu.Unlock()
+	if time.Since(g.ownRefresh) > time.Minute {
+		g.ownRefresh = time.Now()
+		g.ownIPs = nil
+		if addrs, err := net.InterfaceAddrs(); err == nil {
+			for _, a := range addrs {
+				if ipn, ok := a.(*net.IPNet); ok {
+					g.ownIPs = append(g.ownIPs, ipn.IP)
+				}
+			}
+		}
+	}
+	for _, own := range g.ownIPs {
+		if own.Equal(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// Middleware пускает самого хоста всегда: CLI и локальные проверки не должны ломаться.
 func (g *IPGate) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if g.Empty() {
@@ -90,7 +119,7 @@ func (g *IPGate) Middleware(next http.Handler) http.Handler {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
-		if ip.IsLoopback() || g.allowed(ip) {
+		if ip.IsLoopback() || g.OwnAddress(ip) || g.allowed(ip) {
 			next.ServeHTTP(w, r)
 			return
 		}

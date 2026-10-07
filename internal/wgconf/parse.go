@@ -17,6 +17,21 @@ func parseInt(s string) (int, error) {
 	return strconv.Atoi(strings.TrimSpace(s))
 }
 
+// parseAWGNumber понимает и одиночные значения, и диапазоны N-M из
+// конфигов AmneziaWG 2.0: Keenetic asc принимает одиночное число, берём
+// нижнюю границу - любое значение из диапазона валидно для сервера.
+func parseAWGNumber(s string) (int, bool) {
+	s = strings.TrimSpace(s)
+	if i := strings.Index(s, "-"); i > 0 {
+		s = s[:i]
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 0 {
+		return 0, false
+	}
+	return n, true
+}
+
 func parseEndpoint(s string) (string, int, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -156,7 +171,7 @@ func Parse(data []byte) (Config, error) {
 				if setInitPacket(&cfg.AWG, lower, value) {
 					continue
 				}
-				if v, err := parseInt(value); err == nil {
+				if v, ok := parseAWGNumber(value); ok {
 					setAWG(&cfg.AWG, lower, v)
 				}
 			}

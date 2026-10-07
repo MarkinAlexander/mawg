@@ -255,7 +255,7 @@ func (s *Server) putServerSettings(w http.ResponseWriter, r *http.Request) {
 			host = r.RemoteAddr
 		}
 		ip := net.ParseIP(host)
-		if ip == nil || (!ip.IsLoopback() && !gate.Allowed(ip)) {
+		if ip == nil || (!ip.IsLoopback() && !gate.Allowed(ip) && !gate.OwnAddress(ip)) {
 			writeErr(w, fmt.Errorf("в новом списке нет вашего адреса %s - сохранение заблокировано, чтобы не потерять доступ к панели", host))
 			return
 		}
