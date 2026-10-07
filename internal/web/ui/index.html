@@ -800,6 +800,12 @@ $('#pCreate').onclick = async e => {
   const body = { name: $('#pName').value.trim(), fallback: $('#pFallback').value };
   if ($('#slotRow').style.display !== 'none') {
     if (!$('#pSlot').value) return toast(slotsLoading ? 'Слоты ещё загружаются, секунду' : 'Слоты недоступны', true);
+    const opt = $('#pSlot').selectedOptions[0];
+    if (opt && opt.dataset.busy) {
+      const label = opt.textContent.replace(/ - (занят|свободен)$/, '');
+      const ok = await askModal('Занятый слот', `Слот ${label} уже используется. При активации пула его конфигурация будет заменена, текущие пиры пропадут. Создать пул на этом слоте?`, 'Создать');
+      if (!ok) return;
+    }
     body.keeneticSlot = $('#pSlot').value;
   }
   if ($('#protoRow').style.display !== 'none') body.openwrtProto = $('#pProto').value;
@@ -812,6 +818,18 @@ $('#pCreate').onclick = async e => {
 };
 
 let slotsLoading = false;
+function slotBusyHint() {
+  const sel = $('#pSlot');
+  const hint = document.getElementById('slotHint');
+  const opt = sel.selectedOptions[0];
+  if (opt && opt.dataset.busy) {
+    hint.textContent = 'Слот занят: при активации пула его текущая конфигурация и пиры этого интерфейса будут заменены.';
+    hint.style.display = '';
+  } else {
+    hint.style.display = 'none';
+  }
+}
+$('#pSlot').addEventListener('change', slotBusyHint);
 async function loadSlots() {
   const platform = STATUS ? STATUS.platform : '';
   $('#protoRow').style.display = platform === 'openwrt' ? '' : 'none';
@@ -829,6 +847,7 @@ async function loadSlots() {
   try {
     const r = await api('GET', '/slots');
     const mawgSlots = new Set((STATUS ? STATUS.pools : []).map(p => p.slot).filter(Boolean));
+    const prev = dlgPool.open ? sel.value : '';
     let firstFree = '', firstAny = '', listed = 0;
     sel.innerHTML = (r.slots || [])
       .filter(s => !mawgSlots.has(s.id))
@@ -838,16 +857,16 @@ async function loadSlots() {
         const busy = s.linkUp || s.connected || s.description;
         if (!busy && !firstFree) firstFree = s.id;
         const mark = busy ? ' - занят' : ' - свободен';
-        return `<option value="${s.id}">${s.id} (${s.device})${s.description ? ' ' + s.description : ''}${mark}</option>`;
+        return `<option value="${s.id}"${busy ? ' data-busy="1"' : ''}>${s.id} (${s.device})${s.description ? ' ' + s.description : ''}${mark}</option>`;
       }).join('');
     sel.disabled = false;
-    const preselect = firstFree || firstAny;
-    if (preselect) sel.value = preselect;
+    if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
+    else if (firstFree || firstAny) sel.value = firstFree || firstAny;
     if (listed === 0) {
       hint.textContent = 'Слоты WireGuard не найдены - создайте кнопкой "+ слот".';
       hint.style.display = '';
-    } else if (hint.textContent.startsWith('Слоты WireGuard не найдены')) {
-      hint.style.display = 'none';
+    } else {
+      slotBusyHint();
     }
   } catch (e) {
     sel.innerHTML = '';
