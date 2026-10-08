@@ -213,6 +213,28 @@ func TestBuildConfigMergedLXAddsResolver(t *testing.T) {
 	if !strings.Contains(string(data), "default_domain_resolver") {
 		t.Fatal("lx-фрагмент обязан иметь default_domain_resolver")
 	}
+	// резолверу нужна запись в dns.servers - без неё lx-ядро на check
+	// отвечает "default domain resolver not found: local"
+	if !strings.Contains(string(data), `"type": "local"`) || !strings.Contains(string(data), `"tag": "local"`) {
+		t.Fatalf("lx-фрагмент обязан определять локальный dns-сервер: %s", data)
+	}
+	custom, _, err := BuildConfig([]PoolSpec{spec}, Params{LX: true, Merged: true, ResolverTag: "mawg-local"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(custom), `"tag": "mawg-local"`) || !strings.Contains(string(custom), `"server": "mawg-local"`) {
+		t.Fatalf("свой тег резолвера не подставился: %s", custom)
+	}
+	// не-lx фрагмент dns-секцию не добавляет вовсе (чужой dns не трогаем)
+	plainSpec := PoolSpec{Name: "x", Tun: "tun1", TunIP: TuneIP(1), MixedPort: 2282,
+		ProbeTarget: "http://www.gstatic.com/generate_204", Nodes: mustNodes(t, fakeVless)}
+	plain, _, err := BuildConfig([]PoolSpec{plainSpec}, Params{Merged: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(plain), `"dns"`) || strings.Contains(string(plain), "default_domain_resolver") {
+		t.Fatalf("upstream-фрагмент не должен содержать dns/resolver: %s", plain)
+	}
 	if _, _, err := BuildConfig([]PoolSpec{spec}, Params{LX: true, Merged: true, ClashPort: 0}); err != nil {
 		t.Fatalf("merged-профиль не должен требовать clash-порт: %v", err)
 	}

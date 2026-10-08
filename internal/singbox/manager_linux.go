@@ -31,6 +31,7 @@ type Manager struct {
 	SharedDir     string
 	SharedInit    string
 	sharedClash   int
+	resolverTag   string // тег нашего dns-сервера во фрагменте (свободный у чужого конфига)
 	pid           int
 	probeLoopStop chan struct{}
 	lastSpecs     []PoolSpec
@@ -321,7 +322,7 @@ func (m *Manager) stop() {
 
 func (m *Manager) writeConfig(pools []PoolSpec) error {
 	merged := m.Mode == "shared"
-	data, _, err := BuildConfig(pools, Params{ClashPort: m.ClashPort, LX: m.eng.LX, Merged: merged})
+	data, _, err := BuildConfig(pools, Params{ClashPort: m.ClashPort, LX: m.eng.LX, Merged: merged, ResolverTag: m.resolverTag})
 	if err != nil {
 		return err
 	}
@@ -347,10 +348,12 @@ type sharedFacts struct {
 	OutTags   map[string]bool
 	Tuns      map[string]bool
 	Addrs     map[string]bool
+	DNSTags   map[string]bool
 }
 
-// preflightShared разбирает чужой config.json: порт clash_api для проб и
-// занятые теги/tun/адреса, которые наш фрагмент не должен трогать.
+// preflightShared разбирает чужой config.json: порт clash_api для проб,
+// занятые теги/tun/адреса и dns-теги (для выбора имени нашего резолвера),
+// которые наш фрагмент не должен трогать.
 func (m *Manager) preflightShared() (*sharedFacts, error) {
 	path := filepath.Join(m.SharedDir, "config.json")
 	data, err := os.ReadFile(path)
@@ -360,6 +363,9 @@ func (m *Manager) preflightShared() (*sharedFacts, error) {
 	var cfg struct {
 		Inbounds     []map[string]any `json:"inbounds"`
 		Outbounds    []map[string]any `json:"outbounds"`
+		DNS          struct {
+			Servers []map[string]any `json:"servers"`
+		} `json:"dns"`
 		Experimental struct {
 			ClashAPI struct {
 				ExternalController string `json:"external_controller"`
@@ -369,7 +375,7 @@ func (m *Manager) preflightShared() (*sharedFacts, error) {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("чужой config.json не разбирается: %v", err)
 	}
-	f := &sharedFacts{InTags: map[string]bool{}, OutTags: map[string]bool{}, Tuns: map[string]bool{}, Addrs: map[string]bool{}}
+	f := &sharedFacts{InTags: map[string]bool{}, OutTags: map[string]bool{}, Tuns: map[string]bool{}, Addrs: map[string]bool{}, DNSTags: map[string]bool{}}
 	str := func(v any) string { s, _ := v.(string); return s }
 	for _, in := range cfg.Inbounds {
 		if t := str(in["tag"]); t != "" {
@@ -391,6 +397,11 @@ func (m *Manager) preflightShared() (*sharedFacts, error) {
 			f.OutTags[t] = true
 		}
 	}
+	for _, s := range cfg.DNS.Servers {
+		if t := str(s["tag"]); t != "" {
+			f.DNSTags[t] = true
+		}
+	}
 	if c := cfg.Experimental.ClashAPI.ExternalController; c != "" {
 		if _, port, err := net.SplitHostPort(c); err == nil {
 			f.ClashPort, _ = strconv.Atoi(port)
@@ -400,6 +411,17 @@ func (m *Manager) preflightShared() (*sharedFacts, error) {
 		f.ClashPort = m.sharedClash
 	}
 	return f, nil
+}
+
+// resolverTag - свободный тег для нашего локального DNS-резолвера: в merged
+// конфиге массивы дописываются, дубли тегов dns.servers рвут старт ядра.
+func (f *sharedFacts) resolverTag() string {
+	for _, tag := range []string{"local", "mawg-local", "mawg-local-2"} {
+		if !f.DNSTags[tag] {
+			return tag
+		}
+	}
+	return "mawg-local"
 }
 
 func (m *Manager) writeFragment(data []byte) error {
@@ -486,6 +508,7 @@ func (m *Manager) applyShared(runnable []PoolSpec, skipped []string) ([]string, 
 	if err != nil {
 		return skipped, err
 	}
+	m.resolverTag = facts.resolverTag()
 	if facts.ClashPort == 0 {
 		return skipped, fmt.Errorf("в чужом config.json нет clash_api - пробы невозможны; включите clash_api или используйте свой экземпляр движка")
 	}

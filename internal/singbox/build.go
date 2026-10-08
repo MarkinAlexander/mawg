@@ -25,6 +25,19 @@ type Params struct {
 	ClashPort int
 	LX        bool
 	Merged    bool
+	// ResolverTag - тег локального DNS-сервера для default_domain_resolver
+	// в lx-профиле; пусто = "local". В shared выбирается тег, не занятый
+	// чужим конфигом (иначе его dns.servers задублируются).
+	ResolverTag string
+}
+
+// lxResolverLocal - секция dns lx-профиля: ядро lx 1.14 без
+// route.default_domain_resolver не стартует, а резолверу нужна запись в
+// dns.servers - без неё check падает "default domain resolver not found".
+func lxResolverDNS(tag string) map[string]any {
+	return map[string]any{
+		"servers": []map[string]any{{"type": "local", "tag": tag}},
+	}
 }
 
 // EligibleNodes - узлы, которые текущий профиль движка умеет запустить
@@ -183,13 +196,21 @@ func BuildConfig(pools []PoolSpec, p Params) ([]byte, []string, error) {
 		return nil, skipped, fmt.Errorf("нет подходящих движку узлов")
 	}
 	route := map[string]any{"rules": routeRules}
-	if p.Merged {
-		if p.LX {
-			route["default_domain_resolver"] = map[string]any{"server": "local"}
+	cfgDNS := map[string]any(nil)
+	if p.LX {
+		tag := p.ResolverTag
+		if tag == "" {
+			tag = "local"
 		}
-		data, err := json.MarshalIndent(map[string]any{
-			"inbounds": inbounds, "outbounds": outbounds, "route": route,
-		}, "", "  ")
+		route["default_domain_resolver"] = map[string]any{"server": tag}
+		cfgDNS = lxResolverDNS(tag)
+	}
+	if p.Merged {
+		frag := map[string]any{"inbounds": inbounds, "outbounds": outbounds, "route": route}
+		if cfgDNS != nil {
+			frag["dns"] = cfgDNS
+		}
+		data, err := json.MarshalIndent(frag, "", "  ")
 		return data, skipped, err
 	}
 	outbounds = append(outbounds, map[string]any{"type": "direct", "tag": "direct"})
@@ -199,7 +220,11 @@ func BuildConfig(pools []PoolSpec, p Params) ([]byte, []string, error) {
 		"auto_detect_interface": true,
 	}
 	if p.LX {
-		cfgRoute["default_domain_resolver"] = map[string]any{"server": "local"}
+		tag := p.ResolverTag
+		if tag == "" {
+			tag = "local"
+		}
+		cfgRoute["default_domain_resolver"] = map[string]any{"server": tag}
 	}
 	cfg := map[string]any{
 		"log":       map[string]any{"level": "info"},
@@ -209,6 +234,9 @@ func BuildConfig(pools []PoolSpec, p Params) ([]byte, []string, error) {
 		"experimental": map[string]any{
 			"clash_api": map[string]any{"external_controller": fmt.Sprintf("127.0.0.1:%d", p.ClashPort)},
 		},
+	}
+	if cfgDNS != nil {
+		cfg["dns"] = cfgDNS
 	}
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	return data, skipped, err
