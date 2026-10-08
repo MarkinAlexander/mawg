@@ -49,6 +49,19 @@ func (s *Server) sb() (*singbox.Manager, error) {
 	return sbMgr, nil
 }
 
+// resetSB сбрасывает кэш менеджера движка: после подмены бинаря следующий
+// sb() пересоздаёт его со свежим детектом (lx-профиль). Свой процесс гасим
+// (иначе осиротеет с занятыми портами), у shared просто забываем - фрагмент
+// и чужой сервис живут своей жизнью до следующего применения.
+func (s *Server) resetSB() {
+	sbMu.Lock()
+	defer sbMu.Unlock()
+	if sbMgr != nil && s.store.SingboxMode() != "shared" {
+		sbMgr.Close()
+	}
+	sbMgr = nil
+}
+
 func (s *Server) sharedPaths() (dir, init string) {
 	if s.backend.Name() == store.PlatformKeenetic {
 		return "/opt/etc/sing-box", "/opt/etc/init.d/S99sing-box"

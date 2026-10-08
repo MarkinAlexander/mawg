@@ -187,7 +187,7 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
   </div>
   <div class="card" id="syscard" style="margin-top:16px">
     <h2>Система <span class="muted" id="sysrefresh" style="cursor:pointer">обновить</span></h2>
-    <div class="sub">Проверка зависимостей: пакеты WireGuard/AmneziaWG, MagiTrickle, компоненты прошивки. Установка только по вашему подтверждению.</div>
+    <div class="sub">Проверка зависимостей: пакеты WireGuard/AmneziaWG, MagiTrickle, ядро sing-box-lx, компоненты прошивки. Установка только по вашему подтверждению.</div>
     <table id="systable"><tr><th>компонент</th><th>версия</th><th>состояние</th><th></th></tr></table>
     <div id="rciRow" style="display:none;margin-top:12px;border-top:1px solid var(--border);padding-top:10px">
       <div style="font-size:13px;margin-bottom:4px">Токен локального API Keenetic</div>
@@ -2244,14 +2244,17 @@ async function refreshSystem(force) {
       const st = it.installed
         ? '<span class="badge up">ок</span>'
         : '<span class="badge fallback">нет</span>';
-      const btn = (!it.installed && it.action)
-        ? `<button class="primary" data-inst="${it.id}">установить</button>` : '';
+      const flavors = it.flavors && it.flavors.length ? it.flavors : [''];
+      const btn = it.action
+        ? flavors.map(f =>
+            `<button class="primary" data-inst="${it.id}" data-flavor="${f}">${esc(it.actionLabel || 'установить')}${f ? ' (' + f + ')' : ''}</button>`
+          ).join(' ') : '';
       const note = it.note ? `<div class="muted" style="font-size:11px">${it.note}</div>` : '';
       return `<tr><td>${it.title}${note}</td><td class="muted">${it.version || ''}</td><td>${st}</td><td style="white-space:nowrap">${btn}</td></tr>`;
     }).join('');
     document.querySelector('#systable').innerHTML = '<tr><th>компонент</th><th>версия</th><th>состояние</th><th></th></tr>' + rows;
     document.querySelectorAll('#systable button[data-inst]').forEach(btn => {
-      btn.onclick = () => installComp(btn.dataset.inst, btn);
+      btn.onclick = () => installComp(btn.dataset.inst, btn, btn.dataset.flavor);
     });
   } catch (e) { console.warn(e); }
 }
@@ -2665,23 +2668,27 @@ function showResult(ok, output, errText) {
   fillIfaceSelects();
 }
 
-async function installComp(id, btn) {
+async function installComp(id, btn, flavor) {
   let item;
   try {
     const r = await api('GET', '/system/check');
     item = (r.items || []).find(i => i.id === id);
   } catch (e) { return toast(e.message, true); }
   if (!item || !item.confirm) return;
-  if (!(await askModal('Установка: ' + item.title, item.confirm, 'Установить'))) return;
+  const okLabel = item.actionLabel || 'Установить';
+  if (!(await askModal(okLabel + ': ' + item.title, item.confirm, okLabel))) return;
+  const label = btn.textContent;
   btn.disabled = true; btn.textContent = 'установка...';
   let res;
   try {
     res = await fetch('/api/v1/system/install', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id })
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, flavor: flavor || '' })
     }).then(x => x.json());
-  } catch (e) { btn.disabled = false; btn.textContent = 'установить'; return showResult(false, '', e.message); }
-  btn.disabled = false; btn.textContent = 'установить';
+  } catch (e) { btn.disabled = false; btn.textContent = label; return showResult(false, '', e.message); }
+  btn.disabled = false; btn.textContent = label;
   showResult(!!res.ok, res.output, res.ok ? '' : (res.error || 'неизвестная ошибка'));
+  lastSysJSON = '';
+  refreshSystem(true);
 }
 
 async function refreshRCIToken() {

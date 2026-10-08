@@ -1288,10 +1288,15 @@ func (s *Server) getSystemCheck(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) postSystemInstall(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ID string `json:"id"`
+		ID     string `json:"id"`
+		Flavor string `json:"flavor"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ID == "" {
 		writeErr(w, fmt.Errorf("не указан id компонента"))
+		return
+	}
+	if req.ID == "singbox-lx" {
+		s.installLXCore(w, r, req.Flavor)
 		return
 	}
 	check := s.systemCheck()
