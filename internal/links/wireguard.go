@@ -140,10 +140,17 @@ type vpnExport struct {
 		WireGuard struct {
 			LastConfig string `json:"last_config"`
 		} `json:"wireguard"`
+		Vless struct {
+			LastConfig string `json:"last_config"`
+		} `json:"vless"`
 	} `json:"containers"`
-	APIConfig struct {
+	Name          string `json:"name"`
+	Description   string `json:"description"`
+	ConfigVersion int    `json:"config_version"`
+	APIConfig     struct {
 		ServiceType     string `json:"service_type"`
 		ServiceProtocol string `json:"service_protocol"`
+		UserCountryCode string `json:"user_country_code"`
 	} `json:"api_config"`
 	AuthData struct {
 		APIKey string `json:"api_key"`
@@ -197,7 +204,7 @@ func parseVPN(source, raw string) (Node, error) {
 	}
 	if exp.APIConfig.ServiceType != "" && exp.AuthData.APIKey != "" {
 		return Node{}, fmt.Errorf(
-			"vpn:// содержит ключ Amnezia %s API (протокол %s), а не статический конфиг: сервис Амнезии выдаёт конфиг по этому ключу через свой gateway-API; поддержка обмена ключ на конфиг - отдельная задача",
+			"vpn:// содержит ключ Amnezia %s API (протокол %s), а не статический конфиг: конфиг по ключу выдаёт gateway Амнезии - mawg может обменять его (диалог «ссылка или подписка» -> «Запросить конфиг», либо mawg links amnezia)",
 			strings.TrimPrefix(exp.APIConfig.ServiceType, "amnezia-"), exp.APIConfig.ServiceProtocol)
 	}
 	for _, c := range exp.Containers {

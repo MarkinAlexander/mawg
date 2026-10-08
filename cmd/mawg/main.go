@@ -115,6 +115,8 @@ const usage = `mawg - Multi-AWG Changer ` + `
   mawg links parse <x>    разобрать ссылку/.conf/подписку в модель узлов (JSON);
                           x = url | файл | - (stdin)
   mawg links fetch <url>  скачать подписку: заголовки + модель узлов
+  mawg links amnezia <vpn://> [-via socks5://127.0.0.1:2282]
+                          обменять ключ Amnezia Premium/Free у gateway на AWG-узлы
   mawg singbox discover   релизы ядра sing-box-lx: матрица arch x flavor обоих источников
   mawg -reset-auth        задать новый пароль панели интерактивно
   mawg -password <pass>   задать пароль без вопросов

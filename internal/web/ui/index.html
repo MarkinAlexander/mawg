@@ -301,6 +301,16 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
     <label class="f" id="pSourceRow" style="display:none">Ссылка, URL подписки или несколько ссылок строками
       <textarea id="pSource" rows="6" placeholder="vpn://... / wireguard://... / amneziawg://...&#10;vless://... / trojan://...&#10;https://example.com/sub" style="font-family:ui-monospace,monospace;font-size:12px"></textarea>
     </label>
+    <div id="pAmneziaRow" style="display:none;margin-top:6px;border:1px solid var(--border);border-radius:6px;padding:8px">
+      <div style="font-size:12px;margin-bottom:4px">Это ключ Amnezia Premium/Free API - mawg обменяет его у gateway Амнезии на конфиг <b id="pAmneziaProto">AWG</b> и создаст пул.</div>
+      <div class="muted" style="font-size:11px;margin-bottom:4px">Транспорт к gateway: напрямую или через socks5 уже работающего пула (если провайдер режет gw.amnezia.org). Пробы идут строго по HTTPS, ответы валидируются как JSON.</div>
+      <div class="btnrow" style="align-items:center">
+        <select id="pAmneziaVia" style="flex:1;min-width:200px">
+          <option value="">напрямую (https)</option>
+        </select>
+        <select id="pAmneziaCountry" style="display:none"></select>
+      </div>
+    </div>
     <div class="muted" id="pInspect" style="display:none;font-size:11px;margin-top:2px"></div>
     <div class="muted" id="pLinkHint" style="display:none;font-size:11px">wireguard://, amneziawg:// и vpn:// превращаются в обычные конфиги пула (нативно, слот). Узлы vless/trojan и т.п. становятся tun-интерфейсом движка sing-box (tun1, tun2...), который виден в MagiTrickle как обычный интерфейс. Если на роутере движка нет - узлы будут показаны списком с пометкой.</div>
     <div id="pPlanResult" style="display:none;font-size:12px;border-top:1px solid var(--border);padding-top:8px"></div>
@@ -367,10 +377,11 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
     <div class="f" id="spSourceRow" style="display:none;border-bottom:1px solid var(--border);padding-bottom:10px;margin-bottom:4px">
       <div style="font-size:13px;margin-bottom:2px">Источник (ссылка, vpn:// или URL подписки)</div>
       <textarea id="spSource" rows="3" style="width:100%;font-family:ui-monospace,monospace;font-size:12px"></textarea>
-      <div class="btnrow" style="margin-top:6px;justify-content:flex-end">
+      <div class="btnrow" style="margin-top:6px;justify-content:flex-end;align-items:center">
+        <select id="spAmneziaCountry" style="display:none;max-width:220px" title="локация у gateway Амнезии"></select>
         <button type="button" id="spRefreshSource" title="заново разобрать источник и пересобрать пул (конфиги заменяются)">обновить из источника</button>
       </div>
-      <div class="muted" style="font-size:11px;margin-top:2px">Сервер сменил IP или ссылка протухла - вставьте новую и нажмите. Старые конфиги пула будут заменены разобранными.</div>
+      <div class="muted" style="font-size:11px;margin-top:2px">Сервер сменил IP или ссылка протухла - вставьте новую и нажмите. Старые конфиги пула будут заменены разобранными. Для ключа Amnezia mawg повторит обмен (тем же устройством, без новой выдачи); можно сменить локацию списком.</div>
     </div>
     <label class="f" id="spRenameRow">Имя (переименование)
       <input id="spRename" pattern="[a-z][a-z0-9-]{0,14}" title="строчная латиница, цифры и дефисы, начинается с буквы, до 15 символов">
@@ -908,6 +919,12 @@ function setPoolMode(m) {
 function gateSlot(inspect) {
   const row = $('#slotRow'), hint = document.getElementById('slotHint');
   if (poolMode === 'cfg') { row.classList.remove('rowoff'); return; }
+  if (inspect && inspect.amnezia) {
+    row.classList.remove('rowoff');
+    hint.textContent = 'Протокол из ключа: AWG - нужен свободный слот; VLESS - слот не нужен (будет tun-интерфейс движка). Оставьте выбранным свободный слот, если протокол AWG.';
+    hint.style.display = '';
+    return;
+  }
   if (!inspect || inspect.error) {
     row.classList.add('rowoff');
     hint.textContent = inspect && inspect.error ? 'Ссылка не разбирается: ' + inspect.error : 'Вставьте ссылку - mawg определит, нужен слот (WG/AWG) или будет создан tun-интерфейс.';
@@ -926,11 +943,33 @@ function gateSlot(inspect) {
   }
 }
 
+let amneziaKey = false;
+function updateAmneziaRow(ins) {
+  amneziaKey = !!(ins && ins.amnezia);
+  const row = document.getElementById('pAmneziaRow');
+  if (!row) return;
+  row.style.display = amneziaKey ? '' : 'none';
+  if (!amneziaKey) return;
+  document.getElementById('pAmneziaProto').textContent = (ins.amnezia.serviceProtocol || 'awg').toUpperCase();
+  const via = document.getElementById('pAmneziaVia');
+  const cur = via.value;
+  via.innerHTML = '<option value="">напрямую (https)</option>';
+  (STATUS.engine && STATUS.engine.tuns || []).forEach(t => {
+    if (!t.disabled && t.probePort) {
+      const opt = document.createElement('option');
+      opt.value = `socks5://127.0.0.1:${t.probePort}`;
+      opt.textContent = `через пул ${t.pool} (socks5 127.0.0.1:${t.probePort})`;
+      via.appendChild(opt);
+    }
+  });
+  via.value = cur;
+}
+
 function inspectSource() {
   const src = $('#pSource').value.trim();
   clearTimeout(inspectTimer);
   const box = $('#pInspect');
-  if (!src) { box.style.display = 'none'; gateSlot(null); return; }
+  if (!src) { box.style.display = 'none'; updateAmneziaRow(null); gateSlot(null); return; }
   inspectTimer = setTimeout(async () => {
     const seq = ++inspectSeq;
     box.style.display = '';
@@ -938,17 +977,20 @@ function inspectSource() {
     try {
       const ins = await api('POST', '/links/inspect', { source: src });
       if (seq !== inspectSeq) return;
+      updateAmneziaRow(ins);
       gateSlot(ins);
       let t = [];
       if (ins.error) t.push('не разбирается: ' + ins.error);
+      if (ins.amnezia) t.push(`ключ Amnezia ${(ins.amnezia.serviceType || '').toUpperCase()} API`);
       if (ins.native) t.push(`WG/AWG узлов: ${ins.native}`);
       if (ins.engine) t.push(`прокси-узлов: ${ins.engine} (${(ins.types || []).join(', ')})`);
       if (ins.intervalHours) t.push(`интервал подписки: ${ins.intervalHours} ч`);
-      if (!ins.error && !ins.native && !ins.engine) t.push('узлов не найдено');
+      if (!ins.error && !ins.native && !ins.engine && !ins.amnezia) t.push('узлов не найдено');
       box.textContent = t.join(' · ');
     } catch (err) {
       if (seq !== inspectSeq) return;
       box.textContent = 'не разобрать: ' + err.message;
+      updateAmneziaRow(null);
       gateSlot({ error: err.message });
     }
   }, 500);
@@ -975,6 +1017,17 @@ function renderSourcePlan(p) {
       (p.duplicates && p.duplicates.length ? `, дубликаты пропущены: ${esc(p.duplicates.join(', '))}` : '') + '.</div>';
   } else if (p.engine && p.engine.length) {
     html += `<div style="margin-bottom:6px">Пул не создан: в источнике нет WG/AWG узлов, нативно добавить нечего.</div>`;
+  }
+  if (p.amnezia) {
+    const a = p.amnezia;
+    let meta = `Выдан конфиг Amnezia (${(a.protocol || 'awg').toUpperCase()})`;
+    if (a.serverCountry) meta += `, локация: ${a.serverCountryName || a.serverCountry}`;
+    if (a.maxDevices) meta += `, устройств: ${a.activeDevices}/${a.maxDevices}`;
+    if (a.issuedConfigs) meta += `, выдано конфигов: ${a.issuedConfigs}`;
+    html += `<div class="muted" style="font-size:11px;margin:4px 0">${esc(meta)}</div>`;
+    if (a.availableCountries && a.availableCountries.length > 1) {
+      html += `<div class="muted" style="font-size:11px;margin-bottom:4px">Локации в подписке: ${a.availableCountries.map(c => esc(c.code + (c.name ? ' (' + c.name + ')' : ''))).join(', ')}. Сменить - «обновить из источника» в настройках пула.</div>`;
+    }
   }
   if (p.engine && p.engine.length) {
     const savedForLx = !!(p.pool && p.tun);
@@ -1013,6 +1066,11 @@ $('#pCreate').onclick = async e => {
     await withBusy(e.currentTarget, async () => {
       $('#pCancel').disabled = true;
       try {
+        if (amneziaKey) {
+          body.exchange = true;
+          body.via = document.getElementById('pAmneziaVia').value;
+          body.country = document.getElementById('pAmneziaCountry').value;
+        }
         const plan = await api('POST', '/pools/from-source', { ...body, source });
         const planBox = $('#pPlanResult');
         planBox.innerHTML = renderSourcePlan(plan);
@@ -1147,6 +1205,7 @@ function openSettings(name) {
   $('#spName').textContent = p.name;
   $('#spSourceRow').style.display = (p.settings.engineMode === 'singbox' || p.settings.source) ? '' : 'none';
   $('#spSource').value = p.settings.source || '';
+  updateSpAmneziaCountry(p);
   $('#spRename').value = p.name;
   $('#spRenameRow').style.display = STATUS.platform === 'keenetic' ? '' : 'none';
   const ptype = probeTypeOf(p.settings.probeHost || '');
@@ -1186,14 +1245,26 @@ function openSettings(name) {
 wireProbeSwitch($('#spProbeType'), $('#spProbe'));
 
 document.querySelector('#dlgSettings button[value=cancel]').onclick = () => dlgSettings.close();
+function updateSpAmneziaCountry(p) {
+  const sel = document.getElementById('spAmneziaCountry');
+  const meta = p && p.settings && p.settings.amnezia;
+  if (!meta || !meta.countries || meta.countries.length < 2) { sel.style.display = 'none'; sel.innerHTML = ''; return; }
+  sel.style.display = '';
+  sel.innerHTML = '<option value="">локация: как выдаст gateway</option>' +
+    meta.countries.map(c => `<option value="${esc(c.code)}"${c.code === meta.country ? ' selected' : ''}>${esc(c.code + (c.name ? ' - ' + c.name : ''))}${c.protocols && c.protocols.length ? ' [' + c.protocols.join('/') + ']' : ''}</option>`).join('');
+}
 $('#spRefreshSource').onclick = async e => withBusy(e.currentTarget, async () => {
   const p = settingsPool;
   if (!p) return;
   const src = $('#spSource').value.trim();
   if (!src) { toast('Вставьте ссылку или URL подписки', true); return; }
   try {
-    const plan = await api('POST', `/pools/${encodeURIComponent(p.name)}/refresh-source`, { source: src });
+    const body = { source: src };
+    const csel = document.getElementById('spAmneziaCountry');
+    if (csel.style.display !== 'none' && csel.value) body.country = csel.value;
+    const plan = await api('POST', `/pools/${encodeURIComponent(p.name)}/refresh-source`, body);
     let msg = 'источник обновлён';
+    if (plan.amnezia) msg = 'ключ Amnezia обменян' + (plan.amnezia.serverCountry ? ` (локация ${plan.amnezia.serverCountry})` : '');
     if (plan.added) msg += `: конфигов ${plan.added}`;
     if (plan.engine && plan.engine.length) msg += `, узлов ${plan.engine.length}`;
     if (plan.warnings && plan.warnings.length) msg += '; ' + plan.warnings.join('; ');

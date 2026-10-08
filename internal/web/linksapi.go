@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+
+	"mawg/internal/links"
 )
 
 func (s *Server) inspectSource(w http.ResponseWriter, r *http.Request) {
@@ -20,7 +22,6 @@ func (s *Server) inspectSource(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, fmt.Errorf("пустой источник"))
 		return
 	}
-	res, err := resolveSource(r.Context(), req.Source)
 	out := struct {
 		Error     string   `json:"error,omitempty"`
 		Native    int      `json:"native"`
@@ -30,7 +31,21 @@ func (s *Server) inspectSource(w http.ResponseWriter, r *http.Request) {
 		Userinfo  string   `json:"userinfo,omitempty"`
 		IntervalH float64  `json:"intervalHours,omitempty"`
 		Warnings  []string `json:"warnings,omitempty"`
-	}{Warnings: res.Warnings}
+		Amnezia   *struct {
+			ServiceType     string `json:"serviceType"`
+			ServiceProtocol string `json:"serviceProtocol"`
+		} `json:"amnezia,omitempty"`
+	}{}
+	if key, ok := links.IsAmneziaKey(req.Source); ok {
+		out.Amnezia = &struct {
+			ServiceType     string `json:"serviceType"`
+			ServiceProtocol string `json:"serviceProtocol"`
+		}{strings.TrimPrefix(key.ServiceType, "amnezia-"), key.ServiceProtocol}
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+	res, err := resolveSource(r.Context(), req.Source)
+	out.Warnings = res.Warnings
 	if err != nil {
 		out.Error = err.Error()
 		writeJSON(w, http.StatusOK, out)

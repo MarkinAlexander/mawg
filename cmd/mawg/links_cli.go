@@ -14,7 +14,7 @@ import (
 	"mawg/internal/links"
 )
 
-const linksUsage = "использование: mawg links parse <url|file|-> | mawg links fetch <url>"
+const linksUsage = "использование: mawg links parse <url|file|-> | mawg links fetch <url> | mawg links amnezia <vpn://> [--via socks5://127.0.0.1:2282]"
 
 func cmdLinks(args []string) int {
 	if len(args) == 0 {
@@ -26,10 +26,60 @@ func cmdLinks(args []string) int {
 		return cmdLinksParse(args[1:])
 	case "fetch":
 		return cmdLinksFetch(args[1:])
+	case "amnezia":
+		return cmdLinksAmnezia(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "неизвестная подкоманда %q\n%s\n", args[0], linksUsage)
 		return 2
 	}
+}
+
+// cmdLinksAmnezia обменивает vpn://-ключ Amnezia Premium/Free на AWG-узлы
+// у gateway Амнезии (https, строго JSON; через --via - socks5 рабочего пула).
+func cmdLinksAmnezia(args []string) int {
+	var source, via string
+	for i := 0; i < len(args); i++ {
+		switch {
+		case args[i] == "--via" && i+1 < len(args):
+			i++
+			via = args[i]
+		case source == "":
+			source = args[i]
+		default:
+			fmt.Println(linksUsage)
+			return 2
+		}
+	}
+	if source == "-" {
+		body, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			fmt.Println("stdin:", err)
+			return 1
+		}
+		source = strings.TrimSpace(string(body))
+	}
+	if source == "" {
+		fmt.Println(linksUsage)
+		return 2
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	xr, err := links.ExchangeAmneziaKey(ctx, source, links.ExchangeOptions{
+		Socks5:  strings.TrimPrefix(via, "socks5://"),
+		Version: version,
+	})
+	if err != nil {
+		fmt.Println("ошибка:", err)
+		return 1
+	}
+	if xr.ServerCountry != "" {
+		fmt.Printf("локация: %s (%s); устройств: %d/%d; выдано конфигов: %d\n",
+			xr.ServerCountry, xr.ServerCountryName, xr.ActiveDevices, xr.MaxDevices, xr.IssuedConfigs)
+		for _, c := range xr.AvailableCountries {
+			fmt.Printf("  доступна локация: %s (%s) протоколы: %s\n", c.Code, c.Name, strings.Join(c.Protocols, ","))
+		}
+	}
+	return printLinks(links.Result{Source: "amnezia", Nodes: xr.Nodes})
 }
 
 func cmdLinksParse(args []string) int {

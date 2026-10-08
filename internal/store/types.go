@@ -84,13 +84,28 @@ type PoolSettings struct {
 	Keepalive        int    `json:"keepalive"`
 	MaxRTTms         int    `json:"maxRttMs,omitempty"`
 
-	Platform           string `json:"platform"`
-	KeeneticSlot       string `json:"keeneticSlot,omitempty"`
-	OpenwrtProto       string `json:"openwrtProto,omitempty"`
-	MagitrickleGroupID string `json:"magitrickleGroupID,omitempty"`
-	Source             string `json:"source,omitempty"`     // URL/ссылка, из которой собраны конфиги пула (для цикла обновлений)
-	EngineMode         string `json:"engineMode,omitempty"` // "singbox" - узлы пула в tun-интерфейсе движка, а не в нативном слоте
-	TunName            string `json:"tunName,omitempty"`
+	Platform           string       `json:"platform"`
+	KeeneticSlot       string       `json:"keeneticSlot,omitempty"`
+	OpenwrtProto       string       `json:"openwrtProto,omitempty"`
+	MagitrickleGroupID string       `json:"magitrickleGroupID,omitempty"`
+	Source             string       `json:"source,omitempty"`     // URL/ссылка, из которой собраны конфиги пула (для цикла обновлений)
+	EngineMode         string       `json:"engineMode,omitempty"` // "singbox" - узлы пула в tun-интерфейсе движка, а не в нативном слоте
+	TunName            string       `json:"tunName,omitempty"`
+	Amnezia            *AmneziaMeta `json:"amnezia,omitempty"`
+}
+
+// AmneziaMeta - состояние выдачи gateway Амнезии для пула из vpn://-ключа:
+// какой протокол выдан, текущая локация и список доступных локаций.
+type AmneziaMeta struct {
+	Protocol  string           `json:"protocol,omitempty"`
+	Country   string           `json:"country,omitempty"`
+	Countries []GatewayCountry `json:"countries,omitempty"`
+}
+
+type GatewayCountry struct {
+	Code      string   `json:"code"`
+	Name      string   `json:"name,omitempty"`
+	Protocols []string `json:"protocols,omitempty"`
 }
 
 func (s PoolSettings) WithDefaults() PoolSettings {

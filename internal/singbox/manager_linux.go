@@ -21,21 +21,21 @@ import (
 )
 
 type Manager struct {
-	mu           sync.Mutex
-	stmu         sync.Mutex
-	eng          *Engine
-	Dir          string
-	MixedPort    int
-	ClashPort    int
-	Mode         string
-	SharedDir    string
-	SharedInit   string
-	sharedClash  int
-	pid          int
+	mu            sync.Mutex
+	stmu          sync.Mutex
+	eng           *Engine
+	Dir           string
+	MixedPort     int
+	ClashPort     int
+	Mode          string
+	SharedDir     string
+	SharedInit    string
+	sharedClash   int
+	pid           int
 	probeLoopStop chan struct{}
-	lastSpecs    []PoolSpec
-	statuses     map[string]*PoolStatus
-	nodeCooldown map[string]time.Time
+	lastSpecs     []PoolSpec
+	statuses      map[string]*PoolStatus
+	nodeCooldown  map[string]time.Time
 }
 
 type RunConfig struct {
@@ -358,8 +358,8 @@ func (m *Manager) preflightShared() (*sharedFacts, error) {
 		return nil, fmt.Errorf("чужой конфиг %s не читается: %v", path, err)
 	}
 	var cfg struct {
-		Inbounds  []map[string]any `json:"inbounds"`
-		Outbounds []map[string]any `json:"outbounds"`
+		Inbounds     []map[string]any `json:"inbounds"`
+		Outbounds    []map[string]any `json:"outbounds"`
 		Experimental struct {
 			ClashAPI struct {
 				ExternalController string `json:"external_controller"`

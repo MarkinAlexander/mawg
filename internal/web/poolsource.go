@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"mawg/internal/links"
 	"mawg/internal/singbox"
@@ -23,6 +24,19 @@ type sourcePlan struct {
 	Engine     []sourceEngineOne `json:"engine,omitempty"`
 	Skipped    []string          `json:"skipped,omitempty"`
 	Warnings   []string          `json:"warnings,omitempty"`
+	Amnezia    *amneziaPlanMeta  `json:"amnezia,omitempty"`
+}
+
+// amneziaPlanMeta - что вернул gateway при обмене ключа: протокол, локация,
+// доступные локации и счётчики устройств подписки.
+type amneziaPlanMeta struct {
+	Protocol           string                 `json:"protocol,omitempty"`
+	ServerCountry      string                 `json:"serverCountry,omitempty"`
+	ServerCountryName  string                 `json:"serverCountryName,omitempty"`
+	AvailableCountries []store.GatewayCountry `json:"availableCountries,omitempty"`
+	ActiveDevices      int                    `json:"activeDevices,omitempty"`
+	MaxDevices         int                    `json:"maxDevices,omitempty"`
+	IssuedConfigs      int                    `json:"issuedConfigs,omitempty"`
 }
 
 type sourceEngineOne struct {
@@ -37,6 +51,9 @@ type poolSourceReq struct {
 	OpenwrtProto string `json:"openwrtProto"`
 	Fallback     string `json:"fallback"`
 	ProbeHost    string `json:"probeHost"`
+	Exchange     bool   `json:"exchange"`
+	Via          string `json:"via"`
+	Country      string `json:"country"`
 }
 
 func (s *Server) poolSettingsFromReq(req poolSourceReq) (store.PoolSettings, error) {
@@ -91,12 +108,61 @@ func (s *Server) createPoolFromSource(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, fmt.Errorf("пустой источник: дайте URL подписки или ссылку"))
 		return
 	}
+	if key, ok := links.IsAmneziaKey(req.Source); ok {
+		if !req.Exchange {
+			writeJSON(w, http.StatusOK, sourcePlan{
+				Warnings: []string{fmt.Sprintf(
+					"Это ключ Amnezia %s API (не конфиг). Нажмите «Запросить конфиг», чтобы mawg обменял его у gateway Амнезии на пул (AWG или VLESS).",
+					strings.TrimPrefix(key.ServiceType, "amnezia-"))},
+			})
+			return
+		}
+		via := strings.TrimPrefix(strings.TrimSpace(req.Via), "socks5://")
+		xr, xerr := links.ExchangeAmneziaKey(r.Context(), req.Source, links.ExchangeOptions{
+			Socks5: via, Version: s.version, ServerCountryCode: strings.TrimSpace(req.Country),
+		})
+		if xerr != nil {
+			writeErr(w, xerr)
+			return
+		}
+		meta := amneziaFromExchange(&xr)
+		res := store.Sub{Source: req.Source, Nodes: xr.Nodes, RefreshedAt: time.Now(),
+			Warnings: []string{"ключ Amnezia обменян на конфиг у gateway"}}
+		s.createPoolFromNodes(w, r, req, res, meta)
+		return
+	}
 	res, err := resolveSource(r.Context(), req.Source)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	plan := sourcePlan{Warnings: res.Warnings}
+	s.createPoolFromNodes(w, r, req, res, nil)
+}
+
+func amneziaFromExchange(xr *links.ExchangeResult) *amneziaPlanMeta {
+	if xr == nil {
+		return nil
+	}
+	countries := make([]store.GatewayCountry, 0, len(xr.AvailableCountries))
+	for _, c := range xr.AvailableCountries {
+		countries = append(countries, store.GatewayCountry{Code: c.Code, Name: c.Name, Protocols: c.Protocols})
+	}
+	return &amneziaPlanMeta{
+		Protocol: xr.Protocol, ServerCountry: xr.ServerCountry, ServerCountryName: xr.ServerCountryName,
+		AvailableCountries: countries,
+		ActiveDevices:      xr.ActiveDevices, MaxDevices: xr.MaxDevices, IssuedConfigs: xr.IssuedConfigs,
+	}
+}
+
+func storeAmnezia(meta *amneziaPlanMeta) *store.AmneziaMeta {
+	if meta == nil {
+		return nil
+	}
+	return &store.AmneziaMeta{Protocol: meta.Protocol, Country: meta.ServerCountry, Countries: meta.AvailableCountries}
+}
+
+func (s *Server) createPoolFromNodes(w http.ResponseWriter, r *http.Request, req poolSourceReq, res store.Sub, amnezia *amneziaPlanMeta) {
+	plan := sourcePlan{Warnings: res.Warnings, Amnezia: amnezia}
 	if res.Error != "" {
 		plan.Skipped = append(plan.Skipped, res.Error)
 	}
@@ -109,6 +175,7 @@ func (s *Server) createPoolFromSource(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, err)
 			return
 		}
+		settings.Amnezia = storeAmnezia(amnezia)
 		if err := s.validFallback(req.Name, settings.Fallback); err != nil {
 			writeErr(w, err)
 			return
@@ -157,7 +224,7 @@ func (s *Server) createPoolFromSource(w http.ResponseWriter, r *http.Request) {
 		}
 		settings := store.PoolSettings{
 			Platform: s.backend.Name(), Fallback: req.Fallback, ProbeHost: req.ProbeHost,
-			Source: req.Source, EngineMode: engineMode,
+			Source: req.Source, EngineMode: engineMode, Amnezia: storeAmnezia(amnezia),
 		}
 		if err := s.validFallback(req.Name, settings.Fallback); err != nil {
 			writeErr(w, err)

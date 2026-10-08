@@ -10,10 +10,12 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"mawg/internal/links"
 	"mawg/internal/singbox"
 	"mawg/internal/store"
+	"mawg/internal/wgconf"
 )
 
 const engineMode = "singbox"
@@ -227,7 +229,8 @@ func (s *Server) refreshSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Source string `json:"source"`
+		Source  string `json:"source"`
+		Country string `json:"country"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, err)
@@ -241,15 +244,49 @@ func (s *Server) refreshSource(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, fmt.Errorf("у пула нет сохранённого источника - вставьте ссылку"))
 		return
 	}
-	res, err := resolveSource(r.Context(), src)
-	if err != nil {
-		writeErr(w, err)
-		return
+	var res store.Sub
+	var amnezia *amneziaPlanMeta
+	if key, ok := links.IsAmneziaKey(src); ok {
+		xopts := links.ExchangeOptions{
+			Version:           s.version,
+			ServerCountryCode: strings.TrimSpace(req.Country),
+		}
+		if key.ServiceProtocol == "vless" {
+			if ns, err := s.readPoolNodes(name); err == nil && len(ns) > 0 {
+				xopts.VlessUUID = ns[0].UUID
+			}
+		} else {
+			if p, ok := s.store.Pool(name); ok && len(p.Configs) > 0 {
+				if data, err := os.ReadFile(filepath.Join(s.store.PoolDir(name), p.Configs[0].File)); err == nil {
+					if cfg, err := wgconf.Parse(data); err == nil {
+						xopts.ClientPrivKey = cfg.PrivateKey
+					}
+				}
+			}
+		}
+		xr, xerr := links.ExchangeAmneziaKey(r.Context(), src, xopts)
+		if xerr != nil {
+			writeErr(w, xerr)
+			return
+		}
+		amnezia = amneziaFromExchange(&xr)
+		res = store.Sub{Source: src, Nodes: xr.Nodes, RefreshedAt: time.Now(),
+			Warnings: []string{fmt.Sprintf("ключ Amnezia %s обменян на свежий конфиг у gateway", strings.TrimPrefix(key.ServiceType, "amnezia-"))}}
+	} else {
+		var err error
+		res, err = resolveSource(r.Context(), src)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
 	}
-	plan := sourcePlan{Warnings: res.Warnings}
-	if src != pool.Settings.Source {
+	plan := sourcePlan{Warnings: res.Warnings, Amnezia: amnezia}
+	if src != pool.Settings.Source || amnezia != nil {
 		st := pool.Settings
 		st.Source = src
+		if amnezia != nil {
+			st.Amnezia = storeAmnezia(amnezia)
+		}
 		if err := s.store.UpdatePool(name, st); err != nil {
 			writeErr(w, err)
 			return
