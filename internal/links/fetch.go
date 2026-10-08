@@ -1,7 +1,6 @@
 package links
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -71,29 +70,20 @@ func clientFor(host string) *http.Client {
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{
 				InsecureSkipVerify:    true,
-				VerifyPeerCertificate: verifySelfSignedOnIP(host),
+				VerifyPeerCertificate: parseLeafOnly(host),
 			},
 		},
 	}
 }
 
-func verifySelfSignedOnIP(host string) func([][]byte, [][]*x509.Certificate) error {
+// панели на IP не имеют доверяемой цепочки (self-signed, приватный CA или
+// серт на IP-SAN) - серт только разбирается; для доменов верификация полная
+func parseLeafOnly(host string) func([][]byte, [][]*x509.Certificate) error {
 	return func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
 		if len(rawCerts) == 0 {
 			return fmt.Errorf("нет сертификата")
 		}
-		cert, err := x509.ParseCertificate(rawCerts[0])
-		if err != nil {
-			return err
-		}
-		if bytes.Equal(cert.RawSubject, cert.RawIssuer) {
-			return nil
-		}
-		roots, err := x509.SystemCertPool()
-		if err != nil {
-			return err
-		}
-		_, err = cert.Verify(x509.VerifyOptions{DNSName: host, Roots: roots})
+		_, err := x509.ParseCertificate(rawCerts[0])
 		return err
 	}
 }
