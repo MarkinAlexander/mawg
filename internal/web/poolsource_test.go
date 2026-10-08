@@ -67,15 +67,15 @@ func TestFromSourceMixedShowsEngineNodes(t *testing.T) {
 	}
 }
 
-func TestFromSourceEngineOnlyCreatesNothing(t *testing.T) {
-	code, plan := postFromSource(t, `{"name":"vless-only","source":"`+fakeVlessLink+`","keeneticSlot":"Wireguard2"}`)
+func TestFromSourceEnginePoolCreated(t *testing.T) {
+	code, plan := postFromSource(t, `{"name":"vless-only","source":"`+fakeVlessLink+`"}`)
 	if code != 200 {
 		t.Fatalf("код %d", code)
 	}
-	if plan.Pool != "" || plan.Added != 0 {
-		t.Fatalf("пул не должен создаваться: %+v", plan)
+	if plan.Pool != "vless-only" {
+		t.Fatalf("пул движка должен создаваться: %+v", plan)
 	}
-	if len(plan.Engine) != 1 {
+	if len(plan.Engine) != 1 || plan.Engine[0].Type != "vless" {
 		t.Fatalf("движок-узлы: %+v", plan.Engine)
 	}
 }

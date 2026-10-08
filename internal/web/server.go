@@ -72,6 +72,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/events", s.getEvents)
 	mux.HandleFunc("POST /api/v1/pools", s.createPool)
 	mux.HandleFunc("POST /api/v1/pools/from-source", s.createPoolFromSource)
+	mux.HandleFunc("POST /api/v1/links/inspect", s.inspectSource)
+	mux.HandleFunc("POST /api/v1/pools/{name}/refresh-source", s.refreshSource)
 	mux.HandleFunc("PUT /api/v1/pools/{name}", s.updatePool)
 	mux.HandleFunc("DELETE /api/v1/pools/{name}", s.deletePool)
 	mux.HandleFunc("POST /api/v1/pools/{name}/configs", s.uploadConfigs)
@@ -360,11 +362,12 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 		Configs        []configView       `json:"configs"`
 	}
 	out := struct {
-		Version     string     `json:"version"`
-		Platform    string     `json:"platform"`
-		BackendName string     `json:"backendName"`
-		AuthEnabled bool       `json:"authEnabled"`
-		Pools       []poolView `json:"pools"`
+		Version     string         `json:"version"`
+		Platform    string         `json:"platform"`
+		BackendName string         `json:"backendName"`
+		AuthEnabled bool           `json:"authEnabled"`
+		Pools       []poolView     `json:"pools"`
+		Engine      map[string]any `json:"engine,omitempty"`
 	}{Version: s.version, Platform: s.backend.Name(), BackendName: s.backend.Name(),
 		AuthEnabled: s.auth == nil || s.auth.Enabled, Pools: []poolView{}}
 
@@ -390,6 +393,25 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 			view.Configs = append(view.Configs, cv)
 		}
 		out.Pools = append(out.Pools, view)
+	}
+	if mgr, err := s.sb(); err == nil {
+		st := mgr.Status()
+		var tuns []map[string]any
+		for _, p := range s.enginePools() {
+			nodes := 0
+			if ns, err := s.readPoolNodes(p.Name); err == nil {
+				nodes = len(ns)
+			}
+			tuns = append(tuns, map[string]any{
+				"pool": p.Name, "tun": p.Settings.TunName,
+				"disabled": p.Disabled, "nodes": nodes,
+			})
+		}
+		out.Engine = map[string]any{
+			"available": true, "running": st.Running, "version": st.Version,
+			"lx": st.LX, "bin": st.Bin, "mixedPort": st.Mixed, "clashPort": st.Clash,
+			"tuns": tuns,
+		}
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -973,12 +995,20 @@ func (s *Server) updatePool(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) deletePool(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if err := s.engine.PoolDown(name); err == nil {
-		// interface left down, slot content removed below
+	wasEngine := s.engineEnabled(r)
+	if !wasEngine {
+		if err := s.engine.PoolDown(name); err == nil {
+			// interface left down, slot content removed below
+		}
 	}
 	if err := s.store.DeletePool(name); err != nil {
 		writeErr(w, err)
 		return
+	}
+	if wasEngine {
+		if _, err := s.applyEngine(); err != nil {
+			s.store.LogEvent(name, "applied", "движок не пересобран после удаления: "+err.Error())
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "deleted"})
 }
@@ -1083,6 +1113,10 @@ func (s *Server) moveConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) postRotate(w http.ResponseWriter, r *http.Request) {
+	if s.engineEnabled(r) {
+		writeErr(w, fmt.Errorf("пул работает через движок: узлы переключаются в его группе, ротация не нужна"))
+		return
+	}
 	if err := s.engine.RotateNow(r.PathValue("name")); err != nil {
 		writeErr(w, err)
 		return
@@ -1091,11 +1125,19 @@ func (s *Server) postRotate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) postCheck(w http.ResponseWriter, r *http.Request) {
+	if s.engineEnabled(r) {
+		writeErr(w, fmt.Errorf("пул работает через движок: проверка выполняется автоматически"))
+		return
+	}
 	s.engine.CheckNow(r.PathValue("name"))
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "checking"})
 }
 
 func (s *Server) postEnable(w http.ResponseWriter, r *http.Request) {
+	if s.engineEnabled(r) {
+		s.postEnableEngine(w, r)
+		return
+	}
 	if err := s.engine.EnablePool(r.PathValue("name")); err != nil {
 		writeErr(w, err)
 		return
@@ -1104,6 +1146,10 @@ func (s *Server) postEnable(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) postDisable(w http.ResponseWriter, r *http.Request) {
+	if s.engineEnabled(r) {
+		s.postDisableEngine(w, r)
+		return
+	}
 	if err := s.engine.DisablePool(r.PathValue("name")); err != nil {
 		writeErr(w, err)
 		return

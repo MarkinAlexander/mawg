@@ -33,6 +33,9 @@ func (p Pool) IndexByFile(file string) int {
 }
 
 func (p Pool) DeviceName() string {
+	if p.Settings.EngineMode == "singbox" && p.Settings.TunName != "" {
+		return p.Settings.TunName
+	}
 	if p.Settings.Platform == PlatformKeenetic && p.Settings.KeeneticSlot != "" {
 		return "nwg" + strings.TrimPrefix(strings.ToLower(p.Settings.KeeneticSlot), "wireguard")
 	}

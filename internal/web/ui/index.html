@@ -58,6 +58,8 @@ dialog .cfgscroll { max-height: none; overflow: visible; }
 dialog .psel-list { max-width: 100%; }
 dialog select { max-width: 100%; }
 dialog::backdrop { background: rgba(0,0,0,.55); }
+#dlgPool.linkmode { max-width: min(94vw, 760px); }
+.rowoff { opacity: .45; pointer-events: none; }
 label.f { display: block; margin: 8px 0; font-size: 13px; color: var(--dim); }
 label.f input, label.f select { display: block; margin-top: 3px; width: 100%; }
 label.f .pwrap { position: relative; margin-top: 3px; }
@@ -285,9 +287,10 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
       </select>
     </label>
     <label class="f" id="pSourceRow" style="display:none">Ссылка, URL подписки или несколько ссылок строками
-      <textarea id="pSource" rows="3" placeholder="vpn://... / wireguard://... / amneziawg://...&#10;vless://... / trojan://...&#10;https://example.com/sub" style="font-family:ui-monospace,monospace;font-size:12px"></textarea>
+      <textarea id="pSource" rows="6" placeholder="vpn://... / wireguard://... / amneziawg://...&#10;vless://... / trojan://...&#10;https://example.com/sub" style="font-family:ui-monospace,monospace;font-size:12px"></textarea>
     </label>
-    <div class="muted" id="pLinkHint" style="display:none;font-size:11px">wireguard://, amneziawg:// и vpn:// превращаются в обычные конфиги пула (нативно, слот). Узлы vless/trojan и т.п. требуют движок sing-box - они будут показаны списком, установка ядра планируется следующим шагом mawg. Вариант «через ядро lx» для WG/AWG появится вместе с движком.</div>
+    <div class="muted" id="pInspect" style="display:none;font-size:11px;margin-top:2px"></div>
+    <div class="muted" id="pLinkHint" style="display:none;font-size:11px">wireguard://, amneziawg:// и vpn:// превращаются в обычные конфиги пула (нативно, слот). Узлы vless/trojan и т.п. становятся tun-интерфейсом движка sing-box (tun1, tun2...), который виден в MagiTrickle как обычный интерфейс. Если на роутере движка нет - узлы будут показаны списком с пометкой.</div>
     <div id="pPlanResult" style="display:none;font-size:12px;border-top:1px solid var(--border);padding-top:8px"></div>
     <div class="btnrow" style="justify-content:end" id="pActions">
       <button value="cancel" id="pCancel">Отмена</button>
@@ -825,18 +828,73 @@ async function delPool(pool) {
 }
 
 let poolMode = 'cfg';
+let inspectTimer = null, inspectSeq = 0;
 function setPoolMode(m) {
   poolMode = m;
   $('#pModeCfg').classList.toggle('primary', m === 'cfg');
   $('#pModeLink').classList.toggle('primary', m === 'link');
+  $('#dlgPool').classList.toggle('linkmode', m === 'link');
   $('#pSourceRow').style.display = m === 'link' ? '' : 'none';
   $('#pLinkHint').style.display = m === 'link' ? '' : 'none';
+  $('#pInspect').style.display = 'none';
   const plan = $('#pPlanResult');
   plan.style.display = 'none';
   plan.innerHTML = '';
   $('#pCreate').style.display = '';
   $('#pCancel').textContent = 'Отмена';
+  gateSlot(null);
 }
+
+function gateSlot(inspect) {
+  const row = $('#slotRow'), hint = document.getElementById('slotHint');
+  if (poolMode === 'cfg') { row.classList.remove('rowoff'); return; }
+  if (!inspect || inspect.error) {
+    row.classList.add('rowoff');
+    hint.textContent = inspect && inspect.error ? 'Ссылка не разбирается: ' + inspect.error : 'Вставьте ссылку - mawg определит, нужен слот (WG/AWG) или будет создан tun-интерфейс.';
+    hint.style.display = '';
+    return;
+  }
+  if (inspect.native > 0) {
+    row.classList.remove('rowoff');
+    hint.textContent = `Есть WG/AWG узлы (${inspect.native}) - выберите свободный слот или создайте новый. ` + (inspect.engine > 0 ? `Прокси-узлы (${inspect.engine}) пойдут в tun-интерфейс движка.` : '');
+    hint.style.color = '';
+    hint.style.display = '';
+  } else {
+    row.classList.add('rowoff');
+    hint.textContent = `Прокси-узлы (${inspect.engine}) - будет создан tun-интерфейс движка sing-box (tun1, tun2...), слот не нужен.`;
+    hint.style.display = '';
+  }
+}
+
+function inspectSource() {
+  const src = $('#pSource').value.trim();
+  clearTimeout(inspectTimer);
+  const box = $('#pInspect');
+  if (!src) { box.style.display = 'none'; gateSlot(null); return; }
+  inspectTimer = setTimeout(async () => {
+    const seq = ++inspectSeq;
+    box.style.display = '';
+    box.textContent = 'разбираю ссылку...';
+    try {
+      const ins = await api('POST', '/links/inspect', { source: src });
+      if (seq !== inspectSeq) return;
+      gateSlot(ins);
+      let t = [];
+      if (ins.error) t.push('не разбирается: ' + ins.error);
+      if (ins.native) t.push(`WG/AWG узлов: ${ins.native}`);
+      if (ins.engine) t.push(`прокси-узлов: ${ins.engine} (${(ins.types || []).join(', ')})`);
+      if (ins.intervalHours) t.push(`интервал подписки: ${ins.intervalHours} ч`);
+      if (!ins.error && !ins.native && !ins.engine) t.push('узлов не найдено');
+      box.textContent = t.join(' · ');
+    } catch (err) {
+      if (seq !== inspectSeq) return;
+      box.textContent = 'не разобрать: ' + err.message;
+      gateSlot({ error: err.message });
+    }
+  }, 500);
+}
+$('#pSource').addEventListener('input', inspectSource);
+
 $('#pModeCfg').onclick = () => setPoolMode('cfg');
 $('#pModeLink').onclick = () => setPoolMode('link');
 
@@ -903,6 +961,7 @@ $('#pCreate').onclick = async e => {
 
 let slotsLoading = false;
 function slotBusyHint() {
+  if (poolMode === 'link') return;
   const sel = $('#pSlot');
   const hint = document.getElementById('slotHint');
   const opt = sel.selectedOptions[0];
@@ -947,6 +1006,7 @@ async function loadSlots() {
     if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
     else if (firstFree || firstAny) sel.value = firstFree || firstAny;
     if (listed === 0) {
+      if (poolMode === 'link') return;
       hint.textContent = 'Слоты WireGuard не найдены - создайте кнопкой "+ слот".';
       hint.style.display = '';
     } else {
@@ -955,6 +1015,7 @@ async function loadSlots() {
   } catch (e) {
     sel.innerHTML = '';
     sel.disabled = false;
+    if (poolMode === 'link') return;
     hint.textContent = 'Не удалось получить список слотов: ' + e.message + '. Создание пула заблокировано до появления списка.';
     hint.style.display = '';
   } finally {

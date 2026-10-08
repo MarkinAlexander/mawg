@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"mawg/internal/links"
 	"mawg/internal/store"
 	"mawg/internal/wgconf"
 )
@@ -53,6 +54,27 @@ func (s *Server) poolSettingsFromReq(req poolSourceReq) (store.PoolSettings, err
 	return settings, nil
 }
 
+func buildNativeConfigs(nodes []links.Node) (ncs []wgconf.NamedConfig, engine []sourceEngineOne, skipped []string) {
+	for _, node := range nodes {
+		if node.Type != "wireguard" && node.Type != "amneziawg" {
+			engine = append(engine, sourceEngineOne{Tag: node.Tag, Type: node.Type})
+			continue
+		}
+		confText, err := node.ConfText()
+		if err != nil {
+			skipped = append(skipped, err.Error())
+			continue
+		}
+		cfg, err := wgconf.Parse([]byte(confText))
+		if err != nil {
+			skipped = append(skipped, node.Tag+": "+err.Error())
+			continue
+		}
+		ncs = append(ncs, wgconf.NamedConfig{OriginalName: node.ConfName(), Raw: []byte(confText), Config: cfg})
+	}
+	return ncs, engine, skipped
+}
+
 func (s *Server) createPoolFromSource(w http.ResponseWriter, r *http.Request) {
 	var req poolSourceReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -70,30 +92,11 @@ func (s *Server) createPoolFromSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	plan := sourcePlan{Warnings: res.Warnings}
-	for _, warn := range []string{res.Error} {
-		if warn != "" {
-			plan.Skipped = append(plan.Skipped, warn)
-		}
+	if res.Error != "" {
+		plan.Skipped = append(plan.Skipped, res.Error)
 	}
-
-	var ncs []wgconf.NamedConfig
-	for _, node := range res.Nodes {
-		if node.Type != "wireguard" && node.Type != "amneziawg" {
-			plan.Engine = append(plan.Engine, sourceEngineOne{Tag: node.Tag, Type: node.Type})
-			continue
-		}
-		confText, err := node.ConfText()
-		if err != nil {
-			plan.Skipped = append(plan.Skipped, err.Error())
-			continue
-		}
-		cfg, err := wgconf.Parse([]byte(confText))
-		if err != nil {
-			plan.Skipped = append(plan.Skipped, node.Tag+": "+err.Error())
-			continue
-		}
-		ncs = append(ncs, wgconf.NamedConfig{OriginalName: node.ConfName(), Raw: []byte(confText), Config: cfg})
-	}
+	ncs, engineNodes, skipped := buildNativeConfigs(res.Nodes)
+	plan.Skipped = append(plan.Skipped, skipped...)
 
 	if len(ncs) > 0 {
 		settings, err := s.poolSettingsFromReq(req)
@@ -118,6 +121,7 @@ func (s *Server) createPoolFromSource(w http.ResponseWriter, r *http.Request) {
 		plan.Pool = pool.Name
 		plan.Added = added
 		plan.Duplicates = dupes
+		plan.Engine = engineNodes
 		s.store.LogEvent(pool.Name, "applied", fmt.Sprintf("пул из источника: %d конфигов", added))
 		for _, e := range plan.Engine {
 			s.store.LogEvent(pool.Name, "engine", fmt.Sprintf("узел %s (%s) ждёт движок sing-box", e.Tag, e.Type))
@@ -128,6 +132,38 @@ func (s *Server) createPoolFromSource(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		s.engine.CheckNow(pool.Name)
+		writeJSON(w, http.StatusOK, plan)
+		return
+	}
+
+	if len(engineNodes) > 0 {
+		settings := store.PoolSettings{
+			Platform: s.backend.Name(), Fallback: req.Fallback, ProbeHost: req.ProbeHost,
+			Source: req.Source, EngineMode: engineMode, TunName: s.allocTun(),
+		}
+		if err := s.validFallback(req.Name, settings.Fallback); err != nil {
+			writeErr(w, err)
+			return
+		}
+		pool, err := s.store.CreatePool(req.Name, settings)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		if err := s.writePoolNodes(pool.Name, res.Nodes); err != nil {
+			writeErr(w, err)
+			return
+		}
+		plan.Pool = pool.Name
+		plan.Engine = engineNodes
+		s.store.LogEvent(pool.Name, "applied", fmt.Sprintf("пул из источника: %d узлов в tun (%s)", len(res.Nodes), settings.TunName))
+		skipped, err := s.applyEngine()
+		plan.Skipped = append(plan.Skipped, skipped...)
+		if err != nil {
+			plan.Warnings = append(plan.Warnings, "движок не применил конфиг: "+err.Error())
+		}
+		writeJSON(w, http.StatusOK, plan)
+		return
 	}
 	writeJSON(w, http.StatusOK, plan)
 }

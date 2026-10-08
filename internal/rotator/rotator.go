@@ -456,7 +456,7 @@ func (e *Engine) checkPool(name string) {
 	e.actMu.Lock()
 	defer e.actMu.Unlock()
 	p, ok := e.store.Pool(name)
-	if !ok || p.Disabled {
+	if !ok || p.Disabled || p.Settings.EngineMode != "" {
 		return
 	}
 	st := e.store.State(name)

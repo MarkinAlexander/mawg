@@ -78,6 +78,8 @@ func (s *Store) saveLocked(path string, v any) error {
 func (s *Store) poolsDir() string  { return filepath.Join(s.base, "pools") }
 func (s *Store) backupDir() string { return filepath.Join(s.base, "backups") }
 
+func (s *Store) Base() string { return s.base }
+
 func (s *Store) PoolDir(name string) string { return filepath.Join(s.poolsDir(), name) }
 
 func (s *Store) Settings() Settings {

@@ -88,7 +88,9 @@ type PoolSettings struct {
 	KeeneticSlot       string `json:"keeneticSlot,omitempty"`
 	OpenwrtProto       string `json:"openwrtProto,omitempty"`
 	MagitrickleGroupID string `json:"magitrickleGroupID,omitempty"`
-	Source             string `json:"source,omitempty"` // URL/ссылка, из которой собраны конфиги пула (для цикла обновлений)
+	Source             string `json:"source,omitempty"`     // URL/ссылка, из которой собраны конфиги пула (для цикла обновлений)
+	EngineMode         string `json:"engineMode,omitempty"` // "singbox" - узлы пула в tun-интерфейсе движка, а не в нативном слоте
+	TunName            string `json:"tunName,omitempty"`
 }
 
 func (s PoolSettings) WithDefaults() PoolSettings {
