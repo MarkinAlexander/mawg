@@ -11,3 +11,6 @@ tools/
 *.pdf
 .idea/
 favicon/
+act.tmp.txt
+runs.tmp.json
+*.tmp.json
