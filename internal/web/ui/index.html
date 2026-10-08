@@ -221,7 +221,7 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
     </div>
     <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px">
       <div style="font-size:13px;margin-bottom:4px">Режим движка sing-box</div>
-      <div class="muted" style="font-size:11px;margin-bottom:6px">«Свой экземпляр» - mawg держит отдельный процесс sing-box (tun1+, mixed 2282+, clash 2291). «Общее ядро» - пулы mawg живут фрагментом mawg-pools.json рядом с config.json основного sing-box (сам config.json не меняется), применение = рестарт сервиса sing-box: соединения рвутся на несколько секунд. Пробы идут через clash_api основного ядра.</div>
+      <div class="muted" style="font-size:11px;margin-bottom:6px">«Свой экземпляр» - mawg держит отдельный процесс sing-box (tun1+, mixed 2282+, clash 2291). «Общее ядро» - пулы mawg живут фрагментом mawg-pools.json рядом с config.json основного sing-box (сам config.json не меняется), применение - горячее: lx-ядро перечитывает конфиг по SIGHUP, туннели и соединения не рвутся (на upstream-ядре - рестарт сервиса). Пробы идут через clash_api основного ядра.</div>
       <div class="btnrow" style="align-items:center">
         <select id="sbMode">
           <option value="own">свой экземпляр</option>

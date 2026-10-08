@@ -465,8 +465,45 @@ func (m *Manager) restartShared(timeout time.Duration) error {
 }
 
 func (m *Manager) sharedAlive() bool {
+	return len(m.sharedPids()) > 0
+}
+
+// sharedPids - pid'ы работающего ядра.
+func (m *Manager) sharedPids() []string {
 	out, err := exec.Command("pidof", filepath.Base(m.eng.Bin)).Output()
-	return err == nil && len(strings.Fields(string(out))) > 0
+	if err != nil {
+		return nil
+	}
+	return strings.Fields(string(out))
+}
+
+// reloadShared применяет конфиг без рестарта: lx-ядро (1.14) умеет
+// SIGHUP-перезачитывание - чужие туннели и соединения не рвутся. Upstream
+// 1.13.3 от SIGHUP умирал, поэтому там и при невыжившем процессе - рестарт.
+func (m *Manager) reloadShared(timeout time.Duration) error {
+	if !m.eng.LX {
+		return m.restartShared(timeout)
+	}
+	for _, p := range m.sharedPids() {
+		if n, conv := strconv.Atoi(p); conv == nil {
+			syscall.Kill(n, syscall.SIGHUP)
+		}
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(m.sharedPids()) == 0 {
+			break // сигнал убил процесс - честный рестарт
+		}
+		resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/version", m.clashBase()))
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return nil
+			}
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return m.restartShared(timeout)
 }
 
 // backupShared сохраняет config.json владельца перед каждым apply
@@ -545,7 +582,7 @@ func (m *Manager) applyShared(runnable []PoolSpec, skipped []string) ([]string, 
 		return skipped, err
 	}
 	m.sharedClash = facts.ClashPort
-	if err := m.restartShared(45 * time.Second); err != nil {
+	if err := m.reloadShared(45 * time.Second); err != nil {
 		m.restoreFragment(prev, hadPrev)
 		if rerr := m.checkShared(); rerr == nil {
 			_ = m.restartShared(45 * time.Second)
@@ -574,7 +611,13 @@ func (m *Manager) Apply(pools []PoolSpec) ([]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.stmu.Lock()
+	prevStatuses := m.statuses
 	m.statuses = map[string]*PoolStatus{}
+	for _, spec := range pools {
+		if st, ok := prevStatuses[spec.Name]; ok {
+			m.statuses[spec.Name] = st
+		}
+	}
 	m.stmu.Unlock()
 	if len(pools) == 0 {
 		if m.Mode == "shared" {
