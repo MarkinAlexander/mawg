@@ -1362,15 +1362,9 @@ type mtSnapshot struct {
 	err     error
 }
 
-// mtSnapshotCached - тяжёлый снимок MagiTrickle+Slots (ndmc exec, JSON,
-// регэкспы) не чаще раза в 30 секунд: вкладки панели опрашивают /mt/*
-// и без кэша каждая вкладка жгла десятки процентов CPU на softfloat-MIPS.
-// titles отдаётся копией: обработчики мутируют карту, шарить нельзя
-// (fatal concurrent map read and map write).
 // mtSnapshotCached - свежие группы + заголовки слотов. Сырой JSON групп
-// получаем на каждый вызов (дёшево), декод - только если хеш изменился:
-// кэш декода живёт вечно, пока данные не меняются. titles - копия,
-// обработчики мутируют карту.
+// получаем на каждый вызов (дёшево), декод - только если хеш изменился.
+// titles отдаётся копией: обработчики мутируют карту, шарить нельзя.
 func (s *Server) mtSnapshotCached() (groups []magitrickle.Group, titles map[string]string, err error) {
 	s.mtCacheMu.Lock()
 	defer s.mtCacheMu.Unlock()

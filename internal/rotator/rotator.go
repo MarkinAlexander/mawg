@@ -959,9 +959,9 @@ func (e *Engine) applyGroupChanges(key string, mutate func(groups []magitrickle.
 	return err
 }
 
-// magitrickле падает сам по себе; раз в тик набора проверяем живость и
-// поднимаем, если он работал и умер. заодно подтягиваем в тень правки из
-// UI magitrickle, если список не усечён.
+// magitrickle падает сам по себе; раз в тик проверяем живость и поднимаем,
+// если работал и умер. Заодно подтягиваем в тень правки из его UI, если
+// список не усечён.
 func (e *Engine) monitorMagitrickle() {
 	if e.mt == nil {
 		return
@@ -1234,17 +1234,14 @@ func (e *Engine) checkGroupPolicies() {
 			if !known || !origHealthy {
 				e.polOks[g.ID] = 0
 			}
-			// группа уже на исходном интерфейсе, а флаг degraded остался
-			// (MagiTrickle перезапускался или вернули руками): флаг устарел.
-			// Если исходный интерфейс нездоров - сразу переключаем по политике,
-			// иначе просто снимаем флаг. Иначе группа навсегда выпадает из
-			// обработки политик (ждёт "восстановления", которое не придет).
+			// флаг degraded устарел (группа уже на исходнике): без этой ветки
+			// группа ждёт "восстановления" вечно и выпадает из политик.
+			// Исходник нездоров - сразу переключаем, иначе снимаем флаг.
 			if dg.Mode == store.PolicyIface && g.Interface == dg.OrigIface {
 				if known && !origHealthy && pol.OnDead == store.PolicyIface &&
 					pol.Iface != "" && pol.Iface != g.Interface && g.Enable {
-					// clearDeg тут нельзя: pending ниже восстанавливает флаг
-					// (иначе он стёрся бы и обратного возврата на исходный
-					// интерфейс уже не случилось бы)
+					// clearDeg нельзя: pending ниже вернёт флаг (иначе
+					// потерялся бы обратный возврат на исходник)
 					acts[g.ID] = action{iface: pol.Iface}
 					pending[g.ID] = store.DegradedGroup{OrigIface: dg.OrigIface, Mode: store.PolicyIface}
 				} else {
