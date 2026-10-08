@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"net/http"
+	"os/exec"
 	"time"
 
 	"mawg/internal/singbox"
@@ -52,6 +53,15 @@ func (s *Server) installLXCore(w http.ResponseWriter, r *http.Request, flavor st
 	s.resetSB()
 	if len(s.enginePools()) > 0 {
 		go func() {
+			// в shared сервис мог не работать (установка с нуля): стартуем
+			// - start идемпотентен, работающий сервис не трогает
+			if s.store.SingboxMode() == "shared" {
+				_, initScript := s.sharedPaths()
+				out, err := exec.Command(initScript, "start").CombinedOutput()
+				if err != nil {
+					s.store.LogEvent("system", "lxcore", "сервис sing-box не стартовал ("+initScript+"): "+firstLine(string(out)))
+				}
+			}
 			skipped, err := s.applyEngine()
 			if err != nil {
 				s.store.LogEvent("singbox", "applied", "после установки lx движок не пересобран: "+err.Error())
