@@ -21,22 +21,23 @@ import (
 )
 
 type Manager struct {
-	mu            sync.Mutex
-	stmu          sync.Mutex
-	eng           *Engine
-	Dir           string
-	MixedPort     int
-	ClashPort     int
-	Mode          string
-	SharedDir     string
-	SharedInit    string
-	sharedClash   int
-	resolverTag   string // тег нашего dns-сервера во фрагменте (свободный у чужого конфига)
-	pid           int
-	probeLoopStop chan struct{}
-	lastSpecs     []PoolSpec
-	statuses      map[string]*PoolStatus
-	nodeCooldown  map[string]time.Time
+	mu              sync.Mutex
+	stmu            sync.Mutex
+	eng             *Engine
+	Dir             string
+	MixedPort       int
+	ClashPort       int
+	Mode            string
+	SharedDir       string
+	SharedInit      string
+	sharedClash     int
+	resolverTag     string // тег нашего dns-сервера во фрагменте (свободный у чужого конфига)
+	sharedCacheFile string
+	pid             int
+	probeLoopStop   chan struct{}
+	lastSpecs       []PoolSpec
+	statuses        map[string]*PoolStatus
+	nodeCooldown    map[string]time.Time
 }
 
 type RunConfig struct {
@@ -349,6 +350,7 @@ type sharedFacts struct {
 	Tuns      map[string]bool
 	Addrs     map[string]bool
 	DNSTags   map[string]bool
+	CacheFile string
 }
 
 // preflightShared разбирает чужой config.json: порт clash_api для проб и
@@ -366,8 +368,13 @@ func (m *Manager) preflightShared() (*sharedFacts, error) {
 			Servers []map[string]any `json:"servers"`
 		} `json:"dns"`
 		Experimental struct {
+			CacheFile struct {
+				Enabled bool   `json:"enabled"`
+				Path    string `json:"path"`
+			} `json:"cache_file"`
 			ClashAPI struct {
 				ExternalController string `json:"external_controller"`
+				CacheFile          string `json:"cache_file"`
 			} `json:"clash_api"`
 		} `json:"experimental"`
 	}
@@ -408,6 +415,14 @@ func (m *Manager) preflightShared() (*sharedFacts, error) {
 	}
 	if f.ClashPort == 0 {
 		f.ClashPort = m.sharedClash
+	}
+	if cfg.Experimental.CacheFile.Enabled {
+		f.CacheFile = cfg.Experimental.CacheFile.Path
+		if f.CacheFile == "" {
+			f.CacheFile = "cache.db в рабочем каталоге ядра"
+		}
+	} else if p := cfg.Experimental.ClashAPI.CacheFile; p != "" {
+		f.CacheFile = p
 	}
 	return f, nil
 }
@@ -466,6 +481,63 @@ func (m *Manager) restartShared(timeout time.Duration) error {
 
 func (m *Manager) sharedAlive() bool {
 	return len(m.sharedPids()) > 0
+}
+
+// SetCacheFile выключает кэш (off) или переносит его в /tmp (tmp); clash
+// носителя в /tmp: база пишется через mmap без остановки, на флешке это
+// постоянный износ. Конфиг правится с бэкапом, проверяется check-ом,
+// при провале - откат; применение через рестарт (bbolt открывает базу
+// на старте, горячего переезда пути она не умеет).
+func (m *Manager) SetCacheFile(mode string) (string, error) {
+	if m.Mode != "shared" {
+		return "", fmt.Errorf("управление кэшем нужно только в режиме общего ядра")
+	}
+	path := filepath.Join(m.SharedDir, "config.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	m.backupShared()
+	out, old, changed, err := editCacheFile(data, mode)
+	if err != nil {
+		return "", err
+	}
+	if !changed {
+		if mode == CacheModeOff {
+			return "", nil
+		}
+		m.sharedCacheFile = old
+		return old, nil
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, out, 0o600); err != nil {
+		return "", err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return "", err
+	}
+	if err := m.checkShared(); err != nil {
+		_ = os.WriteFile(path, data, 0o600)
+		return "", fmt.Errorf("check не прошёл, конфиг откачен: %v", err)
+	}
+	if mode == CacheModeTmp {
+		if err := os.MkdirAll(filepath.Dir(CacheTmpPath), 0o755); err != nil {
+			return "", err
+		}
+	}
+	if err := m.restartShared(45 * time.Second); err != nil {
+		_ = os.WriteFile(path, data, 0o600)
+		if rerr := m.checkShared(); rerr == nil {
+			_ = m.restartShared(45 * time.Second)
+		}
+		return "", fmt.Errorf("рестарт не удался, конфиг откачен: %v", err)
+	}
+	m.sharedCacheFile = ""
+	if mode == CacheModeTmp {
+		m.sharedCacheFile = CacheTmpPath
+	}
+	return "ок", nil
 }
 
 // sharedPids - pid'ы работающего ядра.
@@ -545,6 +617,7 @@ func (m *Manager) applyShared(runnable []PoolSpec, skipped []string) ([]string, 
 		return skipped, err
 	}
 	m.resolverTag = facts.resolverTag()
+	m.sharedCacheFile = facts.CacheFile
 	if facts.ClashPort == 0 {
 		return skipped, fmt.Errorf("в чужом config.json нет clash_api - пробы невозможны; включите clash_api или используйте свой экземпляр движка")
 	}
@@ -718,19 +791,20 @@ func (m *Manager) waitClash(timeout time.Duration) error {
 }
 
 type Status struct {
-	Running  bool   `json:"running"`
-	PID      int    `json:"pid,omitempty"`
-	Version  string `json:"version,omitempty"`
-	LX       bool   `json:"lx"`
-	Bin      string `json:"bin,omitempty"`
-	Mixed    int    `json:"mixedPort"`
-	Clash    int    `json:"clashPort"`
-	Mode     string `json:"mode"`
-	Fragment string `json:"fragment,omitempty"`
+	Running   bool   `json:"running"`
+	PID       int    `json:"pid,omitempty"`
+	Version   string `json:"version,omitempty"`
+	LX        bool   `json:"lx"`
+	Bin       string `json:"bin,omitempty"`
+	Mixed     int    `json:"mixedPort"`
+	Clash     int    `json:"clashPort"`
+	Mode      string `json:"mode"`
+	Fragment  string `json:"fragment,omitempty"`
+	CacheFile string `json:"cacheFile,omitempty"`
 }
 
 func (m *Manager) Status() Status {
-	st := Status{Version: m.eng.Version, LX: m.eng.LX, Bin: m.eng.Bin, Mixed: m.MixedPort, Clash: m.clashBase(), Mode: m.Mode}
+	st := Status{Version: m.eng.Version, LX: m.eng.LX, Bin: m.eng.Bin, Mixed: m.MixedPort, Clash: m.clashBase(), Mode: m.Mode, CacheFile: m.sharedCacheFile}
 	if m.Mode == "shared" {
 		st.Fragment = m.fragmentPath()
 		if m.sharedAlive() {

@@ -25,15 +25,16 @@ func NewManagerConfig(dir string, cfg RunConfig) (*Manager, error) {
 }
 
 type Status struct {
-	Running  bool   `json:"running"`
-	PID      int    `json:"pid,omitempty"`
-	Version  string `json:"version,omitempty"`
-	LX       bool   `json:"lx"`
-	Bin      string `json:"bin,omitempty"`
-	Mixed    int    `json:"mixedPort"`
-	Clash    int    `json:"clashPort"`
-	Mode     string `json:"mode"`
-	Fragment string `json:"fragment,omitempty"`
+	Running   bool   `json:"running"`
+	PID       int    `json:"pid,omitempty"`
+	Version   string `json:"version,omitempty"`
+	LX        bool   `json:"lx"`
+	Bin       string `json:"bin,omitempty"`
+	Mixed     int    `json:"mixedPort"`
+	Clash     int    `json:"clashPort"`
+	Mode      string `json:"mode"`
+	Fragment  string `json:"fragment,omitempty"`
+	CacheFile string `json:"cacheFile,omitempty"`
 }
 
 func (m *Manager) Info() Engine { return Engine{} }
@@ -42,6 +43,10 @@ func (m *Manager) Apply(pools []PoolSpec) ([]string, error) {
 	return nil, fmt.Errorf("движок sing-box доступен только на роутере")
 }
 func (m *Manager) Status() Status { return Status{} }
+
+func (m *Manager) SetCacheFile(mode string) (string, error) {
+	return "", fmt.Errorf("движок sing-box доступен только на роутере")
+}
 
 type PoolStatus struct {
 	Eligible    int       `json:"eligible"`

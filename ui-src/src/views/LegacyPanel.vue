@@ -107,6 +107,11 @@ onMounted(() => {
         <button class="primary" id="sbModeSave">применить</button>
         <span class="muted" style="font-size:11px" id="sbModeInfo"></span>
       </div>
+      <div class="btnrow" id="sbCacheRow" style="display:none;align-items:center">
+        <span class="muted" style="font-size:11px;flex:1" id="sbCacheText"></span>
+        <button class="primary" id="sbCacheOff">выключить кэш</button>
+        <button id="sbCacheTmp">в /tmp</button>
+      </div>
     </div>
   </div>
   <div class="card" id="setcard" style="margin-top:16px">

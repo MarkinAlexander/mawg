@@ -229,6 +229,13 @@ function updateSbMode() {
   parts.push(eng.running ? 'ядро работает' : 'ядро не отвечает');
   if (eng.mode === 'shared' && eng.fragment) parts.push(eng.fragment);
   info.textContent = parts.join(' | ');
+  const row = document.getElementById('sbCacheRow');
+  if (row) {
+    const onFlash = eng.mode === 'shared' && eng.cacheFile && !eng.cacheFile.startsWith('/tmp');
+    row.style.display = onFlash ? 'flex' : 'none';
+    if (onFlash) document.getElementById('sbCacheText').textContent =
+      'Кэш ядра пишется на флешку (' + eng.cacheFile + ') - постоянный износ ~170МБ/сутки. Выключить совсем: ничего не пишется, выборы сбрасываются при рестарте ядра. В /tmp: не пишется на флешку, выборы живут до ребута роутера.';
+  }
 }
 
 async function setSbMode() {
@@ -861,6 +868,21 @@ document.getElementById('wanSave').onclick = async () => {
 };
 
 document.getElementById('sbModeSave').onclick = setSbMode;
+
+const cacheAct = async mode => {
+  const texts = {
+    off: ['Выключить кэш ядра', 'Кэш будет выключен (experimental.cache_file.enabled = false): запись на флешку прекратится совсем. Ваш sing-box будет перезапущен - соединения коротко прервутся. Запомненные выборы селекторов сбросятся - urltest-пулы восстановятся сами.', 'Выключить'],
+    tmp: ['Перенести кэш ядра в /tmp', 'cache_file переедет в /tmp/sing-box/cache.db: на флешку писаться перестанет, выборы живут до ребута роутера. Ваш sing-box будет перезапущен - соединения коротко прервутся.', 'Перенести'],
+  }[mode];
+  if (!(await askModal(texts[0], texts[1], texts[2]))) return;
+  try {
+    await api('POST', '/singbox/cache-file', { mode });
+    toast(mode === 'off' ? 'Кэш ядра выключен - запись на флешку прекращена' : 'Кэш перенесён в /tmp');
+    refresh();
+  } catch (e) { toast(e.message, true); }
+};
+document.getElementById('sbCacheOff').onclick = () => cacheAct('off');
+document.getElementById('sbCacheTmp').onclick = () => cacheAct('tmp');
 
 let polSaved = { fail: null, restore: null };
 function polCyclesValid() {

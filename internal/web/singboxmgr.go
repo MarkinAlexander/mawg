@@ -99,6 +99,37 @@ func (s *Server) postSingboxMode(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// postCacheFile выключает (mode "off") или переносит в /tmp (mode "tmp")
+// clash cache_file общего ядра: база пишет себя через mmap постоянно
+// и изнашивает флешку.
+func (s *Server) postCacheFile(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Mode string `json:"mode"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, err)
+		return
+	}
+	if req.Mode != singbox.CacheModeOff && req.Mode != singbox.CacheModeTmp {
+		writeErr(w, fmt.Errorf("mode должен быть off или tmp"))
+		return
+	}
+	mgr, err := s.sb()
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if _, err := mgr.SetCacheFile(req.Mode); err != nil {
+		s.store.LogEvent("singbox", "cachefile", "управление cache_file не удалось: "+err.Error())
+		writeErr(w, err)
+		return
+	}
+	verb := map[string]string{singbox.CacheModeOff: "выключен (запись ядра на флешку прекращена)",
+		singbox.CacheModeTmp: "перенесён в " + singbox.CacheTmpPath}[req.Mode]
+	s.store.LogEvent("singbox", "cachefile", "clash cache_file "+verb)
+	writeJSON(w, http.StatusOK, map[string]string{"ok": req.Mode})
+}
+
 // RestoreEngine при старте mawg приводит движок к текущим пулам: без этого
 // после рестарта mawg пулы висят в «не применял конфиг» без проб (в shared
 // фрагмент на диске уже верный, но статусы и пробы пустые).
