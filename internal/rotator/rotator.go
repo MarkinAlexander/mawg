@@ -1228,6 +1228,24 @@ func (e *Engine) checkGroupPolicies() {
 				continue
 			}
 			origHealthy, known := health[dg.OrigIface]
+			// группа уже на исходном интерфейсе, а флаг degraded остался
+			// (MagiTrickle перезапускался или вернули руками): флаг устарел.
+			// Если исходный интерфейс нездоров - сразу переключаем по политике,
+			// иначе просто снимаем флаг. Иначе группа навсегда выпадает из
+			// обработки политик (ждёт "восстановления", которое не придет).
+			if dg.Mode == store.PolicyIface && g.Interface == dg.OrigIface {
+				if known && !origHealthy && pol.OnDead == store.PolicyIface &&
+					pol.Iface != "" && pol.Iface != g.Interface && g.Enable {
+					// clearDeg тут нельзя: pending ниже восстанавливает флаг
+					// (иначе он стёрся бы и обратного возврата на исходный
+					// интерфейс уже не случилось бы)
+					acts[g.ID] = action{iface: pol.Iface}
+					pending[g.ID] = store.DegradedGroup{OrigIface: dg.OrigIface, Mode: store.PolicyIface}
+				} else {
+					acts[g.ID] = action{clearDeg: true}
+				}
+				continue
+			}
 			if !known || !origHealthy {
 				continue
 			}
