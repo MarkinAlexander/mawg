@@ -4,6 +4,9 @@
 #   [--with-magitrickle] [--without-magitrickle] [--with-awg3]
 # по умолчанию: определить платформу, проверить зависимости (спросить при
 # необходимости), скачать бинарник последнего релиза, поставить сервис.
+# MAWG_DEBUG=1 - печатать тайминги шагов (в stderr).
+# Обновление (-u) не вызывает apk/opkg вовсе: скачивание существующим
+# curl или wget; пакетный менеджер нужен только если fetcher-а нет вообще.
 
 set -u
 
@@ -13,10 +16,21 @@ TMP="/tmp/mawg-install.$$"
 MODE="install"
 WANT_MT="ask"
 WANT_AWG3="no"
+DEBUG="${MAWG_DEBUG:-0}"
+PKG_MANAGER=""
+FETCHER=""
+START_TS=$(date +%s)
+STEP_TS=$START_TS
 
 say() { echo "== $*"; }
 warn() { echo "-- ВНИМАНИЕ: $*" >&2; }
 die() { echo "ОШИБКА: $*" >&2; rm -rf "$TMP"; exit 1; }
+mark() {
+    [ "$DEBUG" = 1 ] || return 0
+    now=$(date +%s)
+    echo "[debug] $* : $((now - STEP_TS))с (всего $((now - START_TS))с)" >&2
+    STEP_TS=$now
+}
 
 for arg in "$@"; do
     case "$arg" in
@@ -26,26 +40,10 @@ for arg in "$@"; do
         --with-magitrickle) WANT_MT="yes";;
         --without-magitrickle) WANT_MT="no";;
         --with-awg3) WANT_AWG3="yes";;
-        -h|--help) sed -n '2,6p' "$0"; exit 0;;
+        -h|--help) sed -n '2,9p' "$0"; exit 0;;
         *) die "неизвестный аргумент $arg (см. --help)";;
     esac
 done
-
-fetch() {
-    if command -v curl >/dev/null 2>&1; then
-        curl -fsSL "$1" -o "$2"
-    elif command -v wget >/dev/null 2>&1; then
-        wget -qO "$2" "$1"
-    else
-        die "нужен curl или wget"
-    fi
-}
-
-fetch_ok() {
-    command -v curl >/dev/null 2>&1 && return 0
-    command -v wget >/dev/null 2>&1 && wget -q --spider https://github.com >/dev/null 2>&1 && return 0
-    return 1
-}
 
 detect_pkg_manager() {
     if [ "$PLATFORM" = keenetic ]; then
@@ -59,6 +57,11 @@ detect_pkg_manager() {
     else
         die "не найден пакетный менеджер apk или opkg"
     fi
+}
+
+need_pkg() {
+    [ -n "$PKG_MANAGER" ] && return 0
+    PKG_MANAGER=$(detect_pkg_manager)
 }
 
 pkg_update() { "$PKG_MANAGER" update; }
@@ -77,12 +80,35 @@ pkg_installed() {
     esac
 }
 
-ensure_fetch() {
-    fetch_ok && return 0
-    say "wget не умеет https, устанавливаю curl"
+pick_fetcher() {
+    if command -v curl >/dev/null 2>&1; then
+        echo curl
+    elif command -v wget >/dev/null 2>&1; then
+        echo wget
+    fi
+}
+
+do_fetch() {
+    if [ "$FETCHER" = curl ]; then
+        curl -fsSL "$1" -o "$2"
+    else
+        wget -qO "$2" "$1"
+    fi
+}
+
+ensure_fetcher() {
+    FETCHER=$(pick_fetcher)
+    if [ -n "$FETCHER" ]; then
+        mark "fetcher: $FETCHER"
+        return 0
+    fi
+    need_pkg
+    say "нет curl и wget, ставлю curl через $PKG_MANAGER (один $PKG_MANAGER update)"
     pkg_update >/dev/null 2>&1
     pkg_install curl >/dev/null 2>&1
-    fetch_ok || die "нужен curl или wget с https (установка curl через $PKG_MANAGER не удалась)"
+    FETCHER=$(pick_fetcher)
+    [ "$FETCHER" = curl ] || die "нужен curl или wget с https (установка curl через $PKG_MANAGER не удалась)"
+    mark "установка curl"
 }
 
 ask() {
@@ -256,10 +282,15 @@ if [ "$MODE" = remove ] || [ "$MODE" = purge ]; then
     exit 0
 fi
 
-PKG_MANAGER=$(detect_pkg_manager) || exit 1
-say "платформа: $PLATFORM, архитектура: $ARCH, пакеты: $PKG_MANAGER"
+if [ "$MODE" = install ]; then
+    need_pkg
+    say "платформа: $PLATFORM, архитектура: $ARCH, пакеты: $PKG_MANAGER"
+else
+    say "платформа: $PLATFORM, архитектура: $ARCH, обновление"
+fi
+mark "определение платформы"
 
-ensure_fetch
+ensure_fetcher
 mkdir -p "$TMP" || die "не создать $TMP"
 
 if [ "$MODE" = install ]; then
@@ -267,6 +298,7 @@ if [ "$MODE" = install ]; then
     say "$PKG_MANAGER update"
     pkg_update >/dev/null 2>&1 && pkg_update_ok=1
     [ "$pkg_update_ok" = 1 ] || warn "$PKG_MANAGER update не удался, продолжаю без него"
+    mark "$PKG_MANAGER update"
 
     if [ "$PLATFORM" = keenetic ]; then
         say "проверка компонента WireGuard"
@@ -298,7 +330,7 @@ if [ "$MODE" = install ]; then
             say "обновление до AmneziaWG 3.1 (репозиторий Slava-Shchipunov)"
             warn "заменяет kmod, после установки потребуется перезагрузка роутера"
             if ask "продолжить обновление AmneziaWG до 3.1"; then
-                fetch "https://raw.githubusercontent.com/2Grey/awg-openwrt/refs/heads/master/amneziawg-install.sh" "$TMP/awg.sh" \
+                do_fetch "https://raw.githubusercontent.com/2Grey/awg-openwrt/refs/heads/master/amneziawg-install.sh" "$TMP/awg.sh" \
                     && sh "$TMP/awg.sh" -e -n < /dev/null \
                     || warn "обновление AWG не удалось, смотрите вывод выше"
                 warn "перезагрузите роутер после установки"
@@ -323,7 +355,7 @@ if [ "$MODE" = install ]; then
         fi
         if [ "$do_mt" = yes ] && [ "$pkg_update_ok" = 1 ]; then
             say "установка MagiTrickle"
-            fetch "http://bin.magitrickle.dev/packages/add_repo.sh" "$TMP/mt.sh" || warn "не удалось скачать add_repo.sh"
+            do_fetch "http://bin.magitrickle.dev/packages/add_repo.sh" "$TMP/mt.sh" || warn "не удалось скачать add_repo.sh"
             if [ -s "$TMP/mt.sh" ]; then
                 if ! sh "$TMP/mt.sh" >/dev/null 2>&1 || ! pkg_update >/dev/null 2>&1; then
                     warn "не удалось добавить или обновить репозиторий MagiTrickle"
@@ -347,8 +379,22 @@ say "загрузка mawg-linux-$ARCH"
 if [ -n "${MAWG_BINARY:-}" ]; then
     cp "$MAWG_BINARY" "$TMP/mawg" || die "не удалось скопировать MAWG_BINARY=$MAWG_BINARY"
 else
-    fetch "$DL_BASE/mawg-linux-$ARCH" "$TMP/mawg" || die "не удалось скачать mawg-linux-$ARCH (релизы: https://github.com/$REPO/releases)"
-    if fetch "$DL_BASE/sha256sum.txt" "$TMP/sha256sum.txt" 2>/dev/null; then
+    if ! do_fetch "$DL_BASE/mawg-linux-$ARCH" "$TMP/mawg"; then
+        rm -f "$TMP/mawg"
+        if [ "$MODE" = install ] && [ "$FETCHER" = wget ] && [ -z "${MAWG_BINARY:-}" ]; then
+            warn "wget не смог скачать (возможно, не умеет https), ставлю curl и пробую снова"
+            need_pkg
+            pkg_update >/dev/null 2>&1
+            pkg_install curl >/dev/null 2>&1
+            FETCHER=$(pick_fetcher)
+            do_fetch "$DL_BASE/mawg-linux-$ARCH" "$TMP/mawg" \
+                || die "не удалось скачать mawg-linux-$ARCH (релизы: https://github.com/$REPO/releases)"
+        else
+            die "не удалось скачать mawg-linux-$ARCH wget-ом (релизы: https://github.com/$REPO/releases). Если wget не умеет https - поставьте curl и запустите снова"
+        fi
+    fi
+    mark "скачивание бинарника"
+    if do_fetch "$DL_BASE/sha256sum.txt" "$TMP/sha256sum.txt" 2>/dev/null; then
         want=$(grep "mawg-linux-$ARCH\$" "$TMP/sha256sum.txt" | awk '{print $1}')
         got=$(sha256sum "$TMP/mawg" | awk '{print $1}')
         if [ -z "$want" ]; then
@@ -361,12 +407,14 @@ else
     else
         warn "sha256sum.txt недоступен, проверка суммы пропущена"
     fi
+    mark "проверка checksum"
 fi
 size=$(wc -c < "$TMP/mawg" 2>/dev/null || echo 0)
 [ "$size" -gt 500000 ] || die "скачанный файл подозрительно мал ($size байт)"
 
 say "установка $BIN"
 svc_stop
+mark "остановка сервиса"
 mv "$TMP/mawg" "$BIN" || die "не удалось записать $BIN"
 chmod +x "$BIN"
 mkdir -p "$DATA"
@@ -379,6 +427,7 @@ fi
 
 svc_start
 sleep 1
+mark "запуск сервиса"
 if [ "$PLATFORM" = openwrt ]; then
     pgrep -f /usr/bin/mawg >/dev/null 2>&1 || warn "mawg не запустился, смотрите $LOG"
 else

@@ -125,7 +125,7 @@ func (f installerFixture) run(t *testing.T, suffix string) installerResult {
 	script := definitions + packageCommands + "\nPLATFORM=openwrt\n"
 	script += "TMP=" + shellQuote(filepath.Join(dir, "tmp")) + "\nmkdir -p \"$TMP\"\n"
 	script += "WANT_MT=" + wantMT + "\n"
-	script += "fetch() { printf '#!/bin/sh\\nexit %s\\n' \"$MOCK_REPO_STATUS\" > \"$2\"; }\n"
+	script += "do_fetch() { printf '#!/bin/sh\\nexit %s\\n' \"$MOCK_REPO_STATUS\" > \"$2\"; }\n"
 	script += "PKG_MANAGER=$(detect_pkg_manager) || exit 1\n" + suffix
 	output, runErr := runShell(t, script,
 		fmt.Sprintf("MOCK_APK=%d", boolInt(f.apk)), fmt.Sprintf("MOCK_OPKG=%d", boolInt(f.opkg)),
@@ -149,8 +149,9 @@ func boolInt(value bool) int {
 func dependencyChecks(t *testing.T) string {
 	t.Helper()
 	source := installerSource(t)
-	return "if [ \"$MODE\" = install ]; then" + before(t,
-		after(t, source, "if [ \"$MODE\" = install ]; then"), "\nsay \"загрузка mawg-linux-$ARCH\"")
+	marker := "if [ \"$MODE\" = install ]; then\n    pkg_update_ok=0"
+	return marker + before(t,
+		after(t, source, marker), "\nsay \"загрузка mawg-linux-$ARCH\"")
 }
 
 func TestInstallerPackageManagers(t *testing.T) {
@@ -244,7 +245,23 @@ func TestInstallerFetchBootstrap(t *testing.T) {
 			if manager == "apk" {
 				verb = "add"
 			}
-			script := fmt.Sprintf("fetch_ok() { grep -q '%s %s curl' \"$PKG_LOG\" 2>/dev/null; }\nensure_fetch", manager, verb)
+			script := fmt.Sprintf(`
+command() {
+    case "$*" in
+        "-v curl") test "${MOCK_CURL:-0}" = 1;;
+        "-v wget") return 1;;
+        "-v apk") test "$MOCK_APK" = 1;;
+        "-v opkg") test "$MOCK_OPKG" = 1;;
+        *) builtin command "$@";;
+    esac
+}
+%[1]s() {
+    printf '%%s %%s\n' %[1]s "$*" >> "$PKG_LOG"
+    case "$*" in *curl*) export MOCK_CURL=1;; esac
+    return 0
+}
+ensure_fetcher
+`, manager)
 			result := (installerFixture{apk: manager == "apk", opkg: manager == "opkg"}).run(t, script)
 			if result.err != nil || !strings.Contains(result.calls, manager+" "+verb+" curl") {
 				t.Fatalf("bootstrap failure: %v\n%s\n%s", result.err, result.output, result.calls)
@@ -264,6 +281,47 @@ func TestInstallerAPKMIPSEndianness(t *testing.T) {
 	}
 }
 
+func TestInstallerUpdateModeSkipsPackageManager(t *testing.T) {
+	source := installerSource(t)
+	definitions := before(t, source, "\nPLATFORM=$(detect_platform)")
+	download := before(t, after(t, source, "\nsay \"загрузка mawg-linux-$ARCH\""), "\nsize=$(wc -c")
+	dir := t.TempDir()
+	log := filepath.Join(dir, "calls.log")
+	script := definitions + packageCommands + "\nPLATFORM=openwrt\nMODE=update\nARCH=arm64\n"
+	script += "TMP=" + shellQuote(filepath.Join(dir, "tmp")) + "\nmkdir -p \"$TMP\"\n"
+	script += `
+command() {
+    case "$*" in
+        "-v curl") return 1;;
+        "-v wget") return 0;;
+        *) builtin command "$@";;
+    esac
+}
+wget() {
+    printf 'wget %s\n' "$*" >> "$PKG_LOG"
+    printf 'fake-mawg-binary' > "$2"
+}
+ensure_fetcher
+` + download
+	output, err := runShell(t, script, "PKG_LOG="+filepath.ToSlash(log), "MAWG_DEBUG=1")
+	if err != nil {
+		t.Fatalf("update через wget не прошёл: %v\n%s", err, output)
+	}
+	calls, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(calls), "apk") || strings.Contains(string(calls), "opkg") {
+		t.Fatalf("update-режим не должен вызывать пакетный менеджер: %s", calls)
+	}
+	if !strings.Contains(string(calls), "wget") {
+		t.Fatalf("скачивание должно идти wget-ом: %s", calls)
+	}
+	if !strings.Contains(output, "[debug]") {
+		t.Fatalf("MAWG_DEBUG=1 должен печатать тайминги: %s", output)
+	}
+}
+
 func TestInstallerLocalBinary(t *testing.T) {
 	source := installerSource(t)
 	definitions := before(t, source, "\nPLATFORM=$(detect_platform)")
@@ -275,7 +333,7 @@ func TestInstallerLocalBinary(t *testing.T) {
 		t.Fatal(err)
 	}
 	script := definitions + "\nARCH=arm64\nTMP=" + shellQuote(filepath.Join(dir, "tmp")) + "\nmkdir -p \"$TMP\"\n"
-	script += "fetch() { return 1; }\n" + download
+	script += "do_fetch() { return 1; }\n" + download
 	output, err := runShell(t, script, "MAWG_BINARY="+filepath.ToSlash(binary))
 	if err != nil {
 		t.Fatalf("local binary installation failed: %v\n%s", err, output)
