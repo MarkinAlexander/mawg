@@ -122,6 +122,11 @@ func (s *Server) createPoolFromSource(w http.ResponseWriter, r *http.Request) {
 		for _, e := range plan.Engine {
 			s.store.LogEvent(pool.Name, "engine", fmt.Sprintf("узел %s (%s) ждёт движок sing-box", e.Tag, e.Type))
 		}
+		if p, ok := s.store.Pool(pool.Name); ok && len(p.Configs) > 0 {
+			if err := s.engine.SetActive(pool.Name, p.Configs[0].File); err != nil {
+				plan.Warnings = append(plan.Warnings, "не активирован: "+err.Error())
+			}
+		}
 		s.engine.CheckNow(pool.Name)
 	}
 	writeJSON(w, http.StatusOK, plan)
