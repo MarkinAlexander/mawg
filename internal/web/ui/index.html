@@ -2686,6 +2686,7 @@ async function refreshLog() {
       `<div>[${fmtTime(ev.time)}] ${ev.pool}: <span class="k-${ev.kind}">${ev.kind}</span> ${ev.message}</div>`
     ).join('');
     if (stick) log.scrollTop = log.scrollHeight;
+    if (evs.some(ev => ev.kind === 'policy')) refreshRules(false);
   } catch {}
 }
 
@@ -2694,6 +2695,7 @@ function startPanel() {
   setInterval(refreshLog, 15000);
   setInterval(() => { refreshMT(); loadSlots(); }, 30000);
   setInterval(() => refreshSystem(false), 60000);
+  setInterval(() => refreshRules(false), 30000);
   setInterval(fillIfaceSelects, 60000);
   setInterval(() => refreshIfaces(false), 30000);
   setInterval(() => refreshBundles(false), 30000);

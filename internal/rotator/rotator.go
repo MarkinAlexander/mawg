@@ -51,6 +51,7 @@ type Engine struct {
 	casc     *cascade.Manager
 	tickN    int
 	polFails map[string]int
+	polOks   map[string]int
 }
 
 const probeStatusTTL = 30 * time.Second
@@ -96,6 +97,7 @@ func New(st *store.Store, b platform.Backend, mt *magitrickle.Client) *Engine {
 		probeBusy:   map[string]bool{},
 		tunnelAddrs: map[string]string{},
 		polFails:    map[string]int{},
+		polOks:      map[string]int{},
 	}
 	if mt != nil {
 		e.casc = cascade.New(st, mt)
@@ -1228,6 +1230,9 @@ func (e *Engine) checkGroupPolicies() {
 				continue
 			}
 			origHealthy, known := health[dg.OrigIface]
+			if !known || !origHealthy {
+				e.polOks[g.ID] = 0
+			}
 			// группа уже на исходном интерфейсе, а флаг degraded остался
 			// (MagiTrickle перезапускался или вернули руками): флаг устарел.
 			// Если исходный интерфейс нездоров - сразу переключаем по политике,
@@ -1249,6 +1254,12 @@ func (e *Engine) checkGroupPolicies() {
 			if !known || !origHealthy {
 				continue
 			}
+			// возврат на исходник - с двухцикловой выдержкой, чтобы
+			// лоскочущий вокруг порога интерфейс не дёргал группы
+			e.polOks[g.ID]++
+			if e.polOks[g.ID] < 2 {
+				continue
+			}
 			if dg.Mode == store.PolicyDirect {
 				if !g.Enable {
 					acts[g.ID] = action{enable: true, clearDeg: true}
@@ -1263,8 +1274,10 @@ func (e *Engine) checkGroupPolicies() {
 		healthy, known := health[g.Interface]
 		if !known || healthy {
 			e.polFails[g.ID] = 0
+			e.polOks[g.ID] = 0
 			continue
 		}
+		e.polOks[g.ID] = 0
 		e.polFails[g.ID]++
 		if e.polFails[g.ID] < 2 {
 			continue
