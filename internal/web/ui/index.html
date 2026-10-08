@@ -56,6 +56,8 @@ th { color: var(--dim); font-weight: normal; }
 /* заголовки и короткие колонки системной таблицы не рвутся посреди слова */
 #systable th, #systable td:nth-child(2), #systable td:nth-child(3) { white-space: nowrap; word-break: normal; }
 #systable td:first-child { word-break: break-word; }
+.spin { width: 18px; height: 18px; flex: none; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: mawgspin 0.8s linear infinite; display: inline-block; }
+@keyframes mawgspin { to { transform: rotate(360deg); } }
 .drop { border: 1px dashed var(--border); border-radius: 8px; padding: 14px; text-align: center; color: var(--dim); margin-top: 10px; cursor: pointer; }
 .drop.hover { border-color: var(--accent); color: var(--accent); }
 dialog { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 18px; min-width: 360px; max-width: min(92vw, 480px); max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); overflow-y: auto; overflow-x: hidden; }
@@ -507,10 +509,10 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
 </dialog>
 
 <dialog id="dlgLx">
-  <form method="dialog" style="display:grid; gap:8px; min-width:440px; max-width:620px">
+  <form method="dialog" style="display:grid; gap:8px; min-width:440px">
     <h3 style="margin:0" id="lxTitle">Ядро sing-box-lx</h3>
     <div id="lxText" style="font-size:13px;white-space:pre-line;line-height:1.5"></div>
-    <label class="f">Профиль сборки
+    <label class="f" id="lxFlavorLabel">Профиль сборки
       <select id="lxFlavor">
         <option value="plain">plain - обычный бинарь: быстрый старт, много места (на mips ~90 МБ)</option>
         <option value="upx">upx - сжатый: в ~4 раза меньше на диске, старт дольше и RAM больше (opt-in)</option>
@@ -521,17 +523,21 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
       <span id="lxBackupText" style="font-size:12px"></span>
     </div>
     <div class="muted" id="lxNote" style="font-size:11px"></div>
+    <div class="f" id="lxProgress" style="display:none;align-items:center;gap:10px;font-size:13px;line-height:1.5">
+      <span class="spin"></span>
+      <span>Идёт установка: качается релиз (~30-90 МБ), проверяется контрольная сумма, прогоняется тест-запуск. Это занимает до пары минут - не закрывайте панель.</span>
+    </div>
     <div class="btnrow" style="justify-content:end;margin:0">
-      <button value="cancel">Отмена</button>
+      <button value="cancel" id="lxCancel">Отмена</button>
       <button class="primary" id="lxGo">Установить</button>
     </div>
   </form>
 </dialog>
 
-<dialog id="dlgResult">
-  <form method="dialog" style="display:grid; gap:10px; min-width:460px; max-width:640px">
+<dialog id="dlgResult" style="max-width:min(92vw,660px)">
+  <form method="dialog" style="display:grid; gap:10px; min-width:460px">
     <h3 style="margin:0" id="rsTitle">Результат</h3>
-    <pre id="rsOut" style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;font:11.5px/1.5 ui-monospace,monospace;margin:0;white-space:pre-wrap;word-break:break-word"></pre>
+    <pre id="rsOut" style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;font:11.5px/1.55 ui-monospace,monospace;margin:0;white-space:pre-wrap;word-break:break-word;max-height:55vh;overflow:auto"></pre>
     <div class="btnrow" style="justify-content:end;margin:0">
       <button class="primary" value="ok">Закрыть</button>
     </div>
@@ -2722,8 +2728,21 @@ async function installComp(id, btn) {
 
 // диалог установки lx-ядра: профиль plain/upx и - для замены чужого -
 // сохранять ли старое ядро (выбор по свободному месту)
+let lxInstalling = false;
+dlgLx.addEventListener('cancel', e => { if (lxInstalling) e.preventDefault(); });
+function setLxFormVisible(show) {
+  document.getElementById('lxText').style.display = show ? '' : 'none';
+  document.getElementById('lxFlavorLabel').style.display = show ? '' : 'none';
+  document.getElementById('lxBackupRow').style.display = show ? 'flex' : 'none';
+  document.getElementById('lxNote').style.display = show ? '' : 'none';
+  document.getElementById('lxProgress').style.display = show ? 'none' : 'flex';
+  document.getElementById('lxGo').disabled = !show;
+  document.getElementById('lxCancel').disabled = !show;
+}
 function openLxDialog(item, btn) {
   const mb = b => (b / 1048576).toFixed(0) + ' МБ';
+  lxInstalling = false;
+  setLxFormVisible(true);
   $('#lxTitle').textContent = (item.actionLabel || 'Установить') + ' - ядро sing-box-lx';
   $('#lxText').textContent = item.confirm || '';
   $('#lxNote').textContent = item.note || '';
@@ -2747,12 +2766,12 @@ function openLxDialog(item, btn) {
   dlgLx.showModal();
 }
 $('#lxFlavor').onchange = e => { $('#lxGo').dataset.flavor = e.target.value; };
-document.querySelector('#dlgLx button[value=cancel]').onclick = () => dlgLx.close();
+document.getElementById('lxCancel').onclick = () => { if (!lxInstalling) dlgLx.close(); };
 $('#lxGo').onclick = async e => {
   e.preventDefault();
-  const btn = document.querySelector('#systable button[data-inst="singbox-lx"]');
-  const label = btn ? btn.textContent : '';
-  if (btn) { btn.disabled = true; btn.textContent = 'установка...'; }
+  if (lxInstalling) return;
+  lxInstalling = true;
+  setLxFormVisible(false);
   let res;
   try {
     res = await fetch('/api/v1/system/install', {
@@ -2760,15 +2779,14 @@ $('#lxGo').onclick = async e => {
       body: JSON.stringify({ id: 'singbox-lx', flavor: $('#lxGo').dataset.flavor || 'plain', backup: $('#lxBackup').checked })
     }).then(x => x.json());
   } catch (err) {
-    if (btn) { btn.disabled = false; btn.textContent = label; }
-    dlgLx.close();
+    lxInstalling = false;
+    setLxFormVisible(true);
     return showResult(false, '', err.message);
   }
-  if (btn) { btn.disabled = false; btn.textContent = label; }
+  const ok = !!res.ok;
+  lxInstalling = false;
   dlgLx.close();
-  showResult(!!res.ok, res.output, res.ok ? '' : (res.error || 'неизвестная ошибка'));
-  lastSysJSON = '';
-  refreshSystem(true);
+  showResult(ok, res.output, ok ? '' : (res.error || 'неизвестная ошибка'));
 };
 
 async function refreshRCIToken() {
