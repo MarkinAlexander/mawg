@@ -240,6 +240,10 @@ func (m *Manager) Apply(pools []PoolSpec) ([]string, error) {
 	m.lastSpecs = runnable
 	for _, spec := range runnable {
 		m.probeSpec(spec)
+		if st, ok := m.PoolStatus(spec.Name); ok && !st.ProbeOK {
+			time.Sleep(2 * time.Second)
+			m.probeSpec(spec)
+		}
 	}
 	return skipped, nil
 }
