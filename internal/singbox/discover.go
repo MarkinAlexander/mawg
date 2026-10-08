@@ -40,6 +40,16 @@ type Release struct {
 	SHA256SUM bool               `json:"sha256sums"`
 	Assets    int                `json:"assets"`
 	Matrix    map[string]Flavors `json:"matrix"`
+	// Names - имена и размеры ассетов по архитектуре, для скачивания
+	Names map[string]FlavorAssets `json:"-"`
+}
+
+// FlavorAssets - имена файлов plain/upx ассета одной архитектуры.
+type FlavorAssets struct {
+	Plain   string
+	PlainSz int64
+	UPX     string
+	UPXSz   int64
 }
 
 type SourceReport struct {
@@ -115,7 +125,7 @@ func fetchReleases(ctx context.Context, src Source) ([]Release, error) {
 func buildRelease(r ghRelease) Release {
 	rel := Release{
 		Tag: r.TagName, URL: r.HTMLURL, Published: r.Published,
-		Assets: len(r.Assets), Matrix: map[string]Flavors{},
+		Assets: len(r.Assets), Matrix: map[string]Flavors{}, Names: map[string]FlavorAssets{},
 	}
 	for _, a := range r.Assets {
 		if a.Name == "SHA256SUMS" {
@@ -127,12 +137,16 @@ func buildRelease(r ghRelease) Release {
 			continue
 		}
 		f := rel.Matrix[arch]
+		n := rel.Names[arch]
 		if upx {
 			f.UPX = true
+			n.UPX, n.UPXSz = a.Name, a.Size
 		} else {
 			f.Plain = true
+			n.Plain, n.PlainSz = a.Name, a.Size
 		}
 		rel.Matrix[arch] = f
+		rel.Names[arch] = n
 	}
 	return rel
 }
