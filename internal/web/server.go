@@ -381,6 +381,30 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 			Rotations: st.Rotations, Disabled: p.Disabled, ConsecFails: st.ConsecFails, Settings: p.Settings,
 			Configs: []configView{},
 		}
+		if p.Settings.EngineMode == engineMode {
+			switch {
+			case func() bool { _, err := s.sb(); return err != nil }():
+				view.Mode, view.LastResult = "fallback", "движок недоступен"
+			default:
+				if mgr, err := s.sb(); err == nil {
+					if ps, ok := mgr.PoolStatus(p.Name); ok {
+						switch {
+						case ps.Reason == "waits-lx":
+							view.Mode, view.LastResult = "fallback", "узлы ждут lx-ядро: "+ps.Detail
+						case ps.CheckedAt.IsZero():
+							view.Mode, view.LastResult = "fallback", "проба ещё не выполнялась"
+						case ps.ProbeOK:
+							view.Mode = "up"
+							view.LastResult = fmt.Sprintf("ok (http %dms)", ps.ProbeMs)
+						default:
+							view.Mode, view.LastResult = "fallback", "проба не прошла: "+ps.ProbeErr
+						}
+					} else {
+						view.Mode, view.LastResult = "fallback", "движок не применял конфиг"
+					}
+				}
+			}
+		}
 		now := time.Now().Unix()
 		for _, c := range p.Configs {
 			cv := configView{File: c.File, Original: c.Original, Endpoint: c.Endpoint, Enabled: c.Enabled}
@@ -407,11 +431,18 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 			if n, err := strconv.Atoi(strings.TrimPrefix(p.Settings.TunName, "tun")); err == nil && n > 0 {
 				idx = n
 			}
-			tuns = append(tuns, map[string]any{
+			entry := map[string]any{
 				"pool": p.Name, "tun": p.Settings.TunName,
 				"disabled": p.Disabled, "nodes": nodes,
 				"probePort": st.Mixed + 1 + idx - 1,
-			})
+			}
+			if ps, ok := mgr.PoolStatus(p.Name); ok {
+				entry["probeOk"] = ps.ProbeOK
+				entry["probeMs"] = ps.ProbeMs
+				entry["probeErr"] = ps.ProbeErr
+				entry["reason"] = ps.Reason
+			}
+			tuns = append(tuns, entry)
 		}
 		out.Engine = map[string]any{
 			"available": true, "running": st.Running, "version": st.Version,

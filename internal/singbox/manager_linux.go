@@ -3,11 +3,14 @@
 package singbox
 
 import (
+	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -15,11 +18,14 @@ import (
 
 type Manager struct {
 	mu        sync.Mutex
+	stmu      sync.Mutex
 	eng       *Engine
 	Dir       string
 	MixedPort int
 	ClashPort int
 	pid       int
+	lastSpecs []PoolSpec
+	statuses  map[string]*PoolStatus
 }
 
 func NewManager(dir string) (*Manager, error) {
@@ -30,11 +36,95 @@ func NewManager(dir string) (*Manager, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	return &Manager{eng: eng, Dir: dir, MixedPort: 2281, ClashPort: 2291}, nil
+	m := &Manager{eng: eng, Dir: dir, MixedPort: 2281, ClashPort: 2291, statuses: map[string]*PoolStatus{}}
+	go m.probeLoop()
+	return m, nil
 }
 
 func (m *Manager) Info() Engine {
 	return *m.eng
+}
+
+type PoolStatus struct {
+	Eligible  int       `json:"eligible"`
+	MixedPort int       `json:"mixedPort"`
+	ProbeOK   bool      `json:"probeOk"`
+	ProbeMs   int       `json:"probeMs"`
+	ProbeErr  string    `json:"probeErr,omitempty"`
+	CheckedAt time.Time `json:"checkedAt,omitempty"`
+	Reason    string    `json:"reason,omitempty"`
+	Detail    string    `json:"detail,omitempty"`
+}
+
+func (m *Manager) setStatus(name string, st *PoolStatus) {
+	m.stmu.Lock()
+	m.statuses[name] = st
+	m.stmu.Unlock()
+}
+
+func (m *Manager) PoolStatus(name string) (PoolStatus, bool) {
+	m.stmu.Lock()
+	defer m.stmu.Unlock()
+	st, ok := m.statuses[name]
+	if !ok {
+		return PoolStatus{}, false
+	}
+	cp := *st
+	return cp, true
+}
+
+func (m *Manager) probePool(port int, target string) (int, error) {
+	pu, err := url.Parse(fmt.Sprintf("socks5://127.0.0.1:%d", port))
+	if err != nil {
+		return 0, err
+	}
+	client := &http.Client{
+		Timeout:   8 * time.Second,
+		Transport: &http.Transport{Proxy: http.ProxyURL(pu)},
+	}
+	start := time.Now()
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, target, nil)
+	if err != nil {
+		return 0, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	ms := int(time.Since(start).Milliseconds())
+	if resp.StatusCode < 200 || resp.StatusCode >= 400 {
+		return ms, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	return ms, nil
+}
+
+func (m *Manager) probeSpec(spec PoolSpec) {
+	ms, err := m.probePool(spec.MixedPort, spec.ProbeTarget)
+	st := &PoolStatus{
+		Eligible: len(spec.Nodes), MixedPort: spec.MixedPort,
+		ProbeOK: err == nil, ProbeMs: ms, CheckedAt: time.Now(),
+	}
+	if err != nil {
+		st.ProbeErr = err.Error()
+	}
+	m.setStatus(spec.Name, st)
+}
+
+func (m *Manager) probeLoop() {
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		m.mu.Lock()
+		specs := m.lastSpecs
+		m.mu.Unlock()
+		for _, spec := range specs {
+			if spec.ProbeTarget == "" {
+				continue
+			}
+			m.probeSpec(spec)
+		}
+	}
 }
 
 func (m *Manager) cfgPath() string  { return m.Dir + "/config.json" }
@@ -71,35 +161,57 @@ func (m *Manager) stop() {
 	m.pid = 0
 }
 
-func (m *Manager) writeConfig(pools []PoolSpec) ([]string, error) {
-	data, skipped, err := BuildConfig(pools, Params{MixedPort: m.MixedPort, ClashPort: m.ClashPort, LX: m.eng.LX})
+func (m *Manager) writeConfig(pools []PoolSpec) error {
+	data, _, err := BuildConfig(pools, Params{ClashPort: m.ClashPort, LX: m.eng.LX})
 	if err != nil {
-		return skipped, err
+		return err
 	}
 	tmp := m.cfgPath() + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return skipped, err
+		return err
 	}
 	if err := m.eng.Check(tmp); err != nil {
 		os.Remove(tmp)
-		return skipped, err
+		return err
 	}
-	if err := os.Rename(tmp, m.cfgPath()); err != nil {
-		return skipped, err
-	}
-	return skipped, nil
+	return os.Rename(tmp, m.cfgPath())
 }
 
-// Apply приводит экземпляр к списку пулов: пустой список = процесс остановлен
+// Apply приводит экземпляр к списку пулов: пустой список = процесс остановлен.
+// Пулы, которые текущий профиль не умеет, не запускаются со статусом waits-lx.
 func (m *Manager) Apply(pools []PoolSpec) ([]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.stmu.Lock()
+	m.statuses = map[string]*PoolStatus{}
+	m.stmu.Unlock()
 	if len(pools) == 0 {
 		m.stop()
+		m.lastSpecs = nil
 		return nil, nil
 	}
-	skipped, err := m.writeConfig(pools)
-	if err != nil {
+	var skipped []string
+	var runnable []PoolSpec
+	for i, spec := range pools {
+		eligible, reasons := EligibleNodes(spec.Nodes, m.eng.LX)
+		if len(eligible) == 0 {
+			m.setStatus(spec.Name, &PoolStatus{Reason: "waits-lx", Detail: strings.Join(reasons, "; ")})
+			skipped = append(skipped, fmt.Sprintf("пул %s: ни один узел не поддерживается текущим движком (%s)", spec.Name, strings.Join(reasons, "; ")))
+			continue
+		}
+		spec.Nodes = eligible
+		spec.MixedPort = m.MixedPort + 1 + i
+		if spec.ProbeTarget == "" {
+			spec.ProbeTarget = "http://www.gstatic.com/generate_204"
+		}
+		runnable = append(runnable, spec)
+	}
+	if len(runnable) == 0 {
+		m.stop()
+		m.lastSpecs = nil
+		return skipped, nil
+	}
+	if err := m.writeConfig(runnable); err != nil {
 		return skipped, err
 	}
 	m.stop()
@@ -125,14 +237,18 @@ func (m *Manager) Apply(pools []PoolSpec) ([]string, error) {
 	if err == nil {
 		os.WriteFile(m.lastGood(), cp, 0o600)
 	}
+	m.lastSpecs = runnable
+	for _, spec := range runnable {
+		m.probeSpec(spec)
+	}
 	return skipped, nil
 }
 
 func (m *Manager) waitClash(timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
-	url := fmt.Sprintf("http://127.0.0.1:%d/version", m.ClashPort)
+	probe := fmt.Sprintf("http://127.0.0.1:%d/version", m.ClashPort)
 	for time.Now().Before(deadline) {
-		resp, err := http.Get(url)
+		resp, err := http.Get(probe)
 		if err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"mawg/internal/links"
+	"mawg/internal/singbox"
 	"mawg/internal/store"
 	"mawg/internal/wgconf"
 )
@@ -138,6 +139,19 @@ func (s *Server) createPoolFromSource(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(engineNodes) > 0 {
+		lx := false
+		if mgr, err := s.sb(); err == nil {
+			lx = mgr.Info().LX
+		}
+		eligible, reasons := singbox.EligibleNodes(res.Nodes, lx)
+		if len(eligible) == 0 {
+			plan.Engine = engineNodes
+			plan.Skipped = append(plan.Skipped, reasons...)
+			plan.Warnings = append(plan.Warnings,
+				"Пул не создан: ни один узел не поддерживается текущим движком sing-box. Нужен lx-профиль ядра - после его установки добавьте ссылку заново.")
+			writeJSON(w, http.StatusOK, plan)
+			return
+		}
 		settings := store.PoolSettings{
 			Platform: s.backend.Name(), Fallback: req.Fallback, ProbeHost: req.ProbeHost,
 			Source: req.Source, EngineMode: engineMode, TunName: s.allocTun(),

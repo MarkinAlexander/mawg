@@ -2,7 +2,10 @@
 
 package singbox
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 type Manager struct{}
 
@@ -25,3 +28,16 @@ func (m *Manager) Apply(pools []PoolSpec) ([]string, error) {
 	return nil, fmt.Errorf("движок sing-box доступен только на роутере")
 }
 func (m *Manager) Status() Status { return Status{} }
+
+type PoolStatus struct {
+	Eligible  int       `json:"eligible"`
+	MixedPort int       `json:"mixedPort"`
+	ProbeOK   bool      `json:"probeOk"`
+	ProbeMs   int       `json:"probeMs"`
+	ProbeErr  string    `json:"probeErr,omitempty"`
+	CheckedAt time.Time `json:"checkedAt,omitempty"`
+	Reason    string    `json:"reason,omitempty"`
+	Detail    string    `json:"detail,omitempty"`
+}
+
+func (m *Manager) PoolStatus(name string) (PoolStatus, bool) { return PoolStatus{}, false }

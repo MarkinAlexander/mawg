@@ -67,6 +67,32 @@ func TestFromSourceMixedShowsEngineNodes(t *testing.T) {
 	}
 }
 
+func TestFromSourceLxOnlyNodeCreatesNothing(t *testing.T) {
+	lxOnly := "vless://00000000-0000-4000-8000-000000000001@203.0.113.12:443" +
+		"?encryption=mlkem768x25519plus.native.0rtt.FAKE&type=xhttp&path=%2Fup&mode=auto" +
+		"&security=tls&sni=cdn.example.org#lx-only-node"
+	body, _ := json.Marshal(map[string]string{"name": "lx-wait", "source": lxOnly})
+	code, plan := postFromSource(t, string(body))
+	if code != 200 {
+		t.Fatalf("код %d", code)
+	}
+	if plan.Pool != "" {
+		t.Fatalf("пул без поддерживаемых узлов не должен создаваться: %+v", plan)
+	}
+	if !anyContains(plan.Warnings, "Пул не создан") {
+		t.Fatalf("должна быть причина: %v", plan.Warnings)
+	}
+}
+
+func anyContains(list []string, sub string) bool {
+	for _, s := range list {
+		if strings.Contains(s, sub) {
+			return true
+		}
+	}
+	return false
+}
+
 func TestFromSourceEnginePoolCreated(t *testing.T) {
 	code, plan := postFromSource(t, `{"name":"vless-only","source":"`+fakeVlessLink+`"}`)
 	if code != 200 {

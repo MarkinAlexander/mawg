@@ -25,8 +25,8 @@ func mustNodes(t *testing.T, src string) []links.Node {
 }
 
 func TestBuildConfigUpstream(t *testing.T) {
-	spec := PoolSpec{Name: "demo", Tun: "tun1", TunIP: TuneIP(1), Nodes: mustNodes(t, fakeVless)}
-	data, skipped, err := BuildConfig([]PoolSpec{spec}, Params{MixedPort: 2281, ClashPort: 2291})
+	spec := PoolSpec{Name: "demo", Tun: "tun1", TunIP: TuneIP(1), MixedPort: 2282, Nodes: mustNodes(t, fakeVless)}
+	data, skipped, err := BuildConfig([]PoolSpec{spec}, Params{ClashPort: 2291})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,8 +95,8 @@ func TestBuildConfigUpstream(t *testing.T) {
 }
 
 func TestBuildConfigSkipsXhttpOnUpstream(t *testing.T) {
-	spec := PoolSpec{Name: "x", Tun: "tun1", TunIP: TuneIP(1), Nodes: mustNodes(t, fakeVlessXhttp)}
-	_, skipped, err := BuildConfig([]PoolSpec{spec}, Params{MixedPort: 2281, ClashPort: 2291})
+	spec := PoolSpec{Name: "x", Tun: "tun1", TunIP: TuneIP(1), MixedPort: 2282, Nodes: mustNodes(t, fakeVlessXhttp)}
+	_, skipped, err := BuildConfig([]PoolSpec{spec}, Params{ClashPort: 2291})
 	if err == nil {
 		t.Fatal("xhttp на upstream не должен собираться")
 	}
@@ -106,8 +106,8 @@ func TestBuildConfigSkipsXhttpOnUpstream(t *testing.T) {
 }
 
 func TestBuildConfigLXAllowsXhttp(t *testing.T) {
-	spec := PoolSpec{Name: "x", Tun: "tun1", TunIP: TuneIP(1), Nodes: mustNodes(t, fakeVlessXhttp)}
-	data, skipped, err := BuildConfig([]PoolSpec{spec}, Params{MixedPort: 2281, ClashPort: 2291, LX: true})
+	spec := PoolSpec{Name: "x", Tun: "tun1", TunIP: TuneIP(1), MixedPort: 2282, Nodes: mustNodes(t, fakeVlessXhttp)}
+	data, skipped, err := BuildConfig([]PoolSpec{spec}, Params{ClashPort: 2291, LX: true})
 	if err != nil {
 		t.Fatal(err)
 	}

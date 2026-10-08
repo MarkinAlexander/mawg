@@ -8,16 +8,31 @@ import (
 )
 
 type PoolSpec struct {
-	Name  string
-	Tun   string
-	TunIP string
-	Nodes []links.Node
+	Name        string
+	Tun         string
+	TunIP       string
+	MixedPort   int
+	ProbeTarget string
+	Nodes       []links.Node
 }
 
 type Params struct {
-	MixedPort int
 	ClashPort int
 	LX        bool
+}
+
+// EligibleNodes - узлы, которые текущий профиль движка умеет запустить
+func EligibleNodes(nodes []links.Node, lx bool) (ok []links.Node, reasons []string) {
+	for _, n := range nodes {
+		ob, good, reason := nodeOutbound("probe", n, lx)
+		_ = ob
+		if good {
+			ok = append(ok, n)
+		} else {
+			reasons = append(reasons, reason)
+		}
+	}
+	return ok, reasons
 }
 
 func nodeOutbound(poolTag string, n links.Node, lx bool) (map[string]any, bool, string) {
@@ -95,8 +110,13 @@ func nodeOutbound(poolTag string, n links.Node, lx bool) (map[string]any, bool, 
 // BuildConfig собирает ЕДИНЫЙ конфиг mawg-экземпляра: на каждый пул свой
 // tun-inbound и selector-группа, route-правило inbound -> группа
 func BuildConfig(pools []PoolSpec, p Params) ([]byte, []string, error) {
-	if p.MixedPort == 0 || p.ClashPort == 0 {
-		return nil, nil, fmt.Errorf("порты движка не заданы")
+	if p.ClashPort == 0 {
+		return nil, nil, fmt.Errorf("порт clash_api не задан")
+	}
+	for _, spec := range pools {
+		if spec.MixedPort == 0 {
+			return nil, nil, fmt.Errorf("пул %s: порт пробы не задан", spec.Name)
+		}
 	}
 	var skipped []string
 	var inbounds []map[string]any
@@ -111,9 +131,8 @@ func BuildConfig(pools []PoolSpec, p Params) ([]byte, []string, error) {
 			"stack": "gvisor",
 		})
 		mixedTag := "mixed-" + spec.Name
-		mixedPort := p.MixedPort + 1 + i
 		inbounds = append(inbounds, map[string]any{
-			"type": "mixed", "tag": mixedTag, "listen": "127.0.0.1", "listen_port": mixedPort,
+			"type": "mixed", "tag": mixedTag, "listen": "127.0.0.1", "listen_port": spec.MixedPort,
 		})
 		groupTag := "mawg-" + spec.Name
 		var tags []string
