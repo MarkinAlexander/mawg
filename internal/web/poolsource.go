@@ -13,6 +13,7 @@ import (
 
 type sourcePlan struct {
 	Pool       string            `json:"pool,omitempty"`
+	Tun        string            `json:"tun,omitempty"`
 	Added      int               `json:"added,omitempty"`
 	Duplicates []string          `json:"duplicates,omitempty"`
 	Engine     []sourceEngineOne `json:"engine,omitempty"`
@@ -155,6 +156,7 @@ func (s *Server) createPoolFromSource(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		plan.Pool = pool.Name
+		plan.Tun = settings.TunName
 		plan.Engine = engineNodes
 		s.store.LogEvent(pool.Name, "applied", fmt.Sprintf("пул из источника: %d узлов в tun (%s)", len(res.Nodes), settings.TunName))
 		skipped, err := s.applyEngine()

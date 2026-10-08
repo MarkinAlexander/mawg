@@ -352,6 +352,14 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
 <dialog id="dlgSettings">
   <form method="dialog" style="display:grid; gap:4px">
     <h3 style="margin:0 0 6px">Настройки пула <span class="muted" id="spName"></span></h3>
+    <div class="f" id="spSourceRow" style="display:none;border-bottom:1px solid var(--border);padding-bottom:10px;margin-bottom:4px">
+      <div style="font-size:13px;margin-bottom:2px">Источник (ссылка, vpn:// или URL подписки)</div>
+      <textarea id="spSource" rows="3" style="width:100%;font-family:ui-monospace,monospace;font-size:12px"></textarea>
+      <div class="btnrow" style="margin-top:6px;justify-content:flex-end">
+        <button type="button" id="spRefreshSource" title="заново разобрать источник и пересобрать пул (конфиги заменяются)">обновить из источника</button>
+      </div>
+      <div class="muted" style="font-size:11px;margin-top:2px">Сервер сменил IP или ссылка протухла - вставьте новую и нажмите. Старые конфиги пула будут заменены разобранными.</div>
+    </div>
     <label class="f" id="spRenameRow">Имя (переименование)
       <input id="spRename" pattern="[a-z][a-z0-9-]{0,14}" title="строчная латиница, цифры и дефисы, начинается с буквы, до 15 символов">
     </label>
@@ -634,12 +642,12 @@ function ensureCard(p) {
     </div>
     <div class="btnrow">
       <button class="primary" data-act="enable" data-show="off">Включить</button>
-      <button data-act="rotate" data-show="on">Сменить конфиг</button>
-      <button data-act="check" data-show="on">Проверить</button>
+      <button data-act="rotate" data-show="on" data-wg-only>Сменить конфиг</button>
+      <button data-act="check" data-show="on" data-wg-only>Проверить</button>
       <button class="danger" data-act="disable" data-show="on">Выключить</button>
       <button class="danger" data-act="delpool">удалить пул</button>
     </div>
-    <details>
+    <details data-wg-only>
       <summary class="cfgsummary" title="порядок конфигов = приоритет ротации">Конфиги (0)</summary>
       <div class="muted" style="font-size:11px;margin-top:4px">порядок списка = приоритет ротации, выше = раньше</div>
       <div class="cfgscroll"><table class="cfgtable"></table></div>
@@ -701,9 +709,19 @@ function updateCard(p) {
     : (p.mode === 'fallback'
       ? '<span class="badge fallback">фоллбек</span>'
       : '<span class="badge up">работает</span>');
-  card.sub.textContent = p.disabled
-    ? `${p.slot ? p.slot + ' = ' : ''}${p.device} | ротация остановлена`
-    : `${p.slot ? p.slot + ' = ' : ''}${p.device} | фоллбек: ${p.settings.fallback === 'direct' ? 'напрямую' : 'держать'}`;
+  const isEng = p.settings.engineMode === 'singbox';
+  const engTun = (STATUS.engine && STATUS.engine.tuns || []).find(t => t.pool === p.name);
+  if (isEng) {
+    card.sub.textContent = p.disabled
+      ? `${p.settings.tunName} | движок остановлен`
+      : `${p.settings.tunName} | движок sing-box${STATUS.engine && STATUS.engine.version ? ' ' + STATUS.engine.version : ''}${STATUS.engine && !STATUS.engine.running ? ' (не запущен)' : ''}`;
+    card.endpoint.textContent = engTun ? `узлов: ${engTun.nodes}` : '-';
+  } else {
+    card.sub.textContent = p.disabled
+      ? `${p.slot ? p.slot + ' = ' : ''}${p.device} | ротация остановлена`
+      : `${p.slot ? p.slot + ' = ' : ''}${p.device} | фоллбек: ${p.settings.fallback === 'direct' ? 'напрямую' : 'держать'}`;
+  }
+  card.root.querySelectorAll('[data-wg-only]').forEach(el => el.style.display = isEng ? 'none' : '');
   card.actions.querySelectorAll('button[data-show]').forEach(btn => {
     btn.style.display = btn.dataset.show === (p.disabled ? 'off' : 'on') ? '' : 'none';
   });
@@ -901,8 +919,10 @@ $('#pModeLink').onclick = () => setPoolMode('link');
 function renderSourcePlan(p) {
   let html = '';
   if (p.pool) {
-    html += `<div style="margin-bottom:6px">Пул <b>${esc(p.pool)}</b> создан: конфигов ${p.added || 0}` +
-      (p.duplicates && p.duplicates.length ? `, дубликаты пропущены: ${esc(p.duplicates.join(', '))}` : '') + '.</div>';
+    const what = p.tun ? `tun-интерфейс ${esc(p.tun)} из узлов` : 'конфигов';
+    html += `<div style="margin-bottom:6px">Пул <b>${esc(p.pool)}</b> создан: ${what} ${p.added || (p.engine && p.engine.length) || 0}` +
+      (p.duplicates && p.duplicates.length ? `, дубликаты пропущены: ${esc(p.duplicates.join(', '))}` : '') +
+      (p.tun ? '. Интерфейс появится, когда движок применит конфиг.' : '') + '</div>';
   } else if (p.engine && p.engine.length) {
     html += `<div style="margin-bottom:6px">Пул не создан: в источнике нет WG/AWG узлов, нативно добавить нечего.</div>`;
   }
@@ -1062,6 +1082,8 @@ function openSettings(name) {
   if (!p) return;
   settingsPool = p;
   $('#spName').textContent = p.name;
+  $('#spSourceRow').style.display = (p.settings.engineMode === 'singbox' || p.settings.source) ? '' : 'none';
+  $('#spSource').value = p.settings.source || '';
   $('#spRename').value = p.name;
   $('#spRenameRow').style.display = STATUS.platform === 'keenetic' ? '' : 'none';
   const ptype = probeTypeOf(p.settings.probeHost || '');
@@ -1092,6 +1114,22 @@ function openSettings(name) {
 wireProbeSwitch($('#spProbeType'), $('#spProbe'));
 
 document.querySelector('#dlgSettings button[value=cancel]').onclick = () => dlgSettings.close();
+$('#spRefreshSource').onclick = async e => withBusy(e.currentTarget, async () => {
+  const p = settingsPool;
+  if (!p) return;
+  const src = $('#spSource').value.trim();
+  if (!src) { toast('Вставьте ссылку или URL подписки', true); return; }
+  try {
+    const plan = await api('POST', `/pools/${encodeURIComponent(p.name)}/refresh-source`, { source: src });
+    let msg = 'источник обновлён';
+    if (plan.added) msg += `: конфигов ${plan.added}`;
+    if (plan.engine && plan.engine.length) msg += `, узлов ${plan.engine.length}`;
+    if (plan.warnings && plan.warnings.length) msg += '; ' + plan.warnings.join('; ');
+    toast(msg, !!(plan.warnings && plan.warnings.length));
+    dlgSettings.close();
+    refresh();
+  } catch (err) { toast(err.message, true); }
+});
 $('#spSave').onclick = async e => {
   e.preventDefault();
   const p = settingsPool;
