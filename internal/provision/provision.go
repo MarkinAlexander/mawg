@@ -21,11 +21,10 @@ type Item struct {
 	Confirm        string   `json:"confirm,omitempty"`
 	RequiresReboot bool     `json:"requiresReboot,omitempty"`
 	Note           string   `json:"note,omitempty"`
-	// StatusText - свой текст бейджа состояния вместо ок/нет
-	// (например «чужое upstream» для не-lx ядра).
+	// StatusText - свой текст бейджа состояния вместо ок/нет («чужое upstream»).
 	StatusText string `json:"statusText,omitempty"`
-	// FreeBytes/BackupBytes - место на диске установки и размер текущего
-	// ядра: диалог установки решает, влезет ли бэкап старого бинаря.
+	// FreeBytes/BackupBytes - место на диске и размер ядра: диалог решает,
+	// влезет ли бэкап старого бинаря.
 	FreeBytes   int64 `json:"freeBytes,omitempty"`
 	BackupBytes int64 `json:"backupBytes,omitempty"`
 }
@@ -316,10 +315,9 @@ func CheckKeenetic(ndmc func(string) (string, error)) Result {
 	return res
 }
 
-// lxCoreItem - пункт «ядро sing-box-lx»: состояние рабочего бинаря и место
-// на диске для диалога установки. Сама установка идёт кодом
-// (singbox.InstallLXCore), Action - маркер для обработчика в web, НЕ
-// shell-скрипт; пути совпадают с singbox.LXTargetForPlatform.
+// lxCoreItem - пункт «ядро sing-box-lx». Action - маркер для web-обработчика
+// (установка идёт кодом singbox.InstallLXCore), не shell-скрипт; пути
+// совпадают с singbox.LXTargetForPlatform.
 func lxCoreItem(run Runner, platform string) Item {
 	bin, markerDir, disk := "/usr/bin/sing-box", "/etc/sing-box-lx", "/"
 	if platform == "keenetic" {
@@ -338,8 +336,7 @@ func lxCoreItem(run Runner, platform string) Item {
 	if out, err := run("test -f "+markerDir+"/.installed-by-mawg && echo marked", 5*time.Second); err == nil && strings.Contains(out, "marked") {
 		marked = true
 	}
-	// место (КБ из df -k) и размер текущего бинаря: диалог установки
-	// предлагает сохранить старое ядро только если копия физически влезает
+	// свободное место и размер бинаря: хватит ли на копию старого ядра
 	freeBytes, backupBytes := int64(0), int64(0)
 	if out, err := run("df -k "+disk+" 2>/dev/null | tail -1 | awk '{print $4}'", 10*time.Second); err == nil {
 		if kb, perr := strconv.ParseInt(strings.TrimSpace(out), 10, 64); perr == nil && kb > 0 {

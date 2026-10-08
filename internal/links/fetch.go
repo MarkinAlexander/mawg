@@ -18,10 +18,9 @@ const fetchLimit = 8 << 20
 type Fetched struct {
 	URL         string
 	ContentType string
-	// BodySHA - sha256 сырого тела: гейт «ничего нового» при автообновлении.
-	BodySHA string
-	Sub     SubInfo
-	Result  Result
+	BodySHA     string // sha256 тела: гейт «ничего нового» автообновления
+	Sub         SubInfo
+	Result      Result
 }
 
 func Fetch(ctx context.Context, rawURL string) (*Fetched, error) {

@@ -114,8 +114,7 @@ func TestSubUpdateNativePoolLifecycle(t *testing.T) {
 		t.Fatal("нет события отката")
 	}
 
-	// триггер деградации: проба валится, ротатор копит ConsecFails -
-	// цикл перепроверяет источник (тело то же -> гейт, пул не тронут)
+	// деградация: цикл перепроверяет источник, то же тело проходит гейт
 	body.Store(subBody("203.0.113.31:35092"))
 	fb.SetProbe("sub", false)
 	st.MutateState("sub", func(x *store.PoolState) { x.ConsecFails = 3; x.LastFailRefresh = time.Time{} })

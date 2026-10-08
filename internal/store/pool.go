@@ -45,8 +45,8 @@ func (p Pool) DeviceName() string {
 	return p.Name
 }
 
-// PoolSnapshot - снимок каталога пула перед заменой конфигов
-// автообновлением источника: файлы + реестр + активный конфиг.
+// PoolSnapshot - снимок каталога пула (файлы + реестр + активный конфиг)
+// перед заменой конфигов автообновлением источника.
 type PoolSnapshot struct {
 	Dir        string
 	Files      map[string][]byte
@@ -54,9 +54,8 @@ type PoolSnapshot struct {
 	ActiveFile string
 }
 
-// SnapshotPool снимает состояние каталога пула (файлы верхнего уровня и
-// реестр конфигов); RestorePoolSnapshot возвращает ровно его - лишние
-// файлы, появившиеся после снимка, удаляются.
+// SnapshotPool снимает каталог пула и реестр; RestorePoolSnapshot
+// возвращает ровно его, лишние файлы удаляются.
 func (s *Store) SnapshotPool(pool string) (*PoolSnapshot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

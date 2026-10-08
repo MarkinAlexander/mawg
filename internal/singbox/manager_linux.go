@@ -351,9 +351,8 @@ type sharedFacts struct {
 	DNSTags   map[string]bool
 }
 
-// preflightShared разбирает чужой config.json: порт clash_api для проб,
-// занятые теги/tun/адреса и dns-теги (для выбора имени нашего резолвера),
-// которые наш фрагмент не должен трогать.
+// preflightShared разбирает чужой config.json: порт clash_api для проб и
+// занятые теги/tun/адреса/dns - наш фрагмент их не трогает.
 func (m *Manager) preflightShared() (*sharedFacts, error) {
 	path := filepath.Join(m.SharedDir, "config.json")
 	data, err := os.ReadFile(path)
@@ -361,9 +360,9 @@ func (m *Manager) preflightShared() (*sharedFacts, error) {
 		return nil, fmt.Errorf("чужой конфиг %s не читается: %v", path, err)
 	}
 	var cfg struct {
-		Inbounds     []map[string]any `json:"inbounds"`
-		Outbounds    []map[string]any `json:"outbounds"`
-		DNS          struct {
+		Inbounds  []map[string]any `json:"inbounds"`
+		Outbounds []map[string]any `json:"outbounds"`
+		DNS       struct {
 			Servers []map[string]any `json:"servers"`
 		} `json:"dns"`
 		Experimental struct {

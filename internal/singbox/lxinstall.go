@@ -17,13 +17,10 @@ import (
 )
 
 const (
-	// LXFlavorPlain/LXFlavorUPX - варианты ассета: plain по умолчанию,
-	// upx - opt-in (жим диска за +RAM и медленный старт на softfloat-MIPS).
-	LXFlavorPlain = "plain"
-	LXFlavorUPX   = "upx"
+	LXFlavorPlain = "plain" // по умолчанию
+	LXFlavorUPX   = "upx"   // opt-in: меньше на диске, дороже по RAM и старту
 
-	// lxMinTarball - sanity размера скачанного архива (ядро не бывает меньше).
-	lxMinTarball = 10 << 20
+	lxMinTarball = 10 << 20 // sanity размера скачанного архива
 
 	LXMarkerName = ".installed-by-mawg"
 )
@@ -42,8 +39,6 @@ func LXTargetForPlatform(platform string) LXTarget {
 	}
 	return LXTarget{Bin: "/usr/bin/sing-box", MarkerDir: "/etc/sing-box-lx", DiskPath: "/"}
 }
-
-// --- детект архитектуры ---
 
 // DetectLxArch определяет архитектуру в терминах ассетов lx-релиза:
 // сначала opkg (Entware честно знает порядок байт), затем ELF-заголовок
@@ -165,9 +160,6 @@ func archFromUname(m string) (arch, note string) {
 	return "", ""
 }
 
-// --- выбор ассета ---
-
-// PickedAsset - найденный ассет: источник, релиз, имя файла.
 type PickedAsset struct {
 	Source Source
 	Tag    string
@@ -224,8 +216,6 @@ func PickAsset(reports []SourceReport, arch, flavor string) (*PickedAsset, error
 		arch, flavor, strings.Join(have, "; "))
 }
 
-// --- версии ---
-
 // HasLXSuffix отличает lx-ядро от upstream: только у lx в версии есть "-lx.".
 func HasLXSuffix(version string) bool { return strings.Contains(version, "-lx.") }
 
@@ -277,28 +267,22 @@ func SingBoxVersion(bin string, run func(argv0 string, args ...string) ([]byte, 
 	return ver, nil
 }
 
-// --- установка ---
-
 type LXInstallOptions struct {
 	Flavor string // plain|upx, пусто = plain
-	// Arch - переопределение детекта (тесты); пусто = DetectLxArch.
-	Arch string
-	// Discover - переопределение дискавери (тесты); пусто = Discovery.
-	Discover func(ctx context.Context) []SourceReport
-	// Target - пути установки; пусто = по GOOS-подобной платформе из
-	// PlatformForLX (keenetic/openwrt решает вызывающая сторона).
 	Target LXTarget
-	// ReplaceForeign - явное согласие заменить чужое (upstream) ядро.
-	ReplaceForeign bool
-	// DropForeignBackup - удалить чужое ядро без сохранения копии <bin>.pre-lx
-	// (для устройств без свободного места; выбор в диалоге установки).
+
+	// ReplaceForeign - явное согласие заменить чужое (upstream) ядро,
+	// DropForeignBackup - без сохранения копии <bin>.pre-lx (диск дороже).
+	ReplaceForeign    bool
 	DropForeignBackup bool
-	TmpDir            string
-	MinTarball        int64 // 0 = lxMinTarball
-	// Fetch скачивает url в dest-файл, возвращает размер (тесты подменяют).
-	Fetch func(ctx context.Context, url, dest string) (int64, error)
-	// Run - запуск внешних команд (tar, тест-запуск); nil = exec.
-	Run func(argv0 string, args ...string) ([]byte, error)
+
+	// Arch, Discover, Fetch, Run, TmpDir, MinTarball - подмены для тестов.
+	Arch       string
+	Discover   func(ctx context.Context) []SourceReport
+	Fetch      func(ctx context.Context, url, dest string) (int64, error)
+	Run        func(argv0 string, args ...string) ([]byte, error)
+	TmpDir     string
+	MinTarball int64 // 0 = lxMinTarball
 }
 
 type LXInstallResult struct {
@@ -365,7 +349,7 @@ func InstallLXCore(ctx context.Context, opts LXInstallOptions) (LXInstallResult,
 	res.Tag = pick.Tag
 	step("релиз %s из %s: %s", pick.Tag, pick.Source, pick.Asset)
 
-	// чужое ядро без явного согласия не трогаем - до скачивания
+	// чужое ядро не трогаем без согласия, отказ - до скачивания
 	prevVer := ""
 	if out, verr := SingBoxVersion(opts.Target.Bin, run); verr == nil {
 		prevVer = out
@@ -378,8 +362,8 @@ func InstallLXCore(ctx context.Context, opts LXInstallOptions) (LXInstallResult,
 		}
 	}
 
-	// своё lx-ядро новее релиза - ничего не ставим; но маркер при миграции
-	// всё равно появляется (ядро без маркера считается своим)
+	// ядро не старее релиза - не перекачиваем; без маркера всё равно ставим
+	// маркер: lx-ядро считается своим
 	releaseVer := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(pick.Tag), "v"))
 	if HasLXSuffix(prevVer) && !LXNewer(releaseVer, prevVer) {
 		res.Version = prevVer
@@ -452,7 +436,6 @@ func InstallLXCore(ctx context.Context, opts LXInstallOptions) (LXInstallResult,
 	res.Version = ver
 	step("тест-запуск в /tmp ok: %s", ver)
 
-	// копия в файловую систему цели + атомарная подмена
 	if err := os.MkdirAll(filepath.Dir(opts.Target.Bin), 0o755); err != nil {
 		_ = os.RemoveAll(dir)
 		return res, err
@@ -606,8 +589,7 @@ func fetchTo(ctx context.Context, url, dest string) (int64, error) {
 	return n, nil
 }
 
-// extractTar - распаковка tar.gz, та же семантика что `tar -xzf`;
-// в тестах вызывается из подмены Run, на устройстве зовётся сам tar.
+// extractTar - распаковка tar.gz как `tar -xzf`; в тестах зовётся из подмены Run.
 func extractTar(tarball, dir string) error {
 	f, err := os.Open(tarball)
 	if err != nil {

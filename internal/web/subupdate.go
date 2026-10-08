@@ -23,14 +23,13 @@ const (
 	subProbeWait    = 60 * time.Second
 )
 
-// subRefreshBusy -singleflight на пул: цикл и кнопка «обновить из
-// источника» не должны пересобирать пул одновременно.
+// subRefreshBusy - singleflight на пул: цикл и ручное обновление
+// не должны пересобирать пул одновременно.
 var subRefreshBusy sync.Map
 
-// SubUpdateLoop - автообновление подписок: плановое по интервалу (настройка
-// пула или Profile-Update-Interval из подписки) и внеплановое при
-// деградации пула - вдруг админ подписку починил. Тело подписки гейтится
-// хешем: не изменилось - пул не трогаем вовсе.
+// SubUpdateLoop - автообновление подписок: плановое (интервал - настройка
+// пула или Profile-Update-Interval подписки) и при деградации пула. Тело
+// подписки гейтится хешем: не изменилось - пул не трогаем.
 func (s *Server) SubUpdateLoop(ctx context.Context) {
 	t := time.NewTicker(subCheckEvery)
 	defer t.Stop()
@@ -54,7 +53,7 @@ func (s *Server) subUpdateTick() {
 			if err != nil {
 				continue
 			}
-			// узлы ждут lx-профиль: обновление источника их не поднимет
+			// waits-lx: обновление источника такие узлы не поднимет
 			if ps, ok := mgr.PoolStatus(p.Name); ok && ps.Reason == "waits-lx" {
 				continue
 			}
@@ -71,8 +70,7 @@ func (s *Server) subUpdateTick() {
 		}
 		interval := subIntervalH(p.Settings.UpdateIntervalH, st.SubIntervalH)
 		if st.SubRefreshAt.IsZero() {
-			// первый тик: только базовая точка отсчёта, без скачивания -
-			// пул мог быть собран давно и руками
+			// первый тик только ставит базовую точку: пул могли собрать руками
 			s.store.MutateState(p.Name, func(x *store.PoolState) { x.SubRefreshAt = time.Now() })
 			s.store.LogEvent(p.Name, "subupdate", fmt.Sprintf("автообновление источника включено, интервал %s", fmtHours(interval)))
 			continue
@@ -262,7 +260,6 @@ func (s *Server) applySourceToPool(p store.Pool, res store.Sub) (subApplyVerdict
 		return subApplyFail, "проба не прошла: " + ps.ProbeErr
 	}
 
-	// нативный пул: заменить конфиги, активировать первый, ждать пробу
 	pool, ok := s.store.Pool(name)
 	if !ok {
 		return subApplyFail, "пул исчез"

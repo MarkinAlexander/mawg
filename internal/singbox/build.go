@@ -25,15 +25,13 @@ type Params struct {
 	ClashPort int
 	LX        bool
 	Merged    bool
-	// ResolverTag - тег локального DNS-сервера для default_domain_resolver
-	// в lx-профиле; пусто = "local". В shared выбирается тег, не занятый
-	// чужим конфигом (иначе его dns.servers задублируются).
+	// ResolverTag - тег dns-сервера для default_domain_resolver lx-профиля
+	// (пусто = "local"); в shared выбирается свободный у чужого конфига.
 	ResolverTag string
 }
 
-// lxResolverLocal - секция dns lx-профиля: ядро lx 1.14 без
-// route.default_domain_resolver не стартует, а резолверу нужна запись в
-// dns.servers - без неё check падает "default domain resolver not found".
+// lxResolverDNS - dns-секция lx-профиля: без записи в dns.servers ядро
+// на check отвечает "default domain resolver not found".
 func lxResolverDNS(tag string) map[string]any {
 	return map[string]any{
 		"servers": []map[string]any{{"type": "local", "tag": tag}},

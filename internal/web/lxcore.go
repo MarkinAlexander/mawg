@@ -9,10 +9,9 @@ import (
 	"mawg/internal/singbox"
 )
 
-// installLXCore - установка lx-ядра sing-box по кнопке «Система ->
-// Зависимости». Чужое ядро меняется только когда свежая проверка показала
-// именно пункт замены (владелец подтвердил это в диалоге установки);
-// backup=false - заменить без сохранения старого бинаря.
+// installLXCore - установка lx-ядра по кнопке «Система -> Зависимости».
+// Чужое ядро меняется только когда свежая проверка показала пункт замены
+// (владелец подтвердил в диалоге); backup=false - без копии старого.
 func (s *Server) installLXCore(w http.ResponseWriter, r *http.Request, flavor string, backup bool) {
 	replace := false
 	for _, item := range s.systemCheck().Items {
@@ -47,14 +46,12 @@ func (s *Server) installLXCore(w http.ResponseWriter, r *http.Request, flavor st
 		}
 		s.store.LogEvent("system", "lxcore", msg)
 	}
-	// движок пересобираем в фоне: в shared это рестарт чужого сервиса
-	// (соединения рвутся, на это владелец согласился в подтверждении),
-	// ответ клиенту не ждёт несколько десятков секунд
+	// движок пересобирается в фоне: в shared это рестарт чужого сервиса,
+	// ответ клиенту его не ждёт
 	s.resetSB()
 	if len(s.enginePools()) > 0 {
 		go func() {
-			// в shared сервис мог не работать (установка с нуля): стартуем
-			// - start идемпотентен, работающий сервис не трогает
+			// после установки с нуля сервиса нет; start идемпотентен
 			if s.store.SingboxMode() == "shared" {
 				_, initScript := s.sharedPaths()
 				out, err := exec.Command(initScript, "start").CombinedOutput()

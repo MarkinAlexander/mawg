@@ -167,9 +167,8 @@ type PoolState struct {
 	LastError   string    `json:"-"`
 	GraceUntil  int64     `json:"-"`
 
-	// автообновление источника подписки: хеш последнего скачанного тела
-	// (гейт «ничего нового»), время/интервал обновления, счётчик неудач
-	// для алерта в панели и кулдаун обновления по деградации.
+	// автообновление источника: хеш тела (гейт «ничего нового»), время и
+	// интервал обновления, кулдаун деградации, счётчик неудач для панели.
 	LastSubHash     string    `json:"lastSubHash,omitempty"`
 	SubRefreshAt    time.Time `json:"subRefreshAt,omitempty"`
 	SubIntervalH    float64   `json:"subIntervalH,omitempty"`
