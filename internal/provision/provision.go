@@ -369,7 +369,7 @@ func lxCoreItem(run Runner, platform string) Item {
 		item.ActionLabel = "заменить чужое"
 		item.Flavors = []string{"plain", "upx"}
 		item.Note = fmt.Sprintf("Сейчас стоит чужое ядро (upstream %s): mawg его не трогает. Замена только по кнопке, старое сохранится как %s.pre-lx.", ver, bin)
-		item.Confirm = fmt.Sprintf("ЗАМЕНИТ рабочее ядро %s (upstream %s) на lx-релиз. Старое сохранится как %s.pre-lx, сервис sing-box будет перезапущен - соединения порвутся. %s. lx-профиль нужен движку для xhttp/mlkem-узлов.", bin, ver, bin, env)
+		item.Confirm = fmt.Sprintf("ЗАМЕНИТ рабочее ядро %s (upstream %s) на lx-релиз. Старое сохранится как %s.pre-lx, сервис sing-box будет перезапущен - соединения порвутся; если сервис не переподнимется с новым бинарем с первого раза, перезапустите его ещё раз. %s. lx-профиль нужен движку для xhttp/mlkem-узлов.", bin, ver, bin, env)
 	}
 	return item
 }
