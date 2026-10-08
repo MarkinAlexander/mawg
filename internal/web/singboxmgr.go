@@ -10,12 +10,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"mawg/internal/links"
 	"mawg/internal/singbox"
 	"mawg/internal/store"
-	"mawg/internal/wgconf"
 )
 
 const engineMode = "singbox"
@@ -269,47 +267,22 @@ func (s *Server) refreshSource(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, fmt.Errorf("у пула нет сохранённого источника - вставьте ссылку"))
 		return
 	}
-	var res store.Sub
-	var amnezia *amneziaPlanMeta
-	if key, ok := links.IsAmneziaKey(src); ok {
-		xopts := links.ExchangeOptions{
-			ServerCountryCode: strings.TrimSpace(req.Country),
-		}
-		if key.ServiceProtocol == "vless" {
-			if ns, err := s.readPoolNodes(name); err == nil && len(ns) > 0 {
-				xopts.VlessUUID = ns[0].UUID
-			}
-		} else {
-			if p, ok := s.store.Pool(name); ok && len(p.Configs) > 0 {
-				if data, err := os.ReadFile(filepath.Join(s.store.PoolDir(name), p.Configs[0].File)); err == nil {
-					if cfg, err := wgconf.Parse(data); err == nil {
-						xopts.ClientPrivKey = cfg.PrivateKey
-					}
-				}
-			}
-		}
-		xr, xerr := links.ExchangeAmneziaKey(r.Context(), src, xopts)
-		if xerr != nil {
-			writeErr(w, xerr)
-			return
-		}
-		amnezia = amneziaFromExchange(&xr)
-		res = store.Sub{Source: src, Nodes: xr.Nodes, RefreshedAt: time.Now(),
-			Warnings: []string{fmt.Sprintf("ключ Amnezia %s обменян на свежий конфиг у gateway", strings.TrimPrefix(key.ServiceType, "amnezia-"))}}
-	} else {
-		var err error
-		res, err = resolveSource(r.Context(), src)
-		if err != nil {
-			writeErr(w, err)
-			return
-		}
+	if _, busy := subRefreshBusy.LoadOrStore(name, struct{}{}); busy {
+		writeErr(w, fmt.Errorf("обновление уже выполняется"))
+		return
 	}
-	plan := sourcePlan{Warnings: res.Warnings, Amnezia: amnezia}
-	if src != pool.Settings.Source || amnezia != nil {
+	defer subRefreshBusy.Delete(name)
+	res, err := s.resolvePoolSource(r.Context(), pool, src, req.Country)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	plan := sourcePlan{Warnings: res.sub.Warnings, Amnezia: res.amnezia}
+	if src != pool.Settings.Source || res.amnezia != nil {
 		st := pool.Settings
 		st.Source = src
-		if amnezia != nil {
-			st.Amnezia = storeAmnezia(amnezia)
+		if res.amnezia != nil {
+			st.Amnezia = storeAmnezia(res.amnezia)
 		}
 		if err := s.store.UpdatePool(name, st); err != nil {
 			writeErr(w, err)
@@ -317,11 +290,11 @@ func (s *Server) refreshSource(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if pool.Settings.EngineMode == engineMode {
-		if len(res.Nodes) == 0 {
+		if len(res.sub.Nodes) == 0 {
 			writeErr(w, fmt.Errorf("в источнике нет узлов"))
 			return
 		}
-		if err := s.writePoolNodes(name, res.Nodes); err != nil {
+		if err := s.writePoolNodes(name, res.sub.Nodes); err != nil {
 			writeErr(w, err)
 			return
 		}
@@ -331,6 +304,7 @@ func (s *Server) refreshSource(w http.ResponseWriter, r *http.Request) {
 			plan.Warnings = append(plan.Warnings, err.Error())
 		}
 		plan.Pool = name
+		s.recordSourceRefresh(name, res.bodyHash, res.intervalH)
 		writeJSON(w, http.StatusOK, plan)
 		return
 	}
@@ -340,7 +314,7 @@ func (s *Server) refreshSource(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	ncs, engineNodes, skipped := buildNativeConfigs(res.Nodes)
+	ncs, engineNodes, skipped := buildNativeConfigs(res.sub.Nodes)
 	plan.Skipped = append(plan.Skipped, skipped...)
 	if len(ncs) > 0 {
 		added, dupes, err := s.store.AddConfigs(name, ncs)
@@ -357,5 +331,6 @@ func (s *Server) refreshSource(w http.ResponseWriter, r *http.Request) {
 		}
 		s.engine.CheckNow(name)
 	}
+	s.recordSourceRefresh(name, res.bodyHash, res.intervalH)
 	writeJSON(w, http.StatusOK, plan)
 }

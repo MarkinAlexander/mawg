@@ -395,6 +395,9 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 		Rotations      int                `json:"rotations"`
 		Disabled       bool               `json:"disabled"`
 		ConsecFails    int                `json:"consecFails"`
+		RefreshFails   int                `json:"refreshFails,omitempty"`
+		LastRefreshErr string             `json:"lastRefreshErr,omitempty"`
+		SubRefreshAt   time.Time          `json:"subRefreshAt,omitempty"`
 		Settings       store.PoolSettings `json:"settings"`
 		Configs        []configView       `json:"configs"`
 	}
@@ -415,6 +418,7 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 			Slot: p.Settings.KeeneticSlot, Mode: st.Mode, ActiveFile: st.ActiveFile,
 			LastResult: st.LastResult, LastError: st.LastError,
 			Rotations: st.Rotations, Disabled: p.Disabled, ConsecFails: st.ConsecFails, Settings: p.Settings,
+			RefreshFails: st.RefreshFails, LastRefreshErr: st.LastRefreshErr, SubRefreshAt: st.SubRefreshAt,
 			Configs: []configView{},
 		}
 		if p.Settings.EngineMode == engineMode {
@@ -1020,10 +1024,12 @@ func (s *Server) updatePool(w http.ResponseWriter, r *http.Request) {
 	}
 	var patch store.PoolSettings
 	var maxRtt *int
+	var updateIntervalH *float64
 	{
 		var raw struct {
 			store.PoolSettings
-			MaxRTTms *int `json:"maxRttMs"`
+			MaxRTTms        *int     `json:"maxRttMs"`
+			UpdateIntervalH *float64 `json:"updateIntervalH"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
 			writeErr(w, err)
@@ -1031,6 +1037,7 @@ func (s *Server) updatePool(w http.ResponseWriter, r *http.Request) {
 		}
 		patch = raw.PoolSettings
 		maxRtt = raw.MaxRTTms
+		updateIntervalH = raw.UpdateIntervalH
 	}
 	merged := pool.Settings
 	if patch.ProbeHost != "" {
@@ -1053,6 +1060,13 @@ func (s *Server) updatePool(w http.ResponseWriter, r *http.Request) {
 	}
 	if maxRtt != nil {
 		merged.MaxRTTms = *maxRtt
+	}
+	if updateIntervalH != nil {
+		if *updateIntervalH < 0 || *updateIntervalH > 8760 {
+			writeErr(w, fmt.Errorf("интервал автообновления должен быть 0 (из подписки) или 1-8760 часов"))
+			return
+		}
+		merged.UpdateIntervalH = *updateIntervalH
 	}
 	if patch.MagitrickleGroupID != "" {
 		merged.MagitrickleGroupID = patch.MagitrickleGroupID

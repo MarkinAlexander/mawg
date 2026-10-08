@@ -392,6 +392,9 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
         <select id="spAmneziaCountry" style="display:none;max-width:220px" title="локация у gateway Амнезии"></select>
         <button type="button" id="spRefreshSource" title="заново разобрать источник и пересобрать пул (конфиги заменяются)">обновить из источника</button>
       </div>
+      <label class="f" style="margin-top:6px">Автообновление источника, ч (0 = из заголовка подписки, без него сутки; при деградации пула mawg перепроверит источник и сам)
+        <input id="spUpdateInt" type="number" min="0" max="8760">
+      </label>
       <div class="muted" style="font-size:11px;margin-top:2px">Сервер сменил IP или ссылка протухла - вставьте новую и нажмите. Старые конфиги пула будут заменены разобранными. Для ключа Amnezia mawg повторит обмен (тем же устройством, без новой выдачи); можно сменить локацию списком.</div>
     </div>
     <label class="f" id="spRenameRow">Имя (переименование)
@@ -761,7 +764,7 @@ function updateCard(p) {
   });
   card.root.querySelectorAll('[data-wg-only]').forEach(el => el.style.display = isEng ? 'none' : '');
   card.endpoint.textContent = p.activeEndpoint || '-';
-  card.result.textContent = (p.lastResult || '-') + (p.consecFails ? ` (отказов подряд: ${p.consecFails}/${p.settings.failThreshold})` : '');
+  card.result.textContent = (p.lastResult || '-') + (p.consecFails ? ` (отказов подряд: ${p.consecFails}/${p.settings.failThreshold})` : '') + (p.refreshFails ? ` ⚠ автообновление источника падало: ${p.refreshFails}` : '');
   card.err.textContent = p.lastError || '';
   card.err.style.display = p.lastError ? '' : 'none';
   card.errlabel.style.display = p.lastError ? '' : 'none';
@@ -1238,6 +1241,7 @@ function openSettings(name) {
   $('#spThreshold').value = p.settings.failThreshold;
   $('#spCooldown').value = p.settings.cooldownMin;
   $('#spKeepalive').value = p.settings.keepalive;
+  $('#spUpdateInt').value = p.settings.updateIntervalH || 0;
   const fbSel = $('#spFallback');
   let fbOpts = '<option value="direct">пустить трафик напрямую</option><option value="hold">держать последний конфиг</option>';
   for (const other of STATUS.pools) {
@@ -1296,6 +1300,7 @@ $('#spSave').onclick = async e => {
     keepalive: +$('#spKeepalive').value,
     fallback: $('#spFallback').value,
     maxRttMs: $('#spRttOn').checked ? (+$('#spRtt').value || 0) : 0,
+    updateIntervalH: $('#spUpdateInt').value === '' ? 0 : (+$('#spUpdateInt').value || 0),
   };
   try {
     await api('PUT', '/pools/' + p.name, body);

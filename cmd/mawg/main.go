@@ -291,6 +291,7 @@ func main() {
 	log.Printf("mawg %s: platform=%s base=%s web=http://%s:%d", version, plat, dir, listenAddr, cfgPort)
 	httpServer := &http.Server{Addr: bind, Handler: srv.Handler()}
 	go srv.RestoreEngine()
+	go srv.SubUpdateLoop(ctx)
 	go func() {
 		<-ctx.Done()
 		httpServer.Close()
