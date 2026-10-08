@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"mawg/internal/auth"
@@ -38,6 +39,7 @@ type Server struct {
 	mt      *magitrickle.Client
 	version string
 	auth    *auth.Auth
+	tunMu   sync.Mutex
 	IPGate  *auth.IPGate
 	// фактически забинденные адрес/порт демона: UI отличает
 	// "сохранено, но не перезапущено" от "уже применяется"

@@ -53,11 +53,22 @@ func (s *Server) allocTun() string {
 	}
 }
 
-func (s *Server) applyEngine() ([]string, error) {
-	mgr, err := s.sb()
+// claimTun выделяет свободный tun и сразу создаёт пул под блокировкой:
+// два параллельных «Создать» не должны получить одно имя (задвоение tun2).
+// Отдельно задвоение запрещает store.CreatePool; отключённые и ждущие-lx
+// пулы имя тоже занимают.
+func (s *Server) claimTun(settings store.PoolSettings, name string) (store.Pool, error) {
+	s.tunMu.Lock()
+	defer s.tunMu.Unlock()
+	settings.TunName = s.allocTun()
+	pool, err := s.store.CreatePool(name, settings)
 	if err != nil {
-		return nil, err
+		return store.Pool{}, err
 	}
+	return pool, nil
+}
+
+func (s *Server) applyEngine() ([]string, error) {
 	var specs []singbox.PoolSpec
 	for _, p := range s.enginePools() {
 		if p.Disabled {
@@ -79,6 +90,17 @@ func (s *Server) applyEngine() ([]string, error) {
 			CooldownMin:      p.Settings.CooldownMin,
 			MaxRTTms:         p.Settings.MaxRTTms,
 		})
+	}
+	seen := map[string]string{}
+	for _, spec := range specs {
+		if prev, dup := seen[spec.Tun]; dup {
+			return nil, fmt.Errorf("tun %s назначен пулам %s и %s - исправьте настройки одного из них", spec.Tun, prev, spec.Name)
+		}
+		seen[spec.Tun] = spec.Name
+	}
+	mgr, err := s.sb()
+	if err != nil {
+		return nil, err
 	}
 	return mgr.Apply(specs)
 }

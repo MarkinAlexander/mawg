@@ -157,13 +157,13 @@ func (s *Server) createPoolFromSource(w http.ResponseWriter, r *http.Request) {
 		}
 		settings := store.PoolSettings{
 			Platform: s.backend.Name(), Fallback: req.Fallback, ProbeHost: req.ProbeHost,
-			Source: req.Source, EngineMode: engineMode, TunName: s.allocTun(),
+			Source: req.Source, EngineMode: engineMode,
 		}
 		if err := s.validFallback(req.Name, settings.Fallback); err != nil {
 			writeErr(w, err)
 			return
 		}
-		pool, err := s.store.CreatePool(req.Name, settings)
+		pool, err := s.claimTun(settings, req.Name)
 		if err != nil {
 			writeErr(w, err)
 			return
@@ -173,7 +173,7 @@ func (s *Server) createPoolFromSource(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		plan.Pool = pool.Name
-		plan.Tun = settings.TunName
+		plan.Tun = pool.Settings.TunName
 		eligSet := map[string]bool{}
 		for _, n := range eligible {
 			eligSet[n.Tag] = true
@@ -183,7 +183,7 @@ func (s *Server) createPoolFromSource(w http.ResponseWriter, r *http.Request) {
 				plan.Engine = append(plan.Engine, e)
 			}
 		}
-		s.store.LogEvent(pool.Name, "applied", fmt.Sprintf("пул из источника: %d узлов в tun (%s)", len(eligible), settings.TunName))
+		s.store.LogEvent(pool.Name, "applied", fmt.Sprintf("пул из источника: %d узлов в tun (%s)", len(eligible), pool.Settings.TunName))
 		plan.Applied = len(eligible)
 		skipped, err := s.applyEngine()
 		plan.Skipped = append(plan.Skipped, skipped...)

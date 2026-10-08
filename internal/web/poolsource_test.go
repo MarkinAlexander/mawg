@@ -4,8 +4,17 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+
+	"mawg/internal/magitrickle"
+	"mawg/internal/platform/fake"
+	"mawg/internal/rotator"
+	"mawg/internal/store"
 )
 
 func fakeWGKey(b byte) string {
@@ -28,6 +37,11 @@ var (
 func postFromSource(t *testing.T, body string) (int, sourcePlan) {
 	t.Helper()
 	ts := newTestServer(t)
+	return postFromSourceTs(t, ts, body)
+}
+
+func postFromSourceTs(t *testing.T, ts *httptest.Server, body string) (int, sourcePlan) {
+	t.Helper()
 	resp, err := http.Post(ts.URL+"/api/v1/pools/from-source", "application/json", strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
@@ -131,5 +145,101 @@ func TestFromSourceRejectsGarbage(t *testing.T) {
 	code, _ = postFromSource(t, `{"name":"x","source":""}`)
 	if code == 200 {
 		t.Fatal("пустой источник не должен приниматься")
+	}
+}
+
+func engineTuns(t *testing.T, ts *httptest.Server) map[string]string {
+	t.Helper()
+	resp, err := http.Get(ts.URL + "/api/v1/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var st struct {
+		Pools []struct {
+			Name     string `json:"name"`
+			Settings struct {
+				TunName string `json:"tunName"`
+			} `json:"settings"`
+		} `json:"pools"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&st); err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]string{}
+	for _, p := range st.Pools {
+		if p.Settings.TunName != "" {
+			out[p.Name] = p.Settings.TunName
+		}
+	}
+	return out
+}
+
+func TestFromSourceEnginePoolsGetDistinctTuns(t *testing.T) {
+	ts := newTestServer(t)
+	for _, name := range []string{"pool-one", "pool-two"} {
+		code, plan := postFromSourceTs(t, ts, `{"name":"`+name+`","source":"`+fakeVlessLink+`"}`)
+		if code != 200 || plan.Pool != name || plan.Tun == "" {
+			t.Fatalf("%s: код %d, план %+v", name, code, plan)
+		}
+	}
+	tuns := engineTuns(t, ts)
+	if len(tuns) != 2 || tuns["pool-one"] == "" || tuns["pool-two"] == "" {
+		t.Fatalf("tun-ы пулов: %+v", tuns)
+	}
+	if tuns["pool-one"] == tuns["pool-two"] {
+		t.Fatalf("задвоение tun: %+v", tuns)
+	}
+}
+
+func TestFromSourceConcurrentNoTunDup(t *testing.T) {
+	ts := newTestServer(t)
+	var wg sync.WaitGroup
+	for _, name := range []string{"par-a", "par-b"} {
+		wg.Add(1)
+		go func(name string) {
+			defer wg.Done()
+			body := `{"name":"` + name + `","source":"` + fakeVlessLink + `"}`
+			code, plan := postFromSourceTs(t, ts, body)
+			if code != 200 || plan.Pool != name {
+				t.Errorf("%s: код %d, план %+v", name, code, plan)
+			}
+		}(name)
+	}
+	wg.Wait()
+	tuns := engineTuns(t, ts)
+	if len(tuns) != 2 || tuns["par-a"] == tuns["par-b"] {
+		t.Fatalf("параллельное создание дало дубли: %+v", tuns)
+	}
+}
+
+func TestApplyEngineRejectsDuplicateTun(t *testing.T) {
+	base := t.TempDir()
+	root := `{"settings":{},"pools":[
+		{"name":"dup-a","settings":{"platform":"fake","engineMode":"singbox","tunName":"tun2","probeHost":"203.0.113.1"}},
+		{"name":"dup-b","settings":{"platform":"fake","engineMode":"singbox","tunName":"tun2","probeHost":"203.0.113.2"}}]}`
+	if err := os.WriteFile(filepath.Join(base, "config.json"), []byte(root), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	node := `[{"type":"vless","tag":"n","host":"203.0.113.5","port":443,"uuid":"00000000-0000-4000-8000-000000000001"}]`
+	for _, name := range []string{"dup-a", "dup-b"} {
+		dir := filepath.Join(base, "pools", name)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "nodes.json"), []byte(node), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	st, err := store.Open(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fb := fake.New()
+	e := rotator.New(st, fb, magitrickle.New("http://127.0.0.1:1"))
+	srv := New(st, e, fb, nil, "test", nil)
+	_, err = srv.applyEngine()
+	if err == nil || !strings.Contains(err.Error(), "tun tun2") || !strings.Contains(err.Error(), "dup-a") {
+		t.Fatalf("ожидалась ошибка задвоения tun, получено: %v", err)
 	}
 }

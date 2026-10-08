@@ -460,6 +460,10 @@ func (s *Store) CreatePool(name string, settings PoolSettings) (Pool, error) {
 			p.Settings.KeeneticSlot == settings.KeeneticSlot && settings.KeeneticSlot != "" {
 			return Pool{}, fmt.Errorf("слот %s уже занят пулом %q", settings.KeeneticSlot, p.Name)
 		}
+		if settings.EngineMode == "singbox" && settings.TunName != "" &&
+			p.Settings.EngineMode == "singbox" && p.Settings.TunName == settings.TunName {
+			return Pool{}, fmt.Errorf("tun %s уже занят пулом %q", settings.TunName, p.Name)
+		}
 	}
 	if err := os.MkdirAll(s.PoolDir(clean), 0o700); err != nil {
 		return Pool{}, err
