@@ -950,10 +950,22 @@ function renderSourcePlan(p) {
 
 $('#pCreate').onclick = async e => {
   e.preventDefault();
+  const isLink = poolMode === 'link';
   const body = { name: $('#pName').value.trim(), fallback: $('#pFallback').value };
+  if ($('#slotRow').style.display !== 'none' && $('#pSlot').value) {
+    const opt = $('#pSlot').selectedOptions[0];
+    if (opt && opt.dataset.busy && !isLink) {
+      const label = opt.textContent.replace(/ - (занят|свободен)$/, '');
+      const ok = await askModal('Занятый слот', `Слот ${label} уже используется. При активации пула его конфигурация будет заменена, текущие пиры пропадут. Создать пул на этом слоте?`, 'Создать');
+      if (!ok) return;
+    }
+    body.keeneticSlot = $('#pSlot').value;
+  }
+  if ($('#protoRow').style.display !== 'none') body.openwrtProto = $('#pProto').value;
   if (poolMode === 'link') {
     const source = $('#pSource').value.trim();
     if (!source) return toast('Вставьте ссылку, vpn:// или URL подписки', true);
+    if (!$('#pName').value.trim()) return toast('Дайте пулу имя', true);
     try {
       const plan = await api('POST', '/pools/from-source', { ...body, source });
       const planBox = $('#pPlanResult');
@@ -968,17 +980,9 @@ $('#pCreate').onclick = async e => {
     } catch (err) { toast(err.message, true); }
     return;
   }
-  if ($('#slotRow').style.display !== 'none') {
-    if (!$('#pSlot').value) return toast(slotsLoading ? 'Слоты ещё загружаются, секунду' : 'Слоты недоступны', true);
-    const opt = $('#pSlot').selectedOptions[0];
-    if (opt && opt.dataset.busy) {
-      const label = opt.textContent.replace(/ - (занят|свободен)$/, '');
-      const ok = await askModal('Занятый слот', `Слот ${label} уже используется. При активации пула его конфигурация будет заменена, текущие пиры пропадут. Создать пул на этом слоте?`, 'Создать');
-      if (!ok) return;
-    }
-    body.keeneticSlot = $('#pSlot').value;
+  if ($('#slotRow').style.display !== 'none' && !$('#pSlot').value) {
+    return toast(slotsLoading ? 'Слоты ещё загружаются, секунду' : 'Слоты недоступны', true);
   }
-  if ($('#protoRow').style.display !== 'none') body.openwrtProto = $('#pProto').value;
   try {
     await api('POST', '/pools', body);
     dlgPool.close();
