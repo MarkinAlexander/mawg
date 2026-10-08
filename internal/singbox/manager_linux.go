@@ -303,7 +303,8 @@ func (m *Manager) Apply(pools []PoolSpec) ([]string, error) {
 		}
 		spec.Nodes = eligible
 		spec.MixedPort = m.MixedPort + 1 + i
-		if spec.ProbeTarget == "" {
+		if spec.ProbeTarget == "" ||
+			(!strings.HasPrefix(spec.ProbeTarget, "http://") && !strings.HasPrefix(spec.ProbeTarget, "https://")) {
 			spec.ProbeTarget = "http://www.gstatic.com/generate_204"
 		}
 		if spec.CheckIntervalSec <= 0 {
