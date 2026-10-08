@@ -99,9 +99,7 @@ func BuildConfig(pools []PoolSpec, p Params) ([]byte, []string, error) {
 		return nil, nil, fmt.Errorf("порты движка не заданы")
 	}
 	var skipped []string
-	inbounds := []map[string]any{
-		{"type": "mixed", "tag": "mawg-mixed", "listen": "127.0.0.1", "listen_port": p.MixedPort},
-	}
+	var inbounds []map[string]any
 	var outbounds []map[string]any
 	var routeRules []map[string]any
 	for i, spec := range pools {
@@ -111,6 +109,11 @@ func BuildConfig(pools []PoolSpec, p Params) ([]byte, []string, error) {
 			"address": []string{spec.TunIP},
 			"mtu":     9000, "auto_route": false, "strict_route": false,
 			"stack": "gvisor",
+		})
+		mixedTag := "mixed-" + spec.Name
+		mixedPort := p.MixedPort + 1 + i
+		inbounds = append(inbounds, map[string]any{
+			"type": "mixed", "tag": mixedTag, "listen": "127.0.0.1", "listen_port": mixedPort,
 		})
 		groupTag := "mawg-" + spec.Name
 		var tags []string
@@ -130,7 +133,10 @@ func BuildConfig(pools []PoolSpec, p Params) ([]byte, []string, error) {
 		outbounds = append(outbounds, map[string]any{
 			"type": "selector", "tag": groupTag, "outbounds": tags, "default": tags[0],
 		})
-		routeRules = append(routeRules, map[string]any{"inbound": inTag, "outbound": groupTag})
+		routeRules = append(routeRules,
+			map[string]any{"inbound": inTag, "outbound": groupTag},
+			map[string]any{"inbound": mixedTag, "outbound": groupTag},
+		)
 	}
 	if len(outbounds) == 0 {
 		return nil, skipped, fmt.Errorf("нет подходящих движку узлов")

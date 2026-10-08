@@ -41,9 +41,13 @@ func TestBuildConfigUpstream(t *testing.T) {
 	if len(inbounds) != 2 {
 		t.Fatalf("инбаундов: %d", len(inbounds))
 	}
-	tun := inbounds[1].(map[string]any)
+	tun := inbounds[0].(map[string]any)
 	if tun["interface_name"] != "tun1" || tun["auto_route"] != false {
 		t.Fatalf("tun: %v", tun)
+	}
+	mixed := inbounds[1].(map[string]any)
+	if mixed["tag"] != "mixed-demo" || mixed["listen_port"] != float64(2282) {
+		t.Fatalf("mixed пула: %v", mixed)
 	}
 	if tun["address"].([]any)[0] != "172.19.1.1/30" {
 		t.Fatalf("tun address: %v", tun["address"])
@@ -80,6 +84,10 @@ func TestBuildConfigUpstream(t *testing.T) {
 	r0 := rules[0].(map[string]any)
 	if r0["inbound"] != "tun-in-1" || r0["outbound"] != "mawg-demo" {
 		t.Fatalf("route: %v", r0)
+	}
+	r1 := rules[1].(map[string]any)
+	if r1["inbound"] != "mixed-demo" || r1["outbound"] != "mawg-demo" {
+		t.Fatalf("route mixed: %v", r1)
 	}
 	if _, has := cfg["route"].(map[string]any)["default_domain_resolver"]; has {
 		t.Fatal("upstream-профиль не должен иметь default_domain_resolver")

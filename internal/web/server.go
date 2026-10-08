@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -402,9 +403,14 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 			if ns, err := s.readPoolNodes(p.Name); err == nil {
 				nodes = len(ns)
 			}
+			idx := 1
+			if n, err := strconv.Atoi(strings.TrimPrefix(p.Settings.TunName, "tun")); err == nil && n > 0 {
+				idx = n
+			}
 			tuns = append(tuns, map[string]any{
 				"pool": p.Name, "tun": p.Settings.TunName,
 				"disabled": p.Disabled, "nodes": nodes,
+				"probePort": st.Mixed + 1 + idx - 1,
 			})
 		}
 		out.Engine = map[string]any{
