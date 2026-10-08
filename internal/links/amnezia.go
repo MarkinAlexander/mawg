@@ -41,6 +41,11 @@ NgVt5S/FaVjYuzFUifJ12ToChXFgESKFmuso7WluEaWvMIGREdrMrKQKHfYLOzWF
 
 const DefaultGatewayURL = "https://gw.amnezia.org/"
 
+// DefaultClientVersion - версия официального клиента, которую gateway
+// считает допустимой: свою версию mawg он отвергает 501 "client version
+// update is required" (проверено живьём 2026-10-08).
+const DefaultClientVersion = "5.0.3.0"
+
 type AmneziaKey struct {
 	Name            string
 	Description     string
@@ -224,6 +229,10 @@ func ExchangeAmneziaKey(ctx context.Context, raw string, opts ExchangeOptions) (
 		"auth_data":         map[string]string{"api_key": key.APIKey},
 		"is_connect_event":  false,
 	}
+	if payloadFields["app_version"] == "" {
+		payloadFields["app_version"] = DefaultClientVersion
+		payloadFields["cli_version"] = DefaultClientVersion
+	}
 	if opts.ServerCountryCode != "" {
 		payloadFields["server_country_code"] = opts.ServerCountryCode
 	}
@@ -334,8 +343,12 @@ func humanGatewayError(status int, msg string) string {
 	switch {
 	case status == 402:
 		return "подписка Амнезии не активна (HTTP 402): " + msg
+	case status == 409, strings.Contains(msg, "limit of allowable configurations"):
+		return "лимит выданных конфигов для ключа исчерпан (HTTP 409): каждая выдача на новый публичный ключ занимает слот - обновляйте пул тем же ключом («обновить из источника»), лишние конфиги отзовите в приложении Амнезии"
 	case status == 429:
 		return "слишком много запросов к gateway (HTTP 429), повторите позже: " + msg
+	case status == 501, strings.Contains(msg, "client version update is required"):
+		return "gateway требует свежую версию клиента - обновите mawg (HTTP 501): " + msg
 	case strings.Contains(msg, "No active configuration found for"),
 		strings.Contains(msg, "No non-revoked public key found for"):
 		return "у ключа нет активной конфигурации (перевыпустите ключ в приложении Амнезии): " + msg

@@ -65,8 +65,7 @@ func cmdLinksAmnezia(args []string) int {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	xr, err := links.ExchangeAmneziaKey(ctx, source, links.ExchangeOptions{
-		Socks5:  strings.TrimPrefix(via, "socks5://"),
-		Version: version,
+		Socks5: strings.TrimPrefix(via, "socks5://"),
 	})
 	if err != nil {
 		fmt.Println("ошибка:", err)

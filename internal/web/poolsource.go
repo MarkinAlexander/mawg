@@ -119,7 +119,7 @@ func (s *Server) createPoolFromSource(w http.ResponseWriter, r *http.Request) {
 		}
 		via := strings.TrimPrefix(strings.TrimSpace(req.Via), "socks5://")
 		xr, xerr := links.ExchangeAmneziaKey(r.Context(), req.Source, links.ExchangeOptions{
-			Socks5: via, Version: s.version, ServerCountryCode: strings.TrimSpace(req.Country),
+			Socks5: via, ServerCountryCode: strings.TrimSpace(req.Country),
 		})
 		if xerr != nil {
 			writeErr(w, xerr)

@@ -248,7 +248,6 @@ func (s *Server) refreshSource(w http.ResponseWriter, r *http.Request) {
 	var amnezia *amneziaPlanMeta
 	if key, ok := links.IsAmneziaKey(src); ok {
 		xopts := links.ExchangeOptions{
-			Version:           s.version,
 			ServerCountryCode: strings.TrimSpace(req.Country),
 		}
 		if key.ServiceProtocol == "vless" {
