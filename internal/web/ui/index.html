@@ -135,7 +135,7 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
   <span class="meta" id="meta">загрузка...</span>
   <span class="badge" id="updBadge" style="display:none;cursor:pointer;border-color:var(--ok);color:var(--ok)" title="проверить обновления">обновление</span>
   <span style="flex:1"></span>
-  <button class="primary" onclick="dlgPool.showModal(); loadSlots(); setPoolMode('cfg')">+ интерфейс</button>
+  <button class="primary" onclick="dlgPool.showModal(); loadSlots(); setPoolMode('cfg'); $('#pSource').value = '';">+ интерфейс</button>
 </header>
 <main>
   <div class="grid" id="pools"></div>
@@ -918,17 +918,25 @@ $('#pModeLink').onclick = () => setPoolMode('link');
 
 function renderSourcePlan(p) {
   let html = '';
-  if (p.pool) {
-    const what = p.tun ? `tun-интерфейс ${esc(p.tun)} из узлов` : 'конфигов';
-    html += `<div style="margin-bottom:6px">Пул <b>${esc(p.pool)}</b> создан: ${what} ${p.added || (p.engine && p.engine.length) || 0}` +
-      (p.duplicates && p.duplicates.length ? `, дубликаты пропущены: ${esc(p.duplicates.join(', '))}` : '') +
-      (p.tun ? '. Интерфейс появится, когда движок применит конфиг.' : '') + '</div>';
+  const warn = p.warnings && p.warnings.length;
+  if (p.pool && p.tun) {
+    if (warn) {
+      html += `<div style="margin-bottom:6px">Пул <b>${esc(p.pool)}</b> создан (tun ${esc(p.tun)} закреплён), но движок его не применил: <span style="color:var(--err)">${p.warnings.map(esc).join('; ')}</span></div>`;
+    } else {
+      html += `<div style="margin-bottom:6px">Пул <b>${esc(p.pool)}</b> создан: tun-интерфейс ${esc(p.tun)} из узлов ${p.added || (p.engine && p.engine.length) || 0}.</div>`;
+    }
+  } else if (p.pool) {
+    html += `<div style="margin-bottom:6px">Пул <b>${esc(p.pool)}</b> создан: конфигов ${p.added || 0}` +
+      (p.duplicates && p.duplicates.length ? `, дубликаты пропущены: ${esc(p.duplicates.join(', '))}` : '') + '.</div>';
   } else if (p.engine && p.engine.length) {
     html += `<div style="margin-bottom:6px">Пул не создан: в источнике нет WG/AWG узлов, нативно добавить нечего.</div>`;
   }
   if (p.engine && p.engine.length) {
-    html += `<div class="muted" style="font-size:11px;margin-bottom:4px">Узлы, для которых нужен движок sing-box (нативный путь невозможен). Установка ядра - следующий шаг mawg; тогда же появится вариант «через ядро lx» и для WG/AWG:</div>`;
-    html += p.engine.map(e => `<div style="margin:2px 0">• ${esc(e.tag)} <span class="badge">${esc(e.type)}</span> <span class="badge" style="color:var(--warn);border-color:var(--warn)">нужен движок</span></div>`).join('');
+    const savedForLx = !!(p.pool && p.tun);
+    html += savedForLx
+      ? `<div class="muted" style="font-size:11px;margin-bottom:4px">Эти узлы сохранены в пуле, но текущий движок (sing-box без lx) их не умеет: xhttp-транспорт и vless-шифрование есть только в lx-ядре. Когда lx поставим - «обновить из источника» в настройках пула поднимет их.</div>`
+      : `<div class="muted" style="font-size:11px;margin-bottom:4px">Узлы, для которых нужен движок sing-box (нативный путь невозможен):</div>`;
+    html += p.engine.map(e => `<div style="margin:2px 0">• ${esc(e.tag)} <span class="badge">${esc(e.type)}</span> <span class="badge" style="color:var(--warn);border-color:var(--warn)">${savedForLx ? 'ждёт lx-ядро' : 'нужен движок'}</span></div>`).join('');
   }
   if (p.warnings && p.warnings.length) {
     html += `<div style="color:var(--warn);margin-top:6px;font-size:11px">${p.warnings.map(esc).join('; ')}</div>`;
@@ -953,8 +961,7 @@ $('#pCreate').onclick = async e => {
       $('#pCreate').style.display = 'none';
       $('#pCancel').textContent = 'Закрыть';
       if (plan.pool) {
-        toast(`Пул ${plan.pool} создан из источника`);
-        $('#pSource').value = '';
+        toast(`Пул ${plan.pool} создан из источника`, !!plan.warnings);
         refresh();
       }
     } catch (err) { toast(err.message, true); }
