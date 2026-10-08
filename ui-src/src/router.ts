@@ -1,12 +1,11 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
-import StatusView from './views/StatusView.vue'
-import StubView from './views/StubView.vue'
+import LegacyPanel from './views/LegacyPanel.vue'
 
-// hash-history: серверу не нужен fallback на index.html
+// hash-history: серверного fallback не нужно; пока приложение - легаси-панель
+// целиком, маршрутов нет (появятся при разборе панели на компоненты)
 export const router = createRouter({
   history: createWebHashHistory(),
   routes: [
-    { path: '/', component: StatusView },
-    { path: '/:page(.*)', component: StubView },
+    { path: '/:pathMatch(.*)*', component: LegacyPanel },
   ],
 })

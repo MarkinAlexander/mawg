@@ -1,0 +1,2238 @@
+const $ = s => document.querySelector(s);
+let STATUS = null;
+const poolCards = new Map();
+
+function fmtTime(iso) {
+  if (!iso) return '';
+  return new Date(iso).toLocaleTimeString('ru-RU');
+}
+
+function toast(text, isErr) {
+  const m = $('#msg');
+  m.textContent = text;
+  m.style.borderColor = isErr ? 'var(--err)' : 'var(--ok)';
+  m.style.display = 'block';
+  clearTimeout(m._t);
+  m._t = setTimeout(() => m.style.display = 'none', 4000);
+}
+
+let inflight = 0;
+function topbarStart() {
+  inflight++;
+  if (inflight === 1) $('#topbar').classList.add('on');
+}
+function topbarEnd() {
+  inflight = Math.max(0, inflight - 1);
+  if (!inflight) $('#topbar').classList.remove('on');
+}
+
+async function withBusy(btn, fn) {
+  if (!btn || btn.dataset.busy) return;
+  btn.dataset.busy = '1';
+  btn.disabled = true;
+  btn.classList.add('busy');
+  try { await fn(); } finally {
+    delete btn.dataset.busy;
+    btn.disabled = false;
+    btn.classList.remove('busy');
+  }
+}
+
+async function api(method, path, body, isForm) {
+  const opts = { method };
+  if (body !== undefined) opts.body = isForm ? body : JSON.stringify(body);
+  if (!isForm) opts.headers = { 'Content-Type': 'application/json' };
+  topbarStart();
+  try {
+    const resp = await fetch('/api/v1' + path, opts);
+    const data = await resp.json().catch(() => ({}));
+    if (resp.status === 401 && !path.startsWith('/auth/')) { showLogin(); await new Promise(() => {}); }
+    if (!resp.ok) throw new Error(data.error || resp.status);
+    return data;
+  } finally {
+    topbarEnd();
+  }
+}
+
+function ensureCard(p) {
+  let card = poolCards.get(p.name);
+  if (card) return card;
+
+  const root = document.createElement('div');
+  root.className = 'card';
+  root.innerHTML = `
+    <h2><span class="cname"></span> <span class="modebadge"></span><button class="iconbtn edit c-gear" title="настройки пула" style="margin-left:auto">${GEAR_SVG}</button></h2>
+    <div class="sub csub"></div>
+    <div class="kv">
+      <b>конфиг</b><span class="f-endpoint">-</span>
+      <b>проверка</b><span class="f-result">-</span>
+      <b class="f-errlabel" style="display:none">ошибка</b><span class="f-err" style="display:none;color:var(--err)"></span>
+      <b>ротаций</b><span class="f-rotations">0</span>
+    </div>
+    <div class="btnrow">
+      <button class="primary" data-act="enable" data-show="off">Включить</button>
+      <button data-act="rotate" data-show="on" data-wg-only>Сменить конфиг</button>
+      <button data-act="check" data-show="on" data-wg-only>Проверить</button>
+      <button class="danger" data-act="disable" data-show="on">Выключить</button>
+      <button class="danger" data-act="delpool">удалить пул</button>
+    </div>
+    <details data-wg-only>
+      <summary class="cfgsummary" title="порядок конфигов = приоритет ротации">Конфиги (0)</summary>
+      <div class="muted" style="font-size:11px;margin-top:4px">порядок списка = приоритет ротации, выше = раньше</div>
+      <div class="cfgscroll"><table class="cfgtable"></table></div>
+      <div class="drop">перетащите .conf / .zip или нажмите</div>
+      <input type="file" multiple accept=".conf,.zip" style="display:none">
+    </details>`;
+
+  const q = sel => root.querySelector(sel);
+  card = {
+    root,
+    name: p.name,
+    cname: q('.cname'),
+    modebadge: q('.modebadge'),
+    sub: q('.csub'),
+    endpoint: q('.f-endpoint'),
+    result: q('.f-result'),
+    errlabel: q('.f-errlabel'),
+    err: q('.f-err'),
+    rotations: q('.f-rotations'),
+    actions: q('.btnrow'),
+    summary: q('.cfgsummary'),
+    table: q('.cfgtable'),
+    drop: q('.drop'),
+    fileInput: q('input[type=file]'),
+    rows: new Map(),
+  };
+  card.cname.textContent = p.name;
+  card.gear = q('.c-gear');
+
+  root.querySelectorAll('button[data-act]').forEach(btn => {
+    btn.onclick = e => withBusy(e.currentTarget, () => {
+      const act = btn.dataset.act;
+      if (act === 'delpool') return delPool(p.name);
+      if (act === 'enable') return actPool(p.name, 'enable');
+      if (act === 'disable') return actPool(p.name, 'disable');
+      return actPool(p.name, act);
+    });
+  });
+  card.drop.onclick = () => card.fileInput.click();
+  card.gear.onclick = () => openSettings(p.name);
+  card.fileInput.onchange = () => upload(p.name, card.fileInput.files).then(() => { card.fileInput.value = ''; });
+  card.drop.ondragover = e => { e.preventDefault(); card.drop.classList.add('hover'); };
+  card.drop.ondragleave = () => card.drop.classList.remove('hover');
+  card.drop.ondrop = e => {
+    e.preventDefault();
+    card.drop.classList.remove('hover');
+    upload(p.name, e.dataTransfer.files);
+  };
+
+  poolCards.set(p.name, card);
+  $('#pools').appendChild(root);
+  return card;
+}
+
+function updateCard(p) {
+  const card = ensureCard(p);
+  card.modebadge.innerHTML = p.disabled
+    ? '<span class="badge cool">выключен</span>'
+    : (p.mode === 'fallback'
+      ? '<span class="badge fallback">фоллбек</span>'
+      : '<span class="badge up">работает</span>');
+  const isEng = p.settings.engineMode === 'singbox';
+  const engTun = (STATUS.engine && STATUS.engine.tuns || []).find(t => t.pool === p.name);
+  if (isEng) {
+    card.sub.textContent = p.disabled
+      ? `${p.settings.tunName} | движок остановлен`
+      : `${p.settings.tunName} | движок sing-box${STATUS.engine && STATUS.engine.version ? ' ' + STATUS.engine.version : ''}${STATUS.engine && !STATUS.engine.running ? ' (не запущен)' : ''}`;
+    card.endpoint.textContent = engTun ? `узлов: ${engTun.nodes}` : '-';
+  } else {
+    card.sub.textContent = p.disabled
+      ? `${p.slot ? p.slot + ' = ' : ''}${p.device} | ротация остановлена`
+      : `${p.slot ? p.slot + ' = ' : ''}${p.device} | фоллбек: ${p.settings.fallback === 'direct' ? 'напрямую' : 'держать'}`;
+  }
+  card.actions.querySelectorAll('button[data-show]').forEach(btn => {
+    btn.style.display = btn.dataset.show === (p.disabled ? 'off' : 'on') ? '' : 'none';
+  });
+  card.root.querySelectorAll('[data-wg-only]').forEach(el => el.style.display = isEng ? 'none' : '');
+  card.endpoint.textContent = p.activeEndpoint || '-';
+  card.result.textContent = (p.lastResult || '-') + (p.consecFails ? ` (отказов подряд: ${p.consecFails}/${p.settings.failThreshold})` : '') + (p.refreshFails ? ` ⚠ автообновление источника падало: ${p.refreshFails}` : '');
+  card.err.textContent = p.lastError || '';
+  card.err.style.display = p.lastError ? '' : 'none';
+  card.errlabel.style.display = p.lastError ? '' : 'none';
+  card.rotations.textContent = p.rotations;
+  card.summary.textContent = `Конфиги (${(p.configs || []).length})`;
+
+  const tbody = card.table;
+  const seen = new Set();
+  const cfgList = p.configs || [];
+  cfgList.forEach((c, i) => {
+    seen.add(c.file);
+    let row = card.rows.get(c.file);
+    if (!row) {
+      row = document.createElement('tr');
+      row.innerHTML = `<td><span class="r-name"></span><span class="r-badges"></span><span class="muted r-endpoint"></span></td>
+        <td class="ctl"><div class="ctlbox">
+          <button class="iconbtn r-up" title="выше в ротации"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15l-6-6-6 6"/></svg></button>
+          <button class="iconbtn r-down" title="ниже в ротации"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></button>
+          <label class="switch" title="участвует в ротации"><input type="checkbox" class="r-toggle" ${c.enabled ? 'checked' : ''}><span class="knob"></span></label>
+          <button class="iconbtn r-del" title="удалить конфиг"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14"/></svg></button></div></td>`;
+      row.querySelector('.r-toggle').onchange = e => { toggleCfg(p.name, c.file, e.target.checked); };
+      row.querySelector('.r-del').onclick = () => { delCfg(p.name, c.file); };
+      row.querySelector('.r-up').onclick = () => { moveCfg(p.name, c.file, -1); };
+      row.querySelector('.r-down').onclick = () => { moveCfg(p.name, c.file, 1); };
+      card.rows.set(c.file, row);
+    }
+    const active = c.file === p.activeFile;
+    row.style.cssText = active ? 'color:var(--ok)' : (c.enabled ? '' : 'opacity:.45');
+    row.querySelector('.r-name').textContent = c.original;
+    row.querySelector('.r-badges').innerHTML =
+      (active ? '<span class="badge up">активен</span> ' : '') +
+      (c.coolForSec > 0 ? `<span class="badge cool">cooldown ${Math.ceil(c.coolForSec / 60)}м</span>` : '') +
+      (c.conflict ? `<span class="warn-badge" title="${esc(c.conflict)}: исключен из ротации, тумблер не включит">${WARN_SVG_ICON}</span>` : '');
+    row.querySelector('.r-endpoint').textContent = c.endpoint;
+    row.querySelector('.r-up').disabled = i === 0;
+    row.querySelector('.r-down').disabled = i === cfgList.length - 1;
+    tbody.appendChild(row);
+  });
+  for (const [file, row] of card.rows) {
+    if (!seen.has(file)) { row.remove(); card.rows.delete(file); }
+  }
+}
+
+function updateMeta() {
+  const mt = MTState === 'checking' ? 'проверяю...' : (MTState === 'yes' ? 'доступен' : 'недоступен');
+  if (STATUS) $('#meta').textContent = `${STATUS.platform} | mawg ${STATUS.version} | magitrickle: ${mt}`;
+}
+
+async function refresh() {
+  try {
+    STATUS = await api('GET', '/status');
+    updateMeta();
+    updateSbMode();
+    const names = new Set(STATUS.pools.map(p => p.name));
+    for (const [name, card] of poolCards) {
+      if (!names.has(name)) { card.root.remove(); poolCards.delete(name); }
+    }
+    for (const p of STATUS.pools) updateCard(p);
+    $('#empty').style.display = STATUS.pools.length ? 'none' : '';
+  } catch (e) { $('#meta').textContent = 'ошибка: ' + e.message; }
+}
+
+function updateSbMode() {
+  const sel = document.getElementById('sbMode');
+  const info = document.getElementById('sbModeInfo');
+  if (!sel || !STATUS) return;
+  const eng = STATUS.engine;
+  if (!eng || !eng.available) { info.textContent = 'движок не найден'; return; }
+  sel.value = eng.mode || 'own';
+  const parts = [];
+  parts.push(eng.running ? 'ядро работает' : 'ядро не отвечает');
+  if (eng.mode === 'shared' && eng.fragment) parts.push(eng.fragment);
+  info.textContent = parts.join(' | ');
+}
+
+async function setSbMode() {
+  const mode = document.getElementById('sbMode').value;
+  const ok = await askModal('Сменить режим движка',
+    mode === 'shared'
+      ? 'Пулы mawg переедут в общий конфиг sing-box (mawg-pools.json в каталоге основного ядра). Ваш sing-box будет перезапущен - соединения коротко прервутся.'
+      : 'Вернуть отдельный экземпляр движка mawg. Ваш sing-box будет перезапущен без фрагмента mawg.',
+    'Сменить');
+  if (!ok) { updateSbMode(); return; }
+  try {
+    const r = await api('POST', '/singbox/mode', { mode });
+    toast(r.warning ? 'Режим сменён, но: ' + r.warning : 'Режим движка: ' + (r.mode || mode), !!r.warning);
+  } catch (err) { toast(err.message, true); }
+  setTimeout(refresh, 500);
+}
+
+let MT = null;
+let MTState = 'checking';
+async function refreshMT() {
+  try {
+    const r = await api('GET', '/magitrickle');
+    MT = r.available ? r.groups : null;
+    MTState = r.available ? 'yes' : 'no';
+  } catch { MT = null; MTState = 'no'; }
+  updateMeta();
+}
+
+async function upload(pool, files) {
+  if (!files || !files.length) return;
+  const fd = new FormData();
+  for (const f of files) fd.append('files', f);
+  try {
+    const r = await api('POST', `/pools/${pool}/configs`, fd, true);
+    let msg = `Добавлено ${r.added}. Дубликаты: ${(r.duplicates || []).length}. Ошибки: ${(r.errors || []).length}`;
+    if ((r.warnings || []).length) msg += '. Конфликты: ' + r.warnings.length;
+    toast(msg, false);
+    for (const w of (r.warnings || [])) toast(w, true);
+    if ((r.errors || []).length) console.warn(r.errors);
+  } catch (e) { toast(e.message, true); }
+  refresh();
+}
+
+async function actPool(pool, act) {
+  try { await api('POST', `/pools/${pool}/${act}`, {}); } catch (e) { toast(e.message, true); }
+  setTimeout(refresh, 700);
+}
+
+async function activate(pool, file) {
+  try { await api('POST', `/pools/${pool}/activate`, { file }); } catch (e) { toast(e.message, true); }
+  setTimeout(refresh, 700);
+}
+
+async function toggleCfg(pool, file, enabled) {
+  try { await api('POST', `/pools/${pool}/configs/${file}/enable`, { enabled }); } catch (e) { toast(e.message, true); }
+  refresh();
+}
+
+async function moveCfg(pool, file, delta) {
+  try { await api('POST', `/pools/${pool}/configs/${file}/move`, { delta }); } catch (e) { toast(e.message, true); }
+  refresh();
+}
+
+async function delCfg(pool, file) {
+  try { await api('DELETE', `/pools/${pool}/configs/${file}`); } catch (e) { toast(e.message, true); }
+  refresh();
+}
+
+async function delPool(pool) {
+  if (!(await askModal('Удаление пула', `Удалить пул ${pool}? Интерфейс будет выключен, конфиги удалены из mawg.`, 'Удалить'))) return;
+  try { await api('DELETE', '/pools/' + pool); } catch (e) { toast(e.message, true); }
+  refresh();
+}
+
+let poolMode = 'cfg';
+let inspectTimer = null, inspectSeq = 0;
+function setPoolMode(m) {
+  poolMode = m;
+  $('#pModeCfg').classList.toggle('primary', m === 'cfg');
+  $('#pModeLink').classList.toggle('primary', m === 'link');
+  $('#dlgPool').classList.toggle('linkmode', m === 'link');
+  $('#pSourceRow').style.display = m === 'link' ? '' : 'none';
+  $('#pLinkHint').style.display = m === 'link' ? '' : 'none';
+  $('#pInspect').style.display = 'none';
+  const plan = $('#pPlanResult');
+  plan.style.display = 'none';
+  plan.innerHTML = '';
+  $('#pCreate').style.display = '';
+  $('#pCancel').textContent = 'Отмена';
+  gateSlot(null);
+}
+
+function gateSlot(inspect) {
+  const row = $('#slotRow'), hint = document.getElementById('slotHint');
+  if (poolMode === 'cfg') { row.classList.remove('rowoff'); return; }
+  if (inspect && inspect.amnezia) {
+    row.classList.remove('rowoff');
+    hint.textContent = 'Протокол из ключа: AWG - нужен свободный слот; VLESS - слот не нужен (будет tun-интерфейс движка). Оставьте выбранным свободный слот, если протокол AWG.';
+    hint.style.display = '';
+    return;
+  }
+  if (!inspect || inspect.error) {
+    row.classList.add('rowoff');
+    hint.textContent = inspect && inspect.error ? 'Ссылка не разбирается: ' + inspect.error : 'Вставьте ссылку - mawg определит, нужен слот (WG/AWG) или будет создан tun-интерфейс.';
+    hint.style.display = '';
+    return;
+  }
+  if (inspect.native > 0) {
+    row.classList.remove('rowoff');
+    hint.textContent = `Есть WG/AWG узлы (${inspect.native}) - выберите свободный слот или создайте новый. ` + (inspect.engine > 0 ? `Прокси-узлы (${inspect.engine}) пойдут в tun-интерфейс движка.` : '');
+    hint.style.color = '';
+    hint.style.display = '';
+  } else {
+    row.classList.add('rowoff');
+    hint.textContent = `Прокси-узлы (${inspect.engine}) - будет создан tun-интерфейс движка sing-box (tun1, tun2...), слот не нужен.`;
+    hint.style.display = '';
+  }
+}
+
+let amneziaKey = false;
+function updateAmneziaRow(ins) {
+  amneziaKey = !!(ins && ins.amnezia);
+  const row = document.getElementById('pAmneziaRow');
+  if (!row) return;
+  row.style.display = amneziaKey ? '' : 'none';
+  if (!amneziaKey) return;
+  document.getElementById('pAmneziaProto').textContent = (ins.amnezia.serviceProtocol || 'awg').toUpperCase();
+  const via = document.getElementById('pAmneziaVia');
+  const cur = via.value;
+  via.innerHTML = '<option value="">напрямую (https)</option>';
+  (STATUS.engine && STATUS.engine.tuns || []).forEach(t => {
+    if (!t.disabled && t.probePort) {
+      const opt = document.createElement('option');
+      opt.value = `socks5://127.0.0.1:${t.probePort}`;
+      opt.textContent = `через пул ${t.pool} (socks5 127.0.0.1:${t.probePort})`;
+      via.appendChild(opt);
+    }
+  });
+  via.value = cur;
+}
+
+function inspectSource() {
+  const src = $('#pSource').value.trim();
+  clearTimeout(inspectTimer);
+  const box = $('#pInspect');
+  if (!src) { box.style.display = 'none'; updateAmneziaRow(null); gateSlot(null); return; }
+  inspectTimer = setTimeout(async () => {
+    const seq = ++inspectSeq;
+    box.style.display = '';
+    box.textContent = 'разбираю ссылку...';
+    try {
+      const ins = await api('POST', '/links/inspect', { source: src });
+      if (seq !== inspectSeq) return;
+      updateAmneziaRow(ins);
+      gateSlot(ins);
+      let t = [];
+      if (ins.error) t.push('не разбирается: ' + ins.error);
+      if (ins.amnezia) t.push(`ключ Amnezia ${(ins.amnezia.serviceType || '').toUpperCase()} API`);
+      if (ins.native) t.push(`WG/AWG узлов: ${ins.native}`);
+      if (ins.engine) t.push(`прокси-узлов: ${ins.engine} (${(ins.types || []).join(', ')})`);
+      if (ins.intervalHours) t.push(`интервал подписки: ${ins.intervalHours} ч`);
+      if (!ins.error && !ins.native && !ins.engine && !ins.amnezia) t.push('узлов не найдено');
+      box.textContent = t.join(' · ');
+    } catch (err) {
+      if (seq !== inspectSeq) return;
+      box.textContent = 'не разобрать: ' + err.message;
+      updateAmneziaRow(null);
+      gateSlot({ error: err.message });
+    }
+  }, 500);
+}
+$('#pSource').addEventListener('input', inspectSource);
+
+$('#pModeCfg').onclick = () => setPoolMode('cfg');
+$('#pModeLink').onclick = () => setPoolMode('link');
+
+function renderSourcePlan(p) {
+  let html = '';
+  const warn = p.warnings && p.warnings.length;
+  if (p.pool && p.tun) {
+    const applied = p.applied != null ? p.applied : ((p.engine && p.engine.length) || 0);
+    const probe = p.probeOk == null ? '' : (p.probeOk ? ` · проба: ok (${p.probeMs}ms)` : ' · проба: не прошла');
+    if (warn) {
+      html += `<div style="margin-bottom:6px">Пул <b>${esc(p.pool)}</b> создан: tun ${esc(p.tun)}, узлов ${applied}${probe}.<br>` +
+        `<span style="color:var(--err)">${p.warnings.map(esc).join('; ')}</span></div>`;
+    } else {
+      html += `<div style="margin-bottom:6px">Пул <b>${esc(p.pool)}</b> создан: tun-интерфейс ${esc(p.tun)}, узлов ${applied}${probe}.</div>`;
+    }
+  } else if (p.pool) {
+    html += `<div style="margin-bottom:6px">Пул <b>${esc(p.pool)}</b> создан: конфигов ${p.added || 0}` +
+      (p.duplicates && p.duplicates.length ? `, дубликаты пропущены: ${esc(p.duplicates.join(', '))}` : '') + '.</div>';
+  } else if (p.engine && p.engine.length) {
+    html += `<div style="margin-bottom:6px">Пул не создан: в источнике нет WG/AWG узлов, нативно добавить нечего.</div>`;
+  }
+  if (p.amnezia) {
+    const a = p.amnezia;
+    let meta = `Выдан конфиг Amnezia (${(a.protocol || 'awg').toUpperCase()})`;
+    if (a.serverCountry) meta += `, локация: ${a.serverCountryName || a.serverCountry}`;
+    if (a.maxDevices) meta += `, устройств: ${a.activeDevices}/${a.maxDevices}`;
+    if (a.issuedConfigs) meta += `, выдано конфигов: ${a.issuedConfigs}`;
+    html += `<div class="muted" style="font-size:11px;margin:4px 0">${esc(meta)}</div>`;
+    if (a.availableCountries && a.availableCountries.length > 1) {
+      html += `<div class="muted" style="font-size:11px;margin-bottom:4px">Локации в подписке: ${a.availableCountries.map(c => esc(c.code + (c.name ? ' (' + c.name + ')' : ''))).join(', ')}. Сменить - «обновить из источника» в настройках пула.</div>`;
+    }
+  }
+  if (p.engine && p.engine.length) {
+    const savedForLx = !!(p.pool && p.tun);
+    html += savedForLx
+      ? `<div class="muted" style="font-size:11px;margin-bottom:4px">Эти узлы сохранены в пуле, но текущий профиль движка их не запустит (xhttp-транспорт и новое vless-шифрование есть только в lx-ядре). После установки lx - «обновить из источника» в настройках пула поднимет их.</div>`
+      : `<div class="muted" style="font-size:11px;margin-bottom:4px">Узлы, для которых нужен движок sing-box (нативный путь невозможен):</div>`;
+    html += p.engine.map(e => `<div style="margin:2px 0">• ${esc(e.tag)} <span class="badge">${esc(e.type)}</span> <span class="badge" style="color:var(--warn);border-color:var(--warn)">${savedForLx ? 'ждёт lx-ядро' : 'нужен движок'}</span></div>`).join('');
+  }
+  if (p.warnings && p.warnings.length) {
+    html += `<div style="color:var(--warn);margin-top:6px;font-size:11px">${p.warnings.map(esc).join('; ')}</div>`;
+  }
+  if (p.skipped && p.skipped.length) {
+    html += `<div style="color:var(--warn);margin-top:6px;font-size:11px">Пропущено: ${p.skipped.map(esc).join('; ')}</div>`;
+  }
+  return html;
+}
+
+$('#pCreate').onclick = async e => {
+  e.preventDefault();
+  const isLink = poolMode === 'link';
+  const body = { name: $('#pName').value.trim(), fallback: $('#pFallback').value };
+  if ($('#slotRow').style.display !== 'none' && $('#pSlot').value) {
+    const opt = $('#pSlot').selectedOptions[0];
+    if (opt && opt.dataset.busy && !isLink) {
+      const label = opt.textContent.replace(/ - (занят|свободен)$/, '');
+      const ok = await askModal('Занятый слот', `Слот ${label} уже используется. При активации пула его конфигурация будет заменена, текущие пиры пропадут. Создать пул на этом слоте?`, 'Создать');
+      if (!ok) return;
+    }
+    body.keeneticSlot = $('#pSlot').value;
+  }
+  if ($('#protoRow').style.display !== 'none') body.openwrtProto = $('#pProto').value;
+  if (poolMode === 'link') {
+    const source = $('#pSource').value.trim();
+    if (!source) return toast('Вставьте ссылку, vpn:// или URL подписки', true);
+    if (!$('#pName').value.trim()) return toast('Дайте пулу имя', true);
+    await withBusy(e.currentTarget, async () => {
+      $('#pCancel').disabled = true;
+      try {
+        if (amneziaKey) {
+          body.exchange = true;
+          body.via = document.getElementById('pAmneziaVia').value;
+          body.country = document.getElementById('pAmneziaCountry').value;
+        }
+        const plan = await api('POST', '/pools/from-source', { ...body, source });
+        const planBox = $('#pPlanResult');
+        planBox.innerHTML = renderSourcePlan(plan);
+        planBox.style.display = '';
+        $('#pCreate').style.display = 'none';
+        $('#pCancel').textContent = 'Закрыть';
+        $('#pCancel').disabled = false;
+        if (plan.pool) {
+          toast(`Пул ${plan.pool} создан из источника`, !!plan.warnings);
+          refresh();
+        }
+      } catch (err) {
+        $('#pCancel').disabled = false;
+        toast(err.message, true);
+      }
+    });
+    return;
+  }
+  if ($('#slotRow').style.display !== 'none' && !$('#pSlot').value) {
+    return toast(slotsLoading ? 'Слоты ещё загружаются, секунду' : 'Слоты недоступны', true);
+  }
+  try {
+    await api('POST', '/pools', body);
+    dlgPool.close();
+    $('#pName').value = '';
+    refresh();
+  } catch (err) { toast(err.message, true); }
+};
+
+let slotsLoading = false;
+function slotBusyHint() {
+  if (poolMode === 'link') return;
+  const sel = $('#pSlot');
+  const hint = document.getElementById('slotHint');
+  const opt = sel.selectedOptions[0];
+  if (opt && opt.dataset.busy) {
+    hint.textContent = 'Слот занят: при активации пула его текущая конфигурация и пиры этого интерфейса будут заменены.';
+    hint.style.display = '';
+  } else {
+    hint.style.display = 'none';
+  }
+}
+$('#pSlot').addEventListener('change', slotBusyHint);
+async function loadSlots() {
+  const platform = STATUS ? STATUS.platform : '';
+  $('#protoRow').style.display = platform === 'openwrt' ? '' : 'none';
+  $('#slotRow').style.display = platform === 'keenetic' ? '' : 'none';
+  if (platform !== 'keenetic') return;
+  const sel = $('#pSlot');
+  const hint = document.getElementById('slotHint');
+  slotsLoading = true;
+  const firstLoad = !sel.options.length;
+  if (firstLoad) {
+    sel.disabled = true;
+    sel.innerHTML = '<option value="">загружаю слоты...</option>';
+    hint.style.display = 'none';
+  }
+  try {
+    const r = await api('GET', '/slots');
+    const mawgSlots = new Set((STATUS ? STATUS.pools : []).map(p => p.slot).filter(Boolean));
+    const prev = dlgPool.open ? sel.value : '';
+    let firstFree = '', firstAny = '', listed = 0;
+    sel.innerHTML = (r.slots || [])
+      .filter(s => !mawgSlots.has(s.id))
+      .map(s => {
+        listed++;
+        if (!firstAny) firstAny = s.id;
+        const busy = s.linkUp || s.connected || s.description;
+        if (!busy && !firstFree) firstFree = s.id;
+        const mark = busy ? ' - занят' : ' - свободен';
+        return `<option value="${s.id}"${busy ? ' data-busy="1"' : ''}>${s.id} (${s.device})${s.description ? ' ' + s.description : ''}${mark}</option>`;
+      }).join('');
+    sel.disabled = false;
+    if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
+    else if (firstFree || firstAny) sel.value = firstFree || firstAny;
+    if (listed === 0) {
+      if (poolMode === 'link') return;
+      hint.textContent = 'Слоты WireGuard не найдены - создайте кнопкой "+ слот".';
+      hint.style.display = '';
+    } else {
+      slotBusyHint();
+    }
+  } catch (e) {
+    sel.innerHTML = '';
+    sel.disabled = false;
+    if (poolMode === 'link') return;
+    hint.textContent = 'Не удалось получить список слотов: ' + e.message + '. Создание пула заблокировано до появления списка.';
+    hint.style.display = '';
+  } finally {
+    slotsLoading = false;
+  }
+}
+document.getElementById('slotCreate').onclick = e => withBusy(e.currentTarget, async () => {
+  try {
+    const r = await api('POST', '/slots/create', {});
+    toast('Создан слот ' + r.slot);
+    await loadSlots();
+  } catch (err) { toast(err.message, true); }
+});
+
+document.querySelector('#dlgPool button[value=cancel]').onclick = () => dlgPool.close();
+
+const PROBE_DEFAULTS = { http: 'http://www.gstatic.com/generate_204', icmp: '1.1.1.1' };
+function probeTypeOf(target) { return /^https?:\/\//.test(target) ? 'http' : 'icmp'; }
+function wireRttField(onCb, numInput) {
+  const sync = () => {
+    numInput.disabled = !onCb.checked;
+    numInput.style.opacity = onCb.checked ? '' : '.45';
+  };
+  onCb.addEventListener('change', sync);
+  sync();
+}
+wireRttField($('#spRttOn'), $('#spRtt'));
+wireRttField(document.getElementById('ipRttOn'), document.getElementById('ipRtt'));
+wireRttField(document.getElementById('wanRttOn'), document.getElementById('wanRtt'));
+function wireProbeSwitch(typeSel, targetInput) {
+  typeSel.addEventListener('change', () => {
+    const cur = targetInput.value.trim();
+    const curType = probeTypeOf(cur);
+    if (!cur || cur === PROBE_DEFAULTS[curType]) {
+      targetInput.value = PROBE_DEFAULTS[typeSel.value];
+    }
+    targetInput.placeholder = PROBE_DEFAULTS[typeSel.value];
+  });
+}
+
+let settingsPool = null;
+function openSettings(name) {
+  const p = STATUS && STATUS.pools.find(x => x.name === name);
+  if (!p) return;
+  settingsPool = p;
+  $('#spName').textContent = p.name;
+  $('#spSourceRow').style.display = (p.settings.engineMode === 'singbox' || p.settings.source) ? '' : 'none';
+  $('#spSource').value = p.settings.source || '';
+  updateSpAmneziaCountry(p);
+  $('#spRename').value = p.name;
+  $('#spRenameRow').style.display = STATUS.platform === 'keenetic' ? '' : 'none';
+  const ptype = probeTypeOf(p.settings.probeHost || '');
+  $('#spProbeType').value = ptype;
+  $('#spProbe').value = p.settings.probeHost || PROBE_DEFAULTS[ptype];
+  $('#spRttOn').checked = p.settings.maxRttMs > 0;
+  $('#spRtt').value = p.settings.maxRttMs > 0 ? p.settings.maxRttMs : 300;
+  $('#spRttOn').dispatchEvent(new Event('change'));
+  const isEngPool = p.settings.engineMode === 'singbox';
+  $('#spKeepaliveRow').style.display = isEngPool ? 'none' : '';
+  $('#spEngineNote').style.display = isEngPool ? '' : 'none';
+  if (isEngPool) {
+    $('#spProbeType').value = 'http';
+    $('#spProbeType').disabled = true;
+  } else {
+    $('#spProbeType').disabled = false;
+  }
+  $('#spInterval').value = p.settings.checkIntervalSec;
+  $('#spThreshold').value = p.settings.failThreshold;
+  $('#spCooldown').value = p.settings.cooldownMin;
+  $('#spKeepalive').value = p.settings.keepalive;
+  $('#spUpdateInt').value = p.settings.updateIntervalH || 0;
+  const fbSel = $('#spFallback');
+  let fbOpts = '<option value="direct">пустить трафик напрямую</option><option value="hold">держать последний конфиг</option>';
+  for (const other of STATUS.pools) {
+    if (other.name !== p.name) fbOpts += `<option value="pool:${other.name}">перевести группы на пул ${other.name}</option>`;
+  }
+  for (const i of (IFACES || [])) {
+    if (i.device === p.device || i.mode === 'managed') continue;
+    fbOpts += `<option value="iface:${i.device}">перевести группы на интерфейс ${esc(ifaceLabel(i.device))}${i.probe ? '' : ' (без проверки)'}</option>`;
+  }
+  fbSel.innerHTML = fbOpts;
+  fbSel.value = [...fbSel.options].some(o => o.value === (p.settings.fallback || 'direct')) ? (p.settings.fallback || 'direct') : 'direct';
+  updateFbHint(p.device);
+  fbSel.onchange = () => updateFbHint(p.device);
+  dlgSettings.showModal();
+}
+wireProbeSwitch($('#spProbeType'), $('#spProbe'));
+
+document.querySelector('#dlgSettings button[value=cancel]').onclick = () => dlgSettings.close();
+function updateSpAmneziaCountry(p) {
+  const sel = document.getElementById('spAmneziaCountry');
+  const meta = p && p.settings && p.settings.amnezia;
+  if (!meta || !meta.countries || meta.countries.length < 2) { sel.style.display = 'none'; sel.innerHTML = ''; return; }
+  sel.style.display = '';
+  sel.innerHTML = '<option value="">локация: как выдаст gateway</option>' +
+    meta.countries.map(c => `<option value="${esc(c.code)}"${c.code === meta.country ? ' selected' : ''}>${esc(c.code + (c.name ? ' - ' + c.name : ''))}${c.protocols && c.protocols.length ? ' [' + c.protocols.join('/') + ']' : ''}</option>`).join('');
+}
+$('#spRefreshSource').onclick = async e => withBusy(e.currentTarget, async () => {
+  const p = settingsPool;
+  if (!p) return;
+  const src = $('#spSource').value.trim();
+  if (!src) { toast('Вставьте ссылку или URL подписки', true); return; }
+  try {
+    const body = { source: src };
+    const csel = document.getElementById('spAmneziaCountry');
+    if (csel.style.display !== 'none' && csel.value) body.country = csel.value;
+    const plan = await api('POST', `/pools/${encodeURIComponent(p.name)}/refresh-source`, body);
+    let msg = 'источник обновлён';
+    if (plan.amnezia) msg = 'ключ Amnezia обменян' + (plan.amnezia.serverCountry ? ` (локация ${plan.amnezia.serverCountry})` : '');
+    if (plan.added) msg += `: конфигов ${plan.added}`;
+    if (plan.engine && plan.engine.length) msg += `, узлов ${plan.engine.length}`;
+    if (plan.warnings && plan.warnings.length) msg += '; ' + plan.warnings.join('; ');
+    toast(msg, !!(plan.warnings && plan.warnings.length));
+    dlgSettings.close();
+    refresh();
+  } catch (err) { toast(err.message, true); }
+});
+$('#spSave').onclick = async e => {
+  e.preventDefault();
+  const p = settingsPool;
+  if (!p) return;
+  const body = {
+    probeHost: $('#spProbe').value.trim(),
+    checkIntervalSec: +$('#spInterval').value,
+    failThreshold: +$('#spThreshold').value,
+    cooldownMin: +$('#spCooldown').value,
+    keepalive: +$('#spKeepalive').value,
+    fallback: $('#spFallback').value,
+    maxRttMs: $('#spRttOn').checked ? (+$('#spRtt').value || 0) : 0,
+    updateIntervalH: $('#spUpdateInt').value === '' ? 0 : (+$('#spUpdateInt').value || 0),
+  };
+  try {
+    await api('PUT', '/pools/' + p.name, body);
+    const newName = $('#spRename').value.trim();
+    if (newName && newName !== p.name) {
+      await api('POST', `/pools/${p.name}/rename`, { name: newName });
+      const old = poolCards.get(p.name);
+      if (old) old.root.remove();
+      poolCards.delete(p.name);
+    }
+    dlgSettings.close();
+    refresh();
+    refreshIfaces(true);
+  } catch (err) { toast(err.message, true); }
+};
+
+let IFACES = null, showHiddenIfaces = false, lastIfacesJSON = '';
+async function refreshIfaces(force) {
+  try {
+    const r = await api('GET', '/ifaces');
+    IFACES = r.interfaces || [];
+    const json = JSON.stringify(IFACES) + (showHiddenIfaces ? '#h' : '');
+    if (!force && json === lastIfacesJSON) return;
+    lastIfacesJSON = json;
+    renderIfaces();
+  } catch (e) {
+    if (!IFACES) document.getElementById('ifacelist').innerHTML = '<div class="muted">интерфейсы недоступны: ' + esc(e.message) + '</div>';
+    console.warn(e);
+  }
+}
+
+function renderIfaces() {
+  const box = document.getElementById('ifacelist');
+  const all = IFACES || [];
+  const hiddenCount = all.filter(i => i.mode === 'hidden').length;
+  const visible = all.filter(i => i.mode !== 'hidden' || showHiddenIfaces);
+  document.getElementById('ifacecount').textContent = `${all.length} шт, скрыто ${hiddenCount}`;
+  document.getElementById('ifShowHidden').textContent = showHiddenIfaces ? 'скрыть служебные' : `показать скрытые (${hiddenCount})`;
+  document.getElementById('ifShowHidden').style.display = hiddenCount ? '' : 'none';
+  if (!visible.length) {
+    box.innerHTML = '<div class="muted">WireGuard-интерфейсы не найдены</div>';
+    return;
+  }
+  box.innerHTML = '';
+  for (const it of visible) {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:5px 0;border-bottom:1px solid var(--border)';
+    const hs = it.mode === 'managed' ? '' : (it.handshakeAgo >= 0 ? `handshake ${it.handshakeAgo}с назад` : 'handshake нет');
+    const badge = it.linkUp
+      ? `<span class="badge up">up</span>`
+      : `<span class="badge ${it.mode === 'hidden' ? 'cool' : 'fallback'}">down</span>`;
+    const title = it.slot && it.slot !== it.device ? `${it.slot}${it.description && it.description !== it.slot ? ' - ' + esc(it.description) : ''}` : (it.description && it.description !== it.device ? esc(it.description) : '');
+    row.innerHTML = `
+      <b style="min-width:64px">${esc(it.device)}</b>
+      <span class="muted" style="font-size:12px">${title}</span>
+      ${badge}
+      ${hs ? `<span class="muted" style="font-size:11px">${hs}</span>` : ''}
+      ${it.probeStatus ? (it.probeStatus.includes('ок')
+        ? `<span class="badge up">${esc(it.probeStatus)}</span>`
+        : `<span class="badge fallback">${esc(it.probeStatus)}</span>`) : ''}
+      <span style="flex:1"></span>`;
+    const right = document.createElement('span');
+    right.style.cssText = 'display:inline-flex;align-items:center;gap:6px';
+    if (it.mode === 'managed') {
+      right.innerHTML = `<span class="badge">пул ${esc(it.pool)}</span>`;
+    } else {
+      if (it.mode === 'external') {
+        const probeBtn = document.createElement('button');
+        probeBtn.className = 'iconbtn edit';
+        probeBtn.title = it.probe ? 'проверка настроена' : 'настроить проверку';
+        probeBtn.innerHTML = GEAR_SVG + (it.probe ? ' <span style="font-size:10px;color:var(--ok)">*</span>' : '');
+        probeBtn.onclick = () => openIfaceProbeDlg(it);
+        right.appendChild(probeBtn);
+      }
+      const btn = document.createElement('button');
+      btn.textContent = it.mode === 'external' ? 'скрыть' : 'сделать внешним';
+      btn.onclick = async () => {
+        const mode = it.mode === 'external' ? 'hidden' : 'external';
+        try { await api('POST', `/ifaces/${it.device}/mode`, { mode }); } catch (e) { toast(e.message, true); }
+        lastIfacesJSON = '';
+        refreshIfaces(true);
+        fillIfaceSelects();
+      };
+      right.appendChild(btn);
+    }
+    row.appendChild(right);
+    box.appendChild(row);
+  }
+}
+
+document.getElementById('ifShowHidden').onclick = () => {
+  showHiddenIfaces = !showHiddenIfaces;
+  lastIfacesJSON = '';
+  renderIfaces();
+};
+
+let ipDeviceName = null;
+function openIfaceProbeDlg(it) {
+  ipDeviceName = it.device;
+  document.getElementById('ipDevice').textContent = it.device;
+  const probe = it.probe || {};
+  const ptype = probe.type || probeTypeOf(probe.target || '') || 'http';
+  document.getElementById('ipType').value = ptype;
+  document.getElementById('ipTarget').value = probe.target || PROBE_DEFAULTS[ptype];
+  document.getElementById('ipTarget').placeholder = PROBE_DEFAULTS[ptype];
+  document.getElementById('ipRttOn').checked = (probe.maxRttMs || 0) > 0;
+  document.getElementById('ipRtt').value = (probe.maxRttMs || 0) > 0 ? probe.maxRttMs : 300;
+  document.getElementById('ipRttOn').dispatchEvent(new Event('change'));
+  dlgIfaceProbe.showModal();
+}
+wireProbeSwitch(document.getElementById('ipType'), document.getElementById('ipTarget'));
+document.querySelector('#dlgIfaceProbe button[value=cancel]').onclick = () => dlgIfaceProbe.close();
+document.getElementById('ipSave').onclick = async e => {
+  e.preventDefault();
+  const body = {
+    type: document.getElementById('ipType').value,
+    target: document.getElementById('ipTarget').value.trim(),
+    maxRttMs: document.getElementById('ipRttOn').checked ? (+document.getElementById('ipRtt').value || 0) : 0,
+  };
+  if (!body.target) return toast('Укажите цель пробы', true);
+  try {
+    await api('PUT', `/ifaces/${ipDeviceName}/probe`, body);
+    dlgIfaceProbe.close();
+    lastIfacesJSON = ''; refreshIfaces(true);
+  } catch (err) { toast(err.message, true); }
+};
+document.getElementById('ipRemove').onclick = async () => {
+  try {
+    await api('PUT', `/ifaces/${ipDeviceName}/probe`, { target: '' });
+    dlgIfaceProbe.close();
+    lastIfacesJSON = ''; refreshIfaces(true);
+  } catch (err) { toast(err.message, true); }
+};
+
+async function refreshWAN() {
+  try {
+    const r = await api('GET', '/wanprobe');
+    document.getElementById('wanOn').checked = !!r.enabled;
+    const probe = r.probe || {};
+    const ptype = r.enabled ? (probe.type || probeTypeOf(probe.target || '')) : 'http';
+    document.getElementById('wanType').value = ptype;
+    document.getElementById('wanTarget').value = r.enabled ? (probe.target || '') : '';
+    if (ptype === 'http' && !document.getElementById('wanTarget').value) document.getElementById('wanTarget').value = PROBE_DEFAULTS.http;
+    document.getElementById('wanTarget').placeholder = PROBE_DEFAULTS[ptype];
+    document.getElementById('wanRttOn').checked = (probe.maxRttMs || 0) > 0;
+    document.getElementById('wanRtt').value = (probe.maxRttMs || 0) > 0 ? probe.maxRttMs : 300;
+    document.getElementById('wanRttOn').dispatchEvent(new Event('change'));
+  } catch {}
+}
+wireProbeSwitch(document.getElementById('wanType'), document.getElementById('wanTarget'));
+document.getElementById('wanSave').onclick = async () => {
+  const on = document.getElementById('wanOn').checked;
+  const wtype = document.getElementById('wanType').value;
+  let target = document.getElementById('wanTarget').value.trim();
+  if (on && !target && wtype === 'http') target = PROBE_DEFAULTS.http;
+  if (on && !target) return toast('Укажите цель проверки канала', true);
+  const body = on ? {
+    type: wtype,
+    target,
+    maxRttMs: document.getElementById('wanRttOn').checked ? (+document.getElementById('wanRtt').value || 0) : 0,
+  } : { target: '' };
+  try {
+    await api('PUT', '/wanprobe', body);
+    toast('Проверка канала ' + (on ? 'сохранена' : 'выключена'));
+    refreshWAN();
+  } catch (e) { toast(e.message, true); }
+};
+
+document.getElementById('sbModeSave').onclick = setSbMode;
+
+let polSaved = { fail: null, restore: null };
+function polCyclesValid() {
+  const f = document.getElementById('polFailCycles').value.trim();
+  const r = document.getElementById('polRestoreCycles').value.trim();
+  const okF = /^[1-9][0-9]?$/.test(f) && +f <= 20;
+  const okR = /^[1-9][0-9]?$/.test(r) && +r <= 20;
+  const changed = okF && okR && (+f !== polSaved.fail || +r !== polSaved.restore);
+  document.getElementById('polCyclesSave').disabled = !changed;
+  return okF && okR && changed;
+}
+async function loadPolicyCycles() {
+  try {
+    const r = await api('GET', '/mt/policy-cycles');
+    document.getElementById('polFailCycles').value = r.failCycles;
+    document.getElementById('polRestoreCycles').value = r.restoreCycles;
+    polSaved = { fail: r.failCycles, restore: r.restoreCycles };
+    polCyclesValid();
+  } catch {}
+}
+['polFailCycles', 'polRestoreCycles'].forEach(id => {
+  document.getElementById(id).addEventListener('input', polCyclesValid);
+});
+document.getElementById('polCyclesSave').onclick = async e => {
+  if (!polCyclesValid()) return;
+  const body = {
+    failCycles: +document.getElementById('polFailCycles').value,
+    restoreCycles: +document.getElementById('polRestoreCycles').value,
+  };
+  try {
+    const r = await api('PUT', '/mt/policy-cycles', body);
+    polSaved = { fail: r.failCycles, restore: r.restoreCycles };
+    polCyclesValid();
+    toast('Гистерезис политик: переключение после ' + r.failCycles + ' отказов, возврат после ' + r.restoreCycles + ' здоровых циклов');
+  } catch (err) { toast(err.message, true); }
+};
+
+const RULE_TYPES = { namespace: 'домен+поддомены', domain: 'домен', subnet: 'подсеть', wildcard: 'маска (* ?)', regex: 'регулярка' };
+const RULE_HINTS = {
+  domain:    'Точный домен без поддоменов: sub.example.com покроет только его самого',
+  namespace: 'Домен и все поддомены: example.com покроет также sub.example.com',
+  subnet:    'Подсеть IPv4: 149.154.160.0/20',
+  wildcard:  'Шаблон: * любое число символов, ? ровно один. Пример: *example.com',
+  regex:     'Регулярное выражение regexp2. Пример: ^[a-z]*example\.com$',
+};
+const RULE_PLACEHOLDERS = {
+  domain: 'sub.example.com', namespace: 'example.com', subnet: '149.154.160.0/20',
+  wildcard: '*example.com', regex: '^[a-z]*example\.com$',
+};
+const openMtGroups = new Set();
+let lastMtJSON = '';
+let MT_GROUPS = null;
+let MT_DUPS = {};
+
+const GRIP_SVG = '<svg viewBox="0 0 24 24" width="14" height="18" fill="currentColor"><circle cx="9" cy="5" r="1.4"/><circle cx="15" cy="5" r="1.4"/><circle cx="9" cy="12" r="1.4"/><circle cx="15" cy="12" r="1.4"/><circle cx="9" cy="19" r="1.4"/><circle cx="15" cy="19" r="1.4"/></svg>';
+const PENCIL_SVG = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>';
+const TRASH_SVG = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14"/></svg>';
+const GEAR_SVG = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>';
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+let dragEl = null, dragScope = null;
+function attachDnD(el, scope, commit) {
+  el.querySelectorAll('.grip').forEach(g => {
+    g.addEventListener('pointerdown', () => { el.draggable = true; });
+    g.addEventListener('pointerup', () => { el.draggable = false; });
+  });
+  el.addEventListener('dragstart', e => {
+    if (e.target.closest('[draggable="true"]') !== el) return;
+    dragEl = el; dragScope = scope;
+    el.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', ''); } catch {}
+  });
+  el.addEventListener('dragend', () => {
+    el.classList.remove('dragging');
+    el.draggable = false;
+    document.querySelectorAll('.drop-before,.drop-after').forEach(x => x.classList.remove('drop-before', 'drop-after'));
+    dragEl = null; dragScope = null;
+  });
+  el.addEventListener('dragover', e => {
+    if (!dragEl || dragScope !== scope || dragEl === el) return;
+    e.preventDefault();
+    const rect = el.getBoundingClientRect();
+    const before = e.clientY < rect.top + rect.height / 2;
+    el.classList.toggle('drop-before', before);
+    el.classList.toggle('drop-after', !before);
+  });
+  el.addEventListener('dragleave', () => el.classList.remove('drop-before', 'drop-after'));
+  el.addEventListener('drop', e => {
+    if (!dragEl || dragScope !== scope || dragEl === el) return;
+    e.preventDefault();
+    const rect = el.getBoundingClientRect();
+    const before = e.clientY < rect.top + rect.height / 2;
+    el.classList.remove('drop-before', 'drop-after');
+    commit(dragEl, el, before);
+  });
+}
+
+function orderIDs(container, sel) {
+  return [...container.querySelectorAll(sel)].map(x => x.dataset.id);
+}
+
+function editRule(g, rl, tr) {
+  tr.style.display = 'none';
+  const edit = document.createElement('tr');
+  edit.innerHTML = `<td colspan="4">
+    <div class="btnrow" style="margin-top:0">
+      <select class="er-type">${Object.entries(RULE_TYPES).map(([v, l]) => `<option value="${v}"${v === rl.type ? ' selected' : ''}>${l}</option>`).join('')}</select>
+      <input class="er-value" value="${esc(rl.rule)}" style="flex:1;min-width:160px">
+      <input class="er-name" value="${esc(rl.name || '')}" placeholder="имя (необяз.)" style="width:150px">
+      <button class="primary er-save">сохранить</button>
+      <button class="er-cancel">отмена</button>
+    </div>
+    <div class="muted er-hint" style="font-size:11px;margin-top:2px">${RULE_HINTS[rl.type] || ''}</div>
+  </td>`;
+  tr.after(edit);
+  const typeSel = edit.querySelector('.er-type');
+  typeSel.onchange = () => {
+    edit.querySelector('.er-hint').textContent = RULE_HINTS[typeSel.value] || '';
+  };
+  edit.querySelector('.er-cancel').onclick = () => { edit.remove(); tr.style.display = ''; if (pendingRulesRender) rulesRenderIfIdle(); };
+  edit.querySelector('.er-save').onclick = async () => {
+    const value = edit.querySelector('.er-value').value.trim();
+    if (!value) return toast('Введите значение правила', true);
+    try {
+      await api('PUT', `/mt/groups/${g.id}/rules/${rl.id}`, { type: typeSel.value, rule: value, name: edit.querySelector('.er-name').value.trim() });
+      lastMtJSON = ''; refreshRules(true);
+    } catch (e) { toast(e.message, true); }
+  };
+  edit.querySelector('.er-value').focus();
+}
+
+let editGroupID = null;
+const POLICY_HINTS = {
+  '': 'При отвале интерфейса группа ведет себя как обычно: на пуле выключится при его фоллбеке.',
+  'direct': 'Если основной интерфейс умрет, трафик группы пойдет напрямую (проверив, что есть интернет) и вернется сам.',
+  'iface': 'Если основной интерфейс умрет, группа перейдет на запасной интерфейс и вернется сам.'
+};
+function editGroupDlg(g) {
+  editGroupID = g.id;
+  $('#egName').value = g.name;
+  $('#egColor').value = /^#[0-9a-fA-F]{6}$/.test(g.color || '') ? g.color : '#4a9eff';
+  const sel = $('#egIface');
+  const devices = MT_IFACES.map(i => i.device);
+  if (!devices.includes('blackhole')) devices.push('blackhole');
+  if (!devices.includes(g.interface)) devices.push(g.interface);
+  sel.innerHTML = devices.map(d => {
+    const t = d === 'blackhole' ? '(блокировать трафик)' : ((MT_IFACES.find(i => i.device === d) || {}).title || '');
+    return `<option value="${esc(d)}"${d === g.interface ? ' selected' : ''}>${esc(d)}${t ? ' - ' + esc(t) : ''}</option>`;
+  }).join('');
+  sel.disabled = !!g.cascade;
+  const pol = g.policy || { onDead: '', iface: '' };
+  const pdev = MT_IFACES.map(i => i.device).filter(d => d !== 'blackhole');
+  if (pol.iface && !pdev.includes(pol.iface)) pdev.push(pol.iface);
+  $('#egPolicyIface').innerHTML = pdev.map(d => `<option value="${esc(d)}">${esc(ifaceLabel(d))}</option>`).join('');
+  $('#egPolicy').value = pol.onDead || '';
+  $('#egPolicyIface').value = pol.iface || '';
+  egPolicyVisibility();
+  dlgGroup.showModal();
+}
+// блокировка (blackhole) - самостоятельное поведение группы, политика
+// отвала к ней не применяется
+function egPolicyVisibility() {
+  const block = $('#egIface').value === 'blackhole';
+  $('#egPolicy').closest('label').style.display = block ? 'none' : '';
+  $('#egPolicyIface').closest('label').style.display = block || $('#egPolicy').value !== 'iface' ? 'none' : '';
+  $('#egPolicyHint').textContent = block ? '' : (POLICY_HINTS[$('#egPolicy').value] || '');
+}
+document.getElementById('egPolicy').onchange = egPolicyVisibility;
+document.getElementById('egIface').onchange = egPolicyVisibility;
+
+function mtInterfaces() {
+  const ifs = [];
+  if (STATUS) for (const p of STATUS.pools) ifs.push(p.device);
+  return ifs;
+}
+
+async function mtApi(method, path, body) {
+  try { await api(method, path, body); } catch (e) { toast(e.message, true); }
+  const box = document.getElementById('mtgroups');
+  if (box.contains(document.activeElement) && document.activeElement.blur) document.activeElement.blur();
+  lastMtJSON = '';
+  refreshRules(true);
+}
+
+let imGroupID = null;
+function openImportDlg(g) {
+  imGroupID = g.id;
+  document.getElementById('imTitle').textContent = 'Импорт правил в ' + g.name;
+  document.getElementById('imText').value = '';
+  document.getElementById('dlgImport').showModal();
+}
+document.getElementById('imCancel').onclick = () => document.getElementById('dlgImport').close();
+document.getElementById('imGo').onclick = e => withBusy(e.currentTarget, async () => {
+  const dlg = document.getElementById('dlgImport');
+  const text = document.getElementById('imText').value;
+  if (!text.trim()) return toast('Вставьте список', true);
+  dlg.classList.add('busy');
+  try {
+    const r = await api('POST', `/mt/groups/${imGroupID}/rules/import`, {
+      text,
+      type: document.getElementById('imType').value,
+      toSecond: document.getElementById('imSecond').checked,
+      enable: document.getElementById('imEnable').checked,
+    });
+    dlg.close();
+    const badNote = (r.bad && r.bad.length) ? ' Отброшено: ' + r.bad.join('; ') : '';
+    toast(r.added ? `Импортировано: ${r.added}, пропущено: ${r.skipped}.${badNote}` : 'Нового ничего не добавлено, все дубликаты' + badNote);
+    lastMtJSON = '';
+    refreshRules(true);
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    dlg.classList.remove('busy');
+  }
+});
+
+function copyGroupRules(g) {
+  const lines = (g.rules || []).map(r => r.rule);
+  if (!lines.length) return toast('В группе нет правил', true);
+  const text = lines.join('\n');
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text)
+      .then(() => toast(`Скопировано: ${lines.length}`))
+      .catch(() => showCopyDlg(text, lines.length));
+    return;
+  }
+  showCopyDlg(text, lines.length);
+}
+function showCopyDlg(text, n) {
+  const ta = document.getElementById('cpText');
+  document.getElementById('cpTitle').textContent = `Список правил (${n})`;
+  ta.value = text;
+  document.getElementById('dlgCopy').showModal();
+  ta.focus();
+  ta.select();
+  try { document.execCommand('copy'); } catch (e) {}
+}
+
+function warnTitle(refs) {
+  const others = refs.filter(r => true).map(r => `${r.groupName} (${RULE_TYPES[r.ruleType] || r.ruleType})`);
+  return 'Такой же паттерн в других группах: ' + others.join(', ') + '. Магитрикл применит только первое правило.';
+}
+const WARN_SVG_ICON = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>';
+function warnSvgFor(rule) {
+  const refs = MT_DUPS[(rule || '').toLowerCase()];
+  if (!refs || !refs.length) return '';
+  return '<span class="warn-badge" title="' + esc(warnTitle(refs)) + '">' + WARN_SVG_ICON + '</span>';
+}
+function groupWarnSvg(g) {
+  for (const rl of (g.rules || [])) {
+    if (rl.enable && (MT_DUPS[(rl.rule || '').toLowerCase()] || []).length) {
+      return '<span class="warn-badge" title="в группе есть правила, дублирующиеся в других группах">' + WARN_SVG_ICON + '</span>';
+    }
+  }
+  return '';
+}
+function editingRulesPanel() {
+  // перетаскивание или открытая строка редактора: перерисовка сносит ввод
+  if (dragEl) {
+    if (dragEl.isConnected) return true;
+    dragEl = null;
+  }
+  const box = document.getElementById('mtgroups');
+  if (box.querySelector('.er-value')) return true;
+  const ae = document.activeElement;
+  return !!(ae && box.contains(ae) && (ae.tagName === 'INPUT' || ae.tagName === 'SELECT' || ae.tagName === 'TEXTAREA'));
+}
+let pendingRulesRender = false;
+function rulesRenderIfIdle() {
+  if (editingRulesPanel()) { pendingRulesRender = true; return; }
+  pendingRulesRender = false;
+  renderRules();
+}
+async function refreshRules(force) {
+  try {
+    const r = await api('GET', '/mt/groups');
+    if (!r.available) {
+      document.getElementById('mtgroups').innerHTML = '<div class="muted">MagiTrickle недоступен</div>';
+      return;
+    }
+    MT_GROUPS = r.groups || [];
+    const json = JSON.stringify(MT_GROUPS);
+    if (!force && json === lastMtJSON) {
+      if (pendingRulesRender && !editingRulesPanel()) rulesRenderIfIdle();
+      return;
+    }
+    if (editingRulesPanel() && !force) { lastMtJSON = json; pendingRulesRender = true; return; }
+    lastMtJSON = json;
+    rulesRenderIfIdle();
+    api('GET', '/mt/duplicates').then(d => {
+      MT_DUPS = d.duplicates || {};
+      rulesRenderIfIdle();
+    }).catch(() => { MT_DUPS = {}; });
+  } catch (e) { console.warn(e); }
+}
+document.getElementById('mtgroups').addEventListener('focusout', () => {
+  setTimeout(() => { if (pendingRulesRender && !editingRulesPanel()) rulesRenderIfIdle(); }, 0);
+});
+
+function renderRules() {
+  const box = document.getElementById('mtgroups');
+  if (!MT_GROUPS || !MT_GROUPS.length) {
+    box.innerHTML = '<div class="muted">Групп нет. Создайте группу или примените шаблон.</div>';
+    return;
+  }
+  box.innerHTML = '';
+  for (const g of MT_GROUPS) {
+    const el = document.createElement('div');
+    el.className = 'mtgroup' + (g.interface === 'blackhole' ? ' mtgroup-block' : '');
+    el.dataset.id = g.id;
+    if (g.color) el.style.setProperty('--gcol', g.color);
+    const POLICY_SHORT = { direct: 'прямой ход', iface: 'запасной интерфейс' };
+    const DEGRADED_TXT = {
+      direct: 'идет напрямую: основной интерфейс умер, вернется сам',
+      'direct-pending': 'ждет возврата интернета, потом пойдет напрямую',
+      iface: 'временно переключена на запасной интерфейс'
+    };
+    const cascBadge = g.cascade ? '<span class="badge" style="border-color:#8a8f98;color:#aab0ba">каскад</span>' : '';
+    const blockBadge = g.interface === 'blackhole' ? '<span class="badge" style="border-color:var(--err);color:var(--err)">блокировка</span>' : '';
+    const polBadge = g.policy ? `<span class="badge" style="border-color:#d9a032;color:#d9a032">при отвале: ${POLICY_SHORT[g.policy.onDead] || esc(g.policy.onDead)}</span>` : '';
+    const degTxt = g.degraded ? (DEGRADED_TXT[g.degraded.split(':')[0]] || ('состояние: ' + esc(g.degraded))) : '';
+    el.innerHTML = `
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span class="grip" title="перетащите, чтобы изменить порядок">${GRIP_SVG}</span>
+        <span class="gcolor" style="background:${esc(g.color || '#4a9eff')}"></span>
+        <b>${esc(g.name)}</b>${groupWarnSvg(g)}${cascBadge}${blockBadge}${polBadge}
+        <span class="iface-badge"><span class="badge">${esc(g.interface)}</span>${g.interfaceTitle ? `<span class="iface-title">${esc(g.interfaceTitle)}</span>` : ''}</span>
+        <span class="muted" style="font-size:12px">правил: ${(g.rules||[]).length}</span>
+        <span style="flex:1"></span>
+        <label class="switch" title="${g.enable ? 'выключить группу' : 'включить группу'}"><input type="checkbox" class="mt-toggle" ${g.enable ? 'checked' : ''}><span class="knob"></span></label>
+        <button class="iconbtn edit mt-edit" title="изменить группу">${PENCIL_SVG}</button>
+        <button class="iconbtn mt-del" title="удалить группу">${TRASH_SVG}</button>
+        ${degTxt ? `<div class="muted" style="flex-basis:100%;font-size:11px">${degTxt}</div>` : ''}
+      </div>
+      <details ${openMtGroups.has(g.id) ? 'open' : ''}>
+        <summary>правила</summary>
+        <table class="mt-rules"><tr><th></th><th>тип</th><th>значение</th><th></th></tr></table>
+        <div class="btnrow">
+          <select class="nr-type">${Object.entries(RULE_TYPES).map(([v,l])=>`<option value="${v}">${l}</option>`).join('')}</select>
+          <input class="nr-value" placeholder="${RULE_PLACEHOLDERS.namespace}" style="flex:1;min-width:160px">
+          <button class="nr-add">+ правило</button>
+          <button class="nr-import" title="вставить список доменов, подсетей или ссылок">импорт</button>
+          <button class="nr-copy" title="скопировать все правила группы списком">копировать</button>
+        </div>
+        <div class="muted nr-hint" style="font-size:11px;margin-top:2px">${RULE_HINTS.namespace}</div>
+      </details>`;
+    el.querySelector('.mt-toggle').onchange = e => { mtApi('POST', `/mt/groups/${g.id}/enable`, { enable: e.target.checked }); };
+    el.querySelector('.mt-edit').onclick = () => editGroupDlg(g);
+    el.querySelector('.mt-del').onclick = async e => {
+      const btn = e.currentTarget;
+      if (!(await askModal('Удаление группы', `Удалить группу ${g.name} со всеми правилами?`, 'Удалить'))) return;
+      withBusy(btn, () => mtApi('DELETE', `/mt/groups/${g.id}`));
+    };
+    const det = el.querySelector('details');
+    det.ontoggle = () => { if (det.open) openMtGroups.add(g.id); else openMtGroups.delete(g.id); };
+    const tbody = el.querySelector('.mt-rules');
+    for (const rl of (g.rules||[])) {
+      const tr = document.createElement('tr');
+      tr.dataset.id = rl.id;
+      if (!rl.enable) tr.style.opacity = .45;
+      tr.innerHTML = `<td style="width:18px"><span class="grip" title="перетащите, чтобы изменить порядок">${GRIP_SVG}</span></td>
+        <td><span class="badge cool">${RULE_TYPES[rl.type]||esc(rl.type)}</span></td>
+        <td style="word-break:break-all">${esc(rl.rule)}${rl.enable ? warnSvgFor(rl.rule) : ''}${rl.name?` <span class="muted">(${esc(rl.name)})</span>`:''}</td>
+        <td style="white-space:nowrap;display:flex;align-items:center;gap:8px;justify-content:flex-end">
+          <label class="switch" title="${rl.enable ? 'выключить правило' : 'включить правило'}"><input type="checkbox" class="r-tg" ${rl.enable ? 'checked' : ''}><span class="knob"></span></label>
+          <button class="iconbtn edit r-edit" title="изменить правило">${PENCIL_SVG}</button>
+          <button class="iconbtn r-del" title="удалить правило">${TRASH_SVG}</button></td>`;
+      tr.querySelector('.r-tg').onchange = e => { mtApi('POST', `/mt/groups/${g.id}/rules/${rl.id}/enable`, { enable: e.target.checked }); };
+      tr.querySelector('.r-edit').onclick = () => editRule(g, rl, tr);
+      tr.querySelector('.r-del').onclick = e => withBusy(e.currentTarget, () => mtApi('DELETE', `/mt/groups/${g.id}/rules/${rl.id}`));
+      attachDnD(tr, 'rules:' + g.id, (dragged, target, before) => {
+        target.parentNode.insertBefore(dragged, before ? target : target.nextSibling);
+        mtApi('POST', `/mt/groups/${g.id}/rules/order`, { ids: orderIDs(tbody, 'tr[data-id]') });
+      });
+      tbody.appendChild(tr);
+    }
+    const nrType = el.querySelector('.nr-type');
+    const nrValue = el.querySelector('.nr-value');
+    const nrHint = el.querySelector('.nr-hint');
+    nrType.onchange = () => {
+      nrHint.textContent = RULE_HINTS[nrType.value] || '';
+      nrValue.placeholder = RULE_PLACEHOLDERS[nrType.value] || '';
+    };
+    el.querySelector('.nr-add').onclick = e => withBusy(e.currentTarget, () => {
+      const type = el.querySelector('.nr-type').value;
+      const value = nrValue.value.trim();
+      if (!value) return toast('Введите значение правила', true);
+      openMtGroups.add(g.id);
+      return mtApi('POST', `/mt/groups/${g.id}/rules`, { type, rule: value });
+    });
+    el.querySelector('.nr-import').onclick = () => openImportDlg(g);
+    el.querySelector('.nr-copy').onclick = () => copyGroupRules(g);
+    attachDnD(el, 'groups', (dragged, target, before) => {
+      target.parentNode.insertBefore(dragged, before ? target : target.nextSibling);
+      mtApi('POST', '/mt/groups/order', { ids: orderIDs(box, '.mtgroup') });
+    });
+    box.appendChild(el);
+  }
+}
+
+let MT_IFACES = [];
+let lastIfaceOptsJSON = '';
+function ifaceLabel(dev) {
+  const i = MT_IFACES.find(x => x.device === dev);
+  return i && i.title ? dev + ' - ' + i.title : dev;
+}
+function updateFbHint() {
+  const el = document.getElementById('fbHint');
+  if (!el) return;
+  const v = document.getElementById('spFallback').value;
+  if (!v.startsWith('iface:')) { el.textContent = ''; return; }
+  const dev = v.slice('iface:'.length);
+  const info = (IFACES || []).find(i => i.device === dev);
+  el.textContent = info && info.probe
+    ? 'Группы будут переведены на ' + ifaceLabel(dev) + ' при провале всех конфигов и вернутся, когда пул оживет.'
+    : 'Внимание: у интерфейса ' + ifaceLabel(dev) + ' нет проверки здоровья. Задайте её в разделе Интерфейсы роутера, иначе момент отката и возврата будет определяться неточно.';
+}
+async function fillIfaceSelects() {
+  try {
+    const r = await api('GET', '/mt/interfaces');
+    MT_IFACES = r.interfaces || [];
+    const json = JSON.stringify(MT_IFACES);
+    if (json === lastIfaceOptsJSON) return;
+    lastIfaceOptsJSON = json;
+    const opts = MT_IFACES.map(i=>`<option value="${i.device}">${i.title ? i.device + ' - ' + i.title : i.device}</option>`).join('')
+      + '<option value="blackhole">blackhole (блокировать трафик)</option>';
+    if (opts) {
+      const rg = document.getElementById('rgIface');
+      const pi = document.getElementById('presetIface');
+      const keep1 = rg.value, keep2 = pi.value;
+      rg.innerHTML = opts; pi.innerHTML = opts;
+      if ([...rg.options].some(o=>o.value===keep1)) rg.value = keep1;
+      if ([...pi.options].some(o=>o.value===keep2)) pi.value = keep2;
+    }
+  } catch {}
+}
+
+let CASC_OPEN = { source: '', via: '' };
+function cascadeOptions() {
+  const pools = (STATUS && STATUS.pools ? STATUS.pools : []).map(p => ({ ref: 'pool:' + p.name, label: 'пул ' + p.name }));
+  const ifaces = MT_IFACES.filter(i => i.device !== 'blackhole').map(i => ({ ref: 'iface:' + i.device, label: 'интерфейс ' + ifaceLabel(i.device) }));
+  return pools.concat(ifaces);
+}
+// fillCascadeSel наполняет список каскада, выключая вариант, выбранный
+// в соседнем списке: источник и путь не должны совпадать.
+function fillCascadeSel(sel, otherValue) {
+  sel.innerHTML = cascadeOptions().map(o => `<option value="${o.ref}"${o.ref === otherValue ? ' disabled' : ''}>${o.label}</option>`).join('');
+  if (![...sel.options].some(o => o.value === sel.value && !o.disabled)) {
+    const first = [...sel.options].find(o => !o.disabled);
+    sel.value = first ? first.value : '';
+  }
+}
+function cascadeHostsVisible() {
+  document.getElementById('csHostsWrap').style.display = document.getElementById('csSource').value.startsWith('iface:') ? '' : 'none';
+}
+async function fillCascadeSelects() {
+  try {
+    if (!MT_IFACES.length) await fillIfaceSelects();
+    fillCascadeSel(document.getElementById('csSource'), CASC_OPEN.via);
+    const s = document.getElementById('csSource');
+    if (CASC_OPEN.source && [...s.options].some(o => o.value === CASC_OPEN.source && !o.disabled)) s.value = CASC_OPEN.source;
+    fillCascadeSel(document.getElementById('csVia'), s.value);
+    const v = document.getElementById('csVia');
+    if (CASC_OPEN.via && [...v.options].some(o => o.value === CASC_OPEN.via && !o.disabled)) v.value = CASC_OPEN.via;
+    CASC_OPEN = { source: s.value, via: v.value };
+    cascadeHostsVisible();
+  } catch {}
+}
+document.getElementById('rgCascade').onclick = () => { fillCascadeSelects(); dlgCascade.showModal(); };
+document.getElementById('csSource').onchange = () => {
+  fillCascadeSel(document.getElementById('csVia'), document.getElementById('csSource').value);
+  CASC_OPEN = { source: document.getElementById('csSource').value, via: document.getElementById('csVia').value };
+  cascadeHostsVisible();
+};
+document.getElementById('csVia').onchange = () => {
+  fillCascadeSel(document.getElementById('csSource'), document.getElementById('csVia').value);
+  CASC_OPEN = { source: document.getElementById('csSource').value, via: document.getElementById('csVia').value };
+};
+document.getElementById('csCreate').onclick = async e => {
+  const source = document.getElementById('csSource').value;
+  const via = document.getElementById('csVia').value;
+  if (!source || !via) return toast('Выберите источник и путь', true);
+  if (source === via) return toast('Источник и путь совпадают', true);
+  const hosts = document.getElementById('csHosts').value.split(/\n+/).map(x => x.trim()).filter(Boolean);
+  await withBusy(e.currentTarget, async () => {
+    try {
+      await api('POST', '/cascades', { source, via, hosts });
+      CASC_OPEN = { source, via };
+      dlgCascade.close();
+      toast('Каскад создан и включен');
+      await refreshRules(true);
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
+};
+
+document.getElementById('rgCreate').onclick = async e => {
+  const name = document.getElementById('rgName').value.trim();
+  const iface = document.getElementById('rgIface').value;
+  if (!name || !iface) return toast('Укажите имя группы и интерфейс', true);
+  await withBusy(e.currentTarget, async () => {
+    try {
+      const g = await api('POST', '/mt/groups', { name, interface: iface, color: document.getElementById('rgColor').value });
+      document.getElementById('rgName').value = '';
+      openMtGroups.add(g.id);
+      lastMtJSON = '';
+      await refreshRules(true);
+      const card = document.querySelector('.mtgroup[data-id="' + (window.CSS && CSS.escape ? CSS.escape(g.id) : g.id) + '"]');
+      if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    } catch (err) { toast(err.message, true); }
+  });
+};
+
+document.querySelector('#dlgGroup button[value=cancel]').onclick = () => dlgGroup.close();
+$('#egSave').onclick = e => withBusy(e.currentTarget, async () => {
+  const name = $('#egName').value.trim();
+  if (!name || !editGroupID) return;
+  try {
+    await api('PUT', '/mt/groups/' + editGroupID, { name, color: $('#egColor').value, interface: $('#egIface').value });
+    await api('PUT', '/mt/groups/' + editGroupID + '/policy', $('#egIface').value === 'blackhole'
+      ? { onDead: '' }
+      : { onDead: $('#egPolicy').value, iface: $('#egPolicyIface').value });
+    dlgGroup.close();
+    lastMtJSON = ''; refreshRules(true);
+  } catch (err) { toast(err.message, true); }
+});
+
+let PRESETS = [];
+async function loadPresets() {
+  try {
+    const r = await api('GET', '/mt/presets');
+    PRESETS = r.presets || [];
+    const sel = document.getElementById('presetSel');
+    sel.value = PRESETS.length ? PRESETS[0].id : '';
+    document.getElementById('presetList').innerHTML = PRESETS.map(p=>`<button type="button" class="psel-item" data-id="${p.id}"><span>${p.title}</span><span class="cnt">${p.rules.length}</span></button>`).join('');
+    updatePresetBtn();
+    const hint = document.getElementById('presetSrc');
+    if (r.sourceUrl) {
+      hint.innerHTML = 'Списки: <a href="' + r.sourceUrl + '" target="_blank" rel="noopener">github.com/itdoginfo/allow-domains</a>'
+        + (r.sourceNote ? ' (' + r.sourceNote + ')' : '')
+        + '. Более точные и свежие списки - в репозитории источника.';
+    }
+  } catch {}
+}
+
+function updatePresetBtn() {
+  const p = PRESETS.find(x => x.id === document.getElementById('presetSel').value);
+  document.getElementById('presetBtn').textContent = p ? p.title : 'выберите шаблон';
+}
+document.getElementById('presetBtn').addEventListener('click', e => {
+  e.stopPropagation();
+  const l = document.getElementById('presetList');
+  l.hidden = !l.hidden;
+});
+document.getElementById('presetList').addEventListener('click', e => {
+  const b = e.target.closest('.psel-item');
+  if (!b) return;
+  document.getElementById('presetSel').value = b.dataset.id;
+  document.getElementById('presetList').hidden = true;
+  updatePresetBtn();
+});
+document.addEventListener('click', e => {
+  const w = document.getElementById('presetWrap');
+  if (w && !w.contains(e.target)) document.getElementById('presetList').hidden = true;
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') document.getElementById('presetList').hidden = true;
+});
+
+// нативный попап select в Chromium режет длинные опции: селекты с длинными
+// текстами рисуем сами (кнопка + список), нативный остаётся скрытым хранилищем
+function upgradeSelect(sel) {
+  if (!sel || sel.dataset.pselUp) return;
+  sel.dataset.pselUp = '1';
+  const wrap = document.createElement('div');
+  wrap.className = 'psel';
+  if (sel.closest('.btnrow')) {
+    wrap.style.cssText = sel.style.cssText;
+    sel.style.cssText = '';
+  }
+  const btn = document.createElement('button');
+  btn.type = 'button'; btn.className = 'psel-btn';
+  const list = document.createElement('div');
+  list.className = 'psel-list'; list.hidden = true;
+  wrap.append(btn, list);
+  sel.parentNode.insertBefore(wrap, sel);
+  sel.hidden = true;
+  const sync = () => {
+    btn.disabled = sel.disabled;
+    const opt = sel.selectedOptions[0];
+    btn.textContent = opt ? opt.textContent : '';
+    btn.title = opt ? opt.textContent : '';
+    list.innerHTML = [...sel.options].map(o => `<button type="button" class="psel-item" data-id="${o.value}"${o.disabled ? ' disabled' : ''}><span>${esc(o.textContent)}</span></button>`).join('');
+  };
+  new MutationObserver(sync).observe(sel, { childList: true, attributes: true, attributeFilter: ['disabled'] });
+  const valueDesc = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value');
+  Object.defineProperty(sel, 'value', { get: valueDesc.get, set(v) { valueDesc.set.call(this, v); sync(); } });
+  btn.addEventListener('click', e => { e.stopPropagation(); list.hidden = !list.hidden; });
+  list.addEventListener('click', e => {
+    const b = e.target.closest('.psel-item');
+    if (!b || b.disabled) return;
+    list.hidden = true;
+    sel.value = b.dataset.id;
+    sel.dispatchEvent(new Event('change'));
+  });
+  sync();
+}
+document.addEventListener('click', e => {
+  document.querySelectorAll('.psel-list:not([hidden])').forEach(l => {
+    if (!l.parentElement.contains(e.target)) l.hidden = true;
+  });
+});
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  document.querySelectorAll('.psel-list:not([hidden])').forEach(l => { l.hidden = true; });
+});
+['rgIface', 'presetIface', 'egIface', 'egPolicyIface', 'spFallback', 'csSource', 'csVia', 'bdAddSel', 'ssDevices', 'pSlot'].forEach(id => upgradeSelect(document.getElementById(id)));
+
+const PRESET_TYPE_LABELS = { namespace: 'домен+поддомены', subnet: 'подсети IPv4', subnet6: 'подсети IPv6' };
+document.getElementById('presetApply').onclick = async () => {
+  const preset = document.getElementById('presetSel').value;
+  const iface = document.getElementById('presetIface').value;
+  if (!preset || !iface) return toast('Выберите шаблон и интерфейс', true);
+  const p = PRESETS.find(x => x.id === preset);
+  const cnt = {};
+  ((p && p.rules) || []).forEach(rl => { cnt[rl.type] = (cnt[rl.type] || 0) + 1; });
+  const parts = Object.entries(cnt).map(([t, n]) => `${PRESET_TYPE_LABELS[t] || t}: ${n}`);
+  const rulesLine = p ? `${p.title} - правил: ${p.rules.length}${parts.length ? ' (' + parts.join(', ') + ')' : ''}` : `Шаблон: ${preset}`;
+  const ifaceOpt = document.getElementById('presetIface').selectedOptions[0];
+  const ifaceTxt = ifaceOpt ? ifaceOpt.textContent.trim() : iface;
+  const lines = [rulesLine, `Интерфейс: ${ifaceTxt}`];
+  if (p && p.source) lines.push(`Источник: ${p.source.replace(/^https?:\/\//, '')}`);
+  if (!(await askModal('Применение шаблона', lines.join('\n') + '\n\nСоздать группу?', 'Создать'))) return;
+  try {
+    const r = await api('POST', `/mt/presets/${preset}/apply`, { interface: iface });
+    toast(`Группа создана, правил: ${r.rules}`);
+    lastMtJSON = ''; refreshRules(true);
+  } catch (e) { toast(e.message, true); }
+};
+
+let lastSysJSON = '';
+
+let BUNDLES = null, lastBundlesJSON = '';
+async function refreshBundles(force) {
+  try {
+    const r = await api('GET', '/bundles');
+    BUNDLES = r.bundles || [];
+    const json = JSON.stringify(BUNDLES);
+    if (!force && json === lastBundlesJSON) return;
+    lastBundlesJSON = json;
+    renderBundles();
+  } catch (e) { console.warn(e); }
+}
+
+function renderBundles() {
+  const box = document.getElementById('bundles');
+  if (!BUNDLES || !BUNDLES.length) {
+    box.innerHTML = '<div class="muted">Наборов нет. Создайте набор, добавьте участников (пулы, внешние интерфейсы) и привяжите группы.</div>';
+    return;
+  }
+  box.innerHTML = '';
+  for (const b of BUNDLES) {
+    const el = document.createElement('div');
+    el.style.cssText = 'display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:6px 0;border-bottom:1px solid var(--border)';
+    const chips = (b.members || []).map(m => {
+      const dev = (b.memberDevices || {})[m] || m;
+      const cur = dev === b.currentMember;
+      return `<span class="badge ${cur ? 'up' : ''}" ${cur ? ' style="font-weight:bold"' : ''} title="${esc(m)}">${esc(dev)}</span>`;
+    }).join('<span class="muted">></span>');
+    el.innerHTML = `
+      <b>${esc(b.name)}</b>
+      <span style="display:inline-flex;align-items:center;gap:4px;flex-wrap:wrap">${chips}</span>
+      <span class="muted" style="font-size:12px">групп: ${(b.groups || []).length}</span>
+      <span style="flex:1"></span>
+      <span class="muted" style="font-size:11px">${b.currentMember ? 'сейчас: ' + esc(b.currentMember) : 'не активирован'}</span>
+      <button class="iconbtn edit b-edit" title="изменить набор">${PENCIL_SVG}</button>
+      <button class="iconbtn b-del" title="удалить набор">${TRASH_SVG}</button>`;
+    el.querySelector('.b-edit').onclick = () => openBundleDlg(b);
+    el.querySelector('.b-del').onclick = async () => {
+      if (!(await askModal('Удаление набора', `Удалить набор ${b.name}? Группы останутся на текущем интерфейсе.`, 'Удалить'))) return;
+      api('DELETE', '/bundles/' + b.name).catch(e => toast(e.message, true));
+      lastBundlesJSON = ''; refreshBundles(true);
+    };
+    box.appendChild(el);
+  }
+}
+
+let bdEditing = null, bdMembers = [];
+function bundleCandidates() {
+  const out = [];
+  if (STATUS) for (const p of STATUS.pools) out.push({ id: p.name, label: p.name + ' (пул)' });
+  for (const it of (IFACES || [])) if (it.mode === 'external') out.push({ id: it.device, label: it.device + (it.description && it.description !== it.device ? ' - ' + it.description : '') + ' (внешний)' });
+  return out;
+}
+
+function renderBdMembers() {
+  const box = document.getElementById('bdMembers');
+  box.innerHTML = '';
+  bdMembers.forEach((m, i) => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:3px 0';
+    const cands = bundleCandidates();
+    const label = (cands.find(c => c.id === m) || {}).label || m;
+    row.innerHTML = `<span class="badge">${esc(label)}</span><span style="flex:1"></span>`;
+    const up = document.createElement('button');
+    up.textContent = 'выше'; up.disabled = i === 0;
+    up.onclick = () => { [bdMembers[i - 1], bdMembers[i]] = [bdMembers[i], bdMembers[i - 1]]; renderBdMembers(); };
+    const down = document.createElement('button');
+    down.textContent = 'ниже'; down.disabled = i === bdMembers.length - 1;
+    down.onclick = () => { [bdMembers[i + 1], bdMembers[i]] = [bdMembers[i], bdMembers[i + 1]]; renderBdMembers(); };
+    const del = document.createElement('button');
+    del.textContent = 'убрать'; del.className = 'danger';
+    del.onclick = () => { bdMembers.splice(i, 1); renderBdMembers(); };
+    row.append(up, down, del);
+    box.appendChild(row);
+  });
+  const sel = document.getElementById('bdAddSel');
+  const used = new Set(bdMembers);
+  sel.innerHTML = bundleCandidates().filter(c => !used.has(c.id)).map(c => `<option value="${esc(c.id)}">${esc(c.label)}</option>`).join('') || '<option value="">нет доступных участников</option>';
+}
+
+function openBundleDlg(b) {
+  bdEditing = b ? b.name : null;
+  document.getElementById('bdTitle').textContent = b ? 'Изменить набор' : 'Новый набор';
+  document.getElementById('bdName').value = b ? b.name : '';
+  document.getElementById('bdName').disabled = !!b;
+  bdMembers = b ? [...(b.members || [])] : [];
+  renderBdMembers();
+  const box = document.getElementById('bdGroups');
+  box.innerHTML = (MT_GROUPS || []).map(g =>
+    `<div class="bd-group-row" style="display:flex;gap:10px;align-items:center;padding:3px 0;font-size:13px;cursor:pointer">
+      <label class="switch" title="включить группу в набор"><input type="checkbox" value="${esc(g.id)}" ${b && (b.groups || []).includes(g.id) ? 'checked' : ''}><span class="knob"></span></label>
+      <span>${esc(g.name)} <span class="muted">(${esc(g.interface)})</span></span></div>`
+  ).join('') || '<div class="muted">Группы MagiTrickle недоступны</div>';
+  box.querySelectorAll('.bd-group-row').forEach(row => {
+    row.onclick = e => {
+      if (e.target.closest('.switch')) return;
+      const cb = row.querySelector('input');
+      cb.checked = !cb.checked;
+    };
+  });
+  dlgBundle.showModal();
+}
+
+document.getElementById('bdAdd').onclick = () => {
+  const v = document.getElementById('bdAddSel').value;
+  if (v && !bdMembers.includes(v)) { bdMembers.push(v); renderBdMembers(); }
+};
+document.querySelector('#dlgBundle button[value=cancel]').onclick = () => dlgBundle.close();
+document.getElementById('bCreate').onclick = () => openBundleDlg(null);
+document.getElementById('bdSave').onclick = e => withBusy(e.currentTarget, async () => {
+  const name = document.getElementById('bdName').value.trim() || bdEditing;
+  if (!name) return toast('Укажите имя', true);
+  if (!bdMembers.length) return toast('Добавьте хотя бы одного участника', true);
+  const groups = [...document.querySelectorAll('#bdGroups input:checked')].map(x => x.value);
+  if (!groups.length) return toast('Выберите хотя бы одну группу', true);
+  const body = { name, members: bdMembers, groups };
+  try {
+    if (bdEditing) await api('PUT', '/bundles/' + bdEditing, body);
+    else await api('POST', '/bundles', body);
+    dlgBundle.close();
+    lastBundlesJSON = ''; refreshBundles(true);
+  } catch (err) { toast(err.message, true); }
+});
+async function refreshSystem(force) {
+  try {
+    const r = await api('GET', '/system/check');
+    const json = JSON.stringify(r);
+    if (!force && json === lastSysJSON) return;
+    lastSysJSON = json;
+    const rows = (r.items || []).map(it => {
+      const badge = it.statusText
+        ? (it.installed ? `<span class="badge up">${esc(it.statusText)}</span>` : `<span class="badge fallback">${esc(it.statusText)}</span>`)
+        : (it.installed ? '<span class="badge up">ок</span>' : '<span class="badge fallback">нет</span>');
+      const btn = it.action
+        ? `<button class="primary" data-inst="${it.id}">${esc(it.actionLabel || 'установить')}</button>` : '';
+      const note = it.note ? `<div class="muted" style="font-size:11px">${it.note}</div>` : '';
+      return `<tr><td>${it.title}${note}</td><td class="muted">${it.version || ''}</td><td>${badge}</td><td style="white-space:nowrap">${btn}</td></tr>`;
+    }).join('');
+    document.querySelector('#systable').innerHTML = '<tr><th>компонент</th><th>версия</th><th>состояние</th><th></th></tr>' + rows;
+    document.querySelectorAll('#systable button[data-inst]').forEach(btn => {
+      btn.onclick = () => installComp(btn.dataset.inst, btn);
+    });
+  } catch (e) { console.warn(e); }
+}
+
+let confirmResolve = null, confirmOk = false;
+function askModal(title, text, okLabel) {
+  return new Promise(resolve => {
+    confirmResolve = resolve;
+    confirmOk = false;
+    document.getElementById('cfTitle').textContent = title;
+    document.getElementById('cfText').textContent = text;
+    document.getElementById('cfOk').textContent = okLabel || 'ОК';
+    dlgConfirm.showModal();
+  });
+}
+document.querySelector('#dlgConfirm button[value=cancel]').onclick = () => dlgConfirm.close();
+document.getElementById('cfOk').onclick = e => { e.preventDefault(); confirmOk = true; dlgConfirm.close(); };
+dlgConfirm.addEventListener('close', () => {
+  if (confirmResolve) { confirmResolve(confirmOk); confirmResolve = null; }
+});
+
+// авторизация: оверлей входа по 401, смена пароля, выход
+const EYE_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+const EYE_OFF_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+document.querySelectorAll('.peye').forEach(b => {
+  b.innerHTML = EYE_SVG;
+  b.onclick = () => {
+    const inp = document.getElementById(b.dataset.for);
+    const show = inp.type === 'password';
+    inp.type = show ? 'text' : 'password';
+    b.innerHTML = show ? EYE_OFF_SVG : EYE_SVG;
+    inp.focus();
+  };
+});
+
+let loginShown = false;
+function showLogin() {
+  if (loginShown) return;
+  loginShown = true;
+  document.body.classList.remove('unlocked');
+  document.getElementById('authErr').style.display = 'none';
+  document.getElementById('dlgAuth').showModal();
+  setTimeout(() => document.getElementById('authPass').focus(), 50);
+}
+document.getElementById('dlgAuth').addEventListener('cancel', e => e.preventDefault());
+document.getElementById('authGo').onclick = async e => {
+  e.preventDefault();
+  const btn = e.currentTarget;
+  const errEl = document.getElementById('authErr');
+  errEl.style.display = 'none';
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin"></span>вход...';
+  try {
+    const r = await fetch('/api/v1/auth/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
+      body: JSON.stringify({ login: document.getElementById('authLogin').value.trim(), password: document.getElementById('authPass').value })
+    });
+    if (r.ok) { location.reload(); return; }
+    const d = await r.json().catch(() => ({}));
+    errEl.textContent = d.error || ('ошибка ' + r.status);
+    errEl.style.display = '';
+  } catch (err) {
+    errEl.textContent = 'ошибка сети: ' + err.message;
+    errEl.style.display = '';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Войти';
+  }
+};
+document.getElementById('authPass').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('authGo').click(); });
+
+document.getElementById('setPassBtn').onclick = () => {
+  document.getElementById('pwErr').style.display = 'none';
+  ['pwOld', 'pwNew', 'pwNew2'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('dlgPass').showModal();
+};
+document.getElementById('pwSave').onclick = async e => {
+  e.preventDefault();
+  const btn = e.currentTarget;
+  const errEl = document.getElementById('pwErr');
+  errEl.style.display = 'none';
+  const old = document.getElementById('pwOld').value;
+  const n1 = document.getElementById('pwNew').value, n2 = document.getElementById('pwNew2').value;
+  if (n1.length < 8) { errEl.textContent = 'минимум 8 символов'; errEl.style.display = ''; return; }
+  if (n1 !== n2) { errEl.textContent = 'пароли не совпадают'; errEl.style.display = ''; return; }
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin"></span>сохранение...';
+  try {
+    await api('POST', '/auth/password', { old, password: n1 });
+    document.getElementById('dlgPass').close();
+    toast('пароль изменён');
+  } catch (err) { errEl.textContent = err.message; errEl.style.display = ''; }
+  finally {
+    btn.disabled = false;
+    btn.textContent = 'Сохранить';
+  }
+};
+document.getElementById('logoutBtn').onclick = async () => {
+  try { await fetch('/api/v1/auth/logout', { method: 'POST', credentials: 'same-origin' }); } catch {}
+  location.reload();
+};
+function showNoAuthBadge() {
+  document.getElementById('setPassBtn').style.display = 'none';
+  document.getElementById('logoutBtn').style.display = 'none';
+}
+
+// --- настройки панели ---
+let SSRV = null, ALLOW = [];
+function renderAllowChips() {
+  const box = document.getElementById('ssChips');
+  if (!ALLOW.length) {
+    box.innerHTML = '<span class="muted" style="font-size:12px">список пуст - доступ с любого адреса</span>';
+    return;
+  }
+  box.innerHTML = '';
+  for (const e of ALLOW) {
+    const chip = document.createElement('span');
+    chip.style.cssText = 'display:inline-flex;align-items:center;gap:6px;border:1px solid ' + (e.on ? 'var(--ok)' : 'var(--border)') + ';border-radius:14px;padding:2px 6px 2px 10px;font-size:12px' + (e.on ? '' : ';opacity:.5');
+    chip.innerHTML = esc(e.v) +
+      '<label class="switch" style="margin:0" title="' + (e.on ? 'выключить запись (не применялась бы после сохранения)' : 'включить запись') + '"><input type="checkbox"' + (e.on ? ' checked' : '') + '><span class="knob"></span></label>' +
+      '<button type="button" class="iconbtn" title="удалить запись" style="padding:0 3px">' + X_SVG + '</button>';
+    chip.querySelector('input').onchange = ev => { e.on = ev.target.checked; renderAllowChips(); };
+    chip.querySelector('button').onclick = () => { ALLOW = ALLOW.filter(x => x !== e); renderAllowChips(); };
+    box.appendChild(chip);
+  }
+}
+function ipValid(v) {
+  const cidr = v.split('/');
+  if (cidr.length > 2) return false;
+  const parts = cidr[0].split('.');
+  if (parts.length !== 4) return false;
+  for (const p of parts) if (!/^\d{1,3}$/.test(p) || +p > 255) return false;
+  if (cidr.length === 2) {
+    if (!/^\d{1,2}$/.test(cidr[1]) || +cidr[1] < 8 || +cidr[1] > 32) return false;
+  }
+  return true;
+}
+function subnet24(v) { return v.replace(/\.\d+(\.\d+)?(\/\d+)?$/, ''); }
+async function allowAdd(value) {
+  const v = (value || '').trim();
+  if (!v) return;
+  if (!ipValid(v)) return toast('"' + v + '" не похоже на IP или подсеть - проверьте опечатки', true);
+  if (ALLOW.some(e => e.v === v)) return toast('Такой адрес уже есть в списке', true);
+  // защита от чужой подсети: сравниваем с адресом клиента и уже
+  // добавленными записями
+  const mine = SSRV && SSRV.clientIp;
+  const known = ALLOW.map(e => subnet24(e.v)).concat(mine ? [subnet24(mine)] : []);
+  const sub = subnet24(v);
+  if (known.length && !known.includes(sub)) {
+    if (!(await askModal('Другая подсеть',
+      'Адрес ' + v + ' из подсети ' + subnet24(v) + '.*, а вы сейчас в ' + (mine ? subnet24(mine) + '.*' : 'другой подсети') + '. Обычно так бывает из-за опечатки. Точно добавить?',
+      'Добавить'))) return;
+  }
+  ALLOW.push({ v, on: true });
+  renderAllowChips();
+}
+async function loadServerSettings() {
+  try {
+    SSRV = await api('GET', '/settings/server');
+    const box = document.getElementById('serverSettingsBox');
+    if (!SSRV || !box) return;
+    document.getElementById('ssAuthOn').checked = SSRV.authEnabled;
+    updateAuthHint();
+    document.getElementById('ssAddr').value = SSRV.listenAddr || '0.0.0.0';
+    document.getElementById('ssPort').value = SSRV.port || 8090;
+    ALLOW = (SSRV.allowedIps || []).map(e => ({ v: e.v, on: e.on !== false }));
+    renderAllowChips();
+    // рассинхрон: конфиг уже на другом порту/адресе, а демон работает
+    // на старом - сразу предлагаем перезапуск
+    if ((SSRV.runningPort && +SSRV.port !== +SSRV.runningPort) ||
+        (SSRV.runningAddr && SSRV.listenAddr && SSRV.listenAddr !== SSRV.runningAddr)) {
+      document.getElementById('ssRestartRow').style.display = '';
+    }
+    api('GET', '/lan/clients').then(r => {
+      const sel = document.getElementById('ssDevices');
+      const cur = sel.value;
+      const list = (r && r.clients) || [];
+      sel.innerHTML = '<option value="">устройства сети (' + list.length + ')...</option>' +
+        list.map(c => `<option value="${esc(c.ip)}">${esc(c.ip)}${c.name ? ' - ' + esc(c.name) : ''}${c.mac ? ' (' + esc(c.mac) + ')' : ''}</option>`).join('');
+      if ([...sel.options].some(o => o.value === cur)) sel.value = cur;
+    }).catch(() => {});
+  } catch {}
+}
+function updateAuthHint() {
+  const on = document.getElementById('ssAuthOn').checked;
+  document.getElementById('ssAuthHint').textContent = on
+    ? 'Вход по паролю включён. Панель и API закрыты сессией или токеном.'
+    : 'ВНИМАНИЕ: авторизация выключена. Панель и API открыты любому, кто достучится до порта. Это небезопасно, если порт доступен из интернета или большой сети. Разрешённые адреса ниже частично компенсируют риск.';
+}
+document.getElementById('ssAdd').onclick = () => {
+  const inp = document.getElementById('ssAllowed');
+  allowAdd(inp.value).then(() => { inp.value = ''; inp.focus(); });
+};
+document.getElementById('ssAllowed').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); document.getElementById('ssAdd').click(); }
+});
+document.getElementById('ssDevices').onchange = e => {
+  if (e.target.value) allowAdd(e.target.value).then(() => { e.target.value = ''; });
+};
+document.getElementById('ssAddMine').onclick = () => {
+  if (SSRV && SSRV.clientIp) allowAdd(SSRV.clientIp);
+  else toast('Адрес не определён', true);
+};
+document.getElementById('ssAuthOn').onchange = () => {
+  if (!document.getElementById('ssAuthOn').checked) return updateAuthHint();
+  if (SSRV && !SSRV.hasCreds) {
+    document.getElementById('ssAuthOn').checked = false;
+    toast('Нет сохранённой учётки: сначала задайте пароль', true);
+    return;
+  }
+  updateAuthHint();
+};
+document.getElementById('ssSave').onclick = e => withBusy(e.currentTarget, async () => {
+  const off = !document.getElementById('ssAuthOn').checked;
+  if (off && !(await askModal('Отключение авторизации',
+    'Панель и API будут открыты ЛЮБОМУ, кто достучится до порта. Если порт доступен из интернета или большой сети - это небезопасно. Продолжить?',
+    'Отключить'))) {
+    document.getElementById('ssAuthOn').checked = true;
+    updateAuthHint();
+    return;
+  }
+  const body = {
+    listenAddr: document.getElementById('ssAddr').value.trim() || '0.0.0.0',
+    port: +document.getElementById('ssPort').value,
+    allowedIps: ALLOW.map(e => ({ v: e.v, on: e.on })),
+    authDisabled: off
+  };
+  try {
+    const r = await api('PUT', '/settings/server', body);
+    if (r.needRestart) {
+      document.getElementById('ssRestartRow').style.display = '';
+      toast('Сохранено. Новый адрес/порт вступят в силу после перезапуска демона');
+    } else {
+      document.getElementById('ssRestartRow').style.display = 'none';
+      toast('Сохранено');
+    }
+    loadServerSettings();
+  } catch (err) { toast(err.message, true); }
+});
+
+// --- проверка обновлений в шапке ---
+let UPD = null;
+async function checkUpdates(manual) {
+  try {
+    const r = await api('GET', '/system/update/check');
+    if (r.error) {
+      document.getElementById('updInfo').textContent = 'проверка обновления не удалась: ' + r.error;
+      if (manual) toast('Проверка обновления: ' + r.error, true);
+      return;
+    }
+    UPD = r;
+    const badge = document.getElementById('updBadge');
+    if (r.update) {
+      badge.style.display = '';
+      badge.textContent = 'обновиться до ' + r.latest;
+      badge.title = 'текущая ' + r.current + '; нажать - обновить (install.sh с проверкой sha256, сервис перезапустится)';
+      document.getElementById('updInfo').textContent = 'есть обновление: текущая ' + r.current + ', последняя ' + r.latest + ' (кнопка в шапке или здесь по проверке)';
+    } else {
+      badge.style.display = 'none';
+      document.getElementById('updInfo').textContent = 'обновлений нет: текущая ' + r.current + ', последняя ' + r.latest;
+    }
+  } catch (err) { if (manual) toast(err.message, true); }
+}
+document.getElementById('updCheckBtn').onclick = e => withBusy(e.currentTarget, () => checkUpdates(true));
+
+// перезапуск демона из панели: подтверждение, спиннер, ожидание возврата
+// waitForPanel ждёт возврата панели; при смене порта/адреса опрашивает
+// НОВЫЙ origin (no-cors: кросс-портовый fetch читает только факт ответа,
+// этого достаточно - connection refused роняет промис)
+function waitForPanel(cb, tries, origin) {
+  const url = (origin || '') + '/api/v1/status';
+  const opts = origin && origin !== location.origin
+    ? { mode: 'no-cors' }
+    : { credentials: 'same-origin' };
+  fetch(url, opts).then(r => {
+    if (opts.mode !== 'no-cors' && r.status !== 401 && !r.ok) {
+      if (tries > 0) return setTimeout(() => waitForPanel(cb, tries - 1, origin), 2000);
+      return cb(false);
+    }
+    cb(true);
+  }).catch(() => {
+    if (tries > 0) setTimeout(() => waitForPanel(cb, tries - 1, origin), 2000);
+    else cb(false);
+  });
+}
+// panelTargetOrigin - куда переедет панель по текущим полям настроек;
+// null = остаётся на этом же адресе
+function panelTargetOrigin() {
+  const newPort = +document.getElementById('ssPort').value || 8090;
+  const addr = (document.getElementById('ssAddr').value.trim() || '0.0.0.0');
+  let host = location.hostname;
+  if (addr !== '0.0.0.0' && addr !== '::' && addr !== location.hostname) host = addr;
+  const target = location.protocol + '//' + host + ':' + newPort;
+  return target === location.origin ? null : target;
+}
+document.getElementById('ssRestart').onclick = async e => {
+  const btn = e.currentTarget;
+  if (!(await askModal('Перезапуск панели',
+    'Демон mawg будет перезапущен: панель на 10-30 секунд пропадёт, туннели и маршруты не трогаются (конфиги остаются применёнными). Страница сама вернётся, когда панель оживёт. Перезапустить?',
+    'Перезапустить'))) return;
+  const target = panelTargetOrigin();
+  if (target && target.startsWith(location.protocol + '//127.0.0.1') && !location.hostname.includes('127.0.0.1')) {
+    toast('Панель переедет на 127.0.0.1 - с этого компьютера она будет недоступна напрямую (нужен доступ с роутера или прокси)', true);
+  }
+  await withBusy(btn, async () => {
+    try {
+      await api('POST', '/system/restart');
+    } catch (err) { toast(err.message, true); return; }
+    btn.innerHTML = '<span class="spin"></span>панель перезапускается, ждём возврата' + (target ? ' на ' + target.replace(location.protocol + '//', '') : '') + '...';
+    setTimeout(() => waitForPanel(ok => {
+      if (ok) location.href = (target || location.origin) + location.pathname;
+      else { btn.textContent = 'перезапустить панель'; toast('Панель не вернулась за отведённое время - проверьте её вручную' + (target ? ' по адресу ' + target.replace(location.protocol + '//', '') : ''), true); }
+    }, 30, target), 4000);
+  });
+};
+document.getElementById('updBadge').onclick = async e => {
+  const badge = e.currentTarget;
+  if (!UPD || !UPD.update) return;
+  if (!(await askModal('Обновление mawg', 'Скачать и установить ' + UPD.latest + '? Бинарник качается с проверкой sha256, сервис перезапустится, панель на минуту уйдёт.', 'Обновить'))) return;
+  await withBusy(badge, async () => {
+    try {
+      await api('POST', '/system/update/run');
+    } catch (err) { toast(err.message, true); return; }
+    // установка идёт в фоне после ответа: ждём возврата панели с новой
+    // версией и перезагружаем страницу сами, иначе версия и бейдж
+    // отстают от реальности
+    const wasVersion = UPD.current;
+    const dlg = document.getElementById('dlgUpdate');
+    const txt = document.getElementById('updWaitText');
+    const sec = document.getElementById('updWaitSec');
+    const spin = document.getElementById('updWaitSpin');
+    const closeBtn = document.getElementById('updWaitClose');
+    txt.textContent = 'скачиваем и устанавливаем ' + UPD.latest + '; панель перезапустится, страница обновится сама';
+    spin.style.display = '';
+    closeBtn.style.display = 'none';
+    dlg.showModal();
+    const t0 = Date.now();
+    const tick = setInterval(() => { sec.textContent = Math.round((Date.now() - t0) / 1000); }, 1000);
+    let done = false;
+    const finish = msg => {
+      if (done) return;
+      done = true;
+      clearInterval(tick);
+      if (!msg) { location.reload(); return; }
+      txt.textContent = msg;
+      spin.style.display = 'none';
+      closeBtn.style.display = '';
+    };
+    closeBtn.onclick = () => dlg.close();
+    const poll = n => {
+      if (done) return;
+      fetch('/api/v1/status', { credentials: 'same-origin' }).then(r => {
+        if (r.status === 401) return finish(); // панель уже перезапустилась, сессия сброшена
+        if (!r.ok) throw 0;
+        return r.json().then(j => {
+          if (j.version && j.version !== wasVersion) finish();
+          else txt.textContent = 'устанавливаем ' + UPD.latest + ' (панель ещё работает на ' + wasVersion + ')...';
+        });
+      }).catch(() => {
+        if (!done) txt.textContent = 'панель перезапускается, ждём возврата...';
+      }).finally(() => {
+        if (done) return;
+        if (n <= 0) return finish('Не дождались возврата панели за 5 минут. Обновление могло затянуться: обновите страницу вручную и проверьте версию в разделе Настройки.');
+        setTimeout(() => poll(n - 1), 2000);
+      });
+    };
+    setTimeout(() => poll(150), 3000);
+  });
+};
+document.getElementById('dlgUpdate').addEventListener('cancel', e => e.preventDefault());
+
+// крестик очистки на текстовых инпутах
+const X_SVG = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+function wireClearInputs(root) {
+  root.querySelectorAll('input').forEach(inp => {
+    const t = inp.type;
+    // number: есть штатный спиннер больше/меньше - крестик очистки лишний
+    if (t === 'number' || t === 'password' || t === 'color' || t === 'checkbox' || t === 'radio' || t === 'file' || t === 'hidden' || inp.closest('.xwrap')) return;
+    const wrap = document.createElement('span');
+    wrap.className = 'xwrap';
+    wrap.style.flex = inp.style.flex;
+    wrap.style.minWidth = inp.style.minWidth;
+    wrap.style.width = inp.style.width;
+    inp.style.flex = ''; inp.style.minWidth = ''; inp.style.width = '';
+    inp.parentNode.insertBefore(wrap, inp);
+    wrap.appendChild(inp);
+    const btn = document.createElement('button');
+    btn.type = 'button'; btn.className = 'clr'; btn.title = 'очистить'; btn.innerHTML = X_SVG;
+    wrap.appendChild(btn);
+    if (!inp.hasAttribute('placeholder')) inp.placeholder = ' ';
+    btn.onclick = () => { inp.value = ''; inp.dispatchEvent(new Event('input', { bubbles: true })); inp.focus(); };
+  });
+}
+let clrTimer = null;
+new MutationObserver(() => {
+  clearTimeout(clrTimer);
+  clrTimer = setTimeout(() => wireClearInputs(document), 50);
+}).observe(document.body, { childList: true, subtree: true });
+wireClearInputs(document);
+
+function showResult(ok, output, errText) {
+  document.getElementById('rsTitle').textContent = ok ? 'Установлено' : 'Ошибка установки';
+  document.getElementById('rsTitle').style.color = ok ? 'var(--ok)' : 'var(--err)';
+  const outText = (errText ? errText + String.fromCharCode(10, 10) : '') + (output || '').trim();
+  document.getElementById('rsOut').textContent = outText;
+  dlgResult.showModal();
+  lastSysJSON = '';
+  refreshSystem(true);
+  refreshRules(true);
+  loadPresets();
+  fillIfaceSelects();
+}
+
+async function installComp(id, btn) {
+  let item;
+  try {
+    const r = await api('GET', '/system/check');
+    item = (r.items || []).find(i => i.id === id);
+  } catch (e) { return toast(e.message, true); }
+  if (!item) return;
+  if (id === 'singbox-lx') return openLxDialog(item, btn);
+  if (!item.confirm) return;
+  const okLabel = item.actionLabel || 'Установить';
+  if (!(await askModal(okLabel + ': ' + item.title, item.confirm, okLabel))) return;
+  const label = btn.textContent;
+  btn.disabled = true; btn.textContent = 'установка...';
+  let res;
+  try {
+    res = await fetch('/api/v1/system/install', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id })
+    }).then(x => x.json());
+  } catch (e) { btn.disabled = false; btn.textContent = label; return showResult(false, '', e.message); }
+  btn.disabled = false; btn.textContent = label;
+  showResult(!!res.ok, res.output, res.ok ? '' : (res.error || 'неизвестная ошибка'));
+  lastSysJSON = '';
+  refreshSystem(true);
+}
+
+// диалог установки lx-ядра: профиль plain/upx и - для замены чужого -
+// сохранять ли старое ядро (выбор по свободному месту)
+let lxInstalling = false;
+dlgLx.addEventListener('cancel', e => { if (lxInstalling) e.preventDefault(); });
+function setLxFormVisible(show) {
+  document.getElementById('lxText').style.display = show ? '' : 'none';
+  document.getElementById('lxFlavorLabel').style.display = show ? '' : 'none';
+  document.getElementById('lxBackupRow').style.display = show ? 'flex' : 'none';
+  document.getElementById('lxNote').style.display = show ? '' : 'none';
+  document.getElementById('lxProgress').style.display = show ? 'none' : 'flex';
+  document.getElementById('lxGo').disabled = !show;
+  document.getElementById('lxCancel').disabled = !show;
+}
+function openLxDialog(item, btn) {
+  const mb = b => (b / 1048576).toFixed(0) + ' МБ';
+  lxInstalling = false;
+  setLxFormVisible(true);
+  $('#lxTitle').textContent = (item.actionLabel || 'Установить') + ' - ядро sing-box-lx';
+  $('#lxText').textContent = item.confirm || '';
+  $('#lxNote').textContent = item.note || '';
+  $('#lxNote').style.display = item.note ? '' : 'none';
+  $('#lxGo').textContent = item.actionLabel || 'Установить';
+  $('#lxGo').dataset.flavor = $('#lxFlavor').value || 'plain';
+  const isReplace = item.action === 'singbox-lx-replace';
+  const row = $('#lxBackupRow'), cb = $('#lxBackup'), txt = $('#lxBackupText');
+  if (isReplace && item.backupBytes > 0) {
+    row.style.display = 'flex';
+    const fits = (item.freeBytes || 0) > item.backupBytes + 64 * 1048576;
+    cb.checked = fits;
+    cb.disabled = !fits;
+    txt.textContent = fits
+      ? `сохранить старое ядро как sing-box.pre-lx (${mb(item.backupBytes)}, свободно ${mb(item.freeBytes)})`
+      : `для копии старого ядра (${mb(item.backupBytes)}) места не хватит (свободно ${mb(item.freeBytes)}) - будет удалено без сохранения`;
+  } else {
+    row.style.display = 'none';
+    cb.checked = false;
+  }
+  dlgLx.showModal();
+}
+$('#lxFlavor').onchange = e => { $('#lxGo').dataset.flavor = e.target.value; };
+document.getElementById('lxCancel').onclick = () => { if (!lxInstalling) dlgLx.close(); };
+$('#lxGo').onclick = async e => {
+  e.preventDefault();
+  if (lxInstalling) return;
+  lxInstalling = true;
+  setLxFormVisible(false);
+  let res;
+  try {
+    res = await fetch('/api/v1/system/install', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: 'singbox-lx', flavor: $('#lxGo').dataset.flavor || 'plain', backup: $('#lxBackup').checked })
+    }).then(x => x.json());
+  } catch (err) {
+    lxInstalling = false;
+    setLxFormVisible(true);
+    return showResult(false, '', err.message);
+  }
+  const ok = !!res.ok;
+  lxInstalling = false;
+  dlgLx.close();
+  showResult(ok, res.output, ok ? '' : (res.error || 'неизвестная ошибка'));
+};
+
+async function refreshRCIToken() {
+  const row = document.getElementById('rciRow');
+  try {
+    const st = await api('GET', '/status');
+    row.style.display = st.platform === 'keenetic' ? '' : 'none';
+    if (st.platform !== 'keenetic') return;
+    const r = await api('GET', '/rcitoken');
+    const inp = document.getElementById('rciToken');
+    inp.value = '';
+    inp.placeholder = r.configured ? 'задан (скрыт) - введите новый для замены' : 'X-NDMA-TKN';
+    document.getElementById('rciSave').disabled = true;
+  } catch (e) { console.warn(e); }
+}
+const rciSaveBtn = document.getElementById('rciSave');
+const rciTokenInput = document.getElementById('rciToken');
+const rciSaveSync = () => { rciSaveBtn.disabled = !rciTokenInput.value.trim(); };
+rciTokenInput.addEventListener('input', rciSaveSync);
+rciSaveSync();
+document.getElementById('rciSave').onclick = async e => {
+  const token = rciTokenInput.value.trim();
+  if (!token) { rciSaveSync(); return; }
+  e.currentTarget.disabled = true;
+  try {
+    await api('PUT', '/rcitoken', { token });
+    toast('Токен сохранен');
+    rciTokenInput.value = '';
+  } catch (err) { toast(err.message, true); }
+  rciSaveSync();
+};
+refreshRCIToken();
+
+$('#sysrefresh').onclick = () => { lastSysJSON = ''; refreshSystem(true);
+refreshRules(true);
+loadPresets();
+fillIfaceSelects(); };
+
+let lastLogKey = '';
+async function refreshLog() {
+  try {
+    const r = await api('GET', '/events');
+    const evs = r.events || [];
+    const key = evs.length + ':' + (evs[0] ? evs[0].time + evs[0].kind : '');
+    if (key === lastLogKey) return;
+    lastLogKey = key;
+    const log = $('#log');
+    const stick = log.scrollTop >= log.scrollHeight - log.clientHeight - 30;
+    log.innerHTML = evs.slice(-80).reverse().map(ev =>
+      `<div>[${fmtTime(ev.time)}] ${ev.pool}: <span class="k-${ev.kind}">${ev.kind}</span> ${ev.message}</div>`
+    ).join('');
+    if (stick) log.scrollTop = log.scrollHeight;
+    if (evs.some(ev => ev.kind === 'policy')) refreshRules(false);
+  } catch {}
+}
+
+function startPanel() {
+  setInterval(refresh, 5000);
+  setInterval(refreshLog, 15000);
+  setInterval(() => { refreshMT(); loadSlots(); }, 30000);
+  setInterval(() => refreshSystem(false), 60000);
+  setInterval(() => refreshRules(false), 30000);
+  loadPolicyCycles();
+  setInterval(fillIfaceSelects, 60000);
+  setInterval(() => refreshIfaces(false), 30000);
+  setInterval(() => refreshBundles(false), 30000);
+  refresh(); refreshLog(); refreshMT(); loadSlots();
+  refreshSystem(true); refreshRules(true); loadPresets();
+  fillIfaceSelects(); refreshIfaces(true); refreshBundles(true); refreshWAN();
+  loadServerSettings(); checkUpdates(false);
+}
+
+// гейт: без сессии страница - чёрный фон и модалка входа, API не опрашивается
+async function startGate() {
+  let ok = false, authOff = false;
+  try {
+    const r = await fetch('/api/v1/status', { credentials: 'same-origin' });
+    if (r.status === 401) { showLogin(); return; }
+    if (r.ok) {
+      const d = await r.json().catch(() => ({}));
+      if (d.authEnabled === false) authOff = true;
+    }
+    ok = true;
+  } catch {}
+  document.body.classList.add('unlocked');
+  if (authOff) showNoAuthBadge();
+  if (ok) startPanel();
+}
+startGate();
