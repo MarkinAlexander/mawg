@@ -88,6 +88,7 @@ type PoolSettings struct {
 	KeeneticSlot       string `json:"keeneticSlot,omitempty"`
 	OpenwrtProto       string `json:"openwrtProto,omitempty"`
 	MagitrickleGroupID string `json:"magitrickleGroupID,omitempty"`
+	Source             string `json:"source,omitempty"` // URL/ссылка, из которой собраны конфиги пула (для цикла обновлений)
 }
 
 func (s PoolSettings) WithDefaults() PoolSettings {
@@ -251,8 +252,8 @@ type BundleState struct {
 }
 
 type StateFile struct {
-	Pools          map[string]*PoolState   `json:"pools"`
-	Bundles        map[string]*BundleState `json:"bundles,omitempty"`
+	Pools          map[string]*PoolState    `json:"pools"`
+	Bundles        map[string]*BundleState  `json:"bundles,omitempty"`
 	DegradedGroups map[string]DegradedGroup `json:"degradedGroups,omitempty"`
 }
 

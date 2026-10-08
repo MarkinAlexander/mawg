@@ -133,7 +133,7 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
   <span class="meta" id="meta">загрузка...</span>
   <span class="badge" id="updBadge" style="display:none;cursor:pointer;border-color:var(--ok);color:var(--ok)" title="проверить обновления">обновление</span>
   <span style="flex:1"></span>
-  <button class="primary" onclick="dlgPool.showModal(); loadSlots()">+ интерфейс</button>
+  <button class="primary" onclick="dlgPool.showModal(); loadSlots(); setPoolMode('cfg')">+ интерфейс</button>
 </header>
 <main>
   <div class="grid" id="pools"></div>
@@ -171,15 +171,6 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
       <button class="primary" id="bCreate" style="font-size:11px">+ набор</button></h2>
     <div class="sub">Группы MagiTrickle привязываются к набору: mawg держит их на первом здоровом участнике (приоритет по порядку), при отказе переключает на следующий, при восстановлении возвращает. Участники: пулы mawg и внешние интерфейсы.</div>
     <div id="bundles"></div>
-  </div>
-  <div class="card" id="subscard" style="margin-top:16px">
-    <h2>Подписки и ссылки <span class="muted">разбор подключений</span></h2>
-    <div class="sub">URL подписки (http/https), одиночная ссылка vless://, trojan://, wireguard://, amneziawg://, vpn:// или несколько ссылок строками. mawg скачивает и разбирает на узлы; список хранится в панели.</div>
-    <div class="btnrow" style="align-items:flex-start;margin-top:2px">
-      <textarea id="subInput" rows="2" placeholder="https://example.com/sub&#10;или vless://... (можно несколько строк)" style="flex:1;min-width:220px;resize:vertical;font-family:ui-monospace,monospace;font-size:12px"></textarea>
-      <button class="primary" id="subAdd">добавить</button>
-    </div>
-    <div id="subs"></div>
   </div>
   <div class="card" id="syscard" style="margin-top:16px">
     <h2>Система <span class="muted" id="sysrefresh" style="cursor:pointer">обновить</span></h2>
@@ -267,8 +258,12 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
 <dialog id="dlgPool">
   <form method="dialog" style="display:grid; gap:4px">
     <h3 style="margin:0 0 6px">Новый интерфейс (пул)</h3>
+    <div class="btnrow" style="margin:0 0 2px">
+      <button type="button" id="pModeCfg" class="primary">конфиги .conf / .zip</button>
+      <button type="button" id="pModeLink">ссылка или подписка</button>
+    </div>
     <label class="f">Имя (латиница, цифры, дефис)
-      <input id="pName" placeholder="proton" pattern="[a-z][a-z0-9-]{0,14}" title="строчная латиница, цифры и дефисы, начинается с буквы, до 15 символов" required>
+      <input id="pName" placeholder="proton или my-vless-fr" pattern="[a-z][a-z0-9-]{0,14}" title="строчная латиница, цифры и дефисы, начинается с буквы, до 15 символов" required>
     </label>
     <label class="f" id="slotRow" style="display:none">Слот Keenetic
       <div class="btnrow" style="margin-top:3px">
@@ -289,8 +284,13 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
         <option value="hold">держать последний конфиг</option>
       </select>
     </label>
-    <div class="btnrow" style="justify-content:end">
-      <button value="cancel">Отмена</button>
+    <label class="f" id="pSourceRow" style="display:none">Ссылка, URL подписки или несколько ссылок строками
+      <textarea id="pSource" rows="3" placeholder="vpn://... / wireguard://... / amneziawg://...&#10;vless://... / trojan://...&#10;https://example.com/sub" style="font-family:ui-monospace,monospace;font-size:12px"></textarea>
+    </label>
+    <div class="muted" id="pLinkHint" style="display:none;font-size:11px">wireguard://, amneziawg:// и vpn:// превращаются в обычные конфиги пула (нативно, слот). Узлы vless/trojan и т.п. требуют движок sing-box - они будут показаны списком, установка ядра планируется следующим шагом mawg. Вариант «через ядро lx» для WG/AWG появится вместе с движком.</div>
+    <div id="pPlanResult" style="display:none;font-size:12px;border-top:1px solid var(--border);padding-top:8px"></div>
+    <div class="btnrow" style="justify-content:end" id="pActions">
+      <button value="cancel" id="pCancel">Отмена</button>
       <button class="primary" id="pCreate">Создать</button>
     </div>
   </form>
@@ -567,15 +567,6 @@ function fmtTime(iso) {
   return new Date(iso).toLocaleTimeString('ru-RU');
 }
 
-function fmtBytes(n) {
-  n = Number(n) || 0;
-  if (!n) return '0';
-  const u = ['Б', 'КБ', 'МБ', 'ГБ', 'ТБ'];
-  let i = 0;
-  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
-  return n.toFixed(n >= 100 || i === 0 ? 0 : 1) + ' ' + u[i];
-}
-
 function toast(text, isErr) {
   const m = $('#msg');
   m.textContent = text;
@@ -833,6 +824,40 @@ async function delPool(pool) {
   refresh();
 }
 
+let poolMode = 'cfg';
+function setPoolMode(m) {
+  poolMode = m;
+  $('#pModeCfg').classList.toggle('primary', m === 'cfg');
+  $('#pModeLink').classList.toggle('primary', m === 'link');
+  $('#pSourceRow').style.display = m === 'link' ? '' : 'none';
+  $('#pLinkHint').style.display = m === 'link' ? '' : 'none';
+  const plan = $('#pPlanResult');
+  plan.style.display = 'none';
+  plan.innerHTML = '';
+  $('#pCreate').style.display = '';
+  $('#pCancel').textContent = 'Отмена';
+}
+$('#pModeCfg').onclick = () => setPoolMode('cfg');
+$('#pModeLink').onclick = () => setPoolMode('link');
+
+function renderSourcePlan(p) {
+  let html = '';
+  if (p.pool) {
+    html += `<div style="margin-bottom:6px">Пул <b>${esc(p.pool)}</b> создан: конфигов ${p.added || 0}` +
+      (p.duplicates && p.duplicates.length ? `, дубликаты пропущены: ${esc(p.duplicates.join(', '))}` : '') + '.</div>';
+  } else if (p.engine && p.engine.length) {
+    html += `<div style="margin-bottom:6px">Пул не создан: в источнике нет WG/AWG узлов, нативно добавить нечего.</div>`;
+  }
+  if (p.engine && p.engine.length) {
+    html += `<div class="muted" style="font-size:11px;margin-bottom:4px">Узлы, для которых нужен движок sing-box (нативный путь невозможен). Установка ядра - следующий шаг mawg; тогда же появится вариант «через ядро lx» и для WG/AWG:</div>`;
+    html += p.engine.map(e => `<div style="margin:2px 0">• ${esc(e.tag)} <span class="badge">${esc(e.type)}</span> <span class="badge" style="color:var(--warn);border-color:var(--warn)">нужен движок</span></div>`).join('');
+  }
+  if (p.skipped && p.skipped.length) {
+    html += `<div style="color:var(--warn);margin-top:6px;font-size:11px">Пропущено: ${p.skipped.map(esc).join('; ')}</div>`;
+  }
+  return html;
+}
+
 $('#pCreate').onclick = async e => {
   e.preventDefault();
   const body = { name: $('#pName').value.trim(), fallback: $('#pFallback').value };
@@ -847,6 +872,24 @@ $('#pCreate').onclick = async e => {
     body.keeneticSlot = $('#pSlot').value;
   }
   if ($('#protoRow').style.display !== 'none') body.openwrtProto = $('#pProto').value;
+  if (poolMode === 'link') {
+    const source = $('#pSource').value.trim();
+    if (!source) return toast('Вставьте ссылку, vpn:// или URL подписки', true);
+    try {
+      const plan = await api('POST', '/pools/from-source', { ...body, source });
+      const planBox = $('#pPlanResult');
+      planBox.innerHTML = renderSourcePlan(plan);
+      planBox.style.display = '';
+      $('#pCreate').style.display = 'none';
+      $('#pCancel').textContent = 'Закрыть';
+      if (plan.pool) {
+        toast(`Пул ${plan.pool} создан из источника`);
+        $('#pSource').value = '';
+        refresh();
+      }
+    } catch (err) { toast(err.message, true); }
+    return;
+  }
   try {
     await api('POST', '/pools', body);
     dlgPool.close();
@@ -2399,69 +2442,6 @@ async function refreshLog() {
   } catch {}
 }
 
-async function refreshSubs() {
-  let data;
-  try { data = await api('GET', '/subs'); } catch { return; }
-  const box = $('#subs');
-  const subs = data.subs || [];
-  if (!subs.length) { box.innerHTML = '<div class="muted" style="font-size:12px;margin-top:8px">подписок пока нет</div>'; return; }
-  box.innerHTML = subs.map(s => {
-    const info = s.info || {};
-    const traffic = (info.upload || info.download) ? `<b>трафик</b><span>${fmtBytes(info.upload)} ↑ / ${fmtBytes(info.download)} ↓${info.total ? ' из ' + fmtBytes(info.total) : ''}</span>` : '';
-    const interval = info.updateIntervalHours ? `<b>интервал</b><span>${info.updateIntervalHours} ч</span>` : '';
-    const err = s.error ? `<b>ошибка</b><span style="color:var(--err)">${esc(s.error)}</span>` : '';
-    const warns = (s.warnings && s.warnings.length) ? `<b>предупреждения</b><span style="color:var(--warn)">${s.warnings.map(esc).join('; ')}</span>` : '';
-    return `<details style="margin-top:8px;border:1px solid var(--border);border-radius:8px;padding:6px 10px;background:var(--panel2)">
-      <summary style="display:flex;gap:8px;align-items:center;cursor:pointer">
-        <b>${esc(s.name)}</b>
-        <span class="badge">${s.nodes ? s.nodes.length : 0} узл.</span>
-        ${s.error ? '<span class="badge" style="color:var(--err);border-color:var(--err)">ошибка</span>' : ''}
-        <span class="muted" style="font-size:11px">${fmtTime(s.refreshedAt)}</span>
-        <span style="flex:1"></span>
-        <button data-act="subrefresh" data-name="${esc(s.name)}" title="скачать и разобрать заново">обновить</button>
-        <button class="danger" data-act="subdel" data-name="${esc(s.name)}">удалить</button>
-      </summary>
-      <div class="kv" style="margin-top:8px"><b>источник</b><span style="font-size:11px">${esc(s.source)}</span>${traffic}${interval}${err}${warns}</div>
-      ${subNodesTable(s)}
-    </details>`;
-  }).join('');
-  box.querySelectorAll('button[data-act]').forEach(b => b.onclick = e => {
-    e.preventDefault(); e.stopPropagation();
-    if (b.dataset.act === 'subrefresh') return withBusy(b, () => subCall('POST', '/subs/' + encodeURIComponent(b.dataset.name) + '/refresh', undefined, 'подписка обновлена'));
-    return subDel(b.dataset.name);
-  });
-}
-
-function subNodesTable(s) {
-  if (!s.nodes || !s.nodes.length) return '';
-  const rows = s.nodes.map(n => {
-    const tls = n.tls ? esc(n.tls.security) + (n.tls.sni ? '·' + esc(n.tls.sni) : '') : '—';
-    const tr = n.transport ? esc(n.transport) + (n.mode ? '·' + esc(n.mode) : '') : 'tcp';
-    return `<tr><td>${esc(n.tag)}</td><td>${esc(n.type)}</td><td>${esc(n.host)}:${n.port}</td><td>${tr}</td><td>${tls}</td><td>${esc(n.encryption || '')}</td></tr>`;
-  }).join('');
-  return `<div class="cfgscroll" style="max-height:300px;margin-top:6px"><table><tr><th>узел</th><th>тип</th><th>сервер</th><th>транспорт</th><th>tls</th><th>шифрование</th></tr>${rows}</table></div>`;
-}
-
-async function subCall(method, path, body, okMsg) {
-  try {
-    const sub = await api(method, path, body);
-    if (okMsg) toast(okMsg + (sub.nodes ? ': ' + sub.nodes.length + ' узл.' : ''), !!sub.error);
-    await refreshSubs();
-  } catch (err) { toast(err.message, true); }
-}
-
-async function subDel(name) {
-  if (!confirm('удалить подписку ' + name + '?')) return;
-  await subCall('DELETE', '/subs/' + encodeURIComponent(name), undefined, 'подписка удалена');
-}
-
-$('#subAdd').onclick = e => withBusy(e.currentTarget, async () => {
-  const src = $('#subInput').value.trim();
-  if (!src) return;
-  await subCall('POST', '/subs', { source: src }, 'подписка добавлена');
-  $('#subInput').value = '';
-});
-
 function startPanel() {
   setInterval(refresh, 5000);
   setInterval(refreshLog, 5000);
@@ -2474,7 +2454,6 @@ function startPanel() {
   refresh(); refreshLog(); refreshMT(); loadSlots();
   refreshSystem(true); refreshRules(true); loadPresets();
   fillIfaceSelects(); refreshIfaces(true); refreshBundles(true); refreshWAN();
-  refreshSubs();
   loadServerSettings(); checkUpdates(false);
 }
 
