@@ -101,8 +101,25 @@ func TestFromSourceEnginePoolCreated(t *testing.T) {
 	if plan.Pool != "vless-only" {
 		t.Fatalf("пул движка должен создаваться: %+v", plan)
 	}
-	if len(plan.Engine) != 1 || plan.Engine[0].Type != "vless" {
-		t.Fatalf("движок-узлы: %+v", plan.Engine)
+	if len(plan.Engine) != 0 {
+		t.Fatalf("рабочий узел не должен помечаться «ждёт lx»: %+v", plan.Engine)
+	}
+}
+
+func TestFromSourceMixedLxNodeFlagged(t *testing.T) {
+	lxOnly := "vless://00000000-0000-4000-8000-000000000001@203.0.113.12:443" +
+		"?encryption=mlkem768x25519plus.native.0rtt.FAKE&type=xhttp&path=%2Fup&mode=auto" +
+		"&security=tls&sni=cdn.example.org#lx-only-node"
+	body, _ := json.Marshal(map[string]string{"name": "vless-lx", "source": fakeVlessLink + " \n" + lxOnly})
+	code, plan := postFromSource(t, string(body))
+	if code != 200 {
+		t.Fatalf("код %d", code)
+	}
+	if plan.Pool != "vless-lx" {
+		t.Fatalf("пул должен создаваться из поддерживаемых узлов: %+v", plan)
+	}
+	if len(plan.Engine) != 1 || plan.Engine[0].Tag != "manual|lx-only-node" {
+		t.Fatalf("ждущий-lx список: %+v", plan.Engine)
 	}
 }
 

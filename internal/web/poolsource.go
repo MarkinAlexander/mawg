@@ -171,12 +171,24 @@ func (s *Server) createPoolFromSource(w http.ResponseWriter, r *http.Request) {
 		}
 		plan.Pool = pool.Name
 		plan.Tun = settings.TunName
-		plan.Engine = engineNodes
-		s.store.LogEvent(pool.Name, "applied", fmt.Sprintf("пул из источника: %d узлов в tun (%s)", len(res.Nodes), settings.TunName))
+		eligSet := map[string]bool{}
+		for _, n := range eligible {
+			eligSet[n.Tag] = true
+		}
+		for _, e := range engineNodes {
+			if !eligSet[e.Tag] {
+				plan.Engine = append(plan.Engine, e)
+			}
+		}
+		s.store.LogEvent(pool.Name, "applied", fmt.Sprintf("пул из источника: %d узлов в tun (%s)", len(eligible), settings.TunName))
 		skipped, err := s.applyEngine()
 		plan.Skipped = append(plan.Skipped, skipped...)
 		if err != nil {
 			plan.Warnings = append(plan.Warnings, "движок не применил конфиг: "+err.Error())
+		} else if mgr, mgrErr := s.sb(); mgrErr == nil {
+			if ps, ok := mgr.PoolStatus(pool.Name); ok && !ps.CheckedAt.IsZero() && !ps.ProbeOK {
+				plan.Warnings = append(plan.Warnings, "проба не прошла: "+ps.ProbeErr)
+			}
 		}
 		writeJSON(w, http.StatusOK, plan)
 		return

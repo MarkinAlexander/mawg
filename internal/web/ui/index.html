@@ -935,7 +935,7 @@ function renderSourcePlan(p) {
   if (p.engine && p.engine.length) {
     const savedForLx = !!(p.pool && p.tun);
     html += savedForLx
-      ? `<div class="muted" style="font-size:11px;margin-bottom:4px">Эти узлы сохранены в пуле, но текущий движок (sing-box без lx) их не умеет: xhttp-транспорт и vless-шифрование есть только в lx-ядре. Когда lx поставим - «обновить из источника» в настройках пула поднимет их.</div>`
+      ? `<div class="muted" style="font-size:11px;margin-bottom:4px">Эти узлы сохранены в пуле, но текущий профиль движка их не запустит (xhttp-транспорт и новое vless-шифрование есть только в lx-ядре). После установки lx - «обновить из источника» в настройках пула поднимет их.</div>`
       : `<div class="muted" style="font-size:11px;margin-bottom:4px">Узлы, для которых нужен движок sing-box (нативный путь невозможен):</div>`;
     html += p.engine.map(e => `<div style="margin:2px 0">• ${esc(e.tag)} <span class="badge">${esc(e.type)}</span> <span class="badge" style="color:var(--warn);border-color:var(--warn)">${savedForLx ? 'ждёт lx-ядро' : 'нужен движок'}</span></div>`).join('');
   }
@@ -966,18 +966,25 @@ $('#pCreate').onclick = async e => {
     const source = $('#pSource').value.trim();
     if (!source) return toast('Вставьте ссылку, vpn:// или URL подписки', true);
     if (!$('#pName').value.trim()) return toast('Дайте пулу имя', true);
-    try {
-      const plan = await api('POST', '/pools/from-source', { ...body, source });
-      const planBox = $('#pPlanResult');
-      planBox.innerHTML = renderSourcePlan(plan);
-      planBox.style.display = '';
-      $('#pCreate').style.display = 'none';
-      $('#pCancel').textContent = 'Закрыть';
-      if (plan.pool) {
-        toast(`Пул ${plan.pool} создан из источника`, !!plan.warnings);
-        refresh();
+    await withBusy(e.currentTarget, async () => {
+      $('#pCancel').disabled = true;
+      try {
+        const plan = await api('POST', '/pools/from-source', { ...body, source });
+        const planBox = $('#pPlanResult');
+        planBox.innerHTML = renderSourcePlan(plan);
+        planBox.style.display = '';
+        $('#pCreate').style.display = 'none';
+        $('#pCancel').textContent = 'Закрыть';
+        $('#pCancel').disabled = false;
+        if (plan.pool) {
+          toast(`Пул ${plan.pool} создан из источника`, !!plan.warnings);
+          refresh();
+        }
+      } catch (err) {
+        $('#pCancel').disabled = false;
+        toast(err.message, true);
       }
-    } catch (err) { toast(err.message, true); }
+    });
     return;
   }
   if ($('#slotRow').style.display !== 'none' && !$('#pSlot').value) {
