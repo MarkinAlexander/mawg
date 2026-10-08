@@ -122,6 +122,7 @@ func (s *Server) createPoolFromSource(w http.ResponseWriter, r *http.Request) {
 		for _, e := range plan.Engine {
 			s.store.LogEvent(pool.Name, "engine", fmt.Sprintf("узел %s (%s) ждёт движок sing-box", e.Tag, e.Type))
 		}
+		s.engine.CheckNow(pool.Name)
 	}
 	writeJSON(w, http.StatusOK, plan)
 }
