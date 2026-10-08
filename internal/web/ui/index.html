@@ -921,10 +921,13 @@ function renderSourcePlan(p) {
   let html = '';
   const warn = p.warnings && p.warnings.length;
   if (p.pool && p.tun) {
+    const applied = p.applied != null ? p.applied : ((p.engine && p.engine.length) || 0);
+    const probe = p.probeOk == null ? '' : (p.probeOk ? ` · проба: ok (${p.probeMs}ms)` : ' · проба: не прошла');
     if (warn) {
-      html += `<div style="margin-bottom:6px">Пул <b>${esc(p.pool)}</b> создан (tun ${esc(p.tun)} закреплён), но движок его не применил: <span style="color:var(--err)">${p.warnings.map(esc).join('; ')}</span></div>`;
+      html += `<div style="margin-bottom:6px">Пул <b>${esc(p.pool)}</b> создан: tun ${esc(p.tun)}, узлов ${applied}${probe}.<br>` +
+        `<span style="color:var(--err)">${p.warnings.map(esc).join('; ')}</span></div>`;
     } else {
-      html += `<div style="margin-bottom:6px">Пул <b>${esc(p.pool)}</b> создан: tun-интерфейс ${esc(p.tun)} из узлов ${p.added || (p.engine && p.engine.length) || 0}.</div>`;
+      html += `<div style="margin-bottom:6px">Пул <b>${esc(p.pool)}</b> создан: tun-интерфейс ${esc(p.tun)}, узлов ${applied}${probe}.</div>`;
     }
   } else if (p.pool) {
     html += `<div style="margin-bottom:6px">Пул <b>${esc(p.pool)}</b> создан: конфигов ${p.added || 0}` +

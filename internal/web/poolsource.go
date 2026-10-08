@@ -15,7 +15,10 @@ import (
 type sourcePlan struct {
 	Pool       string            `json:"pool,omitempty"`
 	Tun        string            `json:"tun,omitempty"`
+	Applied    int               `json:"applied,omitempty"`
 	Added      int               `json:"added,omitempty"`
+	ProbeOK    *bool             `json:"probeOk,omitempty"`
+	ProbeMs    int               `json:"probeMs,omitempty"`
 	Duplicates []string          `json:"duplicates,omitempty"`
 	Engine     []sourceEngineOne `json:"engine,omitempty"`
 	Skipped    []string          `json:"skipped,omitempty"`
@@ -181,13 +184,19 @@ func (s *Server) createPoolFromSource(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		s.store.LogEvent(pool.Name, "applied", fmt.Sprintf("пул из источника: %d узлов в tun (%s)", len(eligible), settings.TunName))
+		plan.Applied = len(eligible)
 		skipped, err := s.applyEngine()
 		plan.Skipped = append(plan.Skipped, skipped...)
 		if err != nil {
 			plan.Warnings = append(plan.Warnings, "движок не применил конфиг: "+err.Error())
 		} else if mgr, mgrErr := s.sb(); mgrErr == nil {
-			if ps, ok := mgr.PoolStatus(pool.Name); ok && !ps.CheckedAt.IsZero() && !ps.ProbeOK {
-				plan.Warnings = append(plan.Warnings, "проба не прошла: "+ps.ProbeErr)
+			if ps, ok := mgr.PoolStatus(pool.Name); ok && !ps.CheckedAt.IsZero() {
+				ok := ps.ProbeOK
+				plan.ProbeOK = &ok
+				plan.ProbeMs = ps.ProbeMs
+				if !ps.ProbeOK {
+					plan.Warnings = append(plan.Warnings, "проба не прошла: "+ps.ProbeErr)
+				}
 			}
 		}
 		writeJSON(w, http.StatusOK, plan)
