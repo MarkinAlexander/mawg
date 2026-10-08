@@ -721,10 +721,10 @@ function updateCard(p) {
       ? `${p.slot ? p.slot + ' = ' : ''}${p.device} | ротация остановлена`
       : `${p.slot ? p.slot + ' = ' : ''}${p.device} | фоллбек: ${p.settings.fallback === 'direct' ? 'напрямую' : 'держать'}`;
   }
-  card.root.querySelectorAll('[data-wg-only]').forEach(el => el.style.display = isEng ? 'none' : '');
   card.actions.querySelectorAll('button[data-show]').forEach(btn => {
     btn.style.display = btn.dataset.show === (p.disabled ? 'off' : 'on') ? '' : 'none';
   });
+  card.root.querySelectorAll('[data-wg-only]').forEach(el => el.style.display = isEng ? 'none' : '');
   card.endpoint.textContent = p.activeEndpoint || '-';
   card.result.textContent = (p.lastResult || '-') + (p.consecFails ? ` (отказов подряд: ${p.consecFails}/${p.settings.failThreshold})` : '');
   card.err.textContent = p.lastError || '';
