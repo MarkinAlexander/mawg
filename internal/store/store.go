@@ -88,6 +88,27 @@ func (s *Store) Settings() Settings {
 	return s.root.Settings
 }
 
+// SingboxMode - "own" (свой экземпляр движка, по умолчанию) | "shared"
+// (общее ядро: фрагмент mawg-pools.json в чужой каталог + рестарт чужого сервиса)
+func (s *Store) SingboxMode() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.root.Settings.SingboxMode == "shared" {
+		return "shared"
+	}
+	return "own"
+}
+
+func (s *Store) SetSingboxMode(mode string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if mode != "own" && mode != "shared" {
+		return fmt.Errorf("неизвестный режим движка %q (own|shared)", mode)
+	}
+	s.root.Settings.SingboxMode = mode
+	return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
+}
+
 func (s *Store) SetSettings(v Settings) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

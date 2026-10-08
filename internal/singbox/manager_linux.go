@@ -6,10 +6,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,13 +27,29 @@ type Manager struct {
 	Dir          string
 	MixedPort    int
 	ClashPort    int
+	Mode         string
+	SharedDir    string
+	SharedInit   string
+	sharedClash  int
 	pid          int
+	probeLoopStop chan struct{}
 	lastSpecs    []PoolSpec
 	statuses     map[string]*PoolStatus
 	nodeCooldown map[string]time.Time
 }
 
+type RunConfig struct {
+	Mode        string
+	SharedDir   string
+	SharedInit  string
+	SharedClash int
+}
+
 func NewManager(dir string) (*Manager, error) {
+	return NewManagerConfig(dir, RunConfig{})
+}
+
+func NewManagerConfig(dir string, cfg RunConfig) (*Manager, error) {
 	eng, err := Detect()
 	if err != nil {
 		return nil, err
@@ -38,9 +57,32 @@ func NewManager(dir string) (*Manager, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	m := &Manager{eng: eng, Dir: dir, MixedPort: 2281, ClashPort: 2291, statuses: map[string]*PoolStatus{}, nodeCooldown: map[string]time.Time{}}
+	mode := cfg.Mode
+	if mode != "shared" {
+		mode = "own"
+	}
+	m := &Manager{eng: eng, Dir: dir, MixedPort: 2281, ClashPort: 2291,
+		Mode: mode, SharedDir: cfg.SharedDir, SharedInit: cfg.SharedInit,
+		sharedClash: cfg.SharedClash, statuses: map[string]*PoolStatus{}, nodeCooldown: map[string]time.Time{}}
+	m.probeLoopStop = make(chan struct{})
 	go m.probeLoop()
 	return m, nil
+}
+
+// Close приводит чужое ядро и собственный процесс в состояние,
+// соответствующее отсутствию менеджера: свой экземпляр гасится, в
+// shared-режиме чужому ядру возвращается чистый конфиг (фрагмент снят).
+func (m *Manager) Close() {
+	m.mu.Lock()
+	mode := m.Mode
+	m.mu.Unlock()
+	if mode == "shared" {
+		if err := m.removeFragment(); err == nil {
+			_ = m.restartShared(20 * time.Second)
+		}
+		return
+	}
+	m.stop()
 }
 
 func (m *Manager) Info() Engine {
@@ -143,7 +185,7 @@ func (m *Manager) probeSpec(spec PoolSpec) {
 // пропуская узлы на cooldown; возвращает выбранный тег ("" - некуда)
 func (m *Manager) rotateNode(spec PoolSpec) (string, error) {
 	group := "mawg-" + spec.Name
-	base := fmt.Sprintf("http://127.0.0.1:%d", m.ClashPort)
+	base := fmt.Sprintf("http://127.0.0.1:%d", m.clashBase())
 	resp, err := http.Get(base + "/proxies/" + url.PathEscape(group))
 	if err != nil {
 		return "", err
@@ -205,7 +247,12 @@ func (m *Manager) rotateNode(spec PoolSpec) (string, error) {
 func (m *Manager) probeLoop() {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
-	for range ticker.C {
+	for {
+		select {
+		case <-m.probeLoopStop:
+			return
+		case <-ticker.C:
+		}
 		m.mu.Lock()
 		specs := m.lastSpecs
 		m.mu.Unlock()
@@ -232,6 +279,15 @@ func (m *Manager) probeLoop() {
 func (m *Manager) cfgPath() string  { return m.Dir + "/config.json" }
 func (m *Manager) pidPath() string  { return m.Dir + "/run.pid" }
 func (m *Manager) lastGood() string { return m.Dir + "/config.last-good.json" }
+
+func (m *Manager) clashBase() int {
+	if m.Mode == "shared" && m.sharedClash > 0 {
+		return m.sharedClash
+	}
+	return m.ClashPort
+}
+
+func (m *Manager) fragmentPath() string { return filepath.Join(m.SharedDir, FragmentName) }
 
 func (m *Manager) alive() bool {
 	if m.pid == 0 {
@@ -264,23 +320,234 @@ func (m *Manager) stop() {
 }
 
 func (m *Manager) writeConfig(pools []PoolSpec) error {
-	data, _, err := BuildConfig(pools, Params{ClashPort: m.ClashPort, LX: m.eng.LX})
+	merged := m.Mode == "shared"
+	data, _, err := BuildConfig(pools, Params{ClashPort: m.ClashPort, LX: m.eng.LX, Merged: merged})
 	if err != nil {
 		return err
 	}
-	tmp := m.cfgPath() + ".tmp"
+	if !merged {
+		tmp := m.cfgPath() + ".tmp"
+		if err := os.WriteFile(tmp, data, 0o600); err != nil {
+			return err
+		}
+		if err := m.eng.Check(tmp); err != nil {
+			os.Remove(tmp)
+			return err
+		}
+		return os.Rename(tmp, m.cfgPath())
+	}
+	return m.writeFragment(data)
+}
+
+// --- общий экземпляр (shared): фрагмент в чужой каталог + рестарт чужого сервиса ---
+
+type sharedFacts struct {
+	ClashPort int
+	InTags    map[string]bool
+	OutTags   map[string]bool
+	Tuns      map[string]bool
+	Addrs     map[string]bool
+}
+
+// preflightShared разбирает чужой config.json: порт clash_api для проб и
+// занятые теги/tun/адреса, которые наш фрагмент не должен трогать.
+func (m *Manager) preflightShared() (*sharedFacts, error) {
+	path := filepath.Join(m.SharedDir, "config.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("чужой конфиг %s не читается: %v", path, err)
+	}
+	var cfg struct {
+		Inbounds  []map[string]any `json:"inbounds"`
+		Outbounds []map[string]any `json:"outbounds"`
+		Experimental struct {
+			ClashAPI struct {
+				ExternalController string `json:"external_controller"`
+			} `json:"clash_api"`
+		} `json:"experimental"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("чужой config.json не разбирается: %v", err)
+	}
+	f := &sharedFacts{InTags: map[string]bool{}, OutTags: map[string]bool{}, Tuns: map[string]bool{}, Addrs: map[string]bool{}}
+	str := func(v any) string { s, _ := v.(string); return s }
+	for _, in := range cfg.Inbounds {
+		if t := str(in["tag"]); t != "" {
+			f.InTags[t] = true
+		}
+		if t := str(in["interface_name"]); t != "" {
+			f.Tuns[t] = true
+		}
+		if a, ok := in["address"].([]any); ok {
+			for _, x := range a {
+				if s := str(x); s != "" {
+					f.Addrs[s] = true
+				}
+			}
+		}
+	}
+	for _, ob := range cfg.Outbounds {
+		if t := str(ob["tag"]); t != "" {
+			f.OutTags[t] = true
+		}
+	}
+	if c := cfg.Experimental.ClashAPI.ExternalController; c != "" {
+		if _, port, err := net.SplitHostPort(c); err == nil {
+			f.ClashPort, _ = strconv.Atoi(port)
+		}
+	}
+	if f.ClashPort == 0 {
+		f.ClashPort = m.sharedClash
+	}
+	return f, nil
+}
+
+func (m *Manager) writeFragment(data []byte) error {
+	tmp := m.fragmentPath() + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return err
 	}
-	if err := m.eng.Check(tmp); err != nil {
+	if err := os.Rename(tmp, m.fragmentPath()); err != nil {
 		os.Remove(tmp)
 		return err
 	}
-	return os.Rename(tmp, m.cfgPath())
+	return nil
 }
 
-// Apply приводит экземпляр к списку пулов: пустой список = процесс остановлен.
-// Пулы, которые текущий профиль не умеет, не запускаются со статусом waits-lx.
+func (m *Manager) removeFragment() error {
+	err := os.Remove(m.fragmentPath())
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+func (m *Manager) checkShared() error {
+	out, err := exec.Command(m.eng.Bin, "check", "-C", m.SharedDir).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("check -C %s не прошёл: %s", m.SharedDir, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func (m *Manager) restartShared(timeout time.Duration) error {
+	if m.SharedInit == "" {
+		return fmt.Errorf("init-скрипт чужого ядра не задан")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, m.SharedInit, "restart").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("рестарт %s не удался: %s", m.SharedInit, strings.TrimSpace(string(out)))
+	}
+	return m.waitClash(timeout)
+}
+
+func (m *Manager) sharedAlive() bool {
+	out, err := exec.Command("pidof", filepath.Base(m.eng.Bin)).Output()
+	return err == nil && len(strings.Fields(string(out))) > 0
+}
+
+// backupShared сохраняет config.json владельца перед каждым apply
+// (последние 5 копий в <база mawg>/singbox/shared-backups)
+func (m *Manager) backupShared() {
+	data, err := os.ReadFile(filepath.Join(m.SharedDir, "config.json"))
+	if err != nil {
+		return
+	}
+	bdir := filepath.Join(m.Dir, "shared-backups")
+	if err := os.MkdirAll(bdir, 0o700); err != nil {
+		return
+	}
+	_ = os.WriteFile(filepath.Join(bdir, "config."+time.Now().Format("20060102-150405")+".json"), data, 0o600)
+	entries, _ := os.ReadDir(bdir)
+	var names []string
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "config.") && strings.HasSuffix(e.Name(), ".json") {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Strings(names)
+	for i := 0; i < len(names)-5; i++ {
+		_ = os.Remove(filepath.Join(bdir, names[i]))
+	}
+}
+
+func (m *Manager) restoreFragment(prev []byte, hadPrev bool) {
+	if !hadPrev {
+		_ = m.removeFragment()
+		return
+	}
+	_ = m.writeFragment(prev)
+}
+
+func (m *Manager) applyShared(runnable []PoolSpec, skipped []string) ([]string, error) {
+	facts, err := m.preflightShared()
+	if err != nil {
+		return skipped, err
+	}
+	if facts.ClashPort == 0 {
+		return skipped, fmt.Errorf("в чужом config.json нет clash_api - пробы невозможны; включите clash_api или используйте свой экземпляр движка")
+	}
+	for i, spec := range runnable {
+		inTag := fmt.Sprintf("tun-in-%d", i+1)
+		if facts.InTags[inTag] || facts.InTags["mixed-"+spec.Name] {
+			return skipped, fmt.Errorf("тег inbound %s уже занят чужим конфигом", inTag)
+		}
+		if facts.OutTags["mawg-"+spec.Name] {
+			return skipped, fmt.Errorf("тег mawg-%s уже занят чужим конфигом", spec.Name)
+		}
+		for _, n := range spec.Nodes {
+			if facts.OutTags["mawg-"+spec.Name+"|"+n.ConfName()] {
+				return skipped, fmt.Errorf("тег узла mawg-%s|%s уже занят чужим конфигом", spec.Name, n.ConfName())
+			}
+		}
+		if facts.Tuns[spec.Tun] {
+			return skipped, fmt.Errorf("интерфейс %s уже занят чужим конфигом", spec.Tun)
+		}
+		if facts.Addrs[spec.TunIP] {
+			return skipped, fmt.Errorf("адрес %s уже занят чужим конфигом", spec.TunIP)
+		}
+	}
+	if !m.sharedAlive() {
+		return skipped, fmt.Errorf("процесс чужого ядра не запущен - не буду стартовать чужой сервис из mawg, запустите %s", m.SharedInit)
+	}
+	m.backupShared()
+	prev, prevErr := os.ReadFile(m.fragmentPath())
+	hadPrev := prevErr == nil
+	if err := m.writeConfig(runnable); err != nil {
+		return skipped, err
+	}
+	if err := m.checkShared(); err != nil {
+		m.restoreFragment(prev, hadPrev)
+		return skipped, err
+	}
+	m.sharedClash = facts.ClashPort
+	if err := m.restartShared(45 * time.Second); err != nil {
+		m.restoreFragment(prev, hadPrev)
+		if rerr := m.checkShared(); rerr == nil {
+			_ = m.restartShared(45 * time.Second)
+		}
+		return skipped, err
+	}
+	if cp, err := os.ReadFile(m.fragmentPath()); err == nil {
+		_ = os.WriteFile(m.lastGood(), cp, 0o600)
+	}
+	m.lastSpecs = runnable
+	for _, spec := range runnable {
+		m.probeSpec(spec)
+		if st, ok := m.PoolStatus(spec.Name); ok && !st.ProbeOK {
+			time.Sleep(2 * time.Second)
+			m.probeSpec(spec)
+		}
+	}
+	return skipped, nil
+}
+
+// Apply приводит ядро к списку пулов: пустой список = пустой конфиг.
+// В режиме own гасится собственный процесс, в shared снимается фрагмент
+// с чужого ядра. Пулы, которые текущий профиль не умеет, не запускаются
+// со статусом waits-lx.
 func (m *Manager) Apply(pools []PoolSpec) ([]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -288,7 +555,13 @@ func (m *Manager) Apply(pools []PoolSpec) ([]string, error) {
 	m.statuses = map[string]*PoolStatus{}
 	m.stmu.Unlock()
 	if len(pools) == 0 {
-		m.stop()
+		if m.Mode == "shared" {
+			if err := m.removeFragment(); err == nil && m.sharedAlive() {
+				_ = m.restartShared(20 * time.Second)
+			}
+		} else {
+			m.stop()
+		}
 		m.lastSpecs = nil
 		return nil, nil
 	}
@@ -313,9 +586,18 @@ func (m *Manager) Apply(pools []PoolSpec) ([]string, error) {
 		runnable = append(runnable, spec)
 	}
 	if len(runnable) == 0 {
-		m.stop()
+		if m.Mode == "shared" {
+			if err := m.removeFragment(); err == nil && m.sharedAlive() {
+				_ = m.restartShared(20 * time.Second)
+			}
+		} else {
+			m.stop()
+		}
 		m.lastSpecs = nil
 		return skipped, nil
+	}
+	if m.Mode == "shared" {
+		return m.applyShared(runnable, skipped)
 	}
 	if err := m.writeConfig(runnable); err != nil {
 		return skipped, err
@@ -356,7 +638,7 @@ func (m *Manager) Apply(pools []PoolSpec) ([]string, error) {
 
 func (m *Manager) waitClash(timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
-	probe := fmt.Sprintf("http://127.0.0.1:%d/version", m.ClashPort)
+	probe := fmt.Sprintf("http://127.0.0.1:%d/version", m.clashBase())
 	for time.Now().Before(deadline) {
 		resp, err := http.Get(probe)
 		if err == nil {
@@ -371,20 +653,29 @@ func (m *Manager) waitClash(timeout time.Duration) error {
 }
 
 type Status struct {
-	Running bool   `json:"running"`
-	PID     int    `json:"pid,omitempty"`
-	Version string `json:"version,omitempty"`
-	LX      bool   `json:"lx"`
-	Bin     string `json:"bin,omitempty"`
-	Mixed   int    `json:"mixedPort"`
-	Clash   int    `json:"clashPort"`
+	Running  bool   `json:"running"`
+	PID      int    `json:"pid,omitempty"`
+	Version  string `json:"version,omitempty"`
+	LX       bool   `json:"lx"`
+	Bin      string `json:"bin,omitempty"`
+	Mixed    int    `json:"mixedPort"`
+	Clash    int    `json:"clashPort"`
+	Mode     string `json:"mode"`
+	Fragment string `json:"fragment,omitempty"`
 }
 
 func (m *Manager) Status() Status {
-	st := Status{Version: m.eng.Version, LX: m.eng.LX, Bin: m.eng.Bin, Mixed: m.MixedPort, Clash: m.ClashPort}
-	st.Running = m.alive()
-	if st.Running {
-		st.PID = m.pid
+	st := Status{Version: m.eng.Version, LX: m.eng.LX, Bin: m.eng.Bin, Mixed: m.MixedPort, Clash: m.clashBase(), Mode: m.Mode}
+	if m.Mode == "shared" {
+		st.Fragment = m.fragmentPath()
+		if m.sharedAlive() {
+			st.Running = true
+		}
+	} else {
+		st.Running = m.alive()
+		if st.Running {
+			st.PID = m.pid
+		}
 	}
 	return st
 }

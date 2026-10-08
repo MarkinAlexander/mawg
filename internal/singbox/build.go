@@ -24,6 +24,7 @@ type PoolSpec struct {
 type Params struct {
 	ClashPort int
 	LX        bool
+	Merged    bool
 }
 
 // EligibleNodes - узлы, которые текущий профиль движка умеет запустить
@@ -113,9 +114,13 @@ func nodeOutbound(poolTag string, n links.Node, lx bool) (map[string]any, bool, 
 }
 
 // BuildConfig собирает ЕДИНЫЙ конфиг mawg-экземпляра: на каждый пул свой
-// tun-inbound и selector-группа, route-правило inbound -> группа
+// tun-inbound и selector-группа, route-правило inbound -> группа.
+// Merged=true даёт ФРАГМЕНТ для -C merge с чужим конфигом: только inbounds,
+// outbounds и route.rules - чужие скаляры (log, clash_api, route.final)
+// по семантике badjson-мержа всё равно побеждают, а прям не нужен
+// (все наши inbounds закрыты явными правилами).
 func BuildConfig(pools []PoolSpec, p Params) ([]byte, []string, error) {
-	if p.ClashPort == 0 {
+	if !p.Merged && p.ClashPort == 0 {
 		return nil, nil, fmt.Errorf("порт clash_api не задан")
 	}
 	for _, spec := range pools {
@@ -177,23 +182,33 @@ func BuildConfig(pools []PoolSpec, p Params) ([]byte, []string, error) {
 	if len(outbounds) == 0 {
 		return nil, skipped, fmt.Errorf("нет подходящих движку узлов")
 	}
+	route := map[string]any{"rules": routeRules}
+	if p.Merged {
+		if p.LX {
+			route["default_domain_resolver"] = map[string]any{"server": "local"}
+		}
+		data, err := json.MarshalIndent(map[string]any{
+			"inbounds": inbounds, "outbounds": outbounds, "route": route,
+		}, "", "  ")
+		return data, skipped, err
+	}
 	outbounds = append(outbounds, map[string]any{"type": "direct", "tag": "direct"})
+	cfgRoute := map[string]any{
+		"rules":                 routeRules,
+		"final":                 "direct",
+		"auto_detect_interface": true,
+	}
+	if p.LX {
+		cfgRoute["default_domain_resolver"] = map[string]any{"server": "local"}
+	}
 	cfg := map[string]any{
 		"log":       map[string]any{"level": "info"},
 		"inbounds":  inbounds,
 		"outbounds": outbounds,
-		"route": map[string]any{
-			"rules":                 routeRules,
-			"final":                 "direct",
-			"auto_detect_interface": true,
-		},
+		"route":     cfgRoute,
 		"experimental": map[string]any{
 			"clash_api": map[string]any{"external_controller": fmt.Sprintf("127.0.0.1:%d", p.ClashPort)},
 		},
-	}
-	if p.LX {
-		route := cfg["route"].(map[string]any)
-		route["default_domain_resolver"] = map[string]any{"server": "local"}
 	}
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	return data, skipped, err
@@ -202,3 +217,5 @@ func BuildConfig(pools []PoolSpec, p Params) ([]byte, []string, error) {
 func TuneName(index int) string { return fmt.Sprintf("tun%d", index) }
 
 func TuneIP(index int) string { return fmt.Sprintf("172.19.%d.1/30", index) }
+
+const FragmentName = "mawg-pools.json"

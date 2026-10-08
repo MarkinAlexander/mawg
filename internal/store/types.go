@@ -224,6 +224,7 @@ type Settings struct {
 	RCIToken      string                 `json:"rciToken,omitempty"`
 	GroupPolicies map[string]GroupPolicy `json:"groupPolicies,omitempty"`
 	Cascades      []CascadeEntry         `json:"cascades,omitempty"`
+	SingboxMode   string                 `json:"singboxMode,omitempty"`
 }
 
 func (s Settings) WithDefaults() Settings {

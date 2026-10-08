@@ -76,6 +76,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/pools", s.createPool)
 	mux.HandleFunc("POST /api/v1/pools/from-source", s.createPoolFromSource)
 	mux.HandleFunc("POST /api/v1/links/inspect", s.inspectSource)
+	mux.HandleFunc("POST /api/v1/singbox/mode", s.postSingboxMode)
 	mux.HandleFunc("POST /api/v1/pools/{name}/refresh-source", s.refreshSource)
 	mux.HandleFunc("PUT /api/v1/pools/{name}", s.updatePool)
 	mux.HandleFunc("DELETE /api/v1/pools/{name}", s.deletePool)
@@ -449,7 +450,7 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 		out.Engine = map[string]any{
 			"available": true, "running": st.Running, "version": st.Version,
 			"lx": st.LX, "bin": st.Bin, "mixedPort": st.Mixed, "clashPort": st.Clash,
-			"tuns": tuns,
+			"mode": st.Mode, "fragment": st.Fragment, "tuns": tuns,
 		}
 	}
 	writeJSON(w, http.StatusOK, out)

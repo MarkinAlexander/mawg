@@ -18,15 +18,73 @@ import (
 
 const engineMode = "singbox"
 
-var sbOnce sync.Once
+var sbMu sync.Mutex
 var sbMgr *singbox.Manager
-var sbErr error
+var sbMode string
 
+// sb отдаёт менеджер движка под текущий режим из настроек (own/shared);
+// при смене режима старый менеджер закрывается: свой процесс гасится,
+// у чужого ядра снимается наш фрагмент.
 func (s *Server) sb() (*singbox.Manager, error) {
-	sbOnce.Do(func() {
-		sbMgr, sbErr = singbox.NewManager(filepath.Join(s.store.Base(), "singbox"))
-	})
-	return sbMgr, sbErr
+	sbMu.Lock()
+	defer sbMu.Unlock()
+	mode := s.store.SingboxMode()
+	if sbMgr != nil && sbMode == mode {
+		return sbMgr, nil
+	}
+	cfg := singbox.RunConfig{Mode: mode}
+	if mode == "shared" {
+		cfg.SharedDir, cfg.SharedInit = s.sharedPaths()
+	}
+	m, err := singbox.NewManagerConfig(filepath.Join(s.store.Base(), "singbox"), cfg)
+	if err != nil {
+		return nil, err
+	}
+	if sbMgr != nil {
+		sbMgr.Close()
+	}
+	sbMgr, sbMode = m, mode
+	return sbMgr, nil
+}
+
+func (s *Server) sharedPaths() (dir, init string) {
+	if s.backend.Name() == store.PlatformKeenetic {
+		return "/opt/etc/sing-box", "/opt/etc/init.d/S99sing-box"
+	}
+	return "/etc/sing-box", "/etc/init.d/sing-box"
+}
+
+// postSingboxMode переключает режим движка (own|shared): сохраняется в
+// настройки, менеджер пересоздаётся (старый закрыт: свой процесс погашен /
+// у чужого ядра снят фрагмент), затем движок применяется в новом режиме.
+func (s *Server) postSingboxMode(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Mode string `json:"mode"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, err)
+		return
+	}
+	if req.Mode != "own" && req.Mode != "shared" {
+		writeErr(w, fmt.Errorf("режим должен быть own или shared"))
+		return
+	}
+	if err := s.store.SetSingboxMode(req.Mode); err != nil {
+		writeErr(w, err)
+		return
+	}
+	out := map[string]any{"ok": "saved", "mode": req.Mode}
+	if _, err := s.sb(); err != nil {
+		out["warning"] = err.Error()
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+	skipped, err := s.applyEngine()
+	out["skipped"] = skipped
+	if err != nil {
+		out["warning"] = err.Error()
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) enginePools() []store.Pool {

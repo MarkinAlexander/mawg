@@ -163,3 +163,60 @@ func TestTuneIPDistinct(t *testing.T) {
 		t.Fatal("tun1 не должен пересекаться с чужим tun0 172.19.0.1/30")
 	}
 }
+
+func TestBuildConfigMergedFragment(t *testing.T) {
+	spec := PoolSpec{Name: "demo", Tun: "tun1", TunIP: TuneIP(1), MixedPort: 2282,
+		ProbeTarget: "http://www.gstatic.com/generate_204", Nodes: mustNodes(t, fakeVless)}
+	data, _, err := BuildConfig([]PoolSpec{spec}, Params{ClashPort: 2291, Merged: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"log", "experimental"} {
+		if _, has := cfg[key]; has {
+			t.Fatalf("фрагмент не должен содержать %s: %s", key, data)
+		}
+	}
+	route := cfg["route"].(map[string]any)
+	if _, has := route["final"]; has {
+		t.Fatal("фрагмент не должен задавать route.final - у чужого конфига свой")
+	}
+	if _, has := route["auto_detect_interface"]; has {
+		t.Fatal("фрагмент не должен задавать auto_detect_interface")
+	}
+	if _, has := route["default_domain_resolver"]; has {
+		t.Fatal("upstream-фрагмент не должен иметь default_domain_resolver")
+	}
+	for _, o := range cfg["outbounds"].([]any) {
+		if o.(map[string]any)["tag"] == "direct" {
+			t.Fatal("фрагмент не должен добавлять свой direct - не нужен без route.final")
+		}
+	}
+	if len(cfg["inbounds"].([]any)) != 2 {
+		t.Fatal("должен остаться tun+mixed пула")
+	}
+	if len(route["rules"].([]any)) != 2 {
+		t.Fatal("должны остаться правила inbound->группа")
+	}
+}
+
+func TestBuildConfigMergedLXAddsResolver(t *testing.T) {
+	spec := PoolSpec{Name: "x", Tun: "tun1", TunIP: TuneIP(1), MixedPort: 2282,
+		ProbeTarget: "http://www.gstatic.com/generate_204", Nodes: mustNodes(t, fakeVlessXhttp)}
+	data, _, err := BuildConfig([]PoolSpec{spec}, Params{LX: true, Merged: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "default_domain_resolver") {
+		t.Fatal("lx-фрагмент обязан иметь default_domain_resolver")
+	}
+	if _, _, err := BuildConfig([]PoolSpec{spec}, Params{LX: true, Merged: true, ClashPort: 0}); err != nil {
+		t.Fatalf("merged-профиль не должен требовать clash-порт: %v", err)
+	}
+	if _, _, err := BuildConfig([]PoolSpec{spec}, Params{ClashPort: 0}); err == nil {
+		t.Fatal("own-профиль без clash-порта должен падать")
+	}
+}
