@@ -25,7 +25,7 @@ func mustNodes(t *testing.T, src string) []links.Node {
 }
 
 func TestBuildConfigUpstream(t *testing.T) {
-	spec := PoolSpec{Name: "demo", Tun: "tun1", TunIP: TuneIP(1), MixedPort: 2282, Nodes: mustNodes(t, fakeVless)}
+	spec := PoolSpec{Name: "demo", Tun: "tun1", TunIP: TuneIP(1), MixedPort: 2282, GroupMode: "selector", Nodes: mustNodes(t, fakeVless)}
 	data, skipped, err := BuildConfig([]PoolSpec{spec}, Params{ClashPort: 2291})
 	if err != nil {
 		t.Fatal(err)
@@ -80,6 +80,9 @@ func TestBuildConfigUpstream(t *testing.T) {
 	if group["default"] != "mawg-demo|test-node" {
 		t.Fatalf("группа: %v", group)
 	}
+	if group["type"] != "selector" {
+		t.Fatalf("тип группы: %v", group)
+	}
 	rules := cfg["route"].(map[string]any)["rules"].([]any)
 	r0 := rules[0].(map[string]any)
 	if r0["inbound"] != "tun-in-1" || r0["outbound"] != "mawg-demo" {
@@ -120,6 +123,31 @@ func TestBuildConfigLXAllowsXhttp(t *testing.T) {
 	if !strings.Contains(string(data), "default_domain_resolver") {
 		t.Fatal("lx-профиль обязан иметь default_domain_resolver")
 	}
+}
+
+func TestBuildConfigUrltestDefault(t *testing.T) {
+	spec := PoolSpec{Name: "u", Tun: "tun1", TunIP: TuneIP(1), MixedPort: 2282,
+		ProbeTarget: "http://www.gstatic.com/generate_204", CheckIntervalSec: 45,
+		Nodes: mustNodes(t, fakeVless)}
+	data, _, err := BuildConfig([]PoolSpec{spec}, Params{ClashPort: 2291})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	json.Unmarshal(data, &cfg)
+	for _, o := range cfg["outbounds"].([]any) {
+		ob := o.(map[string]any)
+		if ob["tag"] == "mawg-u" {
+			if ob["type"] != "urltest" {
+				t.Fatalf("группа должна быть urltest: %v", ob)
+			}
+			if ob["interval"] != "45s" || ob["url"] != "http://www.gstatic.com/generate_204" {
+				t.Fatalf("urltest параметры: %v", ob)
+			}
+			return
+		}
+	}
+	t.Fatal("группа не найдена")
 }
 
 func TestTuneIPDistinct(t *testing.T) {

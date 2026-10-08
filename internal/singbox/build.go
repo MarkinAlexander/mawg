@@ -18,6 +18,7 @@ type PoolSpec struct {
 	CooldownMin      int
 	MaxRTTms         int
 	Nodes            []links.Node
+	GroupMode        string // "urltest" (по умолчанию) | "selector"
 }
 
 type Params struct {
@@ -153,9 +154,21 @@ func BuildConfig(pools []PoolSpec, p Params) ([]byte, []string, error) {
 			skipped = append(skipped, fmt.Sprintf("пул %s: ни один узел не подходит движку, tun не создан", spec.Name))
 			continue
 		}
-		outbounds = append(outbounds, map[string]any{
-			"type": "selector", "tag": groupTag, "outbounds": tags, "default": tags[0],
-		})
+		if spec.GroupMode == "selector" {
+			outbounds = append(outbounds, map[string]any{
+				"type": "selector", "tag": groupTag, "outbounds": tags, "default": tags[0],
+			})
+		} else {
+			interval := spec.CheckIntervalSec
+			if interval <= 0 {
+				interval = 60
+			}
+			outbounds = append(outbounds, map[string]any{
+				"type": "urltest", "tag": groupTag, "outbounds": tags,
+				"url": spec.ProbeTarget, "interval": fmt.Sprintf("%ds", interval),
+				"tolerance": 50,
+			})
+		}
 		routeRules = append(routeRules,
 			map[string]any{"inbound": inTag, "outbound": groupTag},
 			map[string]any{"inbound": mixedTag, "outbound": groupTag},
