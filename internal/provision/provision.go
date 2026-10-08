@@ -11,14 +11,16 @@ import (
 )
 
 type Item struct {
-	ID             string `json:"id"`
-	Title          string `json:"title"`
-	Installed      bool   `json:"installed"`
-	Version        string `json:"version"`
-	Action         string `json:"action,omitempty"`
-	Confirm        string `json:"confirm,omitempty"`
-	RequiresReboot bool   `json:"requiresReboot,omitempty"`
-	Note           string `json:"note,omitempty"`
+	ID             string   `json:"id"`
+	Title          string   `json:"title"`
+	Installed      bool     `json:"installed"`
+	Version        string   `json:"version"`
+	Action         string   `json:"action,omitempty"`
+	ActionLabel    string   `json:"actionLabel,omitempty"`
+	Flavors        []string `json:"flavors,omitempty"`
+	Confirm        string   `json:"confirm,omitempty"`
+	RequiresReboot bool     `json:"requiresReboot,omitempty"`
+	Note           string   `json:"note,omitempty"`
 }
 
 type Result struct {
@@ -255,6 +257,7 @@ func checkOpenwrt(run Runner) Result {
 		})
 	}
 
+	res.Items = append(res.Items, lxCoreItem(run, "openwrt"))
 	return res
 }
 
@@ -302,7 +305,80 @@ func CheckKeenetic(ndmc func(string) (string, error)) Result {
 		})
 	}
 
+	res.Items = append(res.Items, lxCoreItem(shellRun, "keenetic"))
 	return res
+}
+
+// lxCoreItem - пункт «ядро sing-box-lx»: состояние рабочего бинаря и место/
+// память для подтверждения. Сама установка идёт кодом (singbox.InstallLXCore),
+// Action - маркер для обработчика в web, НЕ shell-скрипт; пути совпадают с
+// singbox.LXTargetForPlatform.
+func lxCoreItem(run Runner, platform string) Item {
+	bin, markerDir, disk := "/usr/bin/sing-box", "/etc/sing-box-lx", "/"
+	if platform == "keenetic" {
+		bin, markerDir, disk = "/opt/bin/sing-box", "/opt/etc/sing-box-lx", "/opt"
+	}
+	ver := ""
+	if out, err := run(bin+" version 2>/dev/null", 10*time.Second); err == nil {
+		for _, line := range strings.Split(out, "\n") {
+			if line = strings.TrimSpace(line); line != "" {
+				ver = strings.TrimSpace(strings.TrimPrefix(line, "sing-box version"))
+				break
+			}
+		}
+	}
+	marked := false
+	if out, err := run("test -f "+markerDir+"/.installed-by-mawg && echo marked", 5*time.Second); err == nil && strings.Contains(out, "marked") {
+		marked = true
+	}
+	space, ram := "", ""
+	if out, err := run("df -h "+disk+" 2>/dev/null | tail -1 | awk '{print \"disk \" $4}'; free 2>/dev/null | awk '/^Mem:/{print \"ram \" $4}'", 10*time.Second); err == nil {
+		for _, line := range strings.Split(out, "\n") {
+			if k, v, ok := strings.Cut(strings.TrimSpace(line), " "); ok {
+				switch k {
+				case "disk":
+					space = v
+				case "ram":
+					ram = v
+				}
+			}
+		}
+	}
+	env := fmt.Sprintf("свободно на %s: %s, RAM свободно: %s", disk,
+		orDash(space), orDash(ram))
+	item := Item{ID: "singbox-lx", Title: "Ядро sing-box-lx", Version: ver}
+	confirm := fmt.Sprintf("Скачает свежий релиз sing-box-lx (SHA256, тест-запуск в /tmp, потом установка в %s). %s. После установки движок mawg использует lx-профиль; в режиме «общего ядра» сервис sing-box будет перезапущен - соединения рвутся на несколько секунд.", bin, env)
+	switch {
+	case ver == "":
+		item.Action = "singbox-lx"
+		item.ActionLabel = "установить"
+		item.Flavors = []string{"plain", "upx"}
+		item.Confirm = "Ядро sing-box сейчас не установлено. " + confirm
+	case strings.Contains(ver, "-lx."):
+		item.Installed = true
+		item.Action = "singbox-lx"
+		item.ActionLabel = "обновить из релиза"
+		item.Flavors = []string{"plain", "upx"}
+		item.Confirm = fmt.Sprintf("Установлено lx-ядро %s (своё). ", ver) + confirm + " Если релиз не новее установленного - ничего не изменится."
+		if !marked {
+			item.Note = fmt.Sprintf("Стоит lx-ядро %s без маркера mawg (ставили вручную): считается своим, после кнопки появится маркер.", ver)
+			item.ActionLabel = "пометить своим и обновить"
+		}
+	default:
+		item.Action = "singbox-lx-replace"
+		item.ActionLabel = "заменить чужое"
+		item.Flavors = []string{"plain", "upx"}
+		item.Note = fmt.Sprintf("Сейчас стоит чужое ядро (upstream %s): mawg его не трогает. Замена только по кнопке, старое сохранится как %s.pre-lx.", ver, bin)
+		item.Confirm = fmt.Sprintf("ЗАМЕНИТ рабочее ядро %s (upstream %s) на lx-релиз. Старое сохранится как %s.pre-lx, сервис sing-box будет перезапущен - соединения порвутся. %s. lx-профиль нужен движку для xhttp/mlkem-узлов.", bin, ver, bin, env)
+	}
+	return item
+}
+
+func orDash(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return "н/д"
+	}
+	return strings.TrimSpace(s)
 }
 
 type keeneticVersion struct {
