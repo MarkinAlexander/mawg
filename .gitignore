@@ -14,3 +14,6 @@ favicon/
 act.tmp.txt
 runs.tmp.json
 *.tmp.json
+
+# Vue-панель: зависимости не в гите, сборка (ui/dist) коммитится для go:embed
+ui-src/node_modules/

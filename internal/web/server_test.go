@@ -104,3 +104,25 @@ func TestStatusAndPoolLifecycle(t *testing.T) {
 		t.Fatal("ui page not served")
 	}
 }
+
+func TestAppUIServed(t *testing.T) {
+	ts := newTestServer(t)
+	resp, err := http.Get(ts.URL + "/app/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 || !strings.Contains(string(body), `id="app"`) {
+		t.Fatalf("новая панель не отдаётся: %d %s", resp.StatusCode, body[:min(120, len(body))])
+	}
+	resp2, err := http.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	body2, _ := io.ReadAll(resp2.Body)
+	if !strings.Contains(string(body2), "mawg") {
+		t.Fatalf("старая панель пропала с /")
+	}
+}

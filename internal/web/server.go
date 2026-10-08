@@ -30,7 +30,7 @@ import (
 	"mawg/internal/wgconf"
 )
 
-//go:embed ui/*
+//go:embed ui
 var uiFS embed.FS
 
 type Server struct {
@@ -141,6 +141,16 @@ func (s *Server) Handler() http.Handler {
 		panic(err)
 	}
 	mux.Handle("/", http.FileServer(http.FS(sub)))
+
+	// новая панель (Vue, исходники в ui-src) собирается в ui/app командой
+	// `npm run build`; старая панель остаётся на /. Имя ui/app, а не dist -
+	// go:embed не встраивает каталоги из .gitignore (там занят dist/).
+	appSub, err := fs.Sub(uiFS, "ui/app")
+	if err != nil {
+		panic(err)
+	}
+	mux.Handle("GET /app", http.RedirectHandler("/app/", http.StatusMovedPermanently))
+	mux.Handle("GET /app/", http.StripPrefix("/app/", http.FileServer(http.FS(appSub))))
 	if s.auth != nil {
 		mux.HandleFunc("POST /api/v1/auth/login", s.auth.HandleLogin)
 		mux.HandleFunc("POST /api/v1/auth/logout", s.auth.HandleLogout)
