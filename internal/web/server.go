@@ -128,6 +128,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/cascades", s.cascCreate)
 	mux.HandleFunc("DELETE /api/v1/cascades/{group}", s.cascDelete)
 	mux.HandleFunc("PUT /api/v1/mt/groups/{id}/policy", s.mtSetPolicy)
+	mux.HandleFunc("GET /api/v1/mt/policy-cycles", s.getPolicyCycles)
+	mux.HandleFunc("PUT /api/v1/mt/policy-cycles", s.putPolicyCycles)
 
 	mux.HandleFunc("GET /api/v1/subs", s.getSubs)
 	mux.HandleFunc("POST /api/v1/subs", s.postSubs)
@@ -1823,6 +1825,42 @@ func (s *Server) cascDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "deleted"})
+}
+
+// getPolicyCycles/putPolicyCycles - гистерезис политик групп: сколько
+// циклов до переключения с исходного интерфейса и сколько до возврата.
+func (s *Server) getPolicyCycles(w http.ResponseWriter, r *http.Request) {
+	st := s.store.Settings()
+	writeJSON(w, http.StatusOK, map[string]int{
+		"failCycles":    st.PolicyFailCycles,
+		"restoreCycles": st.PolicyRestoreCycles,
+	})
+}
+
+func (s *Server) putPolicyCycles(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		FailCycles    int `json:"failCycles"`
+		RestoreCycles int `json:"restoreCycles"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, err)
+		return
+	}
+	if req.FailCycles < 1 || req.FailCycles > 20 || req.RestoreCycles < 1 || req.RestoreCycles > 20 {
+		writeErr(w, fmt.Errorf("циклы должны быть от 1 до 20"))
+		return
+	}
+	st := s.store.Settings()
+	st.PolicyFailCycles = req.FailCycles
+	st.PolicyRestoreCycles = req.RestoreCycles
+	if err := s.store.SetSettings(st); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int{
+		"failCycles":    st.PolicyFailCycles,
+		"restoreCycles": st.PolicyRestoreCycles,
+	})
 }
 
 func (s *Server) mtSetPolicy(w http.ResponseWriter, r *http.Request) {

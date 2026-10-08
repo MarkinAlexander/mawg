@@ -166,6 +166,14 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
       <button id="presetApply">шаблон на интерфейс</button>
     </div>
     <div class="muted" id="presetSrc" style="font-size:11px;margin-top:4px"></div>
+    <div class="btnrow" style="align-items:center;margin-top:12px;font-size:12px;flex-wrap:wrap">
+      <span class="muted">Политики отвала: переключать после</span>
+      <input id="polFailCycles" type="number" min="1" max="20" style="width:56px" title="сколько циклов проверки (30с) интерфейс должен считаться мёртвым подряд">
+      <span class="muted">циклов отказа, возвращать после</span>
+      <input id="polRestoreCycles" type="number" min="1" max="20" style="width:56px" title="сколько циклов подряд интерфейс должен быть живым перед возвратом">
+      <span class="muted">здоровых циклов</span>
+      <button type="button" id="polCyclesSave">сохранить</button>
+    </div>
     <div id="mtgroups" style="margin-top:10px"></div>
   </div>
   <div class="card" id="bundcard" style="margin-top:16px">
@@ -1455,6 +1463,24 @@ document.getElementById('wanSave').onclick = async () => {
 
 document.getElementById('sbModeSave').onclick = setSbMode;
 
+async function loadPolicyCycles() {
+  try {
+    const r = await api('GET', '/mt/policy-cycles');
+    document.getElementById('polFailCycles').value = r.failCycles;
+    document.getElementById('polRestoreCycles').value = r.restoreCycles;
+  } catch {}
+}
+document.getElementById('polCyclesSave').onclick = async e => {
+  const body = {
+    failCycles: +document.getElementById('polFailCycles').value || 2,
+    restoreCycles: +document.getElementById('polRestoreCycles').value || 2,
+  };
+  try {
+    const r = await api('PUT', '/mt/policy-cycles', body);
+    toast('Гистерезис политик: переключение после ' + r.failCycles + ' отказов, возврат после ' + r.restoreCycles + ' здоровых циклов');
+  } catch (err) { toast(err.message, true); }
+};
+
 const RULE_TYPES = { namespace: 'домен+поддомены', domain: 'домен', subnet: 'подсеть', wildcard: 'маска (* ?)', regex: 'регулярка' };
 const RULE_HINTS = {
   domain:    'Точный домен без поддоменов: sub.example.com покроет только его самого',
@@ -2696,6 +2722,7 @@ function startPanel() {
   setInterval(() => { refreshMT(); loadSlots(); }, 30000);
   setInterval(() => refreshSystem(false), 60000);
   setInterval(() => refreshRules(false), 30000);
+  loadPolicyCycles();
   setInterval(fillIfaceSelects, 60000);
   setInterval(() => refreshIfaces(false), 30000);
   setInterval(() => refreshBundles(false), 30000);

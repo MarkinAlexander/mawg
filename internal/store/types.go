@@ -240,6 +240,11 @@ type Settings struct {
 	GroupPolicies map[string]GroupPolicy `json:"groupPolicies,omitempty"`
 	Cascades      []CascadeEntry         `json:"cascades,omitempty"`
 	SingboxMode   string                 `json:"singboxMode,omitempty"`
+	// PolicyFailCycles/PolicyRestoreCycles - гистерезис политик групп
+	// МагиТрикла: сколько отказных циклов до переключения с исходного
+	// интерфейса и сколько здоровых до возврата (по умолчанию 2 и 2).
+	PolicyFailCycles    int `json:"policyFailCycles,omitempty"`
+	PolicyRestoreCycles int `json:"policyRestoreCycles,omitempty"`
 }
 
 func (s Settings) WithDefaults() Settings {
@@ -249,6 +254,12 @@ func (s Settings) WithDefaults() Settings {
 	}
 	if out.ListenAddr == "" {
 		out.ListenAddr = "0.0.0.0"
+	}
+	if out.PolicyFailCycles <= 0 {
+		out.PolicyFailCycles = 2
+	}
+	if out.PolicyRestoreCycles <= 0 {
+		out.PolicyRestoreCycles = 2
 	}
 	return out
 }

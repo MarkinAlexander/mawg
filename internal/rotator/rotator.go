@@ -1206,6 +1206,7 @@ func (e *Engine) checkGroupPolicies() {
 	}
 
 	degraded := e.store.DegradedGroups()
+	cycles := e.store.Settings()
 	pending := map[string]store.DegradedGroup{}
 	type action struct {
 		disable, enable bool
@@ -1257,7 +1258,7 @@ func (e *Engine) checkGroupPolicies() {
 			// возврат на исходник - с двухцикловой выдержкой, чтобы
 			// лоскочущий вокруг порога интерфейс не дёргал группы
 			e.polOks[g.ID]++
-			if e.polOks[g.ID] < 2 {
+			if e.polOks[g.ID] < cycles.PolicyRestoreCycles {
 				continue
 			}
 			if dg.Mode == store.PolicyDirect {
@@ -1279,7 +1280,7 @@ func (e *Engine) checkGroupPolicies() {
 		}
 		e.polOks[g.ID] = 0
 		e.polFails[g.ID]++
-		if e.polFails[g.ID] < 2 {
+		if e.polFails[g.ID] < cycles.PolicyFailCycles {
 			continue
 		}
 		switch pol.OnDead {
