@@ -118,6 +118,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/v1/cascades/{group}", s.cascDelete)
 	mux.HandleFunc("PUT /api/v1/mt/groups/{id}/policy", s.mtSetPolicy)
 
+	mux.HandleFunc("GET /api/v1/subs", s.getSubs)
+	mux.HandleFunc("POST /api/v1/subs", s.postSubs)
+	mux.HandleFunc("POST /api/v1/subs/{name}/refresh", s.refreshSub)
+	mux.HandleFunc("DELETE /api/v1/subs/{name}", s.deleteSub)
+
 	sub, err := fs.Sub(uiFS, "ui")
 	if err != nil {
 		panic(err)
@@ -335,7 +340,8 @@ func writeErr(w http.ResponseWriter, err error) {
 	writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 }
 
-func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {	pools := s.store.Pools()
+func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
+	pools := s.store.Pools()
 	type poolView struct {
 		Name           string             `json:"name"`
 		Platform       string             `json:"platform"`
@@ -483,16 +489,16 @@ func (s *Server) getEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 type ifaceView struct {
-	Device       string            `json:"device"`
-	Slot         string            `json:"slot,omitempty"`
-	Description  string            `json:"description,omitempty"`
-	Mode         string            `json:"mode"`
-	Pool         string            `json:"pool,omitempty"`
-	LinkUp       bool              `json:"linkUp"`
-	Connected    bool              `json:"connected"`
-	HandshakeAgo int               `json:"handshakeAgo"`
+	Device       string             `json:"device"`
+	Slot         string             `json:"slot,omitempty"`
+	Description  string             `json:"description,omitempty"`
+	Mode         string             `json:"mode"`
+	Pool         string             `json:"pool,omitempty"`
+	LinkUp       bool               `json:"linkUp"`
+	Connected    bool               `json:"connected"`
+	HandshakeAgo int                `json:"handshakeAgo"`
 	Probe        *store.ProbeConfig `json:"probe,omitempty"`
-	ProbeStatus  string            `json:"probeStatus,omitempty"`
+	ProbeStatus  string             `json:"probeStatus,omitempty"`
 }
 
 func (s *Server) allIfaces(ctx context.Context) []platform.SlotInfo {
