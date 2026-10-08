@@ -1341,38 +1341,32 @@ type mtSnapshot struct {
 // и без кэша каждая вкладка жгла десятки процентов CPU на softfloat-MIPS.
 // titles отдаётся копией: обработчики мутируют карту, шарить нельзя
 // (fatal concurrent map read and map write).
+// mtSnapshotCached - свежие группы + заголовки слотов. Сырой JSON групп
+// получаем на каждый вызов (дёшево), декод - только если хеш изменился:
+// кэш декода живёт вечно, пока данные не меняются. titles - копия,
+// обработчики мутируют карту.
 func (s *Server) mtSnapshotCached() (groups []magitrickle.Group, titles map[string]string, err error) {
 	s.mtCacheMu.Lock()
 	defer s.mtCacheMu.Unlock()
-	if s.mtCache != nil && time.Since(s.mtCache.at) < 30*time.Second {
-		return s.mtCache.groups, copyTitles(s.mtCache.titles), s.mtCache.err
+	raw, rerr := s.mtClient().GroupsRaw(context.Background())
+	if s.mtCache == nil {
+		s.mtCache = &mtSnapshot{}
 	}
-	groups, err = s.groupsDecodeCached()
-	titles = s.mtInterfaceTitles()
-	s.mtCache = &mtSnapshot{at: time.Now(), groups: groups, titles: titles, err: err}
-	return groups, copyTitles(titles), err
-}
-
-// groupsDecodeCached - сырой JSON групп получаем каждый раз, декодируем
-// только если хеш изменился (декод больших списков дорог).
-func (s *Server) groupsDecodeCached() ([]magitrickle.Group, error) {
-	raw, err := s.mtClient().GroupsRaw(context.Background())
-	if err != nil {
-		return nil, err
+	if rerr == nil {
+		sum := sha256.Sum256(raw)
+		if s.mtCache.err != nil || s.mtCache.rawHash != sum {
+			if decoded, derr := magitrickle.DecodeGroups(raw); derr == nil {
+				s.mtCache.rawHash, s.mtCache.groups, s.mtCache.err = sum, decoded, nil
+			} else {
+				s.mtCache.err = derr
+			}
+		}
+	} else {
+		s.mtCache.err = rerr
 	}
-	sum := sha256.Sum256(raw)
-	if s.mtCache != nil && s.mtCache.err == nil && s.mtCache.rawHash == sum {
-		return s.mtCache.groups, nil
-	}
-	groups, err := magitrickle.DecodeGroups(raw)
-	if err != nil {
-		return nil, err
-	}
-	if s.mtCache != nil {
-		s.mtCache.rawHash = sum
-		s.mtCache.groups = groups
-	}
-	return groups, nil
+	s.mtCache.at = time.Now()
+	s.mtCache.titles = s.mtInterfaceTitles()
+	return s.mtCache.groups, copyTitles(s.mtCache.titles), s.mtCache.err
 }
 
 func copyTitles(src map[string]string) map[string]string {

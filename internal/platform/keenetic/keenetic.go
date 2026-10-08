@@ -1,7 +1,6 @@
 package keenetic
 
 import (
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -31,12 +30,12 @@ var (
 
 type Backend struct {
 	token func() string
-	// slotsMu/slotsHash/slotsVal - кэш парса Slots по хешу сырого вывода:
-	// сырые байты всё равно получаем каждый раз, а регэксп-парс на
-	// softfloat-MIPS дорог - повторяем его только при изменении данных.
-	slotsMu   sync.Mutex
-	slotsHash [sha256.Size]byte
-	slotsVal  []platform.SlotInfo
+	// dumpMu/dump/dumpAt - общий дамп /rci/show/interface с TTL 5с: ротатор,
+	// Slots и ручные статусы дергают его пачками в один цикл - один HTTP к
+	// ndm вместо пяти; парс один на дамп.
+	dumpMu sync.Mutex
+	dump   map[string]rciInterface
+	dumpAt time.Time
 }
 
 func New() *Backend { return &Backend{} }
@@ -184,6 +183,10 @@ type rciInterface struct {
 }
 
 func (b *Backend) rciGet(path string) (rciInterface, error) {
+	iface, ok, dumpErr := b.ifaceFromDump(path)
+	if dumpErr == nil && ok {
+		return iface, nil
+	}
 	var out rciInterface
 	body, err := b.rciDo(path)
 	if err == nil {
@@ -223,11 +226,21 @@ func (b *Backend) slotOf(pool store.Pool) (string, int, error) {
 	return m[0], idx, nil
 }
 
-func (b *Backend) Slots() ([]platform.SlotInfo, error) {
+// interfaces - полный дамп интерфейсов ndm, не чаще раза в 5 секунд:
+// все вызывающие (ротатор, Slots, /ifaces) в одном цикле проверок делят
+// один HTTP-вызов вместо персональных.
+func (b *Backend) interfaces() (map[string]rciInterface, error) {
+	b.dumpMu.Lock()
+	defer b.dumpMu.Unlock()
+	if b.dump != nil && time.Since(b.dumpAt) < 5*time.Second {
+		return b.dump, nil
+	}
 	body, err := b.rciDo("/rci/show/interface")
 	if err == nil {
-		if out, ok := b.slotsParsed(body, func() ([]platform.SlotInfo, error) { return parseSlots(body) }); ok {
-			return out, nil
+		var raw map[string]rciInterface
+		if json.Unmarshal(body, &raw) == nil && len(raw) > 0 {
+			b.dump, b.dumpAt = raw, time.Now()
+			return raw, nil
 		}
 	}
 	// 5.2 alpha закрыла локальный RCI паролем (NDM-4515): CLI работает всегда
@@ -235,29 +248,16 @@ func (b *Backend) Slots() ([]platform.SlotInfo, error) {
 	if cerr != nil {
 		return nil, err
 	}
-	if parsed, ok := b.slotsParsed([]byte(out), func() ([]platform.SlotInfo, error) {
-		return ndmcSlots(parseNDMCInterfaces(out)), nil
-	}); ok {
-		return parsed, nil
-	}
-	return ndmcSlots(parseNDMCInterfaces(out)), nil
+	b.dump, b.dumpAt = parseNDMCInterfaces(out), time.Now()
+	return b.dump, nil
 }
 
-// slotsParsed - хеш-обёртка: регэксп-парс сырого вывода ndm повторяем
-// только если хеш изменился с прошлого раза, иначе готовый результат.
-func (b *Backend) slotsParsed(raw []byte, parse func() ([]platform.SlotInfo, error)) ([]platform.SlotInfo, bool) {
-	sum := sha256.Sum256(raw)
-	b.slotsMu.Lock()
-	defer b.slotsMu.Unlock()
-	if b.slotsVal != nil && b.slotsHash == sum {
-		return b.slotsVal, true
-	}
-	val, err := parse()
+func (b *Backend) Slots() ([]platform.SlotInfo, error) {
+	ifaces, err := b.interfaces()
 	if err != nil {
-		return nil, false
+		return nil, err
 	}
-	b.slotsHash, b.slotsVal = sum, val
-	return val, true
+	return slotInfos(ifaces), nil
 }
 
 func ndmcSlots(ifaces map[string]rciInterface) []platform.SlotInfo {
@@ -521,6 +521,25 @@ func (b *Backend) Status(pool store.Pool) (platform.TunnelStatus, error) {
 		st.Connected = false
 	}
 	return st, nil
+}
+
+// ifaceFromDump - слот из свежего общего дампа (5с); ok=false - не из дампа.
+func (b *Backend) ifaceFromDump(path string) (rciInterface, bool, error) {
+	const slotPrefix = "/rci/show/interface/"
+	if !strings.HasPrefix(path, slotPrefix) || path == "/rci/show/interface/" {
+		return rciInterface{}, false, nil
+	}
+	slot := path[len(slotPrefix):]
+	if slot == "" || strings.Contains(slot, "/") {
+		return rciInterface{}, false, nil
+	}
+	b.dumpMu.Lock()
+	defer b.dumpMu.Unlock()
+	if b.dump == nil || time.Since(b.dumpAt) >= 5*time.Second {
+		return rciInterface{}, false, nil
+	}
+	ifc, ok := b.dump[slot]
+	return ifc, ok, nil
 }
 
 var rttRe = regexp.MustCompile(`(?:rtt|round-trip) min/avg/max(?:/(?:mdev|stddev))? = ([\d.]+)/([\d.]+)/`)
