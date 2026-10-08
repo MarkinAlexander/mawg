@@ -137,7 +137,30 @@ type vpnExport struct {
 		AWG       struct {
 			LastConfig string `json:"last_config"`
 		} `json:"awg"`
+		WireGuard struct {
+			LastConfig string `json:"last_config"`
+		} `json:"wireguard"`
 	} `json:"containers"`
+	APIConfig struct {
+		ServiceType     string `json:"service_type"`
+		ServiceProtocol string `json:"service_protocol"`
+	} `json:"api_config"`
+	AuthData struct {
+		APIKey string `json:"api_key"`
+	} `json:"auth_data"`
+}
+
+func zlibAll(b []byte) ([]byte, bool) {
+	zr, err := zlib.NewReader(bytes.NewReader(b))
+	if err != nil {
+		return nil, false
+	}
+	doc, err := io.ReadAll(zr)
+	zr.Close()
+	if err != nil {
+		return nil, false
+	}
+	return doc, true
 }
 
 type vpnLastConfig struct {
@@ -160,24 +183,32 @@ func parseVPN(source, raw string) (Node, error) {
 	if len(payload) < 5 {
 		return Node{}, fmt.Errorf("vpn://: слишком короткое тело")
 	}
-	zr, err := zlib.NewReader(bytes.NewReader(payload[4:]))
-	if err != nil {
-		return Node{}, fmt.Errorf("vpn://: %w", err)
-	}
-	doc, err := io.ReadAll(zr)
-	zr.Close()
-	if err != nil {
-		return Node{}, fmt.Errorf("vpn://: %w", err)
+	doc, okDoc := zlibAll(payload[4:])
+	if !okDoc {
+		if d, ok := zlibAll(payload); ok {
+			doc = d
+		} else {
+			return Node{}, fmt.Errorf("vpn://: тело не zlib")
+		}
 	}
 	var exp vpnExport
 	if err := json.Unmarshal(doc, &exp); err != nil {
 		return Node{}, fmt.Errorf("vpn://: %w", err)
 	}
+	if exp.APIConfig.ServiceType != "" && exp.AuthData.APIKey != "" {
+		return Node{}, fmt.Errorf(
+			"vpn:// содержит ключ Amnezia %s API (протокол %s), а не статический конфиг: сервис Амнезии выдаёт конфиг по этому ключу через свой gateway-API; поддержка обмена ключ на конфиг - отдельная задача",
+			strings.TrimPrefix(exp.APIConfig.ServiceType, "amnezia-"), exp.APIConfig.ServiceProtocol)
+	}
 	for _, c := range exp.Containers {
-		if c.AWG.LastConfig == "" {
+		lastConfig := c.AWG.LastConfig
+		if lastConfig == "" {
+			lastConfig = c.WireGuard.LastConfig
+		}
+		if lastConfig == "" {
 			continue
 		}
-		conf := vpnConfText(c.AWG.LastConfig)
+		conf := vpnConfText(lastConfig)
 		node, err := NodeFromConf(source, "", []byte(conf))
 		if err != nil {
 			return Node{}, fmt.Errorf("vpn://: %w", err)

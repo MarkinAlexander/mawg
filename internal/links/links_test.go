@@ -374,6 +374,41 @@ func TestFetchSubscription(t *testing.T) {
 	}
 }
 
+func TestParseVPNPremiumKeyHonestError(t *testing.T) {
+	doc := `{"api_config":{"service_type":"amnezia-premium","service_protocol":"awg"},
+	         "auth_data":{"api_key":"FAKE.KEY123"},"config_version":2,"name":"Amnezia Premium"}`
+	var zbuf bytes.Buffer
+	zw := zlib.NewWriter(&zbuf)
+	zw.Write([]byte(doc))
+	zw.Close()
+	payload := make([]byte, 4)
+	binary.BigEndian.PutUint32(payload, uint32(len(doc)))
+	payload = append(payload, zbuf.Bytes()...)
+	link := "vpn://" + base64.RawURLEncoding.EncodeToString(payload)
+	_, err := ParseLink("s4", link)
+	if err == nil {
+		t.Fatal("ключ Amnezia Premium не должен разбираться как конфиг")
+	}
+	if !strings.Contains(err.Error(), "Amnezia premium API") || !strings.Contains(err.Error(), "awg") {
+		t.Fatalf("текст ошибки: %v", err)
+	}
+}
+
+func TestParseVPNBareZlibAndWireguardContainer(t *testing.T) {
+	var zbuf bytes.Buffer
+	zw := zlib.NewWriter(&zbuf)
+	zw.Write([]byte(`{"containers":[{"container":"amnezia-wg","wireguard":{"last_config":` + strconv.Quote(plainWgConf) + `}}]}`))
+	zw.Close()
+	link := "vpn://" + base64.RawURLEncoding.EncodeToString(zbuf.Bytes()) // без 4-байтного префикса
+	n, err := ParseLink("s4", link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n.Type != "wireguard" || n.Host != "203.0.113.40" || n.Port != 51820 {
+		t.Fatalf("wireguard-контейнер: %+v", n)
+	}
+}
+
 func TestDecodeBodyRejectsPlainText(t *testing.T) {
 	if _, ok := decodeBody("vless://" + fakeUUID + "@203.0.113.1:1#x"); ok {
 		t.Fatal("чистый текст ссылок не должен считаться base64")
