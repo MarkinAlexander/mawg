@@ -92,6 +92,9 @@ type PoolSettings struct {
 	EngineMode         string       `json:"engineMode,omitempty"` // "singbox" - узлы пула в tun-интерфейсе движка, а не в нативном слоте
 	TunName            string       `json:"tunName,omitempty"`
 	Amnezia            *AmneziaMeta `json:"amnezia,omitempty"`
+	// UpdateIntervalH - интервал автообновления источника в часах;
+	// 0 = из заголовка подписки Profile-Update-Interval, без него сутки.
+	UpdateIntervalH float64 `json:"updateIntervalH,omitempty"`
 }
 
 // AmneziaMeta - состояние выдачи gateway Амнезии для пула из vpn://-ключа:
@@ -163,6 +166,16 @@ type PoolState struct {
 	LastResult  string    `json:"-"`
 	LastError   string    `json:"-"`
 	GraceUntil  int64     `json:"-"`
+
+	// автообновление источника подписки: хеш последнего скачанного тела
+	// (гейт «ничего нового»), время/интервал обновления, счётчик неудач
+	// для алерта в панели и кулдаун обновления по деградации.
+	LastSubHash     string    `json:"lastSubHash,omitempty"`
+	SubRefreshAt    time.Time `json:"subRefreshAt,omitempty"`
+	SubIntervalH    float64   `json:"subIntervalH,omitempty"`
+	LastFailRefresh time.Time `json:"lastFailRefresh,omitempty"`
+	RefreshFails    int       `json:"refreshFails,omitempty"`
+	LastRefreshErr  string    `json:"lastRefreshErr,omitempty"`
 }
 
 // GroupPolicy - поведение группы магитрикла при отвале её основного

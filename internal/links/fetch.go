@@ -2,6 +2,7 @@ package links
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
@@ -17,8 +18,10 @@ const fetchLimit = 8 << 20
 type Fetched struct {
 	URL         string
 	ContentType string
-	Sub         SubInfo
-	Result      Result
+	// BodySHA - sha256 сырого тела: гейт «ничего нового» при автообновлении.
+	BodySHA string
+	Sub     SubInfo
+	Result  Result
 }
 
 func Fetch(ctx context.Context, rawURL string) (*Fetched, error) {
@@ -50,6 +53,7 @@ func Fetch(ctx context.Context, rawURL string) (*Fetched, error) {
 	f := &Fetched{
 		URL:         rawURL,
 		ContentType: resp.Header.Get("Content-Type"),
+		BodySHA:     fmt.Sprintf("%x", sha256.Sum256(body)),
 	}
 	if ui := resp.Header.Get(subscriptionUserinfo); ui != "" {
 		f.Sub = ParseUserinfo(ui)
