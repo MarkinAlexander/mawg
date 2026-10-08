@@ -4,6 +4,7 @@ package singbox
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -17,15 +18,16 @@ import (
 )
 
 type Manager struct {
-	mu        sync.Mutex
-	stmu      sync.Mutex
-	eng       *Engine
-	Dir       string
-	MixedPort int
-	ClashPort int
-	pid       int
-	lastSpecs []PoolSpec
-	statuses  map[string]*PoolStatus
+	mu           sync.Mutex
+	stmu         sync.Mutex
+	eng          *Engine
+	Dir          string
+	MixedPort    int
+	ClashPort    int
+	pid          int
+	lastSpecs    []PoolSpec
+	statuses     map[string]*PoolStatus
+	nodeCooldown map[string]time.Time
 }
 
 func NewManager(dir string) (*Manager, error) {
@@ -36,7 +38,7 @@ func NewManager(dir string) (*Manager, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	m := &Manager{eng: eng, Dir: dir, MixedPort: 2281, ClashPort: 2291, statuses: map[string]*PoolStatus{}}
+	m := &Manager{eng: eng, Dir: dir, MixedPort: 2281, ClashPort: 2291, statuses: map[string]*PoolStatus{}, nodeCooldown: map[string]time.Time{}}
 	go m.probeLoop()
 	return m, nil
 }
@@ -46,14 +48,15 @@ func (m *Manager) Info() Engine {
 }
 
 type PoolStatus struct {
-	Eligible  int       `json:"eligible"`
-	MixedPort int       `json:"mixedPort"`
-	ProbeOK   bool      `json:"probeOk"`
-	ProbeMs   int       `json:"probeMs"`
-	ProbeErr  string    `json:"probeErr,omitempty"`
-	CheckedAt time.Time `json:"checkedAt,omitempty"`
-	Reason    string    `json:"reason,omitempty"`
-	Detail    string    `json:"detail,omitempty"`
+	Eligible    int       `json:"eligible"`
+	MixedPort   int       `json:"mixedPort"`
+	ProbeOK     bool      `json:"probeOk"`
+	ProbeMs     int       `json:"probeMs"`
+	ProbeErr    string    `json:"probeErr,omitempty"`
+	ConsecFails int       `json:"consecFails"`
+	CheckedAt   time.Time `json:"checkedAt,omitempty"`
+	Reason      string    `json:"reason,omitempty"`
+	Detail      string    `json:"detail,omitempty"`
 }
 
 func (m *Manager) setStatus(name string, st *PoolStatus) {
@@ -101,28 +104,127 @@ func (m *Manager) probePool(port int, target string) (int, error) {
 
 func (m *Manager) probeSpec(spec PoolSpec) {
 	ms, err := m.probePool(spec.MixedPort, spec.ProbeTarget)
+	m.stmu.Lock()
+	prev := m.statuses[spec.Name]
+	fails := 0
+	if prev != nil && !prev.ProbeOK {
+		fails = prev.ConsecFails
+	}
+	m.stmu.Unlock()
+	if err == nil && spec.MaxRTTms > 0 && ms > spec.MaxRTTms {
+		err = fmt.Errorf("RTT %dms выше порога %dms", ms, spec.MaxRTTms)
+	}
 	st := &PoolStatus{
 		Eligible: len(spec.Nodes), MixedPort: spec.MixedPort,
 		ProbeOK: err == nil, ProbeMs: ms, CheckedAt: time.Now(),
+		ConsecFails: fails,
 	}
 	if err != nil {
 		st.ProbeErr = err.Error()
+		st.ConsecFails = fails + 1
 	}
 	m.setStatus(spec.Name, st)
+	if err == nil {
+		return
+	}
+	threshold := spec.FailThreshold
+	if threshold <= 0 {
+		threshold = 3
+	}
+	if st.ConsecFails >= threshold {
+		if next, rErr := m.rotateNode(spec); rErr == nil && next != "" {
+			st.Detail = fmt.Sprintf("после %d неудач переключено на %s", st.ConsecFails, next)
+			m.setStatus(spec.Name, st)
+		}
+	}
+}
+
+// rotateNode переключает selector-группу пула на следующий живой узел,
+// пропуская узлы на cooldown; возвращает выбранный тег ("" - некуда)
+func (m *Manager) rotateNode(spec PoolSpec) (string, error) {
+	group := "mawg-" + spec.Name
+	base := fmt.Sprintf("http://127.0.0.1:%d", m.ClashPort)
+	resp, err := http.Get(base + "/proxies/" + url.PathEscape(group))
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	var g struct {
+		Now string   `json:"now"`
+		All []string `json:"all"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&g); err != nil {
+		return "", err
+	}
+	if len(g.All) == 0 {
+		return "", nil
+	}
+	m.stmu.Lock()
+	defer m.stmu.Unlock()
+	cur := 0
+	for i, t := range g.All {
+		if t == g.Now {
+			cur = i
+			break
+		}
+	}
+	cooldown := time.Duration(spec.CooldownMin) * time.Minute
+	if cooldown <= 0 {
+		cooldown = 10 * time.Minute
+	}
+	nowT := time.Now()
+	var pick string
+	for step := 1; step <= len(g.All); step++ {
+		cand := g.All[(cur+step)%len(g.All)]
+		if cand == g.Now {
+			continue
+		}
+		if until, bad := m.nodeCooldown[cand]; bad && nowT.Before(until) {
+			continue
+		}
+		pick = cand
+		break
+	}
+	if pick == "" {
+		return "", nil
+	}
+	m.nodeCooldown[g.Now] = nowT.Add(cooldown)
+	body := fmt.Sprintf(`{"name":%q}`, pick)
+	req, err := http.NewRequest(http.MethodPut, base+"/proxies/"+url.PathEscape(group), strings.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	resp2, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	resp2.Body.Close()
+	return pick, nil
 }
 
 func (m *Manager) probeLoop() {
-	ticker := time.NewTicker(60 * time.Second)
+	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	for range ticker.C {
 		m.mu.Lock()
 		specs := m.lastSpecs
 		m.mu.Unlock()
+		now := time.Now()
 		for _, spec := range specs {
 			if spec.ProbeTarget == "" {
 				continue
 			}
-			m.probeSpec(spec)
+			interval := time.Duration(spec.CheckIntervalSec) * time.Second
+			if interval < 10*time.Second {
+				interval = 60 * time.Second
+			}
+			m.stmu.Lock()
+			st, ok := m.statuses[spec.Name]
+			due := !ok || st.CheckedAt.IsZero() || now.Sub(st.CheckedAt) >= interval
+			m.stmu.Unlock()
+			if due {
+				m.probeSpec(spec)
+			}
 		}
 	}
 }
@@ -203,6 +305,9 @@ func (m *Manager) Apply(pools []PoolSpec) ([]string, error) {
 		spec.MixedPort = m.MixedPort + 1 + i
 		if spec.ProbeTarget == "" {
 			spec.ProbeTarget = "http://www.gstatic.com/generate_204"
+		}
+		if spec.CheckIntervalSec <= 0 {
+			spec.CheckIntervalSec = 60
 		}
 		runnable = append(runnable, spec)
 	}

@@ -363,7 +363,7 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
     <label class="f" id="spRenameRow">Имя (переименование)
       <input id="spRename" pattern="[a-z][a-z0-9-]{0,14}" title="строчная латиница, цифры и дефисы, начинается с буквы, до 15 символов">
     </label>
-    <label class="f">Тип пробы через туннель
+    <label class="f" id="spProbeTypeRow">Тип пробы через туннель
       <select id="spProbeType">
         <option value="http">HTTP-страница 204 (надежнее, ICMP режут)</option>
         <option value="icmp">Ping публичного IP</option>
@@ -372,7 +372,8 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
     <label class="f">Цель пробы
       <input id="spProbe" placeholder="http://www.gstatic.com/generate_204">
     </label>
-    <div class="f" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+    <div class="muted" id="spEngineNote" style="display:none;font-size:11px;margin:-2px 0 4px">Проверка автоматическая: mawg получает целевую страницу через узел (строгий HTTP-тест, ping не используется). После порога отказов узел подписки переключается на следующий, неудачный уходит в cooldown.</div>
+    <div class="f" id="spRttRow" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
       <label class="switch" title="включить порог RTT"><input type="checkbox" id="spRttOn"><span class="knob"></span></label>
       <span>считать нерабочим при RTT выше</span>
       <input id="spRtt" type="number" min="1" max="5000" style="width:90px"> мс
@@ -380,13 +381,13 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
     <label class="f">Интервал проверки, сек
       <input id="spInterval" type="number" min="10" max="3600">
     </label>
-    <label class="f">Отказов подряд до ротации
+    <label class="f" id="spThresholdRow">Отказов подряд до ротации
       <input id="spThreshold" type="number" min="1" max="10">
     </label>
-    <label class="f">Cooldown неудачного конфига, мин
+    <label class="f" id="spCooldownRow">Cooldown неудачного конфига, мин
       <input id="spCooldown" type="number" min="1" max="720">
     </label>
-    <label class="f">Keepalive, сек (0 = из конфига)
+    <label class="f" id="spKeepaliveRow">Keepalive, сек (0 = из конфига)
       <input id="spKeepalive" type="number" min="0" max="300">
     </label>
     <label class="f">Если все конфиги недоступны
@@ -439,7 +440,7 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
     <label class="f">Цель пробы
       <input id="ipTarget" placeholder="http://www.gstatic.com/generate_204">
     </label>
-    <div class="f" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+    <div class="f" id="spRttRow" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
       <label class="switch" title="включить порог RTT"><input type="checkbox" id="ipRttOn"><span class="knob"></span></label>
       <span>считать нерабочим при RTT выше</span>
       <input id="ipRtt" type="number" min="1" max="5000" style="width:90px"> мс
@@ -1099,6 +1100,15 @@ function openSettings(name) {
   $('#spRttOn').checked = p.settings.maxRttMs > 0;
   $('#spRtt').value = p.settings.maxRttMs > 0 ? p.settings.maxRttMs : 300;
   $('#spRttOn').dispatchEvent(new Event('change'));
+  const isEngPool = p.settings.engineMode === 'singbox';
+  $('#spKeepaliveRow').style.display = isEngPool ? 'none' : '';
+  $('#spEngineNote').style.display = isEngPool ? '' : 'none';
+  if (isEngPool) {
+    $('#spProbeType').value = 'http';
+    $('#spProbeType').disabled = true;
+  } else {
+    $('#spProbeType').disabled = false;
+  }
   $('#spInterval').value = p.settings.checkIntervalSec;
   $('#spThreshold').value = p.settings.failThreshold;
   $('#spCooldown').value = p.settings.cooldownMin;

@@ -1022,8 +1022,16 @@ func (s *Server) updatePool(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	engineRebuild := pool.Settings.EngineMode == engineMode
 	if err := s.store.UpdatePool(name, merged); err != nil {
 		writeErr(w, err)
+		return
+	}
+	if engineRebuild {
+		if _, err := s.applyEngine(); err != nil {
+			s.store.LogEvent(name, "applied", "движок не пересобран после смены настроек: "+err.Error())
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"ok": "updated"})
 		return
 	}
 	s.engine.CheckNow(name)

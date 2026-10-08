@@ -8,12 +8,16 @@ import (
 )
 
 type PoolSpec struct {
-	Name        string
-	Tun         string
-	TunIP       string
-	MixedPort   int
-	ProbeTarget string
-	Nodes       []links.Node
+	Name             string
+	Tun              string
+	TunIP            string
+	MixedPort        int
+	ProbeTarget      string
+	CheckIntervalSec int
+	FailThreshold    int
+	CooldownMin      int
+	MaxRTTms         int
+	Nodes            []links.Node
 }
 
 type Params struct {

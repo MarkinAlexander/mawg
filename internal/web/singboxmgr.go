@@ -71,7 +71,14 @@ func (s *Server) applyEngine() ([]string, error) {
 		if n, err := strconv.Atoi(strings.TrimPrefix(p.Settings.TunName, "tun")); err == nil && n > 0 {
 			idx = n
 		}
-		specs = append(specs, singbox.PoolSpec{Name: p.Name, Tun: p.Settings.TunName, TunIP: singbox.TuneIP(idx), Nodes: nodes})
+		specs = append(specs, singbox.PoolSpec{
+			Name: p.Name, Tun: p.Settings.TunName, TunIP: singbox.TuneIP(idx), Nodes: nodes,
+			ProbeTarget:      p.Settings.ProbeHost,
+			CheckIntervalSec: p.Settings.CheckIntervalSec,
+			FailThreshold:    p.Settings.FailThreshold,
+			CooldownMin:      p.Settings.CooldownMin,
+			MaxRTTms:         p.Settings.MaxRTTms,
+		})
 	}
 	return mgr.Apply(specs)
 }
