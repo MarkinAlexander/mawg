@@ -2628,7 +2628,8 @@ const X_SVG = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" strok
 function wireClearInputs(root) {
   root.querySelectorAll('input').forEach(inp => {
     const t = inp.type;
-    if (t === 'password' || t === 'color' || t === 'checkbox' || t === 'radio' || t === 'file' || t === 'hidden' || inp.closest('.xwrap')) return;
+    // number: есть штатный спиннер больше/меньше - крестик очистки лишний
+    if (t === 'number' || t === 'password' || t === 'color' || t === 'checkbox' || t === 'radio' || t === 'file' || t === 'hidden' || inp.closest('.xwrap')) return;
     const wrap = document.createElement('span');
     wrap.className = 'xwrap';
     wrap.style.flex = inp.style.flex;
