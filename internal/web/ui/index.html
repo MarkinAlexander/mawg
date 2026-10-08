@@ -852,6 +852,9 @@ function renderSourcePlan(p) {
     html += `<div class="muted" style="font-size:11px;margin-bottom:4px">Узлы, для которых нужен движок sing-box (нативный путь невозможен). Установка ядра - следующий шаг mawg; тогда же появится вариант «через ядро lx» и для WG/AWG:</div>`;
     html += p.engine.map(e => `<div style="margin:2px 0">• ${esc(e.tag)} <span class="badge">${esc(e.type)}</span> <span class="badge" style="color:var(--warn);border-color:var(--warn)">нужен движок</span></div>`).join('');
   }
+  if (p.warnings && p.warnings.length) {
+    html += `<div style="color:var(--warn);margin-top:6px;font-size:11px">${p.warnings.map(esc).join('; ')}</div>`;
+  }
   if (p.skipped && p.skipped.length) {
     html += `<div style="color:var(--warn);margin-top:6px;font-size:11px">Пропущено: ${p.skipped.map(esc).join('; ')}</div>`;
   }
