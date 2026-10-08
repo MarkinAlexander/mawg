@@ -2691,11 +2691,10 @@ async function refreshLog() {
 
 function startPanel() {
   setInterval(refresh, 5000);
-  setInterval(refreshLog, 5000);
+  setInterval(refreshLog, 15000);
   setInterval(() => { refreshMT(); loadSlots(); }, 30000);
   setInterval(() => refreshSystem(false), 60000);
-  setInterval(() => refreshRules(false), 15000);
-  setInterval(fillIfaceSelects, 10000);
+  setInterval(fillIfaceSelects, 60000);
   setInterval(() => refreshIfaces(false), 30000);
   setInterval(() => refreshBundles(false), 30000);
   refresh(); refreshLog(); refreshMT(); loadSlots();

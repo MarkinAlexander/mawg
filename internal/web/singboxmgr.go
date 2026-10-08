@@ -89,6 +89,18 @@ func (s *Server) postSingboxMode(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// RestoreEngine при старте mawg приводит движок к текущим пулам: без этого
+// после рестарта mawg пулы висят в «не применял конфиг» без проб (в shared
+// фрагмент на диске уже верный, но статусы и пробы пустые).
+func (s *Server) RestoreEngine() {
+	if len(s.enginePools()) == 0 {
+		return
+	}
+	if _, err := s.applyEngine(); err != nil {
+		s.store.LogEvent("singbox", "applied", "восстановление движка при старте: "+err.Error())
+	}
+}
+
 func (s *Server) enginePools() []store.Pool {
 	var out []store.Pool
 	for _, p := range s.store.Pools() {

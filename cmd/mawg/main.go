@@ -170,6 +170,10 @@ func main() {
 	}
 	setupLogging(plat)
 
+	if os.Getenv("MAWG_PPROF") != "" {
+		startPprof()
+	}
+
 	switch cmd {
 	case "start", "stop", "restart":
 		os.Exit(runServiceCmd(plat, cmd))
@@ -286,6 +290,7 @@ func main() {
 	bind := fmt.Sprintf("%s:%d", listenAddr, cfgPort)
 	log.Printf("mawg %s: platform=%s base=%s web=http://%s:%d", version, plat, dir, listenAddr, cfgPort)
 	httpServer := &http.Server{Addr: bind, Handler: srv.Handler()}
+	go srv.RestoreEngine()
 	go func() {
 		<-ctx.Done()
 		httpServer.Close()

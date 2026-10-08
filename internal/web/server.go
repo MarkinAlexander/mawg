@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"crypto/sha256"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -33,14 +34,17 @@ import (
 var uiFS embed.FS
 
 type Server struct {
-	store   *store.Store
-	engine  *rotator.Engine
-	backend platform.Backend
-	mt      *magitrickle.Client
-	version string
-	auth    *auth.Auth
-	tunMu   sync.Mutex
-	IPGate  *auth.IPGate
+	store      *store.Store
+	engine     *rotator.Engine
+	backend    platform.Backend
+	mt         *magitrickle.Client
+	version    string
+	auth       *auth.Auth
+	tunMu      sync.Mutex
+	mtCacheMu  sync.Mutex
+	mtCache    *mtSnapshot
+	ifaceCache respCache
+	IPGate     *auth.IPGate
 	// фактически забинденные адрес/порт демона: UI отличает
 	// "сохранено, но не перезапущено" от "уже применяется"
 	BindAddr string
@@ -347,6 +351,33 @@ func writeErr(w http.ResponseWriter, err error) {
 	writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 }
 
+// respCache - короткий кэш готовых JSON-ответов тяжёлых GET-эндпоинтов:
+// вкладки панели опрашивают их по интервалу, строить ответ заново на
+// каждый запрос на softfloat-MIPS дорого.
+type respCache struct {
+	mu   sync.Mutex
+	at   time.Time
+	body []byte
+}
+
+func (c *respCache) serve(w http.ResponseWriter, ttl time.Duration, build func() ([]byte, error)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.body != nil && time.Since(c.at) < ttl {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Write(c.body)
+		return
+	}
+	body, err := build()
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	c.at, c.body = time.Now(), body
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Write(body)
+}
+
 func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 	pools := s.store.Pools()
 	type poolView struct {
@@ -603,10 +634,13 @@ func (s *Server) allIfaces(ctx context.Context) []platform.SlotInfo {
 }
 
 func (s *Server) getIfaces(w http.ResponseWriter, r *http.Request) {
+	s.ifaceCache.serve(w, 10*time.Second, func() ([]byte, error) { return s.buildIfaces(r) })
+}
+
+func (s *Server) buildIfaces(r *http.Request) ([]byte, error) {
 	slots := s.allIfaces(r.Context())
 	if slots == nil {
-		writeErr(w, fmt.Errorf("не удалось получить список интерфейсов"))
-		return
+		return nil, fmt.Errorf("не удалось получить список интерфейсов")
 	}
 	poolByDevice := map[string]string{}
 	for _, p := range s.store.Pools() {
@@ -640,7 +674,7 @@ func (s *Server) getIfaces(w http.ResponseWriter, r *http.Request) {
 			out[i].ProbeStatus = s.engine.DeviceProbeStatus(out[i].Device)
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"interfaces": out})
+	return json.Marshal(map[string]any{"interfaces": out})
 }
 
 func (s *Server) setIfaceMode(w http.ResponseWriter, r *http.Request) {
@@ -1294,6 +1328,61 @@ func (s *Server) mtClient() *magitrickle.Client {
 	return magitrickle.New("http://127.0.0.1:8080")
 }
 
+type mtSnapshot struct {
+	at      time.Time
+	rawHash [sha256.Size]byte
+	groups  []magitrickle.Group
+	titles  map[string]string
+	err     error
+}
+
+// mtSnapshotCached - тяжёлый снимок MagiTrickle+Slots (ndmc exec, JSON,
+// регэкспы) не чаще раза в 30 секунд: вкладки панели опрашивают /mt/*
+// и без кэша каждая вкладка жгла десятки процентов CPU на softfloat-MIPS.
+// titles отдаётся копией: обработчики мутируют карту, шарить нельзя
+// (fatal concurrent map read and map write).
+func (s *Server) mtSnapshotCached() (groups []magitrickle.Group, titles map[string]string, err error) {
+	s.mtCacheMu.Lock()
+	defer s.mtCacheMu.Unlock()
+	if s.mtCache != nil && time.Since(s.mtCache.at) < 30*time.Second {
+		return s.mtCache.groups, copyTitles(s.mtCache.titles), s.mtCache.err
+	}
+	groups, err = s.groupsDecodeCached()
+	titles = s.mtInterfaceTitles()
+	s.mtCache = &mtSnapshot{at: time.Now(), groups: groups, titles: titles, err: err}
+	return groups, copyTitles(titles), err
+}
+
+// groupsDecodeCached - сырой JSON групп получаем каждый раз, декодируем
+// только если хеш изменился (декод больших списков дорог).
+func (s *Server) groupsDecodeCached() ([]magitrickle.Group, error) {
+	raw, err := s.mtClient().GroupsRaw(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	sum := sha256.Sum256(raw)
+	if s.mtCache != nil && s.mtCache.err == nil && s.mtCache.rawHash == sum {
+		return s.mtCache.groups, nil
+	}
+	groups, err := magitrickle.DecodeGroups(raw)
+	if err != nil {
+		return nil, err
+	}
+	if s.mtCache != nil {
+		s.mtCache.rawHash = sum
+		s.mtCache.groups = groups
+	}
+	return groups, nil
+}
+
+func copyTitles(src map[string]string) map[string]string {
+	dst := make(map[string]string, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
+}
+
 func (s *Server) mtInterfaceTitles() map[string]string {
 	titles := map[string]string{}
 	for _, p := range s.store.Pools() {
@@ -1364,12 +1453,11 @@ func (s *Server) mtDuplicates(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) mtGetGroups(w http.ResponseWriter, r *http.Request) {
-	groups, err := s.mtClient().GroupsWithRules(r.Context())
+	groups, titles, err := s.mtSnapshotCached()
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"available": false, "error": err.Error()})
 		return
 	}
-	titles := s.mtInterfaceTitles()
 	type groupView struct {
 		magitrickle.Group
 		InterfaceTitle string              `json:"interfaceTitle,omitempty"`
@@ -1409,8 +1497,7 @@ func (s *Server) mtGetGroups(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) mtGetInterfaces(w http.ResponseWriter, r *http.Request) {
-	titles := s.mtInterfaceTitles()
-	groups, err := s.mtClient().GroupsWithRules(r.Context())
+	groups, titles, err := s.mtSnapshotCached()
 	if err == nil {
 		for _, g := range groups {
 			// blackhole - служебное имя блокировки, UI добавляет его сам

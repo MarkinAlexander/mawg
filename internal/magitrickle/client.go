@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"strconv"
@@ -102,6 +103,35 @@ func (c *Client) Groups(ctx context.Context) ([]Group, error) {
 		Groups []Group `json:"groups"`
 	}
 	if err := c.call(ctx, http.MethodGet, "/api/v1/groups", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Groups, nil
+}
+
+// GroupsRaw возвращает СЫРОЕ тело /groups?with_rules=true без декодирования:
+// вызывающий может хешировать его и декодировать только при изменении
+// (декод больших списков правил на softfloat-MIPS дорог).
+func (c *Client) GroupsRaw(ctx context.Context) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/api/v1/groups?with_rules=true", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return nil, &statusError{method: http.MethodGet, path: "/api/v1/groups", code: resp.StatusCode}
+	}
+	return io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+}
+
+func DecodeGroups(data []byte) ([]Group, error) {
+	var out struct {
+		Groups []Group `json:"groups"`
+	}
+	if err := json.Unmarshal(data, &out); err != nil {
 		return nil, err
 	}
 	return out.Groups, nil

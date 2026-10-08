@@ -1,6 +1,7 @@
 package keenetic
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"mawg/internal/platform"
@@ -29,6 +31,12 @@ var (
 
 type Backend struct {
 	token func() string
+	// slotsMu/slotsHash/slotsVal - кэш парса Slots по хешу сырого вывода:
+	// сырые байты всё равно получаем каждый раз, а регэксп-парс на
+	// softfloat-MIPS дорог - повторяем его только при изменении данных.
+	slotsMu   sync.Mutex
+	slotsHash [sha256.Size]byte
+	slotsVal  []platform.SlotInfo
 }
 
 func New() *Backend { return &Backend{} }
@@ -218,7 +226,7 @@ func (b *Backend) slotOf(pool store.Pool) (string, int, error) {
 func (b *Backend) Slots() ([]platform.SlotInfo, error) {
 	body, err := b.rciDo("/rci/show/interface")
 	if err == nil {
-		if out, perr := parseSlots(body); perr == nil {
+		if out, ok := b.slotsParsed(body, func() ([]platform.SlotInfo, error) { return parseSlots(body) }); ok {
 			return out, nil
 		}
 	}
@@ -227,7 +235,29 @@ func (b *Backend) Slots() ([]platform.SlotInfo, error) {
 	if cerr != nil {
 		return nil, err
 	}
+	if parsed, ok := b.slotsParsed([]byte(out), func() ([]platform.SlotInfo, error) {
+		return ndmcSlots(parseNDMCInterfaces(out)), nil
+	}); ok {
+		return parsed, nil
+	}
 	return ndmcSlots(parseNDMCInterfaces(out)), nil
+}
+
+// slotsParsed - хеш-обёртка: регэксп-парс сырого вывода ndm повторяем
+// только если хеш изменился с прошлого раза, иначе готовый результат.
+func (b *Backend) slotsParsed(raw []byte, parse func() ([]platform.SlotInfo, error)) ([]platform.SlotInfo, bool) {
+	sum := sha256.Sum256(raw)
+	b.slotsMu.Lock()
+	defer b.slotsMu.Unlock()
+	if b.slotsVal != nil && b.slotsHash == sum {
+		return b.slotsVal, true
+	}
+	val, err := parse()
+	if err != nil {
+		return nil, false
+	}
+	b.slotsHash, b.slotsVal = sum, val
+	return val, true
 }
 
 func ndmcSlots(ifaces map[string]rciInterface) []platform.SlotInfo {
