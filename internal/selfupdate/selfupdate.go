@@ -81,11 +81,11 @@ func newer(current, latest string) bool {
 }
 
 type CheckInfo struct {
-	Current    string `json:"current"`
-	Latest     string `json:"latest"`
-	Update     bool   `json:"update"`
-	URL        string `json:"url,omitempty"`
-	Error      string `json:"error,omitempty"`
+	Current string `json:"current"`
+	Latest  string `json:"latest"`
+	Update  bool   `json:"update"`
+	URL     string `json:"url,omitempty"`
+	Error   string `json:"error,omitempty"`
 }
 
 func Check(ctx context.Context, current string) CheckInfo {

@@ -29,8 +29,8 @@ type Engine struct {
 
 	WANProbeFn func() bool
 
-	wake      chan string
-	stop      context.CancelFunc
+	wake        chan string
+	stop        context.CancelFunc
 	mu          sync.Mutex
 	actMu       sync.Mutex
 	lastApply   map[string]time.Time
@@ -48,8 +48,8 @@ type Engine struct {
 	tunnelAddrs map[string]string
 	tunnelAt    time.Time
 
-	casc  *cascade.Manager
-	tickN int
+	casc     *cascade.Manager
+	tickN    int
 	polFails map[string]int
 }
 
@@ -86,16 +86,16 @@ func (e *Engine) settleAfterIfaceOp() {
 
 func New(st *store.Store, b platform.Backend, mt *magitrickle.Client) *Engine {
 	e := &Engine{
-		store:      st,
-		backend:    b,
-		mt:         mt,
-		wake:       make(chan string, 32),
-		lastApply:  map[string]time.Time{},
-		extFails:   map[string]int{},
+		store:       st,
+		backend:     b,
+		mt:          mt,
+		wake:        make(chan string, 32),
+		lastApply:   map[string]time.Time{},
+		extFails:    map[string]int{},
 		probeCache:  map[string]probeCacheEntry{},
 		probeBusy:   map[string]bool{},
 		tunnelAddrs: map[string]string{},
-		polFails:   map[string]int{},
+		polFails:    map[string]int{},
 	}
 	if mt != nil {
 		e.casc = cascade.New(st, mt)
@@ -889,14 +889,14 @@ func (e *Engine) enterFallback(p store.Pool, st *store.PoolState) {
 		if !exists || fbPool.Disabled {
 			e.store.LogEvent(p.Name, "fallback", "fallback pool "+fbName+" unavailable, going direct")
 			e.ifaceTouched()
-	if err := e.backend.Down(p); err != nil {
+			if err := e.backend.Down(p); err != nil {
 				log.Printf("pool %s: down failed: %v", p.Name, err)
 			}
 			e.suspendGroups(p)
 			return
 		}
 		e.ifaceTouched()
-	if err := e.backend.Down(p); err != nil {
+		if err := e.backend.Down(p); err != nil {
 			log.Printf("pool %s: down failed: %v", p.Name, err)
 		}
 		e.rebindGroups(p, fbPool.DeviceName())
@@ -904,7 +904,7 @@ func (e *Engine) enterFallback(p store.Pool, st *store.PoolState) {
 	}
 	if p.Settings.Fallback == store.FallbackDirect {
 		e.ifaceTouched()
-	if err := e.backend.Down(p); err != nil {
+		if err := e.backend.Down(p); err != nil {
 			log.Printf("pool %s: down failed: %v", p.Name, err)
 		}
 		e.suspendGroups(p)

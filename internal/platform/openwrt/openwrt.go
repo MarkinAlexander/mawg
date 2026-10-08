@@ -1,8 +1,8 @@
 package openwrt
 
 import (
-	"net"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"regexp"

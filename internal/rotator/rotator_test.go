@@ -2,11 +2,11 @@ package rotator
 
 import (
 	"encoding/json"
-	"strings"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
