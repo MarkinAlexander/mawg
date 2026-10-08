@@ -12,6 +12,8 @@
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, sans-serif; }
+input[type=number]::-ms-clear, input[type=number]::-webkit-search-cancel-button,
+input[type=number]::-webkit-search-decoration, input::-webkit-clear-button { display: none; }
 /* панель скрыта до проверки сессии: чёрный фон и модалка входа */
 body:not(.unlocked) header, body:not(.unlocked) main { display: none; }
 a { color: var(--accent); }
@@ -168,11 +170,11 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
     <div class="muted" id="presetSrc" style="font-size:11px;margin-top:4px"></div>
     <div class="btnrow" style="align-items:center;margin-top:12px;font-size:12px;flex-wrap:wrap">
       <span class="muted">Политики отвала: переключать после</span>
-      <input id="polFailCycles" type="number" min="1" max="20" style="width:56px" title="сколько циклов проверки (30с) интерфейс должен считаться мёртвым подряд">
+      <input id="polFailCycles" type="number" min="1" max="20" style="width:56px" title="сколько циклов проверки (30с) интерфейс должен считаться мёртвым подряд" placeholder="2">
       <span class="muted">циклов отказа, возвращать после</span>
-      <input id="polRestoreCycles" type="number" min="1" max="20" style="width:56px" title="сколько циклов подряд интерфейс должен быть живым перед возвратом">
+      <input id="polRestoreCycles" type="number" min="1" max="20" style="width:56px" title="сколько циклов подряд интерфейс должен быть живым перед возвратом" placeholder="2">
       <span class="muted">здоровых циклов</span>
-      <button type="button" id="polCyclesSave">сохранить</button>
+      <button type="button" id="polCyclesSave" disabled>сохранить</button>
     </div>
     <div class="muted" style="font-size:11px;margin-top:4px">Цикл проверки - каждые 30 секунд. Меньше 2 не рекомендуется: «переключать после 1» уводит группы на запасной интерфейс из-за одной потерянной пробы (разовый таймаут или скачок пинга - ложное срабатывание), «возвращать после 1» дёргает группы обратно при первом же удачном прогоне - флапающий канал будет переключать их каждые 30-60 секунд и рвать соединения. Значения 2/2 - разумный компромисс: реакция на отвала ~1-1.5 минуты, возврат только после устойчивого восстановления.</div>
     <div id="mtgroups" style="margin-top:10px"></div>
@@ -1464,20 +1466,38 @@ document.getElementById('wanSave').onclick = async () => {
 
 document.getElementById('sbModeSave').onclick = setSbMode;
 
+let polSaved = { fail: null, restore: null };
+function polCyclesValid() {
+  const f = document.getElementById('polFailCycles').value.trim();
+  const r = document.getElementById('polRestoreCycles').value.trim();
+  const okF = /^[1-9][0-9]?$/.test(f) && +f <= 20;
+  const okR = /^[1-9][0-9]?$/.test(r) && +r <= 20;
+  const changed = okF && okR && (+f !== polSaved.fail || +r !== polSaved.restore);
+  document.getElementById('polCyclesSave').disabled = !changed;
+  return okF && okR && changed;
+}
 async function loadPolicyCycles() {
   try {
     const r = await api('GET', '/mt/policy-cycles');
     document.getElementById('polFailCycles').value = r.failCycles;
     document.getElementById('polRestoreCycles').value = r.restoreCycles;
+    polSaved = { fail: r.failCycles, restore: r.restoreCycles };
+    polCyclesValid();
   } catch {}
 }
+['polFailCycles', 'polRestoreCycles'].forEach(id => {
+  document.getElementById(id).addEventListener('input', polCyclesValid);
+});
 document.getElementById('polCyclesSave').onclick = async e => {
+  if (!polCyclesValid()) return;
   const body = {
-    failCycles: +document.getElementById('polFailCycles').value || 2,
-    restoreCycles: +document.getElementById('polRestoreCycles').value || 2,
+    failCycles: +document.getElementById('polFailCycles').value,
+    restoreCycles: +document.getElementById('polRestoreCycles').value,
   };
   try {
     const r = await api('PUT', '/mt/policy-cycles', body);
+    polSaved = { fail: r.failCycles, restore: r.restoreCycles };
+    polCyclesValid();
     toast('Гистерезис политик: переключение после ' + r.failCycles + ' отказов, возврат после ' + r.restoreCycles + ' здоровых циклов');
   } catch (err) { toast(err.message, true); }
 };
