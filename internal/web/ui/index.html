@@ -61,7 +61,7 @@ dialog::backdrop { background: rgba(0,0,0,.55); }
 #dlgPool.linkmode { max-width: min(94vw, 760px); }
 .rowoff { opacity: .45; pointer-events: none; }
 label.f { display: block; margin: 8px 0; font-size: 13px; color: var(--dim); }
-label.f input, label.f select { display: block; margin-top: 3px; width: 100%; }
+label.f input, label.f select, label.f textarea { display: block; margin-top: 3px; width: 100%; }
 label.f .pwrap { position: relative; margin-top: 3px; }
 label.f .pwrap input { margin-top: 0; padding-right: 32px; }
 .peye { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); background: none; border: none; padding: 2px; color: var(--dim); line-height: 0; }
@@ -265,7 +265,7 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
       <button type="button" id="pModeLink">ссылка или подписка</button>
     </div>
     <label class="f">Имя (латиница, цифры, дефис)
-      <input id="pName" placeholder="proton или my-vless-fr" pattern="[a-z][a-z0-9-]{0,14}" title="строчная латиница, цифры и дефисы, начинается с буквы, до 15 символов" required>
+      <input id="pName" placeholder="proton" pattern="[a-z][a-z0-9-]{0,14}" title="строчная латиница, цифры и дефисы, начинается с буквы, до 15 символов" required>
     </label>
     <label class="f" id="slotRow" style="display:none">Слот Keenetic
       <div class="btnrow" style="margin-top:3px">
