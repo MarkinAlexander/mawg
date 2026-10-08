@@ -10,8 +10,9 @@ import (
 
 // installLXCore - установка lx-ядра sing-box по кнопке «Система ->
 // Зависимости». Чужое ядро меняется только когда свежая проверка показала
-// именно пункт замены (владелец подтвердил это в диалоге установки).
-func (s *Server) installLXCore(w http.ResponseWriter, r *http.Request, flavor string) {
+// именно пункт замены (владелец подтвердил это в диалоге установки);
+// backup=false - заменить без сохранения старого бинаря.
+func (s *Server) installLXCore(w http.ResponseWriter, r *http.Request, flavor string, backup bool) {
 	replace := false
 	for _, item := range s.systemCheck().Items {
 		if item.ID == "singbox-lx" {
@@ -20,11 +21,12 @@ func (s *Server) installLXCore(w http.ResponseWriter, r *http.Request, flavor st
 		}
 	}
 	target := singbox.LXTargetForPlatform(s.backend.Name())
-	s.store.LogEvent("system", "lxcore", "установка lx-ядра ("+orDefault(flavor, "plain")+", цель "+target.Bin+", замена чужого: "+yesNo(replace)+")")
+	s.store.LogEvent("system", "lxcore", "установка lx-ядра ("+orDefault(flavor, "plain")+", цель "+target.Bin+", замена чужого: "+yesNo(replace)+", копия старого: "+yesNo(backup)+")")
 	ctx, cancel := context.WithTimeout(r.Context(), 290*time.Second)
 	defer cancel()
 	res, err := singbox.InstallLXCore(ctx, singbox.LXInstallOptions{
 		Flavor: flavor, Target: target, ReplaceForeign: replace,
+		DropForeignBackup: replace && !backup,
 	})
 	if err != nil {
 		s.store.LogEvent("system", "lxcore", "установка не удалась: "+err.Error())

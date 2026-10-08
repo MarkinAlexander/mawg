@@ -21,6 +21,13 @@ type Item struct {
 	Confirm        string   `json:"confirm,omitempty"`
 	RequiresReboot bool     `json:"requiresReboot,omitempty"`
 	Note           string   `json:"note,omitempty"`
+	// StatusText - свой текст бейджа состояния вместо ок/нет
+	// (например «чужое upstream» для не-lx ядра).
+	StatusText string `json:"statusText,omitempty"`
+	// FreeBytes/BackupBytes - место на диске установки и размер текущего
+	// ядра: диалог установки решает, влезет ли бэкап старого бинаря.
+	FreeBytes   int64 `json:"freeBytes,omitempty"`
+	BackupBytes int64 `json:"backupBytes,omitempty"`
 }
 
 type Result struct {
@@ -309,10 +316,10 @@ func CheckKeenetic(ndmc func(string) (string, error)) Result {
 	return res
 }
 
-// lxCoreItem - пункт «ядро sing-box-lx»: состояние рабочего бинаря и место/
-// память для подтверждения. Сама установка идёт кодом (singbox.InstallLXCore),
-// Action - маркер для обработчика в web, НЕ shell-скрипт; пути совпадают с
-// singbox.LXTargetForPlatform.
+// lxCoreItem - пункт «ядро sing-box-lx»: состояние рабочего бинаря и место
+// на диске для диалога установки. Сама установка идёт кодом
+// (singbox.InstallLXCore), Action - маркер для обработчика в web, НЕ
+// shell-скрипт; пути совпадают с singbox.LXTargetForPlatform.
 func lxCoreItem(run Runner, platform string) Item {
 	bin, markerDir, disk := "/usr/bin/sing-box", "/etc/sing-box-lx", "/"
 	if platform == "keenetic" {
@@ -331,54 +338,47 @@ func lxCoreItem(run Runner, platform string) Item {
 	if out, err := run("test -f "+markerDir+"/.installed-by-mawg && echo marked", 5*time.Second); err == nil && strings.Contains(out, "marked") {
 		marked = true
 	}
-	space, ram := "", ""
-	if out, err := run("df -h "+disk+" 2>/dev/null | tail -1 | awk '{print \"disk \" $4}'; free 2>/dev/null | awk '/^Mem:/{print \"ram \" $4}'", 10*time.Second); err == nil {
-		for _, line := range strings.Split(out, "\n") {
-			if k, v, ok := strings.Cut(strings.TrimSpace(line), " "); ok {
-				switch k {
-				case "disk":
-					space = v
-				case "ram":
-					ram = v
-				}
-			}
+	// место (КБ из df -k) и размер текущего бинаря: диалог установки
+	// предлагает сохранить старое ядро только если копия физически влезает
+	freeBytes, backupBytes := int64(0), int64(0)
+	if out, err := run("df -k "+disk+" 2>/dev/null | tail -1 | awk '{print $4}'", 10*time.Second); err == nil {
+		if kb, perr := strconv.ParseInt(strings.TrimSpace(out), 10, 64); perr == nil && kb > 0 {
+			freeBytes = kb * 1024
 		}
 	}
-	env := fmt.Sprintf("свободно на %s: %s, RAM свободно: %s", disk,
-		orDash(space), orDash(ram))
-	item := Item{ID: "singbox-lx", Title: "Ядро sing-box-lx", Version: ver}
-	confirm := fmt.Sprintf("Скачает свежий релиз sing-box-lx (SHA256, тест-запуск в /tmp, потом установка в %s). %s. После установки движок mawg использует lx-профиль; в режиме «общего ядра» сервис sing-box будет перезапущен - соединения рвутся на несколько секунд.", bin, env)
+	if out, err := run("wc -c < "+bin+" 2>/dev/null", 10*time.Second); err == nil {
+		if n, perr := strconv.ParseInt(strings.TrimSpace(out), 10, 64); perr == nil && n > 0 {
+			backupBytes = n
+		}
+	}
+	item := Item{
+		ID: "singbox-lx", Title: "Ядро sing-box-lx", Version: ver,
+		FreeBytes: freeBytes, BackupBytes: backupBytes,
+	}
+	confirm := fmt.Sprintf("mawg скачает свежий релиз sing-box-lx, проверит контрольную сумму, прогонит тест-запуск во временном каталоге и только потом установит в %s. После установки движок mawg работает на lx-профиле; в режиме «общего ядра» сервис sing-box будет перезапущен - соединения порвутся на несколько секунд.", bin)
 	switch {
 	case ver == "":
+		item.StatusText = "не установлен"
 		item.Action = "singbox-lx"
-		item.ActionLabel = "установить"
-		item.Flavors = []string{"plain", "upx"}
-		item.Confirm = "Ядро sing-box сейчас не установлено. " + confirm
+		item.ActionLabel = "установить lx"
+		item.Confirm = "Сейчас ядро sing-box не установлено. " + confirm
 	case strings.Contains(ver, "-lx."):
 		item.Installed = true
 		item.Action = "singbox-lx"
-		item.ActionLabel = "обновить из релиза"
-		item.Flavors = []string{"plain", "upx"}
-		item.Confirm = fmt.Sprintf("Установлено lx-ядро %s (своё). ", ver) + confirm + " Если релиз не новее установленного - ничего не изменится."
+		item.ActionLabel = "обновить lx"
+		item.Confirm = fmt.Sprintf("Сейчас стоит lx-ядро %s. mawg сравнит его со свежим релизом и установит новый только если тот старее по суффиксу -lx.N, иначе ничего не изменится. ", ver) + confirm
 		if !marked {
-			item.Note = fmt.Sprintf("Стоит lx-ядро %s без маркера mawg (ставили вручную): считается своим, после кнопки появится маркер.", ver)
+			item.Note = "Ядро lx стоит без маркера mawg (ставили вручную) - считается своим, после установки появится маркер."
 			item.ActionLabel = "пометить своим и обновить"
 		}
 	default:
+		item.StatusText = "чужое upstream"
 		item.Action = "singbox-lx-replace"
-		item.ActionLabel = "заменить чужое"
-		item.Flavors = []string{"plain", "upx"}
-		item.Note = fmt.Sprintf("Сейчас стоит чужое ядро (upstream %s): mawg его не трогает. Замена только по кнопке, старое сохранится как %s.pre-lx.", ver, bin)
-		item.Confirm = fmt.Sprintf("ЗАМЕНИТ рабочее ядро %s (upstream %s) на lx-релиз. Старое сохранится как %s.pre-lx, сервис sing-box будет перезапущен - соединения порвутся; если сервис не переподнимется с новым бинарем с первого раза, перезапустите его ещё раз. %s. lx-профиль нужен движку для xhttp/mlkem-узлов.", bin, ver, bin, env)
+		item.ActionLabel = "заменить на lx"
+		item.Note = fmt.Sprintf("Сейчас стоит чужое ядро (upstream %s): mawg его не трогает, замена - только по этой кнопке. Сохранять ли старое перед заменой - выбор в диалоге (зависит от свободного места).", ver)
+		item.Confirm = fmt.Sprintf("Заменит чужое ядро %s (upstream %s) на lx-релиз. Сервис sing-box будет перезапущен - соединения порвутся; если сервис не переподнимется с новым бинарем с первого раза, перезапустите его ещё раз. ", bin, ver) + confirm + " lx-профиль нужен движку для xhttp/mlkem-узлов и AWG-эндпоинтов."
 	}
 	return item
-}
-
-func orDash(s string) string {
-	if strings.TrimSpace(s) == "" {
-		return "н/д"
-	}
-	return strings.TrimSpace(s)
 }
 
 type keeneticVersion struct {

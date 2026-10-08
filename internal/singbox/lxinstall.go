@@ -290,8 +290,11 @@ type LXInstallOptions struct {
 	Target LXTarget
 	// ReplaceForeign - явное согласие заменить чужое (upstream) ядро.
 	ReplaceForeign bool
-	TmpDir         string
-	MinTarball     int64 // 0 = lxMinTarball
+	// DropForeignBackup - удалить чужое ядро без сохранения копии <bin>.pre-lx
+	// (для устройств без свободного места; выбор в диалоге установки).
+	DropForeignBackup bool
+	TmpDir            string
+	MinTarball        int64 // 0 = lxMinTarball
 	// Fetch скачивает url в dest-файл, возвращает размер (тесты подменяют).
 	Fetch func(ctx context.Context, url, dest string) (int64, error)
 	// Run - запуск внешних команд (tar, тест-запуск); nil = exec.
@@ -460,13 +463,16 @@ func InstallLXCore(ctx context.Context, opts LXInstallOptions) (LXInstallResult,
 		return res, err
 	}
 	_ = os.RemoveAll(dir)
-	if prevVer != "" && !HasLXSuffix(prevVer) {
+	foreign := prevVer != "" && !HasLXSuffix(prevVer)
+	if foreign {
 		backup := opts.Target.Bin + ".pre-lx"
-		if _, err := os.Stat(backup); err == nil {
+		if _, exists := os.Stat(backup); exists == nil {
 			step("бэкап чужого ядра уже есть: %s", backup)
+		} else if opts.DropForeignBackup {
+			step("чужое ядро %s удаляется без сохранения копии (выбрано в диалоге)", prevVer)
 		} else if err := copyFile(opts.Target.Bin, backup, 0o755); err != nil {
 			os.Remove(staged)
-			return res, fmt.Errorf("сохранить чужое ядро перед заменой не удалось: %v", err)
+			return res, fmt.Errorf("сохранить чужое ядро перед заменой не удалось (место кончилось?): %v; можно повторить с отключённым сохранением старого", err)
 		} else {
 			res.Backup = backup
 			step("чужое ядро %s сохранено как %s", prevVer, backup)

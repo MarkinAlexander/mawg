@@ -307,6 +307,33 @@ func TestInstallLXCoreMigrateExistingLX(t *testing.T) {
 	}
 }
 
+func TestInstallLXCoreForeignDropBackup(t *testing.T) {
+	// замена чужого ядра без сохранения копии - для устройств без места
+	f := newFakeLXCore(t, "1.14.2-lx.7")
+	f.targetVer = "1.13.3"
+	if err := os.MkdirAll(filepath.Dir(f.targetBin), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(f.targetBin, []byte("upstream-binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	opts := f.opts(true)
+	opts.DropForeignBackup = true
+	res, err := InstallLXCore(context.Background(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Backup != "" {
+		t.Fatalf("бэкап не должен создаваться: %+v", res)
+	}
+	if _, err := os.Stat(f.targetBin + ".pre-lx"); !os.IsNotExist(err) {
+		t.Fatalf("файл .pre-lx не должен существовать: %v", err)
+	}
+	if !strings.Contains(res.Log, "без сохранения копии") {
+		t.Fatalf("лог: %s", res.Log)
+	}
+}
+
 func TestInstallLXCoreBadChecksum(t *testing.T) {
 	f := newFakeLXCore(t, "1.14.2-lx.7")
 	if err := os.WriteFile(filepath.Join(f.dir, "SHA256SUMS"), []byte("deadbeef  "+f.asset+"\n"), 0o644); err != nil {

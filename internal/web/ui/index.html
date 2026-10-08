@@ -53,6 +53,9 @@ label.f .psel { margin-top: 3px; }
 table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 8px; }
 th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--border); word-break: break-all; }
 th { color: var(--dim); font-weight: normal; }
+/* заголовки и короткие колонки системной таблицы не рвутся посреди слова */
+#systable th, #systable td:nth-child(2), #systable td:nth-child(3) { white-space: nowrap; word-break: normal; }
+#systable td:first-child { word-break: break-word; }
 .drop { border: 1px dashed var(--border); border-radius: 8px; padding: 14px; text-align: center; color: var(--dim); margin-top: 10px; cursor: pointer; }
 .drop.hover { border-color: var(--accent); color: var(--accent); }
 dialog { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 18px; min-width: 360px; max-width: min(92vw, 480px); max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); overflow-y: auto; overflow-x: hidden; }
@@ -499,6 +502,28 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
     <div class="btnrow" style="justify-content:end;margin:0">
       <button value="cancel">Отмена</button>
       <button class="primary" id="cfOk">Установить</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="dlgLx">
+  <form method="dialog" style="display:grid; gap:8px; min-width:440px; max-width:620px">
+    <h3 style="margin:0" id="lxTitle">Ядро sing-box-lx</h3>
+    <div id="lxText" style="font-size:13px;white-space:pre-line;line-height:1.5"></div>
+    <label class="f">Профиль сборки
+      <select id="lxFlavor">
+        <option value="plain">plain - обычный бинарь: быстрый старт, много места (на mips ~90 МБ)</option>
+        <option value="upx">upx - сжатый: в ~4 раза меньше на диске, старт дольше и RAM больше (opt-in)</option>
+      </select>
+    </label>
+    <div class="f" id="lxBackupRow" style="display:none;align-items:center;gap:8px">
+      <label class="switch" title="сохранить старое ядро рядом перед заменой"><input type="checkbox" id="lxBackup"><span class="knob"></span></label>
+      <span id="lxBackupText" style="font-size:12px"></span>
+    </div>
+    <div class="muted" id="lxNote" style="font-size:11px"></div>
+    <div class="btnrow" style="justify-content:end;margin:0">
+      <button value="cancel">Отмена</button>
+      <button class="primary" id="lxGo">Установить</button>
     </div>
   </form>
 </dialog>
@@ -2246,20 +2271,17 @@ async function refreshSystem(force) {
     if (!force && json === lastSysJSON) return;
     lastSysJSON = json;
     const rows = (r.items || []).map(it => {
-      const st = it.installed
-        ? '<span class="badge up">ок</span>'
-        : '<span class="badge fallback">нет</span>';
-      const flavors = it.flavors && it.flavors.length ? it.flavors : [''];
+      const badge = it.statusText
+        ? (it.installed ? `<span class="badge up">${esc(it.statusText)}</span>` : `<span class="badge fallback">${esc(it.statusText)}</span>`)
+        : (it.installed ? '<span class="badge up">ок</span>' : '<span class="badge fallback">нет</span>');
       const btn = it.action
-        ? flavors.map(f =>
-            `<button class="primary" data-inst="${it.id}" data-flavor="${f}">${esc(it.actionLabel || 'установить')}${f ? ' (' + f + ')' : ''}</button>`
-          ).join(' ') : '';
+        ? `<button class="primary" data-inst="${it.id}">${esc(it.actionLabel || 'установить')}</button>` : '';
       const note = it.note ? `<div class="muted" style="font-size:11px">${it.note}</div>` : '';
-      return `<tr><td>${it.title}${note}</td><td class="muted">${it.version || ''}</td><td>${st}</td><td style="white-space:nowrap">${btn}</td></tr>`;
+      return `<tr><td>${it.title}${note}</td><td class="muted">${it.version || ''}</td><td>${badge}</td><td style="white-space:nowrap">${btn}</td></tr>`;
     }).join('');
     document.querySelector('#systable').innerHTML = '<tr><th>компонент</th><th>версия</th><th>состояние</th><th></th></tr>' + rows;
     document.querySelectorAll('#systable button[data-inst]').forEach(btn => {
-      btn.onclick = () => installComp(btn.dataset.inst, btn, btn.dataset.flavor);
+      btn.onclick = () => installComp(btn.dataset.inst, btn);
     });
   } catch (e) { console.warn(e); }
 }
@@ -2673,13 +2695,15 @@ function showResult(ok, output, errText) {
   fillIfaceSelects();
 }
 
-async function installComp(id, btn, flavor) {
+async function installComp(id, btn) {
   let item;
   try {
     const r = await api('GET', '/system/check');
     item = (r.items || []).find(i => i.id === id);
   } catch (e) { return toast(e.message, true); }
-  if (!item || !item.confirm) return;
+  if (!item) return;
+  if (id === 'singbox-lx') return openLxDialog(item, btn);
+  if (!item.confirm) return;
   const okLabel = item.actionLabel || 'Установить';
   if (!(await askModal(okLabel + ': ' + item.title, item.confirm, okLabel))) return;
   const label = btn.textContent;
@@ -2687,7 +2711,7 @@ async function installComp(id, btn, flavor) {
   let res;
   try {
     res = await fetch('/api/v1/system/install', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, flavor: flavor || '' })
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id })
     }).then(x => x.json());
   } catch (e) { btn.disabled = false; btn.textContent = label; return showResult(false, '', e.message); }
   btn.disabled = false; btn.textContent = label;
@@ -2695,6 +2719,57 @@ async function installComp(id, btn, flavor) {
   lastSysJSON = '';
   refreshSystem(true);
 }
+
+// диалог установки lx-ядра: профиль plain/upx и - для замены чужого -
+// сохранять ли старое ядро (выбор по свободному месту)
+function openLxDialog(item, btn) {
+  const mb = b => (b / 1048576).toFixed(0) + ' МБ';
+  $('#lxTitle').textContent = (item.actionLabel || 'Установить') + ' - ядро sing-box-lx';
+  $('#lxText').textContent = item.confirm || '';
+  $('#lxNote').textContent = item.note || '';
+  $('#lxNote').style.display = item.note ? '' : 'none';
+  $('#lxGo').textContent = item.actionLabel || 'Установить';
+  $('#lxGo').dataset.flavor = $('#lxFlavor').value || 'plain';
+  const isReplace = item.action === 'singbox-lx-replace';
+  const row = $('#lxBackupRow'), cb = $('#lxBackup'), txt = $('#lxBackupText');
+  if (isReplace && item.backupBytes > 0) {
+    row.style.display = 'flex';
+    const fits = (item.freeBytes || 0) > item.backupBytes + 64 * 1048576;
+    cb.checked = fits;
+    cb.disabled = !fits;
+    txt.textContent = fits
+      ? `сохранить старое ядро как sing-box.pre-lx (${mb(item.backupBytes)}, свободно ${mb(item.freeBytes)})`
+      : `для копии старого ядра (${mb(item.backupBytes)}) места не хватит (свободно ${mb(item.freeBytes)}) - будет удалено без сохранения`;
+  } else {
+    row.style.display = 'none';
+    cb.checked = false;
+  }
+  dlgLx.showModal();
+}
+$('#lxFlavor').onchange = e => { $('#lxGo').dataset.flavor = e.target.value; };
+document.querySelector('#dlgLx button[value=cancel]').onclick = () => dlgLx.close();
+$('#lxGo').onclick = async e => {
+  e.preventDefault();
+  const btn = document.querySelector('#systable button[data-inst="singbox-lx"]');
+  const label = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'установка...'; }
+  let res;
+  try {
+    res = await fetch('/api/v1/system/install', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: 'singbox-lx', flavor: $('#lxGo').dataset.flavor || 'plain', backup: $('#lxBackup').checked })
+    }).then(x => x.json());
+  } catch (err) {
+    if (btn) { btn.disabled = false; btn.textContent = label; }
+    dlgLx.close();
+    return showResult(false, '', err.message);
+  }
+  if (btn) { btn.disabled = false; btn.textContent = label; }
+  dlgLx.close();
+  showResult(!!res.ok, res.output, res.ok ? '' : (res.error || 'неизвестная ошибка'));
+  lastSysJSON = '';
+  refreshSystem(true);
+};
 
 async function refreshRCIToken() {
   const row = document.getElementById('rciRow');
