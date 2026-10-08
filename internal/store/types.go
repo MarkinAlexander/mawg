@@ -258,9 +258,8 @@ func (s Settings) WithDefaults() Settings {
 	if out.PolicyFailCycles <= 0 {
 		out.PolicyFailCycles = 2
 	}
-	// возврат после одного здорового цикла - как было до введения гистерезиса
 	if out.PolicyRestoreCycles <= 0 {
-		out.PolicyRestoreCycles = 1
+		out.PolicyRestoreCycles = 2
 	}
 	return out
 }
