@@ -159,7 +159,7 @@ func (m *Manager) probeSpec(spec PoolSpec) {
 		err = fmt.Errorf("RTT %dms выше порога %dms", ms, spec.MaxRTTms)
 	}
 	st := &PoolStatus{
-		Eligible: len(spec.Nodes), MixedPort: spec.MixedPort,
+		Eligible: len(spec.Nodes) + len(spec.WG), MixedPort: spec.MixedPort,
 		ProbeOK: err == nil, ProbeMs: ms, CheckedAt: time.Now(),
 		ConsecFails: fails,
 	}
@@ -707,7 +707,20 @@ func (m *Manager) Apply(pools []PoolSpec) ([]string, error) {
 	var runnable []PoolSpec
 	for i, spec := range pools {
 		eligible, reasons := EligibleNodes(spec.Nodes, m.eng.LX)
-		if len(eligible) == 0 {
+		// WG-конфиги пула - полноценные члены (wireguard-эндпоинты): пул
+		// без vless-узлов, но с конфигами runnable. AWG-поля умеет только
+		// lx-сборка - на upstream такие конфигы ждут ядро.
+		wgOK := len(spec.WG) > 0
+		if wgOK && !m.eng.LX {
+			for _, c := range spec.WG {
+				if c.AWG.Present() {
+					wgOK = false
+					reasons = append(reasons, "конфиги AmneziaWG требуют ядро lx (сборку с awg)")
+					break
+				}
+			}
+		}
+		if len(eligible) == 0 && !wgOK {
 			m.setStatus(spec.Name, &PoolStatus{Reason: "waits-lx", Detail: strings.Join(reasons, "; ")})
 			skipped = append(skipped, fmt.Sprintf("пул %s: ни один узел не поддерживается текущим движком (%s)", spec.Name, strings.Join(reasons, "; ")))
 			continue
