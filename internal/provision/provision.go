@@ -336,7 +336,11 @@ type lxVerEntry struct {
 func cachedBinVersion(bin string, run Runner) string {
 	size, mtime, ok := lxFileStat(bin)
 	if !ok {
-		return parseBinVersion(runBinVersion(bin, run))
+		out, err := runBinVersion(bin, run)
+		if err != nil {
+			return ""
+		}
+		return parseBinVersion(out)
 	}
 	lxVerMu.Lock()
 	c, hit := lxVerCache[bin]
@@ -344,16 +348,25 @@ func cachedBinVersion(bin string, run Runner) string {
 	if hit && c.size == size && c.mtime.Equal(mtime) {
 		return c.ver
 	}
-	ver := parseBinVersion(runBinVersion(bin, run))
+	ver := ""
+	if out, err := runBinVersion(bin, run); err == nil {
+		ver = parseBinVersion(out)
+	} else {
+		// таймаут/сбой запуска не кэшируем: «не установлен» не должен
+		// закрепиться до замены бинаря
+		return ""
+	}
 	lxVerMu.Lock()
 	lxVerCache[bin] = lxVerEntry{size: size, mtime: mtime, ver: ver}
 	lxVerMu.Unlock()
 	return ver
 }
 
-func runBinVersion(bin string, run Runner) string {
-	out, _ := run(bin+" version 2>/dev/null", 10*time.Second)
-	return out
+func runBinVersion(bin string, run Runner) (string, error) {
+	// upx-профиль на mipsle-softfloat стартует по 10+ секунд (распаковка),
+	// потолок должен это переживать: 10с убивал запуск и ядро «пропадало»
+	out, err := run(bin+" version 2>/dev/null", 90*time.Second)
+	return out, err
 }
 
 func parseBinVersion(out string) string {

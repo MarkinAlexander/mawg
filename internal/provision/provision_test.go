@@ -126,6 +126,37 @@ func TestLxCoreItemStates(t *testing.T) {
 	}
 }
 
+// сбой/таймаут запуска (upx-старт дольше потолка) не закрепляет пустую
+// версию в кэше - после успешного запуска версия появляется
+func TestCachedBinVersionRetriesAfterFailure(t *testing.T) {
+	oldStat := lxFileStat
+	mtime := time.Unix(777, 0)
+	lxFileStat = func(p string) (int64, time.Time, bool) { return 17612508, mtime, true }
+	t.Cleanup(func() { lxFileStat = oldStat })
+	lxVerMu.Lock()
+	lxVerCache = map[string]lxVerEntry{}
+	lxVerMu.Unlock()
+
+	calls, fail := 0, true
+	run := func(script string, _ time.Duration) (string, error) {
+		calls++
+		if fail {
+			return "", fmt.Errorf("таймаут: процесс убит")
+		}
+		return "sing-box version 1.14.2-lx.12\n", nil
+	}
+	if v := cachedBinVersion("/opt/bin/sing-box", run); v != "" {
+		t.Fatalf("при сбое версия должна быть пустой: %q", v)
+	}
+	fail = false
+	if v := cachedBinVersion("/opt/bin/sing-box", run); v != "1.14.2-lx.12" {
+		t.Fatalf("после успеха: %q", v)
+	}
+	if v := cachedBinVersion("/opt/bin/sing-box", run); v != "1.14.2-lx.12" || calls != 2 {
+		t.Fatalf("кэш после успеха: %q, вызовов %d", v, calls)
+	}
+}
+
 // версия бинаря кэшируется по stat-ключу: `sing-box version` на медленной
 // флешке дорог (вычитывает весь бинарь), опрос панели не должен его плодить
 func TestCachedBinVersionReusesStatKey(t *testing.T) {
