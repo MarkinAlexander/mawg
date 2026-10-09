@@ -209,7 +209,8 @@ func TestPremiumHTTPImportSwitchAndSanitizedStatus(t *testing.T) {
 			t.Fatalf("missing active Vue template behavior: %s", snippet)
 		}
 	}
-	code, body = request("GET", "/", nil)
+	// классическая панель переехала с / на /legacy/ (корень редиректит на /app/)
+	code, body = request("GET", "/legacy/", nil)
 	for _, snippet := range []string{"premium-key", "premium-country", "/premium/country", "type=\"password\"", "keyInput.value = ''", "!isEng && !p.disabled && !premium.imported", "upgradeSelect(q('.premium-country'))"} {
 		if code != 200 || !strings.Contains(body, snippet) {
 			t.Fatalf("missing UI import/switch behavior: %s", snippet)
