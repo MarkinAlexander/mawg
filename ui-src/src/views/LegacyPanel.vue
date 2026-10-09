@@ -289,6 +289,10 @@ onMounted(() => {
     <label class="f" id="spRenameRow">Имя (переименование)
       <input id="spRename" pattern="[a-z][a-z0-9-]{0,14}" title="строчная латиница, цифры и дефисы, начинается с буквы, до 15 символов">
     </label>
+    <div class="f" id="spMembersRow" style="display:none">
+      <div style="font-size:13px;margin-bottom:2px">Состав пула (протоколы и адреса)</div>
+      <div id="spMembers" style="max-height:180px;overflow:auto;font-size:12px;display:grid;gap:4px"></div>
+    </div>
     <label class="f" id="spProbeTypeRow">Тип пробы через туннель
       <select id="spProbeType">
         <option value="http">HTTP-страница 204 (надежнее, ICMP режут)</option>

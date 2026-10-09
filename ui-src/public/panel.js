@@ -175,6 +175,10 @@ function updateCard(p) {
       ? `${p.settings.tunName} | движок остановлен`
       : `${p.settings.tunName} | движок sing-box${STATUS.engine && STATUS.engine.version ? ' ' + STATUS.engine.version : ''}${STATUS.engine && !STATUS.engine.running ? ' (не запущен)' : ''}`;
     card.endpoint.textContent = engTun ? `узлов: ${engTun.nodes}` : '-';
+    // плашки протоколов: что именно гоняет движок (AmneziaWG 3.x, vless/ws, ...)
+    const badges = (p.protos || []).map(b =>
+      `<span class="badge" title="${esc(b.kind === 'proxy' ? 'прокси-узел движка' : 'конфиг WG/AWG движка')}">${esc(b.label)}${b.count > 1 ? ' ×' + b.count : ''}</span>`).join(' ');
+    card.sub.insertAdjacentHTML('beforeend', badges ? ' ' + badges : '');
   } else {
     card.sub.textContent = p.disabled
       ? `${p.slot ? p.slot + ' = ' : ''}${p.device} | ротация остановлена`
@@ -766,10 +770,32 @@ function wireProbeSwitch(typeSel, targetInput) {
 }
 
 let settingsPool = null;
+// состав пула для шестерёнки: конфиги WG и прокси-узлы с протоколами
+async function loadPoolMembers(name) {
+  const row = document.getElementById('spMembersRow');
+  const box = document.getElementById('spMembers');
+  if (!row || !box) return;
+  try {
+    const r = await api('GET', `/pools/${name}/members`);
+    const items = r.members || [];
+    row.style.display = items.length ? '' : 'none';
+    box.innerHTML = items.map(m => `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <span class="badge">${esc(m.proto)}${m.detail ? '<span class="muted">/' + esc(m.detail) + '</span>' : ''}</span>
+      <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(m.name)}">${esc(m.name)}</span>
+      <span class="muted" style="font-size:11px">${esc(m.endpoint || '')}</span>
+      ${m.active ? '<span class="badge up">активен</span>' : ''}
+      ${m.enabled === false ? '<span class="badge cool">выключен</span>' : ''}
+    </div>`).join('');
+  } catch (e) {
+    row.style.display = 'none';
+  }
+}
+
 function openSettings(name) {
   const p = STATUS && STATUS.pools.find(x => x.name === name);
   if (!p) return;
   settingsPool = p;
+  loadPoolMembers(name);
   $('#spName').textContent = p.name;
   $('#spSourceRow').style.display = (p.settings.engineMode === 'singbox' || p.settings.source) ? '' : 'none';
   $('#spSource').value = p.settings.source || '';
