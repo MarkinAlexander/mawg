@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"mawg/internal/platform"
@@ -303,6 +304,67 @@ func CheckKeenetic(ndmc func(string) (string, error)) Result {
 	return res
 }
 
+// lxFileStat - (размер, mtime, существует); подменяется в тестах. Реальные
+// проверки ядра идут через stat/statfs, а не shell: wc -c < sing-box и df
+// на медленной флешке (40МБ бинарь ~3.4с чтения) при опросе панели каждые
+// 60с съедали CPU роутера пачкой одноимённых процессов.
+var (
+	lxFileStat = func(p string) (int64, time.Time, bool) {
+		st, err := os.Stat(p)
+		if err != nil {
+			return 0, time.Time{}, false
+		}
+		return st.Size(), st.ModTime(), true
+	}
+	lxDiskFree = platform.DiskFreeBytes
+)
+
+// Кэш версии бинаря по stat-ключу (размер+mtime): `sing-box version`
+// вычитывает весь бинарь с флешки (те же секунды), а версия меняется
+// только вместе с файлом - при замене mtime всегда свежий.
+var (
+	lxVerMu    sync.Mutex
+	lxVerCache = map[string]lxVerEntry{}
+)
+
+type lxVerEntry struct {
+	size  int64
+	mtime time.Time
+	ver   string
+}
+
+func cachedBinVersion(bin string, run Runner) string {
+	size, mtime, ok := lxFileStat(bin)
+	if !ok {
+		return parseBinVersion(runBinVersion(bin, run))
+	}
+	lxVerMu.Lock()
+	c, hit := lxVerCache[bin]
+	lxVerMu.Unlock()
+	if hit && c.size == size && c.mtime.Equal(mtime) {
+		return c.ver
+	}
+	ver := parseBinVersion(runBinVersion(bin, run))
+	lxVerMu.Lock()
+	lxVerCache[bin] = lxVerEntry{size: size, mtime: mtime, ver: ver}
+	lxVerMu.Unlock()
+	return ver
+}
+
+func runBinVersion(bin string, run Runner) string {
+	out, _ := run(bin+" version 2>/dev/null", 10*time.Second)
+	return out
+}
+
+func parseBinVersion(out string) string {
+	for _, line := range strings.Split(out, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			return strings.TrimSpace(strings.TrimPrefix(line, "sing-box version"))
+		}
+	}
+	return ""
+}
+
 // lxCoreItem - пункт «ядро sing-box-lx». Action - маркер для web-обработчика
 // (установка идёт кодом singbox.InstallLXCore), не shell-скрипт; пути
 // совпадают с singbox.LXTargetForPlatform.
@@ -311,34 +373,16 @@ func lxCoreItem(run Runner, platform string) Item {
 	if platform == "keenetic" {
 		bin, markerDir, disk = "/opt/bin/sing-box", "/opt/etc/sing-box-lx", "/opt"
 	}
-	ver := ""
-	if out, err := run(bin+" version 2>/dev/null", 10*time.Second); err == nil {
-		for _, line := range strings.Split(out, "\n") {
-			if line = strings.TrimSpace(line); line != "" {
-				ver = strings.TrimSpace(strings.TrimPrefix(line, "sing-box version"))
-				break
-			}
-		}
-	}
-	marked := false
-	if out, err := run("test -f "+markerDir+"/.installed-by-mawg && echo marked", 5*time.Second); err == nil && strings.Contains(out, "marked") {
-		marked = true
-	}
+	ver := cachedBinVersion(bin, run)
+	_, _, marked := lxFileStat(markerDir + "/.installed-by-mawg")
 	// свободное место и размер бинаря: хватит ли на копию старого ядра
-	freeBytes, backupBytes := int64(0), int64(0)
-	if out, err := run("df -k "+disk+" 2>/dev/null | tail -1 | awk '{print $4}'", 10*time.Second); err == nil {
-		if kb, perr := strconv.ParseInt(strings.TrimSpace(out), 10, 64); perr == nil && kb > 0 {
-			freeBytes = kb * 1024
-		}
-	}
-	if out, err := run("wc -c < "+bin+" 2>/dev/null", 10*time.Second); err == nil {
-		if n, perr := strconv.ParseInt(strings.TrimSpace(out), 10, 64); perr == nil && n > 0 {
-			backupBytes = n
-		}
+	var backupBytes int64
+	if size, _, ok := lxFileStat(bin); ok {
+		backupBytes = size
 	}
 	item := Item{
 		ID: "singbox-lx", Title: "Ядро sing-box-lx", Version: ver,
-		FreeBytes: freeBytes, BackupBytes: backupBytes,
+		FreeBytes: lxDiskFree(disk), BackupBytes: backupBytes,
 	}
 	confirm := fmt.Sprintf("mawg скачает свежий релиз sing-box-lx, проверит контрольную сумму, прогонит тест-запуск во временном каталоге и только потом установит в %s. После установки движок mawg работает на lx-профиле; в режиме «общего ядра» сервис sing-box будет перезапущен - соединения порвутся на несколько секунд.", bin)
 	switch {
