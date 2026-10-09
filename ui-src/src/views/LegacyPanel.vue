@@ -384,7 +384,7 @@ onMounted(() => {
     <h3 style="margin:0" id="cfTitle">Подтверждение</h3>
     <div id="cfText" style="font-size:13px;white-space:pre-line;line-height:1.5"></div>
     <div class="btnrow" style="justify-content:end;margin:0">
-      <button value="cancel">Отмена</button>
+      <button value="cancel" id="cfCancel">Отмена</button>
       <button class="primary" id="cfOk">Установить</button>
     </div>
   </form>
