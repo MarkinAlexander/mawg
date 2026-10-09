@@ -49,15 +49,13 @@ func prep(cmd *exec.Cmd) *exec.Cmd {
 }
 
 func run(name string, args ...string) (string, error) {
-	cmd := prep(exec.Command(name, args...))
-	out, err := cmd.Output()
-	return string(out), err
+	// uci/ip/wg/ifup в норме укладываются в секунды; потолок держит
+	// повисший на битом интерфейсе netlink-запрос от вечного накопления
+	return platform.RunBoundedOutput(prep(exec.Command(name, args...)), 30*time.Second)
 }
 
 func runShell(script string) (string, error) {
-	cmd := prep(exec.Command("/bin/sh", "-c", script))
-	out, err := cmd.CombinedOutput()
-	return string(out), err
+	return platform.RunBoundedCombined(prep(exec.Command("/bin/sh", "-c", script)), 60*time.Second)
 }
 
 func (b *Backend) Slots() ([]platform.SlotInfo, error) {
