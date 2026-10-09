@@ -1429,7 +1429,35 @@ function wireProbeSwitch(typeSel, targetInput) {
 
 let settingsPool = null;
 // состав пула для шестерёнки: конфиги WG и прокси-узлы с протоколами
-async function hidePremSourceRows(p) {
+async // шестерёнка premium-пула: смена страны прямо здесь (движковый или нативный)
+function wirePremSettings(p) {
+  const row = document.getElementById('spPremRow');
+  if (!row) return;
+  const prem = p.premium || {};
+  row.style.display = prem.imported ? '' : 'none';
+  if (!prem.imported) return;
+  const sel = document.getElementById('spPremCountry');
+  const state = JSON.stringify([prem.countries, prem.country]);
+  if (sel.dataset.state !== state) {
+    sel.innerHTML = (prem.countries || []).map(c => `<option value="${esc(c.code)}"${c.code === prem.country ? ' selected' : ''}>${esc(c.name)} (${esc(c.code)})</option>`).join('');
+    if (prem.country) sel.value = prem.country;
+    sel.dataset.state = state;
+  }
+  const note = document.getElementById('spPremNote');
+  if (note) note.textContent = prem.pending ? 'Смена не завершена: регистрация у gateway могла измениться - повторите выбор страны.' : 'Один слот устройства. Страны не добавляются в пул конфигов.';
+  document.getElementById('spPremSwitch').onclick = async e => {
+    if (!sel.value) return toast('Выберите страну', true);
+    await withBusy(e.currentTarget, async () => {
+      try {
+        await api('POST', `/pools/${p.name}/premium/country`, { country: sel.value });
+        toast('Страна применена' + (sel.selectedOptions[0] ? ': ' + sel.selectedOptions[0].textContent : ''));
+        refresh();
+      } catch (err) { toast(err.message, true); }
+    });
+  };
+}
+
+function hidePremSourceRows(p) {
   const isPrem = !!(p.premium || {}).imported;
   const src = document.getElementById('spSourceRow');
   if (src) src.style.display = (!p.free && !isPrem && (p.settings.engineMode === 'singbox' || p.settings.source)) ? '' : 'none';
