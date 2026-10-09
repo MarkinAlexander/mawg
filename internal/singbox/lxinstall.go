@@ -362,21 +362,14 @@ func InstallLXCore(ctx context.Context, opts LXInstallOptions) (LXInstallResult,
 		}
 	}
 
-	// ядро не старее релиза - не перекачиваем; без маркера всё равно ставим
-	// маркер: lx-ядро считается своим
+	// ядро не старее релиза и стоит НАША сборка - не перекачиваем;
+	// чужую/ручную сборку той же версии (маркера с нашим источником нет)
+	// заменяем своей: храним только то, что сами собираем
 	releaseVer := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(pick.Tag), "v"))
-	if HasLXSuffix(prevVer) && !LXNewer(releaseVer, prevVer) {
+	if HasLXSuffix(prevVer) && !LXNewer(releaseVer, prevVer) && markerSource(opts.Target.MarkerDir) == pick.Source.String() {
 		res.Version = prevVer
 		res.UpToDate = true
-		if !markerExists(opts.Target.MarkerDir) {
-			_ = os.MkdirAll(opts.Target.MarkerDir, 0o755)
-			marker := fmt.Sprintf("tag=%s\nversion=%s\ninstalled=%s\nflavor=%s\nadopted=true\n", pick.Tag, prevVer, time.Now().Format(time.RFC3339), opts.Flavor)
-			if err := os.WriteFile(filepath.Join(opts.Target.MarkerDir, LXMarkerName), []byte(marker), 0o644); err == nil {
-				step("lx-ядро %s уже актуально, поставлен маркер mawg", prevVer)
-			}
-		} else {
-			step("lx-ядро %s уже актуально", prevVer)
-		}
+		step("lx-ядро %s уже актуально (наша сборка из %s)", prevVer, pick.Source)
 		res.Log = log.String()
 		return res, nil
 	}
@@ -470,7 +463,7 @@ func InstallLXCore(ctx context.Context, opts LXInstallOptions) (LXInstallResult,
 	if err := os.MkdirAll(opts.Target.MarkerDir, 0o755); err != nil {
 		return res, err
 	}
-	marker := fmt.Sprintf("tag=%s\nversion=%s\ninstalled=%s\nflavor=%s\n", pick.Tag, ver, time.Now().Format(time.RFC3339), opts.Flavor)
+	marker := fmt.Sprintf("tag=%s\nversion=%s\nsource=%s\ninstalled=%s\nflavor=%s\n", pick.Tag, ver, pick.Source.String(), time.Now().Format(time.RFC3339), opts.Flavor)
 	if err := os.WriteFile(filepath.Join(opts.Target.MarkerDir, LXMarkerName), []byte(marker), 0o644); err != nil {
 		return res, err
 	}
@@ -489,6 +482,25 @@ func markerExists(dir string) bool {
 	}
 	_, err := os.Stat(filepath.Join(dir, LXMarkerName))
 	return err == nil
+}
+
+// markerSource - источник последней установки (source= в маркере). Пусто
+// для старых маркеров и ручных установок: такое ядро ставили не из нашего
+// форка, равноверсионная замена своей сборкой разрешена.
+func markerSource(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join(dir, LXMarkerName))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "source="); ok {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }
 
 // findSingBox ищет бинарь sing-box в распакованном дереве.

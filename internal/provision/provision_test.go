@@ -99,11 +99,11 @@ func TestLxCoreItemStates(t *testing.T) {
 		t.Fatalf("lx с маркером: %+v", item)
 	}
 
-	// lx без маркера - миграция: считается своим, после кнопки появится маркер
+	// lx без маркера - не наша сборка: кнопка заменяет бинарь своей сборкой
 	withFS(t, 63607828, 26214400*1024, false)
 	r = fakeRunner{bin + " version": "sing-box version 1.14.2-lx.6\n"}
 	item = lxCoreItem(r.run, "keenetic")
-	if !item.Installed || item.Note == "" || item.ActionLabel != "пометить своим и обновить" {
+	if !item.Installed || item.Note == "" || item.ActionLabel != "заменить своей сборкой" {
 		t.Fatalf("lx без маркера: %+v", item)
 	}
 

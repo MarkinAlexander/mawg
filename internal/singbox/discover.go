@@ -18,8 +18,10 @@ type Source struct {
 
 func (s Source) String() string { return s.Owner + "/" + s.Repo }
 
+// Единственный источник lx-ядер - собственный форк: автор lx-профиля
+// принципиально против upx-сборок, а нам нужен контроль профилей и
+// релизного ритма. Источник фиксируется и в маркере установки.
 var Sources = []Source{
-	{Owner: "Leadaxe", Repo: "sing-box-lx"},
 	{Owner: "MarkinAlexander", Repo: "sing-box-lx"},
 }
 
