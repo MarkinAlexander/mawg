@@ -44,6 +44,7 @@ type Server struct {
 	mtCacheMu  sync.Mutex
 	mtCache    *mtSnapshot
 	ifaceCache respCache
+	sysCache   respCache
 	IPGate     *auth.IPGate
 	// фактически забинденные адрес/порт демона: UI отличает
 	// "сохранено, но не перезапущено" от "уже применяется"
@@ -389,6 +390,13 @@ func (c *respCache) serve(w http.ResponseWriter, ttl time.Duration, build func()
 	c.at, c.body = time.Now(), body
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Write(body)
+}
+
+// reset - выкинуть кэш (после установки компонента ответ должен стать свежим).
+func (c *respCache) reset() {
+	c.mu.Lock()
+	c.body = nil
+	c.mu.Unlock()
 }
 
 func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
@@ -1308,7 +1316,12 @@ func (s *Server) systemCheck() provision.Result {
 }
 
 func (s *Server) getSystemCheck(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.systemCheck())
+	// панель опрашивает проверку зависимостей каждые 60с, а каждая проверка
+	// гоняет opkg/apk-пайплайны и version-запуски - на слабом роутере это
+	// постоянная фоновая нагрузка; кэш 3 минуты, сбрасывается после установки
+	s.sysCache.serve(w, 3*time.Minute, func() ([]byte, error) {
+		return json.Marshal(s.systemCheck())
+	})
 }
 
 func (s *Server) postSystemInstall(w http.ResponseWriter, r *http.Request) {
@@ -1344,6 +1357,7 @@ func (s *Server) postSystemInstall(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error(), "output": out})
 			return
 		}
+		s.sysCache.reset()
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "output": out})
 		return
 	}
