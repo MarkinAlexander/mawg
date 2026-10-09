@@ -598,8 +598,15 @@ async function loadSlots() {
 document.getElementById('slotCreate').onclick = e => withBusy(e.currentTarget, async () => {
   try {
     const r = await api('POST', '/slots/create', {});
-    toast('Создан слот ' + r.slot);
     await loadSlots();
+    const sel = $('#pSlot');
+    if (r.slot && [...sel.options].some(o => o.value === r.slot)) {
+      sel.value = r.slot;
+      slotBusyHint();
+      toast('Создан слот ' + r.slot + ' и выбран для нового пула');
+    } else {
+      toast('Создан слот ' + r.slot);
+    }
   } catch (err) { toast(err.message, true); }
 });
 

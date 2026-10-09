@@ -70,8 +70,12 @@ func (s *Server) poolSettingsFromReq(req poolSourceReq) (store.PoolSettings, err
 			settings.OpenwrtProto = "wireguard"
 		}
 	}
-	if s.backend.Name() == store.PlatformKeenetic && settings.KeeneticSlot == "" {
-		return settings, fmt.Errorf("не выбран слот Keenetic: не удалось получить список слотов, повторите позже")
+	if s.backend.Name() == store.PlatformKeenetic {
+		slot, err := s.resolveKeeneticSlot(settings.KeeneticSlot)
+		if err != nil {
+			return settings, err
+		}
+		settings.KeeneticSlot = slot
 	}
 	return settings, nil
 }
