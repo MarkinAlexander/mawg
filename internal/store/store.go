@@ -548,8 +548,18 @@ func (s *Store) UpdatePool(name string, settings PoolSettings) error {
 	for i := range s.root.Pools {
 		if s.root.Pools[i].Name == name {
 			p := s.root.Pools[i]
-			if p.Premium && (settings.EngineMode != "" || settings.Platform != p.Settings.Platform || (settings.Platform == PlatformOpenwrt && settings.OpenwrtProto != "amneziawg") || settings.Source != "") {
-				return errors.New("Premium работает с нативным AWG-пулом без статического источника")
+			if p.Premium {
+				if settings.Source != "" {
+					return errors.New("Premium работает с нативным AWG-пулом без статического источника")
+				}
+				// движковый режим разрешён: Keenetic-слот (AWG 2.0) конфиги
+				// AWG 3.x от gateway не поднимает, им нужен движок sing-box-lx
+				if settings.EngineMode != "" && settings.EngineMode != "singbox" {
+					return errors.New("Premium работает с нативным AWG-пулом или движком sing-box")
+				}
+				if settings.EngineMode == "" && settings.Platform == PlatformOpenwrt && settings.OpenwrtProto != "amneziawg" {
+					return errors.New("для Premium нужен пул с протоколом amneziawg")
+				}
 			}
 			s.root.Pools[i].Settings = settings.WithDefaults()
 			return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)

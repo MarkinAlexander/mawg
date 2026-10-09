@@ -434,7 +434,7 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 		Configs        []configView       `json:"configs"`
 		Premium        store.PremiumView  `json:"premium"`
 		Protos         []protoBadge       `json:"protos,omitempty"`
-		Free           bool              `json:"free,omitempty"`
+		Free           bool               `json:"free,omitempty"`
 	}
 	out := struct {
 		Version     string         `json:"version"`

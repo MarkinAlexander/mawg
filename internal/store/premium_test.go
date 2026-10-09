@@ -95,18 +95,32 @@ func TestPremiumSettingsCannotDropAWG(t *testing.T) {
 	if err := st.UpdatePool(p.Name, settings); err == nil {
 		t.Fatal("Premium lost AWG protocol")
 	}
+	// движковый режим разрешён (Keenetic: конфиги gateway - AWG 3.x,
+	// слот 5.1 их не поднимает - миграция в движок)
 	settings = p.Settings
 	settings.EngineMode = "singbox"
-	if err := st.UpdatePool(p.Name, settings); err == nil {
-		t.Fatal("Premium changed to engine mode")
+	settings.TunName = "tun4"
+	if err := st.UpdatePool(p.Name, settings); err != nil {
+		t.Fatalf("Premium -> engine: %v", err)
+	}
+	// но статический источник Premium-пулу по-прежнему нельзя
+	settings2 := p.Settings
+	settings2.Source = "https://sub.example.net/sub"
+	if err := st.UpdatePool(p.Name, settings2); err == nil {
+		t.Fatal("Premium accepted static source")
 	}
 }
 
-func TestPremiumRejectsEnginePool(t *testing.T) {
+// движковый пул (Keenetic) принимает импорт Premium
+func TestPremiumAcceptsEnginePool(t *testing.T) {
 	st, _ := Open(t.TempDir())
 	st.CreatePool("engine", PoolSettings{EngineMode: "singbox", TunName: "tun1"})
-	if _, err := st.ImportPremium("engine", "synthetic-key", ""); err == nil {
-		t.Fatal("Premium accepted sing-box pool")
+	if _, err := st.ImportPremium("engine", "synthetic-key", ""); err != nil {
+		t.Fatalf("Premium rejected engine pool: %v", err)
+	}
+	pool, ok := st.Pool("engine")
+	if !ok || !pool.Premium {
+		t.Fatal("пул не помечен Premium")
 	}
 }
 

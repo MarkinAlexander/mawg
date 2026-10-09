@@ -77,9 +77,8 @@ func (s *Store) ImportPremium(pool, key, userCountry string) (PremiumSubscriptio
 		return PremiumSubscription{}, errors.New("пул Premium не найден")
 	}
 	p := s.root.Pools[pi]
-	if p.Settings.EngineMode != "" {
-		return PremiumSubscription{}, errors.New("Premium работает только с нативным AWG-пулом")
-	}
+	// пул может быть нативным (OpenWrt с kmod AWG) или движковым (Keenetic:
+	// gateway выдаёт конфиги AWG 3.x, слот 5.1 их не поднимает)
 	if !p.Premium && len(p.Configs) > 0 {
 		return PremiumSubscription{}, errors.New("импортируйте Premium в пустой AWG-пул")
 	}
