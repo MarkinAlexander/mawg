@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,7 +14,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
+
+	"mawg/internal/platform"
 )
 
 const (
@@ -379,6 +383,10 @@ func InstallLXCore(ctx context.Context, opts LXInstallOptions) (LXInstallResult,
 	tarball := filepath.Join(tmp, pick.Asset)
 	size, err := fetch(ctx, pick.URL(), tarball)
 	if err != nil {
+		if isNoSpace(err) {
+			res.Log = log.String()
+			return res, fmt.Errorf("не хватает места в %s для скачивания архива (~%s): это оперативная память, она освободится после перезагрузки роутера; также помогает профиль upx (архив в ~1.5 раза меньше): %v", tmp, mb(pick.Size), err)
+		}
 		return res, fmt.Errorf("скачать %s не удалось: %v", pick.Asset, err)
 	}
 	minSize := opts.MinTarball
@@ -410,6 +418,11 @@ func InstallLXCore(ctx context.Context, opts LXInstallOptions) (LXInstallResult,
 		return res, err
 	}
 	if _, err := run("tar", "-xzf", tarball, "-C", dir); err != nil {
+		os.RemoveAll(dir)
+		if isNoSpace(err) {
+			res.Log = log.String()
+			return res, fmt.Errorf("не хватает места в %s для распаковки ядра (архив + распакованный бинарь; это оперативная память): помогает профиль upx (бинарь в ~3.5 раза меньше): %v", tmp, err)
+		}
 		return res, fmt.Errorf("распаковка не удалась: %v", err)
 	}
 	bin, err := findSingBox(dir)
@@ -435,11 +448,50 @@ func InstallLXCore(ctx context.Context, opts LXInstallOptions) (LXInstallResult,
 		_ = os.RemoveAll(dir)
 		return res, err
 	}
+
+	// место в ПЗУ: до атомарного rename новый бинарь лежит рядом со старым
+	// (а при чужом ядре с сохранением - ещё и копия старого), поэтому пик
+	// = новое (+ бэкап). Проверяем с точными цифрами до копирования.
+	binSize := int64(0)
+	if st, err := os.Stat(bin); err == nil {
+		binSize = st.Size()
+	}
+	keepOld := prevVer != "" && !HasLXSuffix(prevVer) && !opts.DropForeignBackup
+	need := binSize
+	if keepOld {
+		if st, err := os.Stat(opts.Target.Bin); err == nil {
+			need += st.Size()
+		}
+	}
+	binDir := filepath.Dir(opts.Target.Bin)
+	if free := diskFree(binDir); free > 0 && free < need {
+		// наша предыдущая сборка восстановима повторным скачиванием -
+		// её можно снять до копирования, это освобождает место старого
+		if HasLXSuffix(prevVer) && markerSource(opts.Target.MarkerDir) == pick.Source.String() {
+			if rmErr := os.Remove(opts.Target.Bin); rmErr == nil {
+				step("места в ПЗУ мало (свободно %s): старая наша сборка снята до копирования, при сбое просто повторите установку", mb(free))
+				free = diskFree(binDir)
+			}
+		}
+		if free < need {
+			res.Log = log.String()
+			backupNote := ""
+			if keepOld {
+				backupNote = fmt.Sprintf(" (включая копию старого ядра %s; от неё можно отказаться в диалоге)", mb(need-binSize))
+			}
+			return res, fmt.Errorf("не хватает места в ПЗУ: нужно %s%s, свободно %s. Поставьте профиль upx (бинарь в ~3.5 раза меньше), откажитесь от сохранения старого ядра или освободите место", mb(need), backupNote, mb(free))
+		}
+	}
+
 	staged := opts.Target.Bin + ".lx-new"
 	if err := copyFile(bin, staged, 0o755); err != nil {
 		os.RemoveAll(dir)
 		// недописанный staged не должен занимать место (устройства без запаса)
 		os.Remove(staged)
+		if isNoSpace(err) {
+			res.Log = log.String()
+			return res, fmt.Errorf("не хватает места в ПЗУ при копировании ядра (%s): освободите место или поставьте профиль upx (в ~3.5 раза меньше): %v", mb(binSize), err)
+		}
 		return res, err
 	}
 	_ = os.RemoveAll(dir)
@@ -516,6 +568,17 @@ func markerField(dir, key string) string {
 		}
 	}
 	return ""
+}
+
+// diskFree - свободное место (байты); подменяется в тестах.
+var diskFree = platform.DiskFreeBytes
+
+func isNoSpace(err error) bool {
+	return err != nil && (errors.Is(err, syscall.ENOSPC) || strings.Contains(err.Error(), "no space left"))
+}
+
+func mb(n int64) string {
+	return fmt.Sprintf("%.0f МБ", float64(n)/float64(1<<20))
 }
 
 // findSingBox ищет бинарь sing-box в распакованном дереве.
