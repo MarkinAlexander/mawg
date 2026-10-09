@@ -103,7 +103,9 @@ func Check(ctx context.Context, current string) CheckInfo {
 
 // Run ставит обновление через install.sh релиза (sha256 проверяется им).
 func Run(ctx context.Context) error {
-	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	// install.sh сам качает бинарь и может обновлять пак-менеджер: 60 секунд
+	// не хватало (signal: killed посреди установки), даём 10 минут
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 	resp, err := httpGet(ctx, InstallURL)
 	if err != nil {
