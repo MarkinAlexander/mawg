@@ -126,7 +126,12 @@ func (m *Manager) probePool(port int, target string) (int, error) {
 		return 0, err
 	}
 	client := &http.Client{
-		Timeout:   8 * time.Second,
+		Timeout: 8 * time.Second,
+		// редиректы не следуем: 1.1.1.1 по http даёт 301 на https, а Free
+		// 443 не пускает - проба проверяет «канал жив», а не конечный контент
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
 		Transport: &http.Transport{Proxy: http.ProxyURL(pu)},
 	}
 	start := time.Now()
