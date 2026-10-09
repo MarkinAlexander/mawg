@@ -535,6 +535,67 @@ function renderSourcePlan(p) {
   return html;
 }
 
+// Amnezia Free: gateway может потребовать капчу - показываем человеку,
+// повторяем запрос с решением; идентичность та же (сохранена на сервере)
+let freePending = null;
+let dlgCaptchaId = '';
+async function requestFreePool(fields, answer) {
+  const r = await api('POST', answer ? '/pools/amnezia-free/captcha' : '/pools/amnezia-free',
+    answer ? { ...fields, captchaId: answer.id, captchaSolution: answer.solution } : fields);
+  if (r && r.captchaRequired && r.captcha && r.captcha.image) {
+    freePending = fields;
+    openCaptcha(r.captcha);
+    return null;
+  }
+  return r;
+}
+function openCaptcha(cap) {
+  const dlg = document.getElementById('dlgCaptcha');
+  document.getElementById('capImage').src = 'data:image/png;base64,' + cap.image;
+  document.getElementById('capHint').textContent = cap.hint || 'Введите цифры с картинки, чтобы продолжить получение бесплатного конфига.';
+  const inp = document.getElementById('capInput');
+  inp.value = '';
+  dlgCaptchaId = cap.id || '';
+  if (!dlg.open) dlg.showModal();
+  setTimeout(() => inp.focus(), 50);
+}
+function freePlanDone(plan) {
+  const planBox = $('#pPlanResult');
+  planBox.innerHTML = renderSourcePlan(plan);
+  planBox.style.display = '';
+  $('#pCreate').style.display = 'none';
+  $('#pCancel').textContent = 'Закрыть';
+  $('#pCancel').disabled = false;
+  if (plan.pool) { toast(`Пул ${plan.pool} создан из источника`, !!plan.warnings); refresh(); }
+}
+document.getElementById('capSend').onclick = async e => {
+  const v = document.getElementById('capInput').value.trim();
+  if (!v) return toast('Введите цифры с картинки', true);
+  if (!freePending) return;
+  await withBusy(e.currentTarget, async () => {
+    try {
+      const plan = await requestFreePool(freePending, { id: dlgCaptchaId, solution: v });
+      if (plan) { document.getElementById('dlgCaptcha').close(); freePending = null; freePlanDone(plan); }
+    } catch (err) { toast(err.message, true); }
+  });
+};
+document.getElementById('capInput').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('capSend').click(); });
+document.getElementById('capRefresh').onclick = async e => {
+  if (!freePending) return;
+  await withBusy(e.currentTarget, async () => {
+    try {
+      const plan = await requestFreePool(freePending, null);
+      if (plan) { document.getElementById('dlgCaptcha').close(); freePending = null; freePlanDone(plan); }
+    } catch (err) { toast(err.message, true); }
+  });
+};
+document.getElementById('capCancel').onclick = () => {
+  freePending = null;
+  document.getElementById('dlgCaptcha').close();
+  $('#pCancel').disabled = false;
+  $('#pCreate').style.display = '';
+};
+
 $('#pCreate').onclick = async e => {
   e.preventDefault();
   const isLink = poolMode === 'link';
@@ -562,8 +623,9 @@ $('#pCreate').onclick = async e => {
           body.country = document.getElementById('pAmneziaCountry').value;
         }
         const plan = poolMode === 'free'
-          ? await api('POST', '/pools/amnezia-free', { name: body.name, fallback: body.fallback })
+          ? await requestFreePool({ name: body.name, fallback: body.fallback, keeneticSlot: body.keeneticSlot })
           : await api('POST', '/pools/from-source', { ...body, source });
+        if (!plan) return;
         if (plan.premium) $('#pSource').value = '';
         const planBox = $('#pPlanResult');
         planBox.innerHTML = renderSourcePlan(plan);

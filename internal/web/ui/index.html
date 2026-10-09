@@ -536,6 +536,21 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
   </form>
 </dialog>
 
+<dialog id="dlgCaptcha" style="max-width:min(92vw,420px)">
+  <div style="display:grid; gap:10px; min-width:320px">
+    <h3 style="margin:0">Проверка Amnezia Free</h3>
+    <div class="muted" style="font-size:12px" id="capHint">Введите цифры с картинки, чтобы продолжить получение бесплатного конфига.</div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <img id="capImage" alt="капча" style="max-width:100%;border:1px solid var(--border);border-radius:8px;background:#fff;min-height:60px">
+      <button type="button" id="capRefresh" title="обновить картинку" style="font-size:16px;line-height:1;padding:6px 8px">&#8635;</button>
+    </div>
+    <input id="capInput" inputmode="numeric" autocomplete="off" placeholder="_ _ _ _ _" style="font:16px/1.4 ui-monospace,monospace;letter-spacing:4px;text-align:center">
+    <div class="btnrow" style="justify-content:end;margin:0">
+      <button type="button" id="capCancel">Отмена</button>
+      <button type="button" class="primary" id="capSend">Отправить</button>
+    </div>
+  </div>
+</dialog>
 <dialog id="dlgResult" style="max-width:min(92vw,660px)">
   <form method="dialog" style="display:grid; gap:10px; min-width:460px">
     <h3 style="margin:0" id="rsTitle">Результат</h3>
@@ -1150,6 +1165,67 @@ function renderSourcePlan(p) {
   return html;
 }
 
+// Amnezia Free: gateway может потребовать капчу - показываем человеку,
+// повторяем запрос с решением; идентичность та же (сохранена на сервере)
+let freePending = null;
+let dlgCaptchaId = '';
+async function requestFreePool(fields, answer) {
+  const r = await api('POST', answer ? '/pools/amnezia-free/captcha' : '/pools/amnezia-free',
+    answer ? { ...fields, captchaId: answer.id, captchaSolution: answer.solution } : fields);
+  if (r && r.captchaRequired && r.captcha && r.captcha.image) {
+    freePending = fields;
+    openCaptcha(r.captcha);
+    return null;
+  }
+  return r;
+}
+function openCaptcha(cap) {
+  const dlg = document.getElementById('dlgCaptcha');
+  document.getElementById('capImage').src = 'data:image/png;base64,' + cap.image;
+  document.getElementById('capHint').textContent = cap.hint || 'Введите цифры с картинки, чтобы продолжить получение бесплатного конфига.';
+  const inp = document.getElementById('capInput');
+  inp.value = '';
+  dlgCaptchaId = cap.id || '';
+  if (!dlg.open) dlg.showModal();
+  setTimeout(() => inp.focus(), 50);
+}
+function freePlanDone(plan) {
+  const planBox = $('#pPlanResult');
+  planBox.innerHTML = renderSourcePlan(plan);
+  planBox.style.display = '';
+  $('#pCreate').style.display = 'none';
+  $('#pCancel').textContent = 'Закрыть';
+  $('#pCancel').disabled = false;
+  if (plan.pool) { toast(`Пул ${plan.pool} создан из источника`, !!plan.warnings); refresh(); }
+}
+document.getElementById('capSend').onclick = async e => {
+  const v = document.getElementById('capInput').value.trim();
+  if (!v) return toast('Введите цифры с картинки', true);
+  if (!freePending) return;
+  await withBusy(e.currentTarget, async () => {
+    try {
+      const plan = await requestFreePool(freePending, { id: dlgCaptchaId, solution: v });
+      if (plan) { document.getElementById('dlgCaptcha').close(); freePending = null; freePlanDone(plan); }
+    } catch (err) { toast(err.message, true); }
+  });
+};
+document.getElementById('capInput').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('capSend').click(); });
+document.getElementById('capRefresh').onclick = async e => {
+  if (!freePending) return;
+  await withBusy(e.currentTarget, async () => {
+    try {
+      const plan = await requestFreePool(freePending, null);
+      if (plan) { document.getElementById('dlgCaptcha').close(); freePending = null; freePlanDone(plan); }
+    } catch (err) { toast(err.message, true); }
+  });
+};
+document.getElementById('capCancel').onclick = () => {
+  freePending = null;
+  document.getElementById('dlgCaptcha').close();
+  $('#pCancel').disabled = false;
+  $('#pCreate').style.display = '';
+};
+
 $('#pCreate').onclick = async e => {
   e.preventDefault();
   const isLink = poolMode === 'link';
@@ -1177,8 +1253,9 @@ $('#pCreate').onclick = async e => {
           body.country = document.getElementById('pAmneziaCountry').value;
         }
         const plan = poolMode === 'free'
-          ? await api('POST', '/pools/amnezia-free', { name: body.name, fallback: body.fallback })
+          ? await requestFreePool({ name: body.name, fallback: body.fallback, keeneticSlot: body.keeneticSlot })
           : await api('POST', '/pools/from-source', { ...body, source });
+        if (!plan) return;
         if (plan.premium) $('#pSource').value = '';
         const planBox = $('#pPlanResult');
         planBox.innerHTML = renderSourcePlan(plan);

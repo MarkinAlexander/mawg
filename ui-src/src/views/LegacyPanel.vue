@@ -418,6 +418,22 @@ onMounted(() => {
   </form>
 </dialog>
 
+<dialog id="dlgCaptcha" style="max-width:min(92vw,420px)">
+  <div style="display:grid; gap:10px; min-width:320px">
+    <h3 style="margin:0">Проверка Amnezia Free</h3>
+    <div class="muted" style="font-size:12px" id="capHint">Введите цифры с картинки, чтобы продолжить получение бесплатного конфига.</div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <img id="capImage" alt="капча" style="max-width:100%;border:1px solid var(--border);border-radius:8px;background:#fff;min-height:60px">
+      <button type="button" id="capRefresh" title="обновить картинку" style="font-size:16px;line-height:1;padding:6px 8px">&#8635;</button>
+    </div>
+    <input id="capInput" inputmode="numeric" autocomplete="off" placeholder="_ _ _ _ _" style="font:16px/1.4 ui-monospace,monospace;letter-spacing:4px;text-align:center">
+    <div class="btnrow" style="justify-content:end;margin:0">
+      <button type="button" id="capCancel">Отмена</button>
+      <button type="button" class="primary" id="capSend">Отправить</button>
+    </div>
+  </div>
+</dialog>
+
 <dialog id="dlgResult" style="max-width:min(92vw,660px)">
   <form method="dialog" style="display:grid; gap:10px; min-width:460px">
     <h3 style="margin:0" id="rsTitle">Результат</h3>
