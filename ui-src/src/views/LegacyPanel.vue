@@ -8,7 +8,7 @@ onMounted(() => {
   if (injected) return
   injected = true
   const s = document.createElement('script')
-  s.src = import.meta.env.BASE_URL + 'panel.js'
+  s.src = import.meta.env.BASE_URL + 'panel.js?v=' + __PANEL_V__
   document.body.appendChild(s)
 })
 </script>

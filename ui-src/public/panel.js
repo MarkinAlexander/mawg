@@ -1241,7 +1241,6 @@ function renderRules() {
       </div>
       <details ${openMtGroups.has(g.id) ? 'open' : ''}>
         <summary>правила</summary>
-        <table class="mt-rules"><tr><th></th><th>тип</th><th>значение</th><th></th></tr></table>
         <div class="btnrow">
           <select class="nr-type">${Object.entries(RULE_TYPES).map(([v,l])=>`<option value="${v}">${l}</option>`).join('')}</select>
           <input class="nr-value" placeholder="${RULE_PLACEHOLDERS.namespace}" style="flex:1;min-width:160px">
@@ -1250,6 +1249,7 @@ function renderRules() {
           <button class="nr-copy" title="скопировать все правила группы списком">копировать</button>
         </div>
         <div class="muted nr-hint" style="font-size:11px;margin-top:2px">${RULE_HINTS.namespace}</div>
+        <table class="mt-rules"><tr><th></th><th>тип</th><th>значение</th><th></th></tr></table>
       </details>`;
     el.querySelector('.mt-toggle').onchange = e => { mtApi('POST', `/mt/groups/${g.id}/enable`, { enable: e.target.checked }); };
     el.querySelector('.mt-edit').onclick = () => editGroupDlg(g);
