@@ -135,6 +135,15 @@ func (b *Backend) Apply(pool store.Pool, cfg wgconf.Config) error {
 	if cfg.Peer.PersistentKeepalive > 0 {
 		keepalive = cfg.Peer.PersistentKeepalive
 	}
+	if cfg.Peer.KeepaliveRange != "" {
+		// AWG 3.x: диапазон «min-max» у uci не поддерживается прото-
+		// скриптом - берём минимум диапазона (сервер допускает)
+		if lo := strings.SplitN(cfg.Peer.KeepaliveRange, "-", 2)[0]; lo != "" {
+			if n, err := strconv.Atoi(lo); err == nil {
+				keepalive = n
+			}
+		}
+	}
 	if keepalive > 0 {
 		batch = append(batch, "set "+peerRef+"persistent_keepalive='"+strconv.Itoa(keepalive)+"'")
 	}
@@ -204,6 +213,17 @@ func awgUci(ifRef string, p wgconf.AWGParams) []string {
 	setStr("i3", p.I3)
 	setStr("i4", p.I4)
 	setStr("i5", p.I5)
+	// AWG 3.x: proto-скрипт luci-proto-amneziawg 3.1 умеет эти ключи;
+	// без них (в частности awg_header_protection_key) kmod шлёт пакеты
+	// без защиты заголовка и сервер не отвечает - интерфейс «жив»,
+	// а хендшейка нет
+	setStr("header_protection_key", p.HeaderProtectionKey)
+	setStr("content_padding_addition", p.ContentPaddingAddition)
+	setStr("rekey_after_time", p.RekeyAfterTime)
+	setStr("rekey_timeout", p.RekeyTimeout)
+	setStr("reject_after_time", p.RejectAfterTime)
+	setStr("keepalive_timeout", p.KeepaliveTimeout)
+	setStr("max_handshake_attempts", p.MaxHandshakeAttempts)
 	return out
 }
 
