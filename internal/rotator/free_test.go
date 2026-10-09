@@ -82,8 +82,8 @@ func freeGateway(t *testing.T, publicOf func(string) string) (*httptest.Server, 
 	return srv, &premium.Client{BaseURL: srv.URL, HTTP: srv.Client(), Key: &rsaKey.PublicKey}
 }
 
-// Free-пул создаётся и на Keenetic: слот обязателен, конфиг - AWG 2.0 в
-// слот Wireguard, пул выключен до ручной активации
+// Free-пул создаётся в режиме движка (конфиг gateway - AWG 3.x, нативные
+// интерфейсы его не поднимают), пул выключен до ручной активации
 func TestFreePoolOnKeenetic(t *testing.T) {
 	base := t.TempDir()
 	st, _ := store.Open(base)
@@ -93,7 +93,7 @@ func TestFreePoolOnKeenetic(t *testing.T) {
 	e.PremiumClient = client
 
 	p, err := e.CreateFreePool(context.Background(), "free", store.PoolSettings{
-		Platform: store.PlatformKeenetic, KeeneticSlot: "Wireguard9", ProbeHost: "1.1.1.1",
+		Platform: store.PlatformKeenetic, EngineMode: "singbox", TunName: "tun1", ProbeHost: "1.1.1.1",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -101,22 +101,22 @@ func TestFreePoolOnKeenetic(t *testing.T) {
 	if !p.Free || !p.Disabled || len(p.Configs) != 1 {
 		t.Fatalf("пул: %+v", p)
 	}
-	if p.Settings.KeeneticSlot != "Wireguard9" {
-		t.Fatalf("слот потерян: %+v", p.Settings)
+	if p.Settings.EngineMode != "singbox" || p.Settings.TunName != "tun1" {
+		t.Fatalf("режим движка/tun потеряны: %+v", p.Settings)
 	}
 	if p.Configs[0].File != "amnezia-free.conf" || p.Configs[0].Endpoint != "free.example.net:51820" {
 		t.Fatalf("конфиг Free: %+v", p.Configs[0])
 	}
 	// повторная выдача не перевыпускается: тот же конфиг без похода в gateway
 	p2, err := e.CreateFreePool(context.Background(), "free", store.PoolSettings{
-		Platform: store.PlatformKeenetic, KeeneticSlot: "Wireguard9", ProbeHost: "1.1.1.1",
+		Platform: store.PlatformKeenetic, EngineMode: "singbox", TunName: "tun1", ProbeHost: "1.1.1.1",
 	})
 	if err != nil || p2.Name != "free" {
 		t.Fatalf("повтор: %+v err=%v", p2, err)
 	}
 	// второй Free-пул запрещён
 	if _, err := e.CreateFreePool(context.Background(), "free2", store.PoolSettings{
-		Platform: store.PlatformKeenetic, KeeneticSlot: "Wireguard10", ProbeHost: "1.1.1.1",
+		Platform: store.PlatformKeenetic, EngineMode: "singbox", TunName: "tun2", ProbeHost: "1.1.1.1",
 	}); err == nil {
 		t.Fatal("второй Free-пул не должен создаваться")
 	}
@@ -129,10 +129,10 @@ func TestFreePoolOnKeenetic(t *testing.T) {
 	if _, err := ecdh.X25519().NewPrivateKey(b); err != nil {
 		t.Fatalf("приватный ключ Free невалиден: %v", err)
 	}
-	// без слота - понятный отказ по-русски
-	if _, err := e.CreateFreePool(context.Background(), "noslot", store.PoolSettings{
+	// без движка - отказ с предложением установить ядро
+	if _, err := e.CreateFreePool(context.Background(), "noengine", store.PoolSettings{
 		Platform: store.PlatformKeenetic, ProbeHost: "1.1.1.1",
-	}); err == nil || !strings.Contains(err.Error(), "слот") {
-		t.Fatalf("ждали отказ про слот: %v", err)
+	}); err == nil || !strings.Contains(err.Error(), "движок sing-box-lx") {
+		t.Fatalf("ждали отказ про движок: %v", err)
 	}
 }

@@ -10,6 +10,16 @@ type AWGParams struct {
 	S1, S2, S3, S4     *string
 	H1, H2, H3, H4     *string
 	I1, I2, I3, I4, I5 *string
+	// AWG 3.x: защита заголовка, диапазонные таймеры и паддинг. Нативные
+	// интерфейсы (Keenetic 5.1 AWG 2.0, kmod OpenWrt) их не применяют -
+	// только движок sing-box-lx.
+	HeaderProtectionKey    *string
+	ContentPaddingAddition *string
+	RekeyAfterTime         *string
+	RekeyTimeout           *string
+	RejectAfterTime        *string
+	KeepaliveTimeout       *string
+	MaxHandshakeAttempts   *string
 }
 
 func (p AWGParams) anyInitPacket() bool {
@@ -21,6 +31,25 @@ func (p AWGParams) Present() bool {
 		p.S1 != nil || p.S2 != nil || p.S3 != nil || p.S4 != nil ||
 		p.H1 != nil || p.H2 != nil || p.H3 != nil || p.H4 != nil ||
 		p.anyInitPacket()
+}
+
+// AWG3 - признаки формата AmneziaWG 3.x: нативные слоты такое не поднимут.
+func (p AWGParams) AWG3() bool {
+	if p.HeaderProtectionKey != nil {
+		return true
+	}
+	for _, f := range []*string{p.ContentPaddingAddition, p.RekeyAfterTime,
+		p.RekeyTimeout, p.RejectAfterTime, p.KeepaliveTimeout, p.MaxHandshakeAttempts} {
+		if f != nil {
+			return true
+		}
+	}
+	for _, f := range []*string{p.I1, p.I2, p.I3, p.I4, p.I5} {
+		if f != nil && strings.Contains(*f, "<r ") {
+			return true
+		}
+	}
+	return false
 }
 
 func (p AWGParams) HasExtended() bool {
@@ -61,6 +90,9 @@ type Peer struct {
 	EndpointPort        int
 	AllowedIPs          []string
 	PersistentKeepalive int
+	// KeepaliveRange - AWG 3.x форма «min-max»; при ней PersistentKeepalive
+	// не заполняется (это не одно число).
+	KeepaliveRange string
 }
 
 type Config struct {
@@ -70,6 +102,12 @@ type Config struct {
 	MTU        int
 	AWG        AWGParams
 	Peer       Peer
+}
+
+// NeedsEngine - конфиг требует движок sing-box-lx: AWG 3.x-поля или
+// диапазонный keepalive не поднимаются нативными интерфейсами.
+func (c Config) NeedsEngine() bool {
+	return c.AWG.AWG3() || c.Peer.KeepaliveRange != ""
 }
 
 func (c Config) FirstIPv4() string {

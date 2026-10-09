@@ -181,28 +181,54 @@ func (s *Server) claimTun(settings store.PoolSettings, name string) (store.Pool,
 	return pool, nil
 }
 
+// applyEngineWarn - применить конфиг движка, приложив проблемы к плану.
+func (s *Server) applyEngineWarn(plan *sourcePlan) {
+	skipped, err := s.applyEngine()
+	plan.Skipped = append(plan.Skipped, skipped...)
+	if err != nil {
+		plan.Warnings = append(plan.Warnings, "движок не применил конфиг: "+err.Error())
+	}
+}
+
 func (s *Server) applyEngine() ([]string, error) {
 	var specs []singbox.PoolSpec
 	for _, p := range s.enginePools() {
 		if p.Disabled {
 			continue
 		}
-		nodes, err := s.readPoolNodes(p.Name)
-		if err != nil {
-			return nil, fmt.Errorf("пул %s: %v", p.Name, err)
-		}
 		idx := 1
 		if n, err := strconv.Atoi(strings.TrimPrefix(p.Settings.TunName, "tun")); err == nil && n > 0 {
 			idx = n
 		}
-		specs = append(specs, singbox.PoolSpec{
-			Name: p.Name, Tun: p.Settings.TunName, TunIP: singbox.TuneIP(idx), Nodes: nodes,
+		spec := singbox.PoolSpec{
+			Name: p.Name, Tun: p.Settings.TunName, TunIP: singbox.TuneIP(idx),
 			ProbeTarget:      p.Settings.ProbeHost,
 			CheckIntervalSec: p.Settings.CheckIntervalSec,
 			FailThreshold:    p.Settings.FailThreshold,
 			CooldownMin:      p.Settings.CooldownMin,
 			MaxRTTms:         p.Settings.MaxRTTms,
-		})
+		}
+		nodes, err := s.readPoolNodes(p.Name)
+		switch {
+		case err == nil && (len(nodes) > 0 || len(p.Configs) == 0):
+			spec.Nodes = nodes
+		case os.IsNotExist(err) && len(p.Configs) > 0:
+			// пул без nodes.json, но с конфигами WG/AWG (Amnezia Free и
+			// AWG 3.x-импорт) - конфиги едут wireguard-эндпоинтами
+			for _, c := range p.Configs {
+				if !c.Enabled {
+					continue
+				}
+				cfg, cerr := s.store.LoadConfigFile(p.Name, c.File)
+				if cerr != nil {
+					return nil, fmt.Errorf("пул %s: конфиг %s: %v", p.Name, c.File, cerr)
+				}
+				spec.WG = append(spec.WG, cfg)
+			}
+		default:
+			return nil, fmt.Errorf("пул %s: %v", p.Name, err)
+		}
+		specs = append(specs, spec)
 	}
 	seen := map[string]string{}
 	for _, spec := range specs {

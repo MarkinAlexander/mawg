@@ -87,6 +87,24 @@ func setAWG(p *AWGParams, key, raw string) {
 		slot = &p.H3
 	case "h4":
 		slot = &p.H4
+	// AWG 3.x: диапазонные значения «N» или «min-max»
+	case "contentpaddingaddition":
+		slot = &p.ContentPaddingAddition
+	case "rekeyaftertime":
+		slot = &p.RekeyAfterTime
+	case "rekeytimeout":
+		slot = &p.RekeyTimeout
+	case "rejectaftertime":
+		slot = &p.RejectAfterTime
+	case "keepalivetimeout":
+		slot = &p.KeepaliveTimeout
+	case "maxhandshakeattempts":
+		slot = &p.MaxHandshakeAttempts
+	case "headerprotectionkey":
+		if v := strings.TrimSpace(raw); v != "" {
+			p.HeaderProtectionKey = &v
+		}
+		return
 	default:
 		return
 	}
@@ -186,7 +204,12 @@ func Parse(data []byte) (Config, error) {
 			case "allowedips":
 				cfg.Peer.AllowedIPs = append(cfg.Peer.AllowedIPs, splitList(value)...)
 			case "persistentkeepalive":
-				cfg.Peer.PersistentKeepalive, _ = parseInt(value)
+				// AWG 3.x даёт диапазон «min-max» - это не одно число
+				if strings.Contains(value, "-") && awgNumberRe.MatchString(value) {
+					cfg.Peer.KeepaliveRange = value
+				} else {
+					cfg.Peer.PersistentKeepalive, _ = parseInt(value)
+				}
 			}
 		}
 	}

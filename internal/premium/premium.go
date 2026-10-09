@@ -139,6 +139,21 @@ type BadConfigError struct {
 
 func (e *BadConfigError) Error() string { return e.Reason }
 
+// awgRangeValue - «N» или «min-max» (uint32, min <= max): форма значений
+// AWG 3.x-таймеров и keepalive.
+func awgRangeValue(v string) bool {
+	lo, hi, ranged := strings.Cut(v, "-")
+	a, errA := strconv.ParseUint(lo, 10, 32)
+	if errA != nil {
+		return false
+	}
+	if !ranged {
+		return true
+	}
+	b, errB := strconv.ParseUint(hi, 10, 32)
+	return errB == nil && a <= b
+}
+
 func deviceConfig(link, private string) ([]byte, wgconf.Config, error) {
 	// причина отказа - в ошибке: живой gateway выдаёт реальные конфиги,
 	// глухое «unsupported» не оставляет следов для разбора
@@ -192,9 +207,15 @@ func deviceConfig(link, private string) ([]byte, wgconf.Config, error) {
 			if !ok || strings.ContainsAny(value, "'\r\n\x00") {
 				return reject("строка «" + line + "»")
 			}
-			if key == "mtu" || key == "persistentkeepalive" {
+			if key == "mtu" {
 				n, err := strconv.Atoi(value)
 				if err != nil || n < 0 || n > 65535 {
+					return reject("значение " + key + "=" + value)
+				}
+			}
+			if key == "persistentkeepalive" {
+				// AWG 3.x даёт диапазон «min-max»
+				if !awgRangeValue(value) {
 					return reject("значение " + key + "=" + value)
 				}
 			}
@@ -215,7 +236,7 @@ func deviceConfig(link, private string) ([]byte, wgconf.Config, error) {
 					for i, part := range parts {
 						// uint32 без преобразования в int: на 32-битных
 						// роутерах int(n) переполнялся на больших h-значениях
-						// (реальные конфигы дают h до 4294967295) и рабочий
+						// (реальные конфиги дают h до 4294967295) и рабочий
 						// конфиг отвергался
 						n, err := strconv.ParseUint(part, 10, 32)
 						if err != nil || (i > 0 && n < previous) {
@@ -225,6 +246,15 @@ func deviceConfig(link, private string) ([]byte, wgconf.Config, error) {
 					}
 					allowed = true
 				case "i1", "i2", "i3", "i4", "i5":
+					allowed = true
+				// AWG 3.x: защита заголовка и диапазонные таймеры
+				case "headerprotectionkey":
+					allowed = true
+				case "contentpaddingaddition", "rekeyaftertime", "rekeytimeout",
+					"rejectaftertime", "keepalivetimeout", "maxhandshakeattempts":
+					if !awgRangeValue(value) {
+						return reject("значение " + key + "=" + value)
+					}
 					allowed = true
 				}
 			} else if section == "[Peer]" {

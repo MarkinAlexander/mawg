@@ -51,18 +51,17 @@ func (e *Engine) createFreePool(ctx context.Context, name string, settings store
 	if err != nil {
 		return store.Pool{}, errors.New("invalid Amnezia Free pool name")
 	}
-	if settings.EngineMode != "" || settings.Source != "" || !store.ValidProbeTarget(settings.WithDefaults().ProbeHost) {
-		return store.Pool{}, errors.New("Amnezia Free requires a native AWG pool with a valid probe target")
+	// Конфиг Free у gateway - формат AWG 3.x (защита заголовка, диапазонные
+	// таймеры): нативные интерфейсы его не поднимают, пул создаётся в
+	// режиме движка (sing-box-lx) - web-слой задаёт EngineMode и tun.
+	if settings.Source != "" || !store.ValidProbeTarget(settings.WithDefaults().ProbeHost) {
+		return store.Pool{}, errors.New("Amnezia Free requires a pool with a valid probe target")
 	}
-	// Keenetic: конфиг Free - AWG 2.0 (I/J/H/S-параметры), прошивка 5.1+
-	// умеет их нативно; применяется в слот Wireguard как любой AWG-конфиг.
-	// На более старой прошивке пул поднимется, но хендшейка не будет -
-	// «Система -> Зависимости» предупреждает о 5.1+ отдельно.
-	if settings.Platform == store.PlatformOpenwrt {
-		settings.OpenwrtProto = "amneziawg"
+	if settings.EngineMode == "" {
+		return store.Pool{}, errors.New("Amnezia Free идёт через движок sing-box-lx - установите ядро в «Система -> Зависимости»")
 	}
-	if settings.Platform == store.PlatformKeenetic && settings.KeeneticSlot == "" {
-		return store.Pool{}, errors.New("для Amnezia Free нужен слот WireGuard - создайте его кнопкой «+ слот» в диалоге пула")
+	if settings.TunName == "" {
+		return store.Pool{}, errors.New("для Amnezia Free не выделен tun-интерфейс")
 	}
 	for _, p := range e.store.Pools() {
 		if p.Free && p.Name == clean && len(p.Configs) > 0 {
