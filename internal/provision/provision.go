@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"mawg/internal/platform"
 )
 
 type Item struct {
@@ -41,23 +43,9 @@ func shellRun(script string, timeout time.Duration) (string, error) {
 	if os.Getenv("PATH") == "" {
 		cmd.Env = []string{"PATH=/sbin:/usr/sbin:/bin:/usr/bin:/opt/bin:/opt/sbin"}
 	}
-	done := make(chan struct{})
-	var out []byte
-	var err error
-	go func() {
-		out, err = cmd.CombinedOutput()
-		close(done)
-	}()
-	select {
-	case <-done:
-		return string(out), err
-	case <-time.After(timeout):
-		if cmd.Process != nil {
-			cmd.Process.Kill()
-		}
-		<-done
-		return string(out), fmt.Errorf("timeout")
-	}
+	// таймаут убивает всю группу: у пайплайнов (opkg list | grep) иначе
+	// выживают осиротевшие участники и жгут CPU
+	return platform.RunBoundedCombined(cmd, timeout)
 }
 
 func opkgHasPackage(run Runner, pkg string) bool {
