@@ -204,6 +204,26 @@ function updateMeta() {
   if (STATUS) $('#meta').textContent = `${STATUS.platform} | mawg ${STATUS.version} | magitrickle: ${mt}`;
 }
 
+
+// бейдж пробы интерфейса: в строке только короткий вердикт; развёрнутая
+// причина ошибки - по клику (и в подсказке при наведении), иначе длинный
+// dial tcp... растягивает карточку на полэкрана
+function probeStatusBadge(it) {
+  const st = it.probeStatus || '';
+  const ok = st.startsWith('проба: ок');
+  const cls = ok ? 'up' : 'fallback';
+  if (ok || !st.includes('(')) {
+    return `<span class="badge ${cls}">${esc(st)}</span>`;
+  }
+  const short = st.slice(0, st.indexOf('(')).trim();
+  const detail = st.slice(st.indexOf('(') + 1).replace(/\)$/, '');
+  window.setTimeout(() => {
+    const el = document.querySelector(`[data-probe="${it.device}"]`);
+    if (el) el.onclick = () => askModal('Проба ' + it.device, detail, 'Понятно');
+  }, 0);
+  return `<span class="badge ${cls}" data-probe="${esc(it.device)}" title="${esc(st)}" style="cursor:pointer">${esc(short)}</span>`;
+}
+
 async function refresh() {
   try {
     STATUS = await api('GET', '/status');
@@ -756,9 +776,7 @@ function renderIfaces() {
       <span class="muted" style="font-size:12px">${title}</span>
       ${badge}
       ${hs ? `<span class="muted" style="font-size:11px">${hs}</span>` : ''}
-      ${it.probeStatus ? (it.probeStatus.includes('ок')
-        ? `<span class="badge up">${esc(it.probeStatus)}</span>`
-        : `<span class="badge fallback">${esc(it.probeStatus)}</span>`) : ''}
+      ${it.probeStatus ? probeStatusBadge(it) : ''}
       <span style="flex:1"></span>`;
     const right = document.createElement('span');
     right.style.cssText = 'display:inline-flex;align-items:center;gap:6px';
