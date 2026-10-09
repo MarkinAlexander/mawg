@@ -294,14 +294,11 @@ onMounted(() => {
       <pre id="spFreeConf" style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px;font:11px/1.5 ui-monospace,monospace;margin:0;white-space:pre-wrap;word-break:break-all;max-height:220px;overflow:auto"></pre>
       <div class="btnrow" style="margin-top:4px;justify-content:flex-end"><button type="button" id="spFreeConfCopy">Скопировать</button></div>
     </div>
-    <label class="f" id="spDetourRow" style="display:none">Туннель пула через (каскад движка)
-      <select id="spDetour"><option value="">напрямую</option></select>
-      <div class="muted" style="font-size:11px;margin-top:2px">WireGuard/Amnezia-туннель этого пула заводится через группу другого движкового пула - помогает, когда эндпоинт напрямую недоступен с канала провайдера.</div>
-    </label>
-    <div class="f" id="spMembersRow" style="display:none">
+        <div class="f" id="spMembersRow" style="display:none">
       <div style="font-size:13px;margin-bottom:2px">Состав пула (протоколы и адреса)</div>
       <div id="spMembers" style="max-height:180px;overflow:auto;font-size:12px;display:grid;gap:4px"></div>
     </div>
+    <div class="muted" id="spFreeProbeNote" style="display:none;font-size:11px;margin:2px 0 4px">Цель пробы для Amnezia Free зафиксирована (1.1.1.1 - адрес из списка сервиса): Free - сплит-туннель, сервер пускает только к адресам из выданного списка и без IPv6, произвольная цель будет мигать.</div>
     <label class="f" id="spProbeTypeRow">Тип пробы через туннель
       <select id="spProbeType">
         <option value="http">HTTP-страница 204 (надежнее, ICMP режут)</option>

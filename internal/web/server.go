@@ -1150,16 +1150,13 @@ func (s *Server) updatePool(w http.ResponseWriter, r *http.Request) {
 	if patch.MagitrickleGroupID != "" {
 		merged.MagitrickleGroupID = patch.MagitrickleGroupID
 	}
-	if patch.EngineDetour != "" {
-		if patch.EngineDetour == name {
-			writeErr(w, fmt.Errorf("каскад движка не может заводить пул через самого себя"))
-			return
-		}
-		if dp, ok := s.store.Pool(patch.EngineDetour); !ok || dp.Settings.EngineMode != engineMode {
-			writeErr(w, fmt.Errorf("каскад движка доступен только через движковый пул %s", patch.EngineDetour))
-			return
-		}
-		merged.EngineDetour = patch.EngineDetour
+	// Каскад движка (detour) владельцем отвергнут: всё, заведённое через
+	// ядро, умирает вместе с ядром, а на OpenWrt без sing-box юзер вообще
+	// ничего не получит. Поле EngineDetour оставлено в схеме про запас -
+	// к конфигу движка не применяется, из UI убрано.
+	_ = patch.EngineDetour
+	if pool.Free {
+		merged.ProbeHost = FreeProbeURL
 	}
 	if err := s.validFallback(name, merged.Fallback); err != nil {
 		writeErr(w, err)
