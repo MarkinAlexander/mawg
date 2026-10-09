@@ -4,7 +4,7 @@ import "testing"
 
 func TestRangeParams(t *testing.T) {
 	data := []byte(`[Interface]
-PrivateKey = SMAp//W+/qjES6qfuxaVCM8jQlQtHhgDgHZrhDCfe00=
+PrivateKey = S0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0s=
 Address = 10.200.0.2/32
 Jc = 6
 Jmin = 10

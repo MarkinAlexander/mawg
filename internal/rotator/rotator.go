@@ -14,6 +14,7 @@ import (
 	"mawg/internal/cascade"
 	"mawg/internal/magitrickle"
 	"mawg/internal/platform"
+	"mawg/internal/premium"
 	"mawg/internal/store"
 )
 
@@ -21,9 +22,10 @@ const settleSeconds = 15
 const minApplyInterval = 20 * time.Second
 
 type Engine struct {
-	store   *store.Store
-	backend platform.Backend
-	mt      *magitrickle.Client
+	PremiumClient *premium.Client
+	store         *store.Store
+	backend       platform.Backend
+	mt            *magitrickle.Client
 
 	Clock func() time.Time
 
@@ -87,17 +89,18 @@ func (e *Engine) settleAfterIfaceOp() {
 
 func New(st *store.Store, b platform.Backend, mt *magitrickle.Client) *Engine {
 	e := &Engine{
-		store:       st,
-		backend:     b,
-		mt:          mt,
-		wake:        make(chan string, 32),
-		lastApply:   map[string]time.Time{},
-		extFails:    map[string]int{},
-		probeCache:  map[string]probeCacheEntry{},
-		probeBusy:   map[string]bool{},
-		tunnelAddrs: map[string]string{},
-		polFails:    map[string]int{},
-		polOks:      map[string]int{},
+		PremiumClient: premium.NewClient(),
+		store:         st,
+		backend:       b,
+		mt:            mt,
+		wake:          make(chan string, 32),
+		lastApply:     map[string]time.Time{},
+		extFails:      map[string]int{},
+		probeCache:    map[string]probeCacheEntry{},
+		probeBusy:     map[string]bool{},
+		tunnelAddrs:   map[string]string{},
+		polFails:      map[string]int{},
+		polOks:        map[string]int{},
 	}
 	if mt != nil {
 		e.casc = cascade.New(st, mt)
@@ -815,6 +818,9 @@ func (e *Engine) rotate(p store.Pool, st *store.PoolState, failedActive string) 
 func (e *Engine) applyConfig(p store.Pool, file string) error {
 	cfg, err := e.store.LoadConfigFile(p.Name, file)
 	if err != nil {
+		if p.Premium {
+			err = fmt.Errorf("Premium configuration could not be loaded")
+		}
 		e.store.MutateState(p.Name, func(s *store.PoolState) {
 			s.LastError = "load: " + err.Error()
 			s.Cooldowns[file] = e.now().Add(time.Duration(p.Settings.CooldownMin) * time.Minute).Unix()
@@ -823,6 +829,9 @@ func (e *Engine) applyConfig(p store.Pool, file string) error {
 	}
 	e.ifaceTouched()
 	if err := e.backend.Apply(p, cfg); err != nil {
+		if p.Premium {
+			err = fmt.Errorf("Premium interface apply failed")
+		}
 		e.store.MutateState(p.Name, func(s *store.PoolState) {
 			s.LastError = "apply: " + err.Error()
 			s.Cooldowns[file] = e.now().Add(time.Duration(p.Settings.CooldownMin) * time.Minute).Unix()
@@ -830,9 +839,13 @@ func (e *Engine) applyConfig(p store.Pool, file string) error {
 		e.store.LogEvent(p.Name, "apply-failed", file+": "+err.Error())
 		return err
 	}
+	return e.recordApplied(p, file, cfg.Endpoint())
+}
+
+func (e *Engine) recordApplied(p store.Pool, file, endpoint string) error {
 	e.markApply(p.Name)
 	restored := false
-	e.store.MutateState(p.Name, func(s *store.PoolState) {
+	err := e.store.MutateState(p.Name, func(s *store.PoolState) {
 		s.ActiveFile = file
 		s.ConsecFails = 0
 		s.Rotations++
@@ -849,9 +862,12 @@ func (e *Engine) applyConfig(p store.Pool, file string) error {
 		e.restoreReboundGroups(p)
 		e.restoreDegraded(p.DeviceName())
 	}
-	e.store.LogEvent(p.Name, "applied", file+" -> "+cfg.Endpoint())
+	e.store.LogEvent(p.Name, "applied", file+" -> "+endpoint)
 	if e.casc != nil {
 		go e.casc.SyncSourceEndpoints(context.Background(), "pool:"+p.Name)
+	}
+	if err != nil {
+		return fmt.Errorf("configuration applied but active state could not be saved")
 	}
 	return nil
 }

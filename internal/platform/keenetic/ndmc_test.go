@@ -54,7 +54,7 @@ func TestParseNDMCSingleWithPeer(t *testing.T) {
 		t.Fatalf("peers = %d, want 1", len(w2.Wireguard.Peers))
 	}
 	p := w2.Wireguard.Peers[0]
-	if p.PublicKey != "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=" {
+	if p.PublicKey != "RUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUU=" {
 		t.Fatalf("public key = %q", p.PublicKey)
 	}
 	if !p.Enabled || !p.Online {

@@ -17,8 +17,8 @@ import (
 	"mawg/internal/store"
 )
 
-const testConf = "[Interface]\nPrivateKey = qELLdGEcuWN4Cw04dU6EcD6nSuVPWHFISHlWFPjlyl0=\nAddress = 10.2.0.2/32\n" +
-	"[Peer]\nPublicKey = a7cbHcmzL3FwW7+Fg6Xo9FCdIYnDhWQeWm2c1A2B3C4=\nEndpoint = at1.example.net:51820\nAllowedIPs = 0.0.0.0/0\n"
+const testConf = "[Interface]\nPrivateKey = QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE=\nAddress = 10.2.0.2/32\n" +
+	"[Peer]\nPublicKey = QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI=\nEndpoint = at1.example.net:51820\nAllowedIPs = 0.0.0.0/0\n"
 
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
