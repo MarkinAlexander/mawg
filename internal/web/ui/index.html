@@ -1523,7 +1523,7 @@ function openSettings(name) {
   wirePremSettings(p);
   hidePremSourceRows(p);
   $('#spName').textContent = p.name;
-  $('#spSourceRow').style.display = (!p.free && (p.settings.engineMode === 'singbox' || p.settings.source)) ? '' : 'none';
+  $('#spSourceRow').style.display = (!p.free && !(p.premium || {}).imported && (p.settings.engineMode === 'singbox' || p.settings.source)) ? '' : 'none';
   $('#spSource').value = p.settings.source || '';
   updateSpAmneziaCountry(p);
   $('#spRename').value = p.name;
