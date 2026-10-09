@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"mawg/internal/premium"
+	"mawg/internal/store"
 )
 
 type freePoolReq struct {
@@ -40,15 +41,25 @@ func (s *Server) serveFreePool(w http.ResponseWriter, r *http.Request, withAnswe
 		writeErr(w, errors.New("нет решения капчи: введите цифры с картинки"))
 		return
 	}
-	settings, err := s.poolSettingsFromReq(poolSourceReq{Name: req.Name, Fallback: req.Fallback, ProbeHost: req.ProbeHost, KeeneticSlot: req.KeeneticSlot, OpenwrtProto: "amneziawg"})
-	if err != nil {
-		writeErr(w, err)
-		return
+	// Конфиг Free у gateway - AWG 3.x: пул работает через движок sing-box-lx
+	// (tun-интерфейс), слот/прототип платформы не нужны. Ядро может быть
+	// не установлено на момент создания - пул создаётся выключенным,
+	// предупредим в плане.
+	engineMissing := false
+	if _, err := s.sb(); err != nil {
+		engineMissing = true
+	}
+	settings := store.PoolSettings{
+		Platform: s.backend.Name(), Fallback: req.Fallback, ProbeHost: req.ProbeHost,
+		EngineMode: engineMode,
 	}
 	if err := s.validFallback(req.Name, settings.Fallback); err != nil {
 		writeErr(w, err)
 		return
 	}
+	s.tunMu.Lock()
+	settings.TunName = s.allocTun()
+	s.tunMu.Unlock()
 	var plan sourcePlan
 	if withAnswer {
 		pool, err := s.engine.AnswerFreeCaptcha(r.Context(), req.Name, settings, premium.CaptchaAnswer{ID: req.CaptchaID, Solution: req.CaptchaSolution})
@@ -65,7 +76,10 @@ func (s *Server) serveFreePool(w http.ResponseWriter, r *http.Request, withAnswe
 		}
 		plan = sourcePlan{Pool: pool.Name, Added: len(pool.Configs)}
 	}
-	plan.Warnings = []string{"Amnezia Free получен без аккаунта. Пул не активирован: используйте обычную кнопку активации после проверки настроек."}
+	plan.Warnings = []string{"Amnezia Free получен без аккаунта (конфиг AmneziaWG 3.x идёт через ядро sing-box, " + settings.TunName + "). Пул не активирован: используйте обычную кнопку активации после проверки настроек."}
+	if engineMissing {
+		plan.Warnings = append(plan.Warnings, "Ядро sing-box-lx не установлено - пул заработает после установки в «Система -> Зависимости».")
+	}
 	writeJSON(w, http.StatusOK, plan)
 }
 

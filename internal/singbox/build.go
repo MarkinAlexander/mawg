@@ -3,8 +3,11 @@ package singbox
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"mawg/internal/links"
+	"mawg/internal/wgconf"
 )
 
 type PoolSpec struct {
@@ -18,7 +21,96 @@ type PoolSpec struct {
 	CooldownMin      int
 	MaxRTTms         int
 	Nodes            []links.Node
-	GroupMode        string // "urltest" (по умолчанию) | "selector"
+	// WG - конфиги WireGuard/Amnezia пула: едут wireguard-эндпоинтами
+	// sing-box (в т.ч. AWG 3.x, который нативные интерфейсы не поднимут).
+	WG        []wgconf.Config
+	GroupMode string // "urltest" (по умолчанию) | "selector"
+}
+
+// wgEndpoint - wireguard-эндпоинт sing-box-lx из конфига WG/AWG: AWG-поля
+// (2.0 и 3.x) прикрепляются к корню эндпоинта, как в опциях форка.
+func wgEndpoint(cfg wgconf.Config, tag string) (map[string]any, error) {
+	if cfg.PrivateKey == "" || cfg.Peer.PublicKey == "" || cfg.Peer.EndpointHost == "" {
+		return nil, fmt.Errorf("%s: конфиг без ключа или эндпоинта", tag)
+	}
+	peer := map[string]any{
+		"address":    cfg.Peer.EndpointHost,
+		"public_key": cfg.Peer.PublicKey,
+	}
+	if cfg.Peer.EndpointPort > 0 {
+		peer["port"] = cfg.Peer.EndpointPort
+	}
+	if cfg.Peer.PresharedKey != "" {
+		peer["pre_shared_key"] = cfg.Peer.PresharedKey
+	}
+	if len(cfg.Peer.AllowedIPs) > 0 {
+		peer["allowed_ips"] = cfg.Peer.AllowedIPs
+	}
+	switch {
+	case cfg.Peer.KeepaliveRange != "":
+		peer["persistent_keepalive_interval"] = cfg.Peer.KeepaliveRange
+	case cfg.Peer.PersistentKeepalive > 0:
+		peer["persistent_keepalive_interval"] = cfg.Peer.PersistentKeepalive
+	}
+	ep := map[string]any{
+		"type": "wireguard", "tag": tag, "system": false,
+		"address":     cfg.Addresses,
+		"private_key": cfg.PrivateKey,
+		"peers":       []map[string]any{peer},
+	}
+	if cfg.MTU > 0 {
+		ep["mtu"] = cfg.MTU
+	}
+	awg := cfg.AWG
+	num := func(v *string, name string) any {
+		if v == nil {
+			return nil
+		}
+		n, err := strconv.Atoi(strings.SplitN(*v, "-", 2)[0])
+		if err != nil {
+			return nil // пустое значение поля не пишем
+		}
+		return n
+	}
+	if v := num(awg.Jc, "jc"); v != nil {
+		ep["jc"] = v
+	}
+	if v := num(awg.Jmin, "jmin"); v != nil {
+		ep["jmin"] = v
+	}
+	if v := num(awg.Jmax, "jmax"); v != nil {
+		ep["jmax"] = v
+	}
+	for _, f := range []struct {
+		src *string
+		key string
+	}{
+		{awg.S1, "s1"}, {awg.S2, "s2"}, {awg.S3, "s3"}, {awg.S4, "s4"},
+	} {
+		if v := num(f.src, f.key); v != nil {
+			ep[f.key] = v
+		}
+	}
+	// h1..h4 и AWG 3.x-диапазоны - строкой «N»/«N-M», как ждёт AWGRange
+	for _, f := range []struct {
+		src *string
+		key string
+	}{
+		{awg.H1, "h1"}, {awg.H2, "h2"}, {awg.H3, "h3"}, {awg.H4, "h4"},
+		{awg.I1, "i1"}, {awg.I2, "i2"}, {awg.I3, "i3"}, {awg.I4, "i4"}, {awg.I5, "i5"},
+		{awg.HeaderProtectionKey, "header_protection_key"},
+		{awg.ContentPaddingAddition, "content_padding_addition"},
+		{awg.RekeyAfterTime, "rekey_after_time"},
+		{awg.RekeyTimeout, "rekey_timeout"},
+		{awg.RejectAfterTime, "reject_after_time"},
+		{awg.KeepaliveTimeout, "keepalive_timeout"},
+		{awg.MaxHandshakeAttempts, "max_handshake_attempts"},
+	} {
+		if f.src != nil && strings.TrimSpace(*f.src) != "" {
+			ep[f.key] = strings.TrimSpace(*f.src)
+		}
+	}
+	return ep, nil
 }
 
 type Params struct {
@@ -142,6 +234,7 @@ func BuildConfig(pools []PoolSpec, p Params) ([]byte, []string, error) {
 	var skipped []string
 	var inbounds []map[string]any
 	var outbounds []map[string]any
+	var endpoints []map[string]any
 	var routeRules []map[string]any
 	for i, spec := range pools {
 		inTag := fmt.Sprintf("tun-in-%d", i+1)
@@ -165,6 +258,16 @@ func BuildConfig(pools []PoolSpec, p Params) ([]byte, []string, error) {
 			}
 			outbounds = append(outbounds, ob)
 			tags = append(tags, ob["tag"].(string))
+		}
+		for _, c := range spec.WG {
+			tag := groupTag + "|" + strconv.Itoa(len(tags)+1)
+			ep, err := wgEndpoint(c, tag)
+			if err != nil {
+				skipped = append(skipped, fmt.Sprintf("пул %s: %v", spec.Name, err))
+				continue
+			}
+			endpoints = append(endpoints, ep)
+			tags = append(tags, tag)
 		}
 		if len(tags) == 0 {
 			skipped = append(skipped, fmt.Sprintf("пул %s: ни один узел не подходит движку, tun не создан", spec.Name))
@@ -190,7 +293,7 @@ func BuildConfig(pools []PoolSpec, p Params) ([]byte, []string, error) {
 			map[string]any{"inbound": mixedTag, "outbound": groupTag},
 		)
 	}
-	if len(outbounds) == 0 {
+	if len(outbounds) == 0 && len(endpoints) == 0 {
 		return nil, skipped, fmt.Errorf("нет подходящих движку узлов")
 	}
 	route := map[string]any{"rules": routeRules}
@@ -205,6 +308,9 @@ func BuildConfig(pools []PoolSpec, p Params) ([]byte, []string, error) {
 	}
 	if p.Merged {
 		frag := map[string]any{"inbounds": inbounds, "outbounds": outbounds, "route": route}
+		if len(endpoints) > 0 {
+			frag["endpoints"] = endpoints
+		}
 		if cfgDNS != nil {
 			frag["dns"] = cfgDNS
 		}
@@ -232,6 +338,9 @@ func BuildConfig(pools []PoolSpec, p Params) ([]byte, []string, error) {
 		"experimental": map[string]any{
 			"clash_api": map[string]any{"external_controller": fmt.Sprintf("127.0.0.1:%d", p.ClashPort)},
 		},
+	}
+	if len(endpoints) > 0 {
+		cfg["endpoints"] = endpoints
 	}
 	if cfgDNS != nil {
 		cfg["dns"] = cfgDNS

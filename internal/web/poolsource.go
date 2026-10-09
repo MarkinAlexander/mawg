@@ -178,6 +178,52 @@ func (s *Server) createPoolFromNodes(w http.ResponseWriter, r *http.Request, req
 	ncs, engineNodes, skipped := buildNativeConfigs(res.Nodes)
 	plan.Skipped = append(plan.Skipped, skipped...)
 
+	// AWG 3.x-конфиги (защита заголовка, диапазоны, паддинг) нативные
+	// интерфейсы не поднимают: такой импорт целиком идёт движком,
+	// конфиги хранятся в пуле и едут wireguard-эндпоинтами sing-box-lx.
+	needsEngine := false
+	for _, nc := range ncs {
+		if nc.Config.NeedsEngine() {
+			needsEngine = true
+			break
+		}
+	}
+	if needsEngine {
+		if _, err := s.sb(); err != nil {
+			writeErr(w, fmt.Errorf("в источнике конфиг AmneziaWG 3.x - нативные интерфейсы его не поднимают, нужен движок sing-box-lx: установите ядро в «Система -> Зависимости»"))
+			return
+		}
+		settings := store.PoolSettings{
+			Platform: s.backend.Name(), Fallback: req.Fallback, ProbeHost: req.ProbeHost,
+			Source: req.Source, EngineMode: engineMode, Amnezia: storeAmnezia(amnezia),
+		}
+		if err := s.validFallback(req.Name, settings.Fallback); err != nil {
+			writeErr(w, err)
+			return
+		}
+		pool, err := s.claimTun(settings, req.Name)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		added, _, err := s.store.AddConfigs(pool.Name, ncs)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		plan.Pool = pool.Name
+		plan.Tun = pool.Settings.TunName
+		plan.Added = added
+		plan.Warnings = append(plan.Warnings, "Конфиги AmneziaWG 3.x: нативные интерфейсы не поддерживают этот формат, пул работает через ядро sing-box (tun "+pool.Settings.TunName+").")
+		s.store.LogEvent(pool.Name, "applied", fmt.Sprintf("AWG 3.x из источника: %d конфигов в движке (%s)", added, pool.Settings.TunName))
+		if p, ok := s.store.Pool(pool.Name); ok && len(p.Configs) > 0 {
+			_ = s.engine.SetActive(pool.Name, p.Configs[0].File)
+		}
+		s.applyEngineWarn(&plan)
+		writeJSON(w, http.StatusOK, plan)
+		return
+	}
+
 	if len(ncs) > 0 {
 		settings, err := s.poolSettingsFromReq(req)
 		if err != nil {
