@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"mawg/internal/premium"
+	"mawg/internal/store"
 )
 
 func (s *Server) createPremiumPoolFromSource(w http.ResponseWriter, r *http.Request, req poolSourceReq) {
@@ -27,11 +28,23 @@ func (s *Server) createPremiumPoolFromSource(w http.ResponseWriter, r *http.Requ
 		writeErr(w, err)
 		return
 	}
-	if err := s.validFallback(req.Name, settings.Fallback); err != nil {
-		writeErr(w, err)
-		return
+	// Keenetic: конфиг gateway - AWG 3.x (защита заголовка и диапазоны),
+	// слот 5.1 (AWG 2.0) его не поднимает - пул сразу в режиме движка
+	// sing-box-lx. OpenWrt - нативно (kmod AWG 3.x).
+	if s.backend.Name() == store.PlatformKeenetic {
+		settings.KeeneticSlot = ""
+		settings.EngineMode = engineMode
+		// проба Premium - google-204: gstatic/gstatic-like домены отдают
+		// AAAA и резолвятся мимо туннеля (v6 у Premium нет), 1.1.1.1 режет
+		// сам сервер Premium; google-204 стабилен и в списке
+		settings.ProbeHost = "https://www.google.com/generate_204"
 	}
-	p, err := s.store.CreatePool(req.Name, settings)
+	var p store.Pool
+	if settings.EngineMode == engineMode {
+		p, err = s.claimTun(settings, req.Name)
+	} else {
+		p, err = s.store.CreatePool(req.Name, settings)
+	}
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -84,9 +97,27 @@ func (s *Server) switchPremium(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, errors.New("выберите страну для Premium"))
 		return
 	}
-	if err := s.engine.SwitchPremium(r.Context(), r.PathValue("name"), req.Country); err != nil {
+	name := r.PathValue("name")
+	// пул, созданный до движкового пути (нативный на Keenetic), мигрирует
+	// при первой же смене страны: gateway выдаёт AWG 3.x, слот 5.1 его
+	// не поднимает
+	if p, ok := s.store.Pool(name); ok && p.Premium && p.Settings.EngineMode == "" && s.backend.Name() == store.PlatformKeenetic {
+		merged := p.Settings
+		merged.EngineMode = engineMode
+		merged.TunName = s.allocTun()
+		if err := s.store.UpdatePool(name, merged); err == nil {
+			s.store.LogEvent(name, "premium", "миграция в режим движка (конфиги gateway - AWG 3.x, слот AWG 2.0 их не поднимает)")
+		}
+	}
+	if err := s.engine.SwitchPremium(r.Context(), name, req.Country); err != nil {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, s.store.PremiumView(r.PathValue("name")))
+	// движковый пул: конфиг сохранён, применяем движком
+	if p, ok := s.store.Pool(name); ok && p.Settings.EngineMode == engineMode {
+		if _, err := s.applyEngine(); err != nil {
+			s.store.LogEvent(name, "premium", "движок не пересобран после смены страны: "+err.Error())
+		}
+	}
+	writeJSON(w, http.StatusOK, s.store.PremiumView(name))
 }

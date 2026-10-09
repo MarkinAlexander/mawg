@@ -77,6 +77,27 @@ func (e *Engine) SwitchPremium(ctx context.Context, pool, country string) error 
 	if e.addressTaken(p.Name, p.DeviceName(), store.ManagedConfig{Addresses: cfg.Addresses}) {
 		return errors.New("адрес Premium-туннеля уже занят; старый конфиг оставлен, регистрация изменилась - повторите смену страны")
 	}
+	// движковый пул (Keenetic: конфиг gateway - AWG 3.x, слот его не
+	// поднимает): конфиг сохраняется в пул, applyEngine его подберёт;
+	// нативный путь (OpenWrt с kmod AWG) - как у автора
+	if p.Settings.EngineMode == "singbox" {
+		if e.addressTaken(p.Name, p.DeviceName(), store.ManagedConfig{Addresses: cfg.Addresses}) {
+			return errors.New("адрес Premium-туннеля уже занят; старый конфиг оставлен - повторите смену страны")
+		}
+		file, err := e.store.ReplacePremiumConfig(pool, raw)
+		if err != nil {
+			return errors.New("не удалось сохранить конфиг Premium - повторите смену страны")
+		}
+		if err := e.recordApplied(p, file, cfg.Endpoint()); err != nil {
+			return errors.New("страна применена, но состояние пула не сохранилось - повторите смену страны")
+		}
+		v.Country = country
+		v.PendingPrivate, v.PendingCountry = "", ""
+		if err := e.store.SavePremium(v); err != nil {
+			return errors.New("страна применена, но состояние подписки не сохранилось - повторите смену страны")
+		}
+		return nil
+	}
 	e.ifaceTouched()
 	if err := e.backend.Apply(p, cfg); err != nil {
 		return errors.New("не удалось поднять интерфейс Premium; старый конфиг оставлен - повторите смену страны")
@@ -110,7 +131,8 @@ func (e *Engine) DeletePool(name string) error {
 	if !ok {
 		return errors.New("пул не найден")
 	}
-	if !p.Disabled {
+	// движковый пул: tun гасится пересборкой конфига движка на web-слое
+	if !p.Disabled && p.Settings.EngineMode == "" {
 		e.ifaceTouched()
 		if err := e.backend.Down(p); err != nil && p.Premium {
 			return errors.New("не удалось выключить интерфейс Premium; пул оставлен как есть")
