@@ -294,7 +294,15 @@ onMounted(() => {
       <pre id="spFreeConf" style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px;font:11px/1.5 ui-monospace,monospace;margin:0;white-space:pre-wrap;word-break:break-all;max-height:220px;overflow:auto"></pre>
       <div class="btnrow" style="margin-top:4px;justify-content:flex-end"><button type="button" id="spFreeConfCopy">Скопировать</button></div>
     </div>
-        <div class="f" id="spMembersRow" style="display:none">
+        <div class="f" id="spPremRow" style="display:none">
+      <div style="font-size:13px;margin-bottom:2px">Amnezia Premium: страна</div>
+      <div class="btnrow" style="margin:0;align-items:center">
+        <select id="spPremCountry" style="max-width:220px"></select>
+        <button type="button" class="primary" id="spPremSwitch">Сменить страну</button>
+      </div>
+      <div class="muted" id="spPremNote" style="font-size:11px;margin-top:2px">Один слот устройства. Страны не добавляются в пул конфигов.</div>
+    </div>
+    <div class="f" id="spMembersRow" style="display:none">
       <div style="font-size:13px;margin-bottom:2px">Состав пула (протоколы и адреса)</div>
       <div id="spMembers" style="max-height:180px;overflow:auto;font-size:12px;display:grid;gap:4px"></div>
     </div>

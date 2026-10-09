@@ -412,7 +412,15 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
       <pre id="spFreeConf" style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px;font:11px/1.5 ui-monospace,monospace;margin:0;white-space:pre-wrap;word-break:break-all;max-height:220px;overflow:auto"></pre>
       <div class="btnrow" style="margin-top:4px;justify-content:flex-end"><button type="button" id="spFreeConfCopy">Скопировать</button></div>
     </div>
-        <div class="f" id="spMembersRow" style="display:none">
+        <div class="f" id="spPremRow" style="display:none">
+      <div style="font-size:13px;margin-bottom:2px">Amnezia Premium: страна</div>
+      <div class="btnrow" style="margin:0;align-items:center">
+        <select id="spPremCountry" style="max-width:220px"></select>
+        <button type="button" class="primary" id="spPremSwitch">Сменить страну</button>
+      </div>
+      <div class="muted" id="spPremNote" style="font-size:11px;margin-top:2px">Один слот устройства. Страны не добавляются в пул конфигов.</div>
+    </div>
+    <div class="f" id="spMembersRow" style="display:none">
       <div style="font-size:13px;margin-bottom:2px">Состав пула (протоколы и адреса)</div>
       <div id="spMembers" style="max-height:180px;overflow:auto;font-size:12px;display:grid;gap:4px"></div>
     </div>
@@ -874,7 +882,7 @@ function updateCard(p) {
   card.summary.textContent = `Конфиги (${(p.configs || []).length})`;
 
   const premium = p.premium || {};
-  card.root.querySelector('.premium-panel').style.display = !isEng && (premium.imported || (!(p.configs || []).length && (p.settings.openwrtProto === 'amneziawg' || p.platform === 'keenetic'))) ? '' : 'none';
+  card.root.querySelector('.premium-panel').style.display = (premium.imported || (!isEng && (!(p.configs || []).length && (p.settings.openwrtProto === 'amneziawg' || p.platform === 'keenetic')))) ? '' : 'none';
   card.root.querySelector('.premium-import').style.display = premium.imported && (premium.countries || []).length ? 'none' : '';
   card.root.querySelector('.premium-switch').style.display = premium.imported ? '' : 'none';
   const countrySel = card.root.querySelector('.premium-country');
@@ -1421,7 +1429,15 @@ function wireProbeSwitch(typeSel, targetInput) {
 
 let settingsPool = null;
 // состав пула для шестерёнки: конфиги WG и прокси-узлы с протоколами
-async function loadPoolMembers(name) {
+async function hidePremSourceRows(p) {
+  const isPrem = !!(p.premium || {}).imported;
+  const src = document.getElementById('spSourceRow');
+  if (src) src.style.display = (!p.free && !isPrem && (p.settings.engineMode === 'singbox' || p.settings.source)) ? '' : 'none';
+  const upd = document.getElementById('spUpdateInt');
+  if (upd && upd.closest('label')) upd.closest('label').style.display = (isPrem || p.free) ? 'none' : '';
+}
+
+function loadPoolMembers(name) {
   const row = document.getElementById('spMembersRow');
   const box = document.getElementById('spMembers');
   if (!row || !box) return;
@@ -1477,6 +1493,8 @@ function openSettings(name) {
   loadPoolMembers(name);
   loadFreeConfig(p);
   lockFreeProbe(p);
+  wirePremSettings(p);
+  hidePremSourceRows(p);
   $('#spName').textContent = p.name;
   $('#spSourceRow').style.display = (!p.free && (p.settings.engineMode === 'singbox' || p.settings.source)) ? '' : 'none';
   $('#spSource').value = p.settings.source || '';
