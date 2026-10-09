@@ -818,17 +818,16 @@ async function loadFreeConfig(p) {
   };
 }
 
-function wireDetourRow(p) {
-  const row = document.getElementById('spDetourRow');
-  const sel = document.getElementById('spDetour');
-  if (!row || !sel) return;
-  const isEng = p.settings.engineMode === 'singbox';
-  row.style.display = isEng ? '' : 'none';
-  if (!isEng) return;
-  const others = (STATUS.pools || []).filter(x => x.name !== p.name && x.settings.engineMode === 'singbox' && !x.free);
-  const cur = p.settings.engineDetour || '';
-  sel.innerHTML = '<option value="">напрямую</option>' + others.map(x => `<option value="${esc(x.name)}"${x.name === cur ? ' selected' : ''}>${esc(x.name)}</option>`).join('');
-  sel.dataset.pool = p.name;
+function lockFreeProbe(p) {
+  const note = document.getElementById('spFreeProbeNote');
+  const isFree = !!p.free;
+  $('#spProbe').disabled = isFree;
+  $('#spProbeType').disabled = isFree;
+  if (note) note.style.display = isFree ? '' : 'none';
+  if (isFree) {
+    $('#spProbe').value = 'http://1.1.1.1/';
+    $('#spProbeType').value = 'http';
+  }
 }
 
 function openSettings(name) {
@@ -837,7 +836,7 @@ function openSettings(name) {
   settingsPool = p;
   loadPoolMembers(name);
   loadFreeConfig(p);
-  wireDetourRow(p);
+  lockFreeProbe(p);
   $('#spName').textContent = p.name;
   $('#spSourceRow').style.display = (!p.free && (p.settings.engineMode === 'singbox' || p.settings.source)) ? '' : 'none';
   $('#spSource').value = p.settings.source || '';
@@ -924,10 +923,6 @@ $('#spSave').onclick = async e => {
     maxRttMs: $('#spRttOn').checked ? (+$('#spRtt').value || 0) : 0,
     updateIntervalH: $('#spUpdateInt').value === '' ? 0 : (+$('#spUpdateInt').value || 0),
   };
-  const detourSel = document.getElementById('spDetour');
-  if (detourSel && detourSel.dataset.pool === p.name) {
-    body.engineDetour = detourSel.value || undefined;
-  }
   try {
     await api('PUT', '/pools/' + p.name, body);
     const newName = $('#spRename').value.trim();

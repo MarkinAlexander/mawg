@@ -49,16 +49,14 @@ func (s *Server) serveFreePool(w http.ResponseWriter, r *http.Request, withAnswe
 	if _, err := s.sb(); err != nil {
 		engineMissing = true
 	}
-	probe := req.ProbeHost
-	if probe == "" {
-		// Free - сплит-туннель: сервер пускает только к адресам из своего
-		// allowlist (у конфига - 472 префикса). gstatic резолвится то в AAAA
-		// (v6 у Free нет), то во вне-списочные IPv4 - проба по нему мигает;
-		// 1.1.1.1/32 в списке всегда, IP без DNS - детерминированная проба.
-		probe = "http://1.1.1.1/"
-	}
+	// Проба Free ФИКСИРОВАНА: 1.1.1.1 - адрес из allowlist-а сервиса.
+	// Free - сплит-туннель: сервер пускает только к адресам из выданного
+	// списка (у конфига ~472 префикса, IPv6 нет). gstatic резолвится то в
+	// AAAA, то во вне-списочные IPv4 - произвольная цель пробы мигает;
+	// 1.1.1.1/32 в списке всегда, IP без DNS - детерминированно. Юзеру цель
+	// для Free менять нельзя - иначе «работает/падает» без причины.
 	settings := store.PoolSettings{
-		Platform: s.backend.Name(), Fallback: req.Fallback, ProbeHost: probe,
+		Platform: s.backend.Name(), Fallback: req.Fallback, ProbeHost: FreeProbeURL,
 		EngineMode: engineMode,
 	}
 	if err := s.validFallback(req.Name, settings.Fallback); err != nil {

@@ -18,6 +18,9 @@ import (
 
 const engineMode = "singbox"
 
+// FreeProbeURL - фиксированная цель пробы Amnezia Free (см. web/free.go).
+const FreeProbeURL = "http://1.1.1.1/"
+
 var sbMu sync.Mutex
 var sbMgr *singbox.Manager
 var sbMode string
@@ -200,16 +203,26 @@ func (s *Server) applyEngine() ([]string, error) {
 		if n, err := strconv.Atoi(strings.TrimPrefix(p.Settings.TunName, "tun")); err == nil && n > 0 {
 			idx = n
 		}
-		detour := ""
-		if p.Settings.EngineDetour != "" {
-			if dp, ok := s.store.Pool(p.Settings.EngineDetour); ok && !dp.Disabled && dp.Settings.EngineMode == engineMode && dp.Name != p.Name {
-				detour = "mawg-" + dp.Name
-			}
+		// Каскад движка (detour у wireguard-эндпоинта) - идея ПРО ЗАПАС,
+		// владельцем отвергнута: ядро - точка отказа для всего, что через
+		// него заведено; каскады правильнее делать нативными средствами
+		// роутера (интерфейсы + маршруты). Реализация wgEndpoint(detour)
+		// сохранена в build.go, сюда не подключена.
+		// detour := ""
+		// if p.Settings.EngineDetour != "" {
+		// 	if dp, ok := s.store.Pool(p.Settings.EngineDetour); ok && !dp.Disabled && dp.Settings.EngineMode == engineMode && dp.Name != p.Name {
+		// 		detour = "mawg-" + dp.Name
+		// 	}
+		// }
+		probe := p.Settings.ProbeHost
+		if p.Free {
+			// старые пулы могли сохранить цель без схемы (например «1.1.1.1») -
+			// менеджер такое подменяет на gstatic; для Free цель фиксирована
+			probe = FreeProbeURL
 		}
 		spec := singbox.PoolSpec{
 			Name: p.Name, Tun: p.Settings.TunName, TunIP: singbox.TuneIP(idx),
-			Detour:           detour,
-			ProbeTarget:      p.Settings.ProbeHost,
+			ProbeTarget:      probe,
 			CheckIntervalSec: p.Settings.CheckIntervalSec,
 			FailThreshold:    p.Settings.FailThreshold,
 			CooldownMin:      p.Settings.CooldownMin,
