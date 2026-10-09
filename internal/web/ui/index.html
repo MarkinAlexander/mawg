@@ -1035,7 +1035,13 @@ function setPoolMode(m) {
 
 function gateSlot(inspect) {
   const row = $('#slotRow'), hint = document.getElementById('slotHint');
-  if (poolMode === 'cfg' || poolMode === 'free') { row.classList.remove('rowoff'); hint.style.display = 'none'; return; }
+  if (poolMode === 'free') {
+    row.classList.add('rowoff');
+    hint.textContent = 'Пул Amnezia Free идёт через ядро sing-box (tun-интерфейс) - слот WireGuard не нужен.';
+    hint.style.display = '';
+    return;
+  }
+  if (poolMode === 'cfg') { row.classList.remove('rowoff'); hint.style.display = 'none'; return; }
   if (inspect && inspect.amnezia) {
     row.classList.remove('rowoff');
     hint.textContent = 'Протокол из ключа: AWG - нужен свободный слот; VLESS - слот не нужен (будет tun-интерфейс движка). Оставьте выбранным свободный слот, если протокол AWG.';
