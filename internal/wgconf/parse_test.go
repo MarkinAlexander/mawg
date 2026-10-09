@@ -85,11 +85,11 @@ func TestParseAWGExtended(t *testing.T) {
 }
 
 func TestParseInitPacketBlobs(t *testing.T) {
-	body := "[Interface]\nPrivateKey = qELLdGEcuWN4Cw04dU6EcD6nSuVPWHFISHlWFPjlyl0=\nAddress = 10.2.0.2/32\n" +
+	body := "[Interface]\nPrivateKey = QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE=\nAddress = 10.2.0.2/32\n" +
 		"Jc = 3\nJmin = 1\nJmax = 3\nS1 = 0\nS2 = 0\nS3 = 0\nS4 = 0\n" +
 		"H1 = 1\nH2 = 2\nH3 = 3\nH4 = 4\n" +
 		"I1 = <b 0xdeadbeef0102>\nI2 = <b 0x494e5649544520736970>\n" +
-		"[Peer]\nPublicKey = a7cbHcmzL3FwW7+Fg6Xo9FCdIYnDhWQeWm2c1A2B3C4=\nEndpoint = 185.182.193.107:51820\nAllowedIPs = 0.0.0.0/0\n"
+		"[Peer]\nPublicKey = QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI=\nEndpoint = 185.182.193.107:51820\nAllowedIPs = 0.0.0.0/0\n"
 	cfg, err := Parse([]byte(body))
 	if err != nil {
 		t.Fatal(err)
@@ -145,11 +145,11 @@ func TestParseRealServiceConfigs(t *testing.T) {
 
 func TestParseRejectsBroken(t *testing.T) {
 	cases := map[string]string{
-		"no private key": "[Peer]\nPublicKey = a7cbHcmzL3FwW7+Fg6Xo9FCdIYnDhWQeWm2c1A2B3C4=\nEndpoint = h:1\nAllowedIPs = 0.0.0.0/0\n",
-		"no address":     "[Interface]\nPrivateKey = qELLdGEcuWN4Cw04dU6EcD6nSuVPWHFISHlWFPjlyl0=\n[Peer]\nPublicKey = a7cbHcmzL3FwW7+Fg6Xo9FCdIYnDhWQeWm2c1A2B3C4=\nEndpoint = h:1\n",
-		"no endpoint":    "[Interface]\nPrivateKey = qELLdGEcuWN4Cw04dU6EcD6nSuVPWHFISHlWFPjlyl0=\nAddress = 10.0.0.2/32\n[Peer]\nPublicKey = a7cbHcmzL3FwW7+Fg6Xo9FCdIYnDhWQeWm2c1A2B3C4=\n",
-		"two peers":      "[Interface]\nPrivateKey = qELLdGEcuWN4Cw04dU6EcD6nSuVPWHFISHlWFPjlyl0=\nAddress = 10.0.0.2/32\n[Peer]\nPublicKey = a7cbHcmzL3FwW7+Fg6Xo9FCdIYnDhWQeWm2c1A2B3C4=\nEndpoint = h:1\n[Peer]\nPublicKey = a7cbHcmzL3FwW7+Fg6Xo9FCdIYnDhWQeWm2c1A2B3C5=\nEndpoint = h:2\n",
-		"bad key":        "[Interface]\nPrivateKey = short\nAddress = 10.0.0.2/32\n[Peer]\nPublicKey = a7cbHcmzL3FwW7+Fg6Xo9FCdIYnDhWQeWm2c1A2B3C4=\nEndpoint = h:1\n",
+		"no private key": "[Peer]\nPublicKey = QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI=\nEndpoint = h:1\nAllowedIPs = 0.0.0.0/0\n",
+		"no address":     "[Interface]\nPrivateKey = QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE=\n[Peer]\nPublicKey = QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI=\nEndpoint = h:1\n",
+		"no endpoint":    "[Interface]\nPrivateKey = QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE=\nAddress = 10.0.0.2/32\n[Peer]\nPublicKey = QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI=\n",
+		"two peers":      "[Interface]\nPrivateKey = QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE=\nAddress = 10.0.0.2/32\n[Peer]\nPublicKey = QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI=\nEndpoint = h:1\n[Peer]\nPublicKey = SkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKSko=\nEndpoint = h:2\n",
+		"bad key":        "[Interface]\nPrivateKey = short\nAddress = 10.0.0.2/32\n[Peer]\nPublicKey = QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI=\nEndpoint = h:1\n",
 	}
 	for name, body := range cases {
 		if _, err := Parse([]byte(body)); err == nil {

@@ -3,7 +3,7 @@ package store
 import "testing"
 
 func TestValidProbeHost(t *testing.T) {
-	valid := []string{"1.1.1.1", "8.8.8.8", "185.159.158.20", "162.159.193.10"}
+	valid := []string{"1.1.1.1", "8.8.8.8", "192.0.2.10", "162.159.193.10"}
 	for _, h := range valid {
 		if !ValidProbeHost(h) {
 			t.Fatalf("%s must be valid", h)

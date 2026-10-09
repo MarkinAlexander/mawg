@@ -74,10 +74,10 @@ func TestIngestDedupe(t *testing.T) {
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
 	files := map[string][]byte{
-		"ProtonVPN_AT-1.conf": replaceKey(plain, "qELLdGEcuWN4Cw04dU6EcD6nSuVPWHFISHlWFPjlyl3="),
-		"ProtonVPN_AT-2.conf": replaceKey(plain, "qELLdGEcuWN4Cw04dU6EcD6nSuVPWHFISHlWFPjlyl4="),
-		"sub/dir/DE-1.conf":   replaceKey(plain, "qELLdGEcuWN4Cw04dU6EcD6nSuVPWHFISHlWFPjlyl5="),
-		"same-as-AT-1.conf":   replaceKey(plain, "qELLdGEcuWN4Cw04dU6EcD6nSuVPWHFISHlWFPjlyl3="),
+		"ProtonVPN_AT-1.conf": replaceKey(plain, "R0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0c="),
+		"ProtonVPN_AT-2.conf": replaceKey(plain, "SEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEg="),
+		"sub/dir/DE-1.conf":   replaceKey(plain, "SUlJSUlJSUlJSUlJSUlJSUlJSUlJSUlJSUlJSUlJSUk="),
+		"same-as-AT-1.conf":   replaceKey(plain, "R0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0c="),
 		"readme.txt":          []byte("not a config"),
 	}
 	for name, body := range files {
@@ -104,7 +104,7 @@ func TestIngestDedupe(t *testing.T) {
 }
 
 func replaceKey(src []byte, key string) []byte {
-	out := bytes.Replace(src, []byte("qELLdGEcuWN4Cw04dU6EcD6nSuVPWHFISHlWFPjlyl2="), []byte(key), 1)
+	out := bytes.Replace(src, []byte("RkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkY="), []byte(key), 1)
 	out = bytes.Replace(out, []byte("se-01.protonvpn.net"), []byte(key[0:8]+".example.net"), 1)
 	return out
 }

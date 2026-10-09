@@ -17,3 +17,13 @@ runs.tmp.json
 
 # Vue-панель: зависимости не в гите, сборка (ui/dist) коммитится для go:embed
 ui-src/node_modules/
+
+.env
+.env.*
+.mcp.json
+*.key
+*.uuid
+*.local.json
+premium.json
+free.json
+auth.json

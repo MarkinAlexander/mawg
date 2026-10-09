@@ -24,10 +24,10 @@ func (c *clock) Now() time.Time      { return c.t }
 func (c *clock) Add(d time.Duration) { c.t = c.t.Add(d) }
 
 const (
-	keyA = "qELLdGEcuWN4Cw04dU6EcD6nSuVPWHFISHlWFPjlyl0="
-	keyB = "qELLdGEcuWN4Cw04dU6EcD6nSuVPWHFISHlWFPjlyl1="
-	keyC = "qELLdGEcuWN4Cw04dU6EcD6nSuVPWHFISHlWFPjlyl2="
-	peer = "a7cbHcmzL3FwW7+Fg6Xo9FCdIYnDhWQeWm2c1A2B3C4="
+	keyA = "QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE="
+	keyB = "REREREREREREREREREREREREREREREREREREREREREQ="
+	keyC = "RkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkY="
+	peer = "QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI="
 )
 
 func confBody(priv, host string) []byte {

@@ -25,19 +25,19 @@
              ipv6: 
 
         wireguard: 
-           public-key: GXDYRK4KwLXQhdexhrxxZIX8Ik+ao2kCNweMOYYXkG4=
+           public-key: TExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTEw=
           listen-port: 42391
                status: up
 
                  peer: 
                       public-key: 
-                                  bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=
+                                  RUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUU=
                      description: 
                       local-port: 42391
                      remote-port: 1387
                              via: GigabitEthernet1
-          local-endpoint-address: 79.174.36.109
-         remote-endpoint-address: 162.159.192.1
+          local-endpoint-address: 198.51.100.10
+         remote-endpoint-address: 198.51.100.11
                          rxbytes: 144368589
                          txbytes: 7151852
                   last-handshake: 54

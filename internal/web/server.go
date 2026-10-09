@@ -79,6 +79,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/pools/{name}/rename", s.renamePool)
 	mux.HandleFunc("GET /api/v1/events", s.getEvents)
 	mux.HandleFunc("POST /api/v1/pools", s.createPool)
+	mux.HandleFunc("POST /api/v1/pools/amnezia-free", s.createFreePool)
 	mux.HandleFunc("POST /api/v1/pools/from-source", s.createPoolFromSource)
 	mux.HandleFunc("POST /api/v1/links/inspect", s.inspectSource)
 	mux.HandleFunc("POST /api/v1/singbox/mode", s.postSingboxMode)
@@ -87,6 +88,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/v1/pools/{name}", s.updatePool)
 	mux.HandleFunc("DELETE /api/v1/pools/{name}", s.deletePool)
 	mux.HandleFunc("POST /api/v1/pools/{name}/configs", s.uploadConfigs)
+	mux.HandleFunc("GET /api/v1/pools/{name}/premium", s.getPremium)
+	mux.HandleFunc("POST /api/v1/pools/{name}/premium", s.importPremium)
+	mux.HandleFunc("POST /api/v1/pools/{name}/premium/country", s.switchPremium)
 	mux.HandleFunc("DELETE /api/v1/pools/{name}/configs/{file}", s.deleteConfig)
 	mux.HandleFunc("POST /api/v1/pools/{name}/configs/{file}/enable", s.enableConfig)
 	mux.HandleFunc("POST /api/v1/pools/{name}/configs/{file}/move", s.moveConfig)
@@ -419,6 +423,7 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 		SubRefreshAt   time.Time          `json:"subRefreshAt,omitempty"`
 		Settings       store.PoolSettings `json:"settings"`
 		Configs        []configView       `json:"configs"`
+		Premium        store.PremiumView  `json:"premium"`
 	}
 	out := struct {
 		Version     string         `json:"version"`
@@ -439,6 +444,7 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 			Rotations: st.Rotations, Disabled: p.Disabled, ConsecFails: st.ConsecFails, Settings: p.Settings,
 			RefreshFails: st.RefreshFails, LastRefreshErr: st.LastRefreshErr, SubRefreshAt: st.SubRefreshAt,
 			Configs: []configView{},
+			Premium: s.store.PremiumView(p.Name),
 		}
 		if p.Settings.EngineMode == engineMode {
 			switch {
@@ -832,7 +838,7 @@ func (s *Server) renamePool(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	renamed, err := s.store.RenamePool(old, req.Name)
+	renamed, err := s.engine.RenamePool(old, req.Name)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -1113,12 +1119,13 @@ func (s *Server) updatePool(w http.ResponseWriter, r *http.Request) {
 func (s *Server) deletePool(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	wasEngine := s.engineEnabled(r)
-	if !wasEngine {
-		if err := s.engine.PoolDown(name); err == nil {
-			// interface left down, slot content removed below
-		}
+	var err error
+	if wasEngine {
+		err = s.store.DeletePool(name)
+	} else {
+		err = s.engine.DeletePool(name)
 	}
-	if err := s.store.DeletePool(name); err != nil {
+	if err != nil {
 		writeErr(w, err)
 		return
 	}

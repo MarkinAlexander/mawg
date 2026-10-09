@@ -173,6 +173,7 @@ onMounted(() => {
     <div class="btnrow" style="margin:0 0 2px">
       <button type="button" id="pModeCfg" class="primary">конфиги .conf / .zip</button>
       <button type="button" id="pModeLink">ссылка или подписка</button>
+      <button type="button" id="pModeFree">Amnezia Free без аккаунта</button>
     </div>
     <label class="f">Имя (латиница, цифры, дефис)
       <input id="pName" placeholder="proton" pattern="[a-z][a-z0-9-]{0,14}" title="строчная латиница, цифры и дефисы, начинается с буквы, до 15 символов" required>
@@ -211,6 +212,7 @@ onMounted(() => {
     </div>
     <div class="muted" id="pInspect" style="display:none;font-size:11px;margin-top:2px"></div>
     <div class="muted" id="pLinkHint" style="display:none;font-size:11px">wireguard://, amneziawg:// и vpn:// превращаются в обычные конфиги пула (нативно, слот). Узлы vless/trojan и т.п. становятся tun-интерфейсом движка sing-box (tun1, tun2...), который виден в MagiTrickle как обычный интерфейс. Если на роутере движка нет - узлы будут показаны списком с пометкой.</div>
+    <div class="muted" id="pFreeHint" style="display:none;font-size:12px">Аккаунт, подписка и ключ не нужны. Доступность и регион определяет официальный gateway. Поддерживается Free AWG на OpenWrt/Linux; пул создаётся выключенным. Если сервис недоступен или требует CAPTCHA, конфиг не будет выдуман.</div>
     <div id="pPlanResult" style="display:none;font-size:12px;border-top:1px solid var(--border);padding-top:8px"></div>
     <div class="btnrow" style="justify-content:end" id="pActions">
       <button value="cancel" id="pCancel">Отмена</button>
