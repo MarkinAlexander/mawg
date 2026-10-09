@@ -23,7 +23,7 @@ import (
 const maxBytes = 2 << 20
 
 func decodeLink(link string) ([]byte, error) {
-	bad := errors.New("invalid or unsupported vpn:// configuration")
+	bad := errors.New("ключ vpn:// не разбирается или не поддерживается")
 	if !strings.HasPrefix(link, "vpn://") || len(link) > maxBytes {
 		return nil, bad
 	}
@@ -79,7 +79,7 @@ func ImportKey(link string) (key, country string, err error) {
 		} `json:"auth_data"`
 	}
 	if json.Unmarshal(raw, &v) != nil || v.Version != 2 || v.API.Type != "amnezia-premium" || v.API.Protocol != "awg" || v.Auth.Key == "" || len(v.Auth.Key) > 4096 {
-		return "", "", errors.New("expected an Amnezia Premium AWG v2 access key")
+		return "", "", errors.New("ожидается ключ Amnezia Premium (vpn://, AWG, версия 2)")
 	}
 	return v.Auth.Key, v.API.Country, nil
 }
@@ -87,7 +87,7 @@ func ImportKey(link string) (key, country string, err error) {
 func WireGuardKeys() (private, public string, err error) {
 	key, err := ecdh.X25519().GenerateKey(rand.Reader)
 	if err != nil {
-		return "", "", errors.New("Premium key generation failed")
+		return "", "", errors.New("не удалось сгенерировать ключ Premium")
 	}
 	b := key.Bytes()
 	b[0] &= 248
@@ -97,15 +97,15 @@ func WireGuardKeys() (private, public string, err error) {
 
 func (c *Client) Config(ctx context.Context, key, id, userCountry, country, private string) ([]byte, error) {
 	if !countryCode.MatchString(country) {
-		return nil, errors.New("invalid Premium country")
+		return nil, errors.New("неверная страна Premium")
 	}
 	b, err := base64.StdEncoding.DecodeString(private)
 	if err != nil {
-		return nil, errors.New("invalid saved Premium private key")
+		return nil, errors.New("сохранённый приватный ключ Premium повреждён")
 	}
 	wg, err := ecdh.X25519().NewPrivateKey(b)
 	if err != nil {
-		return nil, errors.New("invalid saved Premium private key")
+		return nil, errors.New("сохранённый приватный ключ Premium повреждён")
 	}
 	v := payload(key, id, userCountry)
 	v["service_protocol"] = "awg"
@@ -119,7 +119,7 @@ func (c *Client) Config(ctx context.Context, key, id, userCountry, country, priv
 		Config string `json:"config"`
 	}
 	if json.Unmarshal(raw, &response) != nil {
-		return nil, errors.New("invalid Premium configuration response")
+		return nil, errors.New("gateway вернул неразборчивый ответ Premium")
 	}
 	data, _, err := deviceConfig(response.Config, private)
 	return data, err

@@ -39,10 +39,10 @@ func Open(base string) (*Store, error) {
 		return nil, err
 	}
 	if err := s.load(filepath.Join(base, "premium.json"), &s.premium); err != nil {
-		return nil, errors.New("could not load Premium subscription")
+		return nil, errors.New("не удалось загрузить подписку Premium")
 	}
 	if err := s.load(filepath.Join(base, "free.json"), &s.free); err != nil {
-		return nil, errors.New("could not load Amnezia Free installation")
+		return nil, errors.New("не удалось загрузить данные Amnezia Free")
 	}
 	if s.state.Pools == nil {
 		s.state.Pools = map[string]*PoolState{}
@@ -489,7 +489,7 @@ func (s *Store) createPool(name string, settings PoolSettings, freeConfig *wgcon
 	defer s.mu.Unlock()
 	for _, p := range s.root.Pools {
 		if freeConfig != nil && p.Free {
-			return Pool{}, errors.New("Amnezia Free already belongs to another pool")
+			return Pool{}, errors.New("Amnezia Free уже привязан к другому пулу")
 		}
 		if p.Name == clean {
 			return Pool{}, fmt.Errorf("пул %q уже существует", clean)
@@ -516,13 +516,13 @@ func (s *Store) createPool(name string, settings PoolSettings, freeConfig *wgcon
 		path := filepath.Join(s.PoolDir(clean), file)
 		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 		if err != nil {
-			return Pool{}, errors.New("could not stage Amnezia Free configuration; existing file retained")
+			return Pool{}, errors.New("не удалось подготовить конфиг Amnezia Free; существующий файл сохранён")
 		}
 		_, writeErr := f.Write(freeConfig.Raw)
 		closeErr := f.Close()
 		if writeErr != nil || closeErr != nil {
 			os.Remove(path)
-			return Pool{}, errors.New("could not persist Amnezia Free configuration")
+			return Pool{}, errors.New("не удалось сохранить конфиг Amnezia Free")
 		}
 		pool.Configs = []ManagedConfig{{File: file, Original: "Amnezia Free", Endpoint: cfg.Endpoint(), PublicKey: cfg.Peer.PublicKey, Addresses: cfg.Addresses, Enabled: true}}
 	}
@@ -549,7 +549,7 @@ func (s *Store) UpdatePool(name string, settings PoolSettings) error {
 		if s.root.Pools[i].Name == name {
 			p := s.root.Pools[i]
 			if p.Premium && (settings.EngineMode != "" || settings.Platform != p.Settings.Platform || (settings.Platform == PlatformOpenwrt && settings.OpenwrtProto != "amneziawg") || settings.Source != "") {
-				return errors.New("Premium requires a native AWG pool without a static source")
+				return errors.New("Premium работает с нативным AWG-пулом без статического источника")
 			}
 			s.root.Pools[i].Settings = settings.WithDefaults()
 			return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
@@ -591,7 +591,7 @@ func (s *Store) AddConfigs(pool string, configs []wgconf.NamedConfig) (added int
 		return 0, nil, fmt.Errorf("пул %q не найден", pool)
 	}
 	if s.root.Pools[pi].Premium {
-		return 0, nil, errors.New("Premium pool uses country switching, not static configs")
+		return 0, nil, errors.New("пул Premium меняет страну, статические конфиги ему не нужны")
 	}
 	dir := s.PoolDir(pool)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -673,7 +673,7 @@ func (s *Store) RemoveConfig(pool, file string) error {
 		for j, c := range s.root.Pools[i].Configs {
 			if c.File == file {
 				if s.root.Pools[i].Premium {
-					return errors.New("Premium current config cannot be deleted; delete the pool instead")
+					return errors.New("активный конфиг Premium нельзя удалить по отдельности - удалите пул целиком")
 				}
 				s.root.Pools[i].Configs = append(s.root.Pools[i].Configs[:j], s.root.Pools[i].Configs[j+1:]...)
 				if err := s.saveLocked(filepath.Join(s.base, "config.json"), s.root); err != nil {

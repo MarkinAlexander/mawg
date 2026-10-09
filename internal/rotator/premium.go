@@ -33,10 +33,10 @@ func (e *Engine) SwitchPremium(ctx context.Context, pool, country string) error 
 	defer e.actMu.Unlock()
 	p, ok := e.store.Pool(pool)
 	if !ok || !p.Premium {
-		return errors.New("import Premium into this pool first")
+		return errors.New("сначала импортируйте Premium в этот пул")
 	}
 	if p.Disabled {
-		return errors.New("enable the Premium pool before switching countries")
+		return errors.New("включите пул Premium перед сменой страны")
 	}
 	v := e.store.Premium()
 	countries, err := e.PremiumClient.Countries(ctx, v.Key, v.UUID, v.UserCountry)
@@ -50,7 +50,7 @@ func (e *Engine) SwitchPremium(ctx context.Context, pool, country string) error 
 		}
 	}
 	if !supported {
-		return errors.New("country is unavailable for Premium AWG")
+		return errors.New("эта страна недоступна для Premium AWG")
 	}
 	v.Countries = countries
 	if v.PendingPrivate == "" || v.PendingCountry != country {
@@ -65,34 +65,34 @@ func (e *Engine) SwitchPremium(ctx context.Context, pool, country string) error 
 	}
 	raw, err := e.PremiumClient.Config(ctx, v.Key, v.UUID, v.UserCountry, country, v.PendingPrivate)
 	if err != nil {
-		return fmt.Errorf("%w; previous local config retained, remote registration may have changed; retry the country", err)
+		return fmt.Errorf("%w; старый конфиг оставлен, регистрация у gateway могла измениться - повторите смену страны", err)
 	}
 	if err := e.PremiumClient.VerifyDevice(ctx, v.Key, v.UUID, v.UserCountry, country); err != nil {
-		return fmt.Errorf("%w; previous local config retained, remote registration may have changed; retry the country", err)
+		return fmt.Errorf("%w; старый конфиг оставлен, регистрация у gateway могла измениться - повторите смену страны", err)
 	}
 	cfg, err := wgconf.Parse(raw)
 	if err != nil {
-		return errors.New("unsupported Premium configuration; remote registration may have changed")
+		return errors.New("gateway вернул неподдерживаемый конфиг; регистрация могла измениться - повторите смену страны")
 	}
 	if e.addressTaken(p.Name, p.DeviceName(), store.ManagedConfig{Addresses: cfg.Addresses}) {
-		return errors.New("Premium tunnel address is occupied; previous local config retained, remote registration changed; retry the country")
+		return errors.New("адрес Premium-туннеля уже занят; старый конфиг оставлен, регистрация изменилась - повторите смену страны")
 	}
 	e.ifaceTouched()
 	if err := e.backend.Apply(p, cfg); err != nil {
-		return errors.New("Premium interface apply failed; previous local config retained, remote registration changed; retry the country")
+		return errors.New("не удалось поднять интерфейс Premium; старый конфиг оставлен - повторите смену страны")
 	}
 	file, err := e.store.ReplacePremiumConfig(pool, raw)
 	if err != nil {
-		return errors.New("Premium interface changed but local config could not be saved; retry the country")
+		return errors.New("интерфейс Premium сменился, но конфиг не сохранился - повторите смену страны")
 	}
 	if err := e.recordApplied(p, file, cfg.Endpoint()); err != nil {
-		return errors.New("Premium country applied but active state could not be saved; retry the country")
+		return errors.New("страна применена, но состояние пула не сохранилось - повторите смену страны")
 	}
 	e.saveRouterConfig(pool)
 	v.Country = country
 	v.PendingPrivate, v.PendingCountry = "", ""
 	if err := e.store.SavePremium(v); err != nil {
-		return errors.New("Premium country applied but subscription state could not be saved; retry the country")
+		return errors.New("страна применена, но состояние подписки не сохранилось - повторите смену страны")
 	}
 	return nil
 }
@@ -108,12 +108,12 @@ func (e *Engine) DeletePool(name string) error {
 	defer e.actMu.Unlock()
 	p, ok := e.store.Pool(name)
 	if !ok {
-		return errors.New("pool not found")
+		return errors.New("пул не найден")
 	}
 	if !p.Disabled {
 		e.ifaceTouched()
 		if err := e.backend.Down(p); err != nil && p.Premium {
-			return errors.New("Premium interface could not be brought down; pool retained")
+			return errors.New("не удалось выключить интерфейс Premium; пул оставлен как есть")
 		}
 	}
 	return e.store.DeletePool(name)

@@ -65,7 +65,7 @@ func (s *Server) importPremium(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 2<<20)
 	if json.NewDecoder(r.Body).Decode(&req) != nil || req.Key == "" {
-		writeErr(w, errors.New("expected a Premium vpn:// key"))
+		writeErr(w, errors.New("вставьте ключ Premium (vpn://)"))
 		return
 	}
 	if err := s.engine.ImportPremium(r.Context(), r.PathValue("name"), req.Key); err != nil {
@@ -81,7 +81,7 @@ func (s *Server) switchPremium(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1024)
 	if json.NewDecoder(r.Body).Decode(&req) != nil || req.Country == "" {
-		writeErr(w, errors.New("expected a Premium country"))
+		writeErr(w, errors.New("выберите страну для Premium"))
 		return
 	}
 	if err := s.engine.SwitchPremium(r.Context(), r.PathValue("name"), req.Country); err != nil {

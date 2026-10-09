@@ -154,7 +154,7 @@ func ExchangeAmneziaKey(ctx context.Context, raw string, opts ExchangeOptions) (
 		protocol = "awg"
 	}
 	if key.ServiceType == "amnezia-premium" && protocol == "awg" {
-		return ExchangeResult{}, fmt.Errorf("Premium AWG requires the managed Premium pool: import /pools/{name}/premium, switch /pools/{name}/premium/country")
+		return ExchangeResult{}, fmt.Errorf("ключ Premium AWG обрабатывается в панели Premium-пула: импортируйте его в карточке пула и меняйте страну там")
 	}
 	gw := opts.GatewayURL
 	if gw == "" {

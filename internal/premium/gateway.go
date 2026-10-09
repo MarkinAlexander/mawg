@@ -107,28 +107,28 @@ func payload(key, id, country string) map[string]any {
 }
 
 func (c *Client) post(ctx context.Context, operation string, v map[string]any) ([]byte, error) {
-	bad := errors.New("Premium gateway response could not be decrypted")
+	bad := errors.New("ответ gateway не расшифровывается")
 	u, err := url.Parse(c.BaseURL)
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-		return nil, errors.New("Premium gateway requires HTTPS")
+		return nil, errors.New("gateway работает только по HTTPS")
 	}
 	if operation != "account_info" && operation != "config" && operation != "services" {
-		return nil, errors.New("unsupported Premium operation")
+		return nil, errors.New("неизвестная операция gateway")
 	}
 	key, iv, salt := make([]byte, 32), make([]byte, 32), make([]byte, 8)
 	for _, b := range [][]byte{key, iv, salt} {
 		if _, err := rand.Read(b); err != nil {
-			return nil, errors.New("Premium encryption failed")
+			return nil, errors.New("ошибка шифрования запроса к gateway")
 		}
 	}
 	session, _ := json.Marshal(map[string][]byte{"aes_key": key, "aes_iv": iv, "aes_salt": salt})
 	wrapped, err := rsa.EncryptPKCS1v15(rand.Reader, c.Key, session)
 	if err != nil {
-		return nil, errors.New("Premium encryption failed")
+		return nil, errors.New("ошибка шифрования запроса к gateway")
 	}
 	raw, err := json.Marshal(v)
 	if err != nil {
-		return nil, errors.New("invalid Premium request")
+		return nil, errors.New("некорректный запрос к gateway")
 	}
 	n := aes.BlockSize - len(raw)%aes.BlockSize
 	raw = append(raw, bytes.Repeat([]byte{byte(n)}, n)...)
@@ -137,11 +137,11 @@ func (c *Client) post(ctx context.Context, operation string, v map[string]any) (
 	env, _ := json.Marshal(map[string][]byte{"key_payload": wrapped, "api_payload": raw})
 	req, err := http.NewRequestWithContext(ctx, "POST", strings.TrimRight(c.BaseURL, "/")+"/v1/"+operation, bytes.NewReader(env))
 	if err != nil {
-		return nil, errors.New("invalid Premium request")
+		return nil, errors.New("некорректный запрос к gateway")
 	}
 	requestID, err := UUID()
 	if err != nil {
-		return nil, errors.New("Premium encryption failed")
+		return nil, errors.New("ошибка шифрования запроса к gateway")
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Client-Request-ID", requestID)
@@ -149,11 +149,11 @@ func (c *Client) post(ctx context.Context, operation string, v map[string]any) (
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	response, err := client.Do(req)
 	if err != nil {
-		return nil, errors.New("Premium gateway unavailable (TLS, network or timeout)")
+		return nil, errors.New("gateway недоступен (сеть, TLS или таймаут)")
 	}
 	defer response.Body.Close()
 	if response.StatusCode >= 300 && response.StatusCode < 400 {
-		return nil, errors.New("Premium gateway redirect refused")
+		return nil, errors.New("gateway попытался перенаправить запрос - отказано")
 	}
 	encrypted, err := io.ReadAll(io.LimitReader(response.Body, maxBytes+1))
 	if err != nil || len(encrypted) == 0 || len(encrypted) > maxBytes || len(encrypted)%aes.BlockSize != 0 {
@@ -197,15 +197,15 @@ func (c *Client) post(ctx context.Context, operation string, v map[string]any) (
 		}
 		switch code {
 		case 409:
-			return nil, errors.New("Premium device limit reached (HTTP 409)")
+			return nil, errors.New("достигнут лимит устройств Premium (HTTP 409) - освободите слот в приложении Амнезии")
 		case 429:
-			return nil, errors.New("Premium rate limit reached (HTTP 429)")
+			return nil, errors.New("слишком много запросов к gateway (HTTP 429), повторите позже")
 		case 408:
-			return nil, errors.New("Premium gateway timeout (HTTP 408)")
+			return nil, errors.New("gateway не ответил вовремя (HTTP 408), повторите позже")
 		case 402, 422:
-			return nil, fmt.Errorf("Premium subscription unavailable (HTTP %d)", code)
+			return nil, fmt.Errorf("подписка Premium недоступна (HTTP %d)", code)
 		default:
-			return nil, fmt.Errorf("Premium gateway rejected request (HTTP %d)", code)
+			return nil, fmt.Errorf("gateway отклонил запрос (HTTP %d)", code)
 		}
 	}
 	return raw, nil
@@ -227,7 +227,7 @@ func (c *Client) Countries(ctx context.Context, key, id, userCountry string) ([]
 		} `json:"available_countries"`
 	}
 	if json.Unmarshal(raw, &response) != nil {
-		return nil, errors.New("invalid Premium country list")
+		return nil, errors.New("gateway вернул неразборчивый список стран")
 	}
 	out := []Country{}
 	seen := map[string]bool{}
@@ -252,7 +252,7 @@ func (c *Client) Countries(ctx context.Context, key, id, userCountry string) ([]
 		out = append(out, Country{Code: v.Code, Name: name})
 	}
 	if len(out) == 0 {
-		return nil, errors.New("Premium has no available AWG countries")
+		return nil, errors.New("в подписке Premium нет стран с AWG")
 	}
 	return out, nil
 }
@@ -272,19 +272,19 @@ func (c *Client) VerifyDevice(ctx context.Context, key, id, userCountry, country
 		} `json:"issued_configs"`
 	}
 	if json.Unmarshal(raw, &response) != nil {
-		return errors.New("invalid Premium device registration response")
+		return errors.New("gateway вернул неразборчивый ответ регистрации устройства")
 	}
 	count := 0
 	for _, device := range response.Issued {
 		if device.UUID == id && device.Source == "gateway_account" {
 			if device.Country != country {
-				return errors.New("Premium country registration does not match request")
+				return errors.New("gateway зарегистрировал не ту страну, что запрошена")
 			}
 			count++
 		}
 	}
 	if count != 1 {
-		return errors.New("Premium router device registration could not be confirmed")
+		return errors.New("не удалось подтвердить регистрацию роутера у gateway")
 	}
 	return nil
 }

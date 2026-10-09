@@ -49,13 +49,13 @@ func (e *Engine) createFreePool(ctx context.Context, name string, settings store
 	defer e.actMu.Unlock()
 	clean, err := wgconf.SanitizePoolName(name)
 	if err != nil {
-		return store.Pool{}, errors.New("invalid Amnezia Free pool name")
+		return store.Pool{}, errors.New("имя пула не подходит: строчная латиница, цифры, дефис")
 	}
 	// Конфиг Free у gateway - формат AWG 3.x (защита заголовка, диапазонные
 	// таймеры): нативные интерфейсы его не поднимают, пул создаётся в
 	// режиме движка (sing-box-lx) - web-слой задаёт EngineMode и tun.
 	if settings.Source != "" || !store.ValidProbeTarget(settings.WithDefaults().ProbeHost) {
-		return store.Pool{}, errors.New("Amnezia Free requires a pool with a valid probe target")
+		return store.Pool{}, errors.New("для Amnezia Free нужна корректная цель пробы")
 	}
 	if settings.EngineMode == "" {
 		return store.Pool{}, errors.New("Amnezia Free идёт через движок sing-box-lx - установите ядро в «Система -> Зависимости»")
@@ -68,23 +68,23 @@ func (e *Engine) createFreePool(ctx context.Context, name string, settings store
 			return p, nil
 		}
 		if p.Free {
-			return store.Pool{}, errors.New("Amnezia Free already belongs to another pool")
+			return store.Pool{}, errors.New("Amnezia Free уже привязан к другому пулу")
 		}
 		if p.Name == clean {
-			return store.Pool{}, errors.New("pool already exists; existing configuration retained")
+			return store.Pool{}, errors.New("пул с таким именем уже существует, его конфигурация сохранена")
 		}
 	}
 	v := e.store.Free()
 	if v.UUID == "" {
 		v.UUID, err = premium.UUID()
 		if err != nil {
-			return store.Pool{}, errors.New("could not create Amnezia Free identity")
+			return store.Pool{}, errors.New("не удалось создать идентичность Amnezia Free")
 		}
 	}
 	if v.Private == "" {
 		v.Private, _, err = premium.WireGuardKeys()
 		if err != nil {
-			return store.Pool{}, errors.New("could not create Amnezia Free key")
+			return store.Pool{}, errors.New("не удалось создать ключ Amnezia Free")
 		}
 	}
 	if err := e.store.SaveFree(v); err != nil {
@@ -96,7 +96,7 @@ func (e *Engine) createFreePool(ctx context.Context, name string, settings store
 			return store.Pool{}, err
 		}
 		if protocol != "awg" {
-			return store.Pool{}, errors.New("catalog offers an unsupported Amnezia Free protocol; no configuration requested")
+			return store.Pool{}, errors.New("gateway предлагает неподдерживаемый протокол Amnezia Free - конфиг не запрашивался")
 		}
 		v.UserCountry = country
 		if err := e.store.SaveFree(v); err != nil {
@@ -113,10 +113,10 @@ func (e *Engine) createFreePool(ctx context.Context, name string, settings store
 	}
 	cfg, err := wgconf.Parse(v.Config)
 	if err != nil || cfg.PrivateKey != v.Private || !cfg.AWG.Present() {
-		return store.Pool{}, errors.New("invalid saved Amnezia Free configuration")
+		return store.Pool{}, errors.New("сохранённый конфиг Amnezia Free повреждён")
 	}
 	if e.addressTaken(clean, "", store.ManagedConfig{Addresses: cfg.Addresses}) {
-		return store.Pool{}, errors.New("Amnezia Free tunnel address is occupied; previous configuration retained")
+		return store.Pool{}, errors.New("адрес туннеля Amnezia Free уже занят; конфигурация сохранена")
 	}
 	return e.store.CreateFreePool(clean, settings, wgconf.NamedConfig{Raw: v.Config, Config: cfg, OriginalName: "Amnezia Free"})
 }
