@@ -142,6 +142,12 @@ func (s *Server) Handler() http.Handler {
 	if err != nil {
 		panic(err)
 	}
+	// основная панель - Vue на /app/; вход с корня идёт туда. Классическая
+	// (самодостаточная страница без panel.js) остаётся страховкой на /legacy/.
+	// {$} - только точный корень, прочая статика (favicon.ico) - как раньше.
+	mux.Handle("GET /{$}", http.RedirectHandler("/app/", http.StatusFound))
+	mux.Handle("GET /legacy", http.RedirectHandler("/legacy/", http.StatusMovedPermanently))
+	mux.Handle("GET /legacy/", http.StripPrefix("/legacy/", http.FileServer(http.FS(sub))))
 	mux.Handle("/", http.FileServer(http.FS(sub)))
 
 	// новая панель (Vue, исходники в ui-src) собирается в ui/app командой
