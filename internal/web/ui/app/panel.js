@@ -780,8 +780,7 @@ function wireProbeSwitch(typeSel, targetInput) {
 }
 
 let settingsPool = null;
-// состав пула для шестерёнки: конфиги WG и прокси-узлы с протоколами
-async // шестерёнка premium-пула: смена страны прямо здесь (движковый или нативный)
+// шестерёнка premium-пула: смена страны прямо здесь (движковый или нативный)
 function wirePremSettings(p) {
   const row = document.getElementById('spPremRow');
   if (!row) return;
