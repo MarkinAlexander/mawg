@@ -21,6 +21,10 @@ func freeError(err error) error {
 	if err == nil {
 		return nil
 	}
+	var cap *CaptchaError
+	if errors.As(err, &cap) {
+		return err
+	}
 	return errors.New(strings.ReplaceAll(err.Error(), "Premium", "Amnezia Free"))
 }
 
@@ -55,7 +59,7 @@ func (c *Client) FreeService(ctx context.Context, id string) (string, string, er
 	return "", "", fmt.Errorf("Amnezia Free is not offered in detected region %s", response.Country)
 }
 
-func (c *Client) FreeConfig(ctx context.Context, id, country, private string) ([]byte, json.RawMessage, error) {
+func (c *Client) FreeConfig(ctx context.Context, id, country, private string, answer *CaptchaAnswer) ([]byte, json.RawMessage, error) {
 	bad := errors.New("unsupported or invalid Amnezia Free AWG configuration")
 	b, err := base64.StdEncoding.DecodeString(private)
 	if err != nil {
@@ -68,6 +72,10 @@ func (c *Client) FreeConfig(ctx context.Context, id, country, private string) ([
 	v := freePayload(id)
 	v["user_country_code"], v["service_type"], v["service_protocol"] = country, "amnezia-free", "awg"
 	v["public_key"] = base64.StdEncoding.EncodeToString(key.PublicKey().Bytes())
+	if answer != nil && answer.ID != "" {
+		v["captcha_id"] = answer.ID
+		v["captcha_solution"] = NormalizeSolution(answer.Solution)
+	}
 	raw, err := c.post(ctx, "config", v)
 	if err != nil {
 		return nil, nil, freeError(err)

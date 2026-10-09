@@ -10,6 +10,16 @@ import (
 )
 
 func (e *Engine) CreateFreePool(ctx context.Context, name string, settings store.PoolSettings) (store.Pool, error) {
+	return e.createFreePool(ctx, name, settings, nil)
+}
+
+// AnswerFreeCaptcha - повтор создания Free-пула с решением капчи от
+// человека; идентичность (UUID/ключ) та же, сохранена с первой попытки.
+func (e *Engine) AnswerFreeCaptcha(ctx context.Context, name string, settings store.PoolSettings, answer premium.CaptchaAnswer) (store.Pool, error) {
+	return e.createFreePool(ctx, name, settings, &answer)
+}
+
+func (e *Engine) createFreePool(ctx context.Context, name string, settings store.PoolSettings, answer *premium.CaptchaAnswer) (store.Pool, error) {
 	e.actMu.Lock()
 	defer e.actMu.Unlock()
 	clean, err := wgconf.SanitizePoolName(name)
@@ -68,7 +78,7 @@ func (e *Engine) CreateFreePool(ctx context.Context, name string, settings store
 		if err := e.store.SaveFree(v); err != nil {
 			return store.Pool{}, err
 		}
-		v.Config, v.Auth, err = e.PremiumClient.FreeConfig(ctx, v.UUID, country, v.Private)
+		v.Config, v.Auth, err = e.PremiumClient.FreeConfig(ctx, v.UUID, country, v.Private, answer)
 		if err != nil {
 			return store.Pool{}, err
 		}

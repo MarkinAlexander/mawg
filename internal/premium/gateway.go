@@ -56,6 +56,48 @@ func UUID() (string, error) {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[:4], b[4:6], b[6:8], b[8:10], b[10:]), nil
 }
 
+// Captcha - испытание gateway Amnezia Free: картинка (base64 PNG) и
+// подсказка. Решение вводит человек в панели, запрос повторяется с
+// captcha_id + captcha_solution.
+type Captcha struct {
+	ID    string `json:"id"`
+	Image string `json:"image"`
+	Hint  string `json:"hint,omitempty"`
+}
+
+// CaptchaError - запрос не выполнен, ждём решение капчи от человека.
+type CaptchaError struct {
+	Captcha Captcha
+}
+
+func (e *CaptchaError) Error() string {
+	return "gateway требует решение капчи"
+}
+
+// CaptchaAnswer - ответ человека на испытание.
+type CaptchaAnswer struct {
+	ID       string
+	Solution string
+}
+
+// NormalizeSolution - только цифры; полноширинные ０-９ приводятся к
+// ascii, как официальный клиент (PR #2508 amnezia-client).
+func NormalizeSolution(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r >= 0xFF10 && r <= 0xFF19:
+			b.WriteRune(r - 0xFF10 + '0')
+		}
+	}
+	if b.Len() > 0 {
+		return b.String()
+	}
+	return strings.TrimSpace(s)
+}
+
 func payload(key, id, country string) map[string]any {
 	v := map[string]any{"os_version": "linux", "app_version": "5.0.3.0", "cli_name": "AmneziaVPN", "distribution": "github", "app_language": "ru", "installation_uuid": id, "service_type": "amnezia-premium", "auth_data": map[string]string{"api_key": key}}
 	if country != "" {
@@ -132,6 +174,7 @@ func (c *Client) post(ctx context.Context, operation string, v map[string]any) (
 		HTTP         *int   `json:"http_status"`
 		CaptchaID    string `json:"captcha_id"`
 		CaptchaImage string `json:"captcha_image"`
+		Hint         string `json:"hint"`
 		Message      string `json:"message"`
 	}
 	if json.Unmarshal(raw, &status) != nil || len(raw) == 0 || raw[0] != '{' {
@@ -142,8 +185,15 @@ func (c *Client) post(ctx context.Context, operation string, v map[string]any) (
 		code = *status.HTTP
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 || code < 200 || code >= 300 {
-		if v["service_type"] == "amnezia-free" && code == 402 && (status.CaptchaID != "" || status.CaptchaImage != "" || strings.Contains(strings.ToLower(status.Message), "captcha") || strings.Contains(strings.ToLower(status.Message), "rate_limit_exceeded")) {
-			return nil, errors.New("Amnezia Free requires CAPTCHA verification (HTTP 402); use the official client or retry later; retry identity retained")
+		msg := strings.ToLower(status.Message)
+		if v["service_type"] == "amnezia-free" && code == 402 && (status.CaptchaID != "" || status.CaptchaImage != "" ||
+			strings.Contains(msg, "captcha") || strings.Contains(msg, "rate_limit_exceeded")) {
+			// gateway требует человеко-проверку: картинка base64 PNG,
+			// решение возвращается повтором запроса с captcha_id +
+			// captcha_solution (протокол официального клиента, PR #2508)
+			return nil, &CaptchaError{Captcha: Captcha{
+				ID: status.CaptchaID, Image: status.CaptchaImage, Hint: status.Hint,
+			}}
 		}
 		switch code {
 		case 409:
