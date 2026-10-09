@@ -180,7 +180,9 @@ func newFakeLXCore(t *testing.T, tag string) *fakeLXCore {
 	f.tarball = filepath.Join(f.dir, f.asset)
 	f.binContent = body
 	sum := sha256.Sum256(f.tarBytes)
-	if err := os.WriteFile(filepath.Join(f.dir, "SHA256SUMS"), []byte(fmt.Sprintf("%x  %s\n", sum, f.asset)), 0o644); err != nil {
+	// оба профиля указывают на один tarball - для теста смены профиля
+	sums := fmt.Sprintf("%x  %s\n%x  %s.upx.tar.gz\n", sum, f.asset, sum, f.asset)
+	if err := os.WriteFile(filepath.Join(f.dir, "SHA256SUMS"), []byte(sums), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	f.targetBin = filepath.Join(f.dir, "bin", "sing-box")
@@ -191,8 +193,11 @@ func newFakeLXCore(t *testing.T, tag string) *fakeLXCore {
 func (f *fakeLXCore) reports() []SourceReport {
 	return []SourceReport{{Source: Sources[0], Releases: []Release{{
 		Tag:    "v" + f.tag,
-		Matrix: map[string]Flavors{"mipsle-softfloat": {Plain: true}},
-		Names:  map[string]FlavorAssets{"mipsle-softfloat": {Plain: f.asset, PlainSz: int64(len(f.tarBytes))}},
+		Matrix: map[string]Flavors{"mipsle-softfloat": {Plain: true, UPX: true}},
+		Names: map[string]FlavorAssets{"mipsle-softfloat": {
+			Plain: f.asset, PlainSz: int64(len(f.tarBytes)),
+			UPX: f.asset + ".upx.tar.gz", UPXSz: int64(len(f.tarBytes)),
+		}},
 	}}}}
 }
 
@@ -203,7 +208,7 @@ func (f *fakeLXCore) opts(replaceForeign bool) LXInstallOptions {
 		ReplaceForeign: replaceForeign,
 		Discover:       func(ctx context.Context) []SourceReport { return f.reports() },
 		Fetch: func(ctx context.Context, url, dest string) (int64, error) {
-			if strings.HasSuffix(url, f.asset) {
+			if strings.HasSuffix(url, f.asset) || strings.HasSuffix(url, f.asset+".upx.tar.gz") {
 				return int64(len(f.tarBytes)), os.WriteFile(dest, f.tarBytes, 0o644)
 			}
 			if strings.HasSuffix(url, "SHA256SUMS") {
@@ -368,6 +373,43 @@ func TestInstallLXCoreMissingArch(t *testing.T) {
 	_, err := InstallLXCore(context.Background(), opts)
 	if err == nil || !strings.Contains(err.Error(), "нет ассета для mipsle-softfloat") {
 		t.Fatalf("честный ответ про отсутствие: %v", err)
+	}
+}
+
+// смена профиля при той же версии - полноценная переустановка, а не «актуально»
+func TestInstallLXCoreFlavorSwitch(t *testing.T) {
+	f := newFakeLXCore(t, "1.14.2-lx.7")
+	res, err := InstallLXCore(context.Background(), f.opts(false))
+	if err != nil || res.UpToDate {
+		t.Fatalf("исходная установка plain: %+v err=%v", res, err)
+	}
+	marker, _ := os.ReadFile(filepath.Join(f.markerDir, LXMarkerName))
+	if !strings.Contains(string(marker), "flavor=plain") {
+		t.Fatalf("маркер после plain: %s", marker)
+	}
+
+	// той же версии, тот же источник, но профиль upx - качаем и меняем
+	opts := f.opts(false)
+	opts.Flavor = LXFlavorUPX
+	res, err = InstallLXCore(context.Background(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.UpToDate {
+		t.Fatalf("смена профиля должна переустанавливать: %+v", res)
+	}
+	marker, _ = os.ReadFile(filepath.Join(f.markerDir, LXMarkerName))
+	if !strings.Contains(string(marker), "flavor=upx") || !strings.Contains(string(marker), "source=") {
+		t.Fatalf("маркер после upx: %s", marker)
+	}
+
+	// снова upx - уже актуально
+	res, err = InstallLXCore(context.Background(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.UpToDate {
+		t.Fatalf("тот же профиль - не перекачиваем: %+v", res)
 	}
 }
 

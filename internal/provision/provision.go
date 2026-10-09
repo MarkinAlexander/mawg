@@ -395,7 +395,7 @@ func lxCoreItem(run Runner, platform string) Item {
 		item.Installed = true
 		item.Action = "singbox-lx"
 		item.ActionLabel = "обновить lx"
-		item.Confirm = fmt.Sprintf("Сейчас стоит lx-ядро %s. mawg переустановит его нашей сборкой, если релиз новее по суффиксу -lx.N или стоящая сборка не наша (нет маркера источника mawg). ", ver) + confirm
+		item.Confirm = fmt.Sprintf("Сейчас стоит lx-ядро %s. mawg переустановит его нашей сборкой, если релиз новее по суффиксу -lx.N, выбран другой профиль (plain/upx) или стоящая сборка не наша (нет маркера источника mawg). ", ver) + confirm
 		if !marked {
 			item.Note = "Ядро lx стоит без маркера mawg (ставили вручную или оригинальной сборкой автора) - обновление заменит бинарь нашей сборкой той же версии."
 			item.ActionLabel = "заменить своей сборкой"
