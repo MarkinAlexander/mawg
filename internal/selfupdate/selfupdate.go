@@ -103,8 +103,10 @@ func Check(ctx context.Context, current string) CheckInfo {
 
 // Run ставит обновление через install.sh релиза (sha256 проверяется им).
 func Run(ctx context.Context) error {
-	// install.sh сам качает бинарь и может обновлять пак-менеджер: 60 секунд
-	// не хватало (signal: killed посреди установки), даём 10 минут
+	// -u = режим обновления: без opkg/apk update и проверки пакетов, только
+	// скачивание бинаря существующим curl/wget. Инсталляционный путь гонял
+	// pkg update на каждый mawg update - на медленных зеркалах это минуты.
+	// Таймаут всё равно щедрый: качать бинарь с github тоже небыстро.
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 	resp, err := httpGet(ctx, InstallURL)
@@ -125,7 +127,7 @@ func Run(ctx context.Context) error {
 		return err
 	}
 	f.Close()
-	cmd := exec.CommandContext(ctx, "sh", tmp)
+	cmd := exec.CommandContext(ctx, "sh", tmp, "-u")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
