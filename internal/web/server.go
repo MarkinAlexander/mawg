@@ -90,6 +90,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/v1/pools/{name}", s.deletePool)
 	mux.HandleFunc("POST /api/v1/pools/{name}/configs", s.uploadConfigs)
 	mux.HandleFunc("GET /api/v1/pools/{name}/premium", s.getPremium)
+	mux.HandleFunc("GET /api/v1/pools/{name}/members", s.getPoolMembers)
 	mux.HandleFunc("POST /api/v1/pools/{name}/premium", s.importPremium)
 	mux.HandleFunc("POST /api/v1/pools/{name}/premium/country", s.switchPremium)
 	mux.HandleFunc("DELETE /api/v1/pools/{name}/configs/{file}", s.deleteConfig)
@@ -431,6 +432,7 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 		Settings       store.PoolSettings `json:"settings"`
 		Configs        []configView       `json:"configs"`
 		Premium        store.PremiumView  `json:"premium"`
+		Protos         []protoBadge       `json:"protos,omitempty"`
 	}
 	out := struct {
 		Version     string         `json:"version"`
@@ -452,6 +454,7 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 			RefreshFails: st.RefreshFails, LastRefreshErr: st.LastRefreshErr, SubRefreshAt: st.SubRefreshAt,
 			Configs: []configView{},
 			Premium: s.store.PremiumView(p.Name),
+			Protos:  s.poolProtoBadges(p),
 		}
 		if p.Settings.EngineMode == engineMode {
 			switch {
