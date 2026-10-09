@@ -49,7 +49,7 @@ func TestWGEndpointAWG3(t *testing.T) {
 	if !cfg.NeedsEngine() {
 		t.Fatal("AWG 3.x конфиг должен требовать движок")
 	}
-	ep, err := wgEndpoint(cfg, "mawg-free|1")
+	ep, err := wgEndpoint(cfg, "mawg-free|1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,13 +88,17 @@ func TestWGEndpointClassic(t *testing.T) {
 	if cfg.NeedsEngine() {
 		t.Fatal("классика не требует движок")
 	}
-	ep, err := wgEndpoint(cfg, "ep")
+	ep, err := wgEndpoint(cfg, "ep", "mawg-xorek")
 	if err != nil {
 		t.Fatal(err)
 	}
 	b, _ := json.Marshal(ep)
 	if !strings.Contains(string(b), `"address":"free.example.net"`) || !strings.Contains(string(b), `"h1":"1"`) {
 		t.Fatalf("эндпоинт: %s", b)
+	}
+	// каскад движка: detour на группу другого пула
+	if !strings.Contains(string(b), `"detour":"mawg-xorek"`) {
+		t.Fatalf("detour: %s", b)
 	}
 }
 

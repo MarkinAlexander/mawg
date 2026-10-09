@@ -91,6 +91,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/pools/{name}/configs", s.uploadConfigs)
 	mux.HandleFunc("GET /api/v1/pools/{name}/premium", s.getPremium)
 	mux.HandleFunc("GET /api/v1/pools/{name}/members", s.getPoolMembers)
+	mux.HandleFunc("GET /api/v1/pools/{name}/configs/{file}", s.getPoolConfigRaw)
 	mux.HandleFunc("POST /api/v1/pools/{name}/premium", s.importPremium)
 	mux.HandleFunc("POST /api/v1/pools/{name}/premium/country", s.switchPremium)
 	mux.HandleFunc("DELETE /api/v1/pools/{name}/configs/{file}", s.deleteConfig)
@@ -433,6 +434,7 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 		Configs        []configView       `json:"configs"`
 		Premium        store.PremiumView  `json:"premium"`
 		Protos         []protoBadge       `json:"protos,omitempty"`
+		Free           bool              `json:"free,omitempty"`
 	}
 	out := struct {
 		Version     string         `json:"version"`
@@ -455,6 +457,7 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 			Configs: []configView{},
 			Premium: s.store.PremiumView(p.Name),
 			Protos:  s.poolProtoBadges(p),
+			Free:    p.Free,
 		}
 		if p.Settings.EngineMode == engineMode {
 			switch {
@@ -1146,6 +1149,17 @@ func (s *Server) updatePool(w http.ResponseWriter, r *http.Request) {
 	}
 	if patch.MagitrickleGroupID != "" {
 		merged.MagitrickleGroupID = patch.MagitrickleGroupID
+	}
+	if patch.EngineDetour != "" {
+		if patch.EngineDetour == name {
+			writeErr(w, fmt.Errorf("каскад движка не может заводить пул через самого себя"))
+			return
+		}
+		if dp, ok := s.store.Pool(patch.EngineDetour); !ok || dp.Settings.EngineMode != engineMode {
+			writeErr(w, fmt.Errorf("каскад движка доступен только через движковый пул %s", patch.EngineDetour))
+			return
+		}
+		merged.EngineDetour = patch.EngineDetour
 	}
 	if err := s.validFallback(name, merged.Fallback); err != nil {
 		writeErr(w, err)

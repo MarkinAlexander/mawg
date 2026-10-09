@@ -54,6 +54,16 @@ async function api(method, path, body, isForm) {
   }
 }
 
+async function apiText(path) {
+  topbarStart();
+  try {
+    const resp = await fetch('/api/v1' + path);
+    if (resp.status === 401) { showLogin(); await new Promise(() => {}); }
+    if (!resp.ok) throw new Error(resp.status);
+    return await resp.text();
+  } finally { topbarEnd(); }
+}
+
 function ensureCard(p) {
   let card = poolCards.get(p.name);
   if (card) return card;
@@ -791,13 +801,45 @@ async function loadPoolMembers(name) {
   }
 }
 
+// Free-пул: показать выданный конфиг (унести в официальный клиент)
+async function loadFreeConfig(p) {
+  const row = document.getElementById('spFreeConfRow');
+  const box = document.getElementById('spFreeConf');
+  if (!row || !box) return;
+  const c = (p.configs || [])[0];
+  row.style.display = p.free && c ? '' : 'none';
+  if (!p.free || !c) return;
+  try {
+    box.textContent = await apiText('/pools/' + p.name + '/configs/' + encodeURIComponent(c.file));
+  } catch (e) { row.style.display = 'none'; }
+  document.getElementById('spFreeConfCopy').onclick = async () => {
+    try { await navigator.clipboard.writeText(box.textContent); toast('Конфиг скопирован в буфер'); }
+    catch (e) { toast('Не удалось скопировать - выделите текст вручную', true); }
+  };
+}
+
+function wireDetourRow(p) {
+  const row = document.getElementById('spDetourRow');
+  const sel = document.getElementById('spDetour');
+  if (!row || !sel) return;
+  const isEng = p.settings.engineMode === 'singbox';
+  row.style.display = isEng ? '' : 'none';
+  if (!isEng) return;
+  const others = (STATUS.pools || []).filter(x => x.name !== p.name && x.settings.engineMode === 'singbox' && !x.free);
+  const cur = p.settings.engineDetour || '';
+  sel.innerHTML = '<option value="">напрямую</option>' + others.map(x => `<option value="${esc(x.name)}"${x.name === cur ? ' selected' : ''}>${esc(x.name)}</option>`).join('');
+  sel.dataset.pool = p.name;
+}
+
 function openSettings(name) {
   const p = STATUS && STATUS.pools.find(x => x.name === name);
   if (!p) return;
   settingsPool = p;
   loadPoolMembers(name);
+  loadFreeConfig(p);
+  wireDetourRow(p);
   $('#spName').textContent = p.name;
-  $('#spSourceRow').style.display = (p.settings.engineMode === 'singbox' || p.settings.source) ? '' : 'none';
+  $('#spSourceRow').style.display = (!p.free && (p.settings.engineMode === 'singbox' || p.settings.source)) ? '' : 'none';
   $('#spSource').value = p.settings.source || '';
   updateSpAmneziaCountry(p);
   $('#spRename').value = p.name;
@@ -882,6 +924,10 @@ $('#spSave').onclick = async e => {
     maxRttMs: $('#spRttOn').checked ? (+$('#spRtt').value || 0) : 0,
     updateIntervalH: $('#spUpdateInt').value === '' ? 0 : (+$('#spUpdateInt').value || 0),
   };
+  const detourSel = document.getElementById('spDetour');
+  if (detourSel && detourSel.dataset.pool === p.name) {
+    body.engineDetour = detourSel.value || undefined;
+  }
   try {
     await api('PUT', '/pools/' + p.name, body);
     const newName = $('#spRename').value.trim();

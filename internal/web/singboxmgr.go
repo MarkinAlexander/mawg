@@ -200,8 +200,15 @@ func (s *Server) applyEngine() ([]string, error) {
 		if n, err := strconv.Atoi(strings.TrimPrefix(p.Settings.TunName, "tun")); err == nil && n > 0 {
 			idx = n
 		}
+		detour := ""
+		if p.Settings.EngineDetour != "" {
+			if dp, ok := s.store.Pool(p.Settings.EngineDetour); ok && !dp.Disabled && dp.Settings.EngineMode == engineMode && dp.Name != p.Name {
+				detour = "mawg-" + dp.Name
+			}
+		}
 		spec := singbox.PoolSpec{
 			Name: p.Name, Tun: p.Settings.TunName, TunIP: singbox.TuneIP(idx),
+			Detour:           detour,
 			ProbeTarget:      p.Settings.ProbeHost,
 			CheckIntervalSec: p.Settings.CheckIntervalSec,
 			FailThreshold:    p.Settings.FailThreshold,

@@ -25,11 +25,14 @@ type PoolSpec struct {
 	// sing-box (в т.ч. AWG 3.x, который нативные интерфейсы не поднимут).
 	WG        []wgconf.Config
 	GroupMode string // "urltest" (по умолчанию) | "selector"
+	// Detour - тег группы другого пула: туннель этого пула заводится
+	// через неё (каскад движка, detour в sing-box).
+	Detour string
 }
 
 // wgEndpoint - wireguard-эндпоинт sing-box-lx из конфига WG/AWG: AWG-поля
 // (2.0 и 3.x) прикрепляются к корню эндпоинта, как в опциях форка.
-func wgEndpoint(cfg wgconf.Config, tag string) (map[string]any, error) {
+func wgEndpoint(cfg wgconf.Config, tag, detour string) (map[string]any, error) {
 	if cfg.PrivateKey == "" || cfg.Peer.PublicKey == "" || cfg.Peer.EndpointHost == "" {
 		return nil, fmt.Errorf("%s: конфиг без ключа или эндпоинта", tag)
 	}
@@ -57,6 +60,9 @@ func wgEndpoint(cfg wgconf.Config, tag string) (map[string]any, error) {
 		"address":     cfg.Addresses,
 		"private_key": cfg.PrivateKey,
 		"peers":       []map[string]any{peer},
+	}
+	if detour != "" {
+		ep["detour"] = detour
 	}
 	if cfg.MTU > 0 {
 		ep["mtu"] = cfg.MTU
@@ -261,7 +267,7 @@ func BuildConfig(pools []PoolSpec, p Params) ([]byte, []string, error) {
 		}
 		for _, c := range spec.WG {
 			tag := groupTag + "|" + strconv.Itoa(len(tags)+1)
-			ep, err := wgEndpoint(c, tag)
+			ep, err := wgEndpoint(c, tag, spec.Detour)
 			if err != nil {
 				skipped = append(skipped, fmt.Sprintf("пул %s: %v", spec.Name, err))
 				continue
