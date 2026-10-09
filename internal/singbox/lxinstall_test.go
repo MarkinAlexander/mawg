@@ -91,9 +91,11 @@ func TestArchFromELF(t *testing.T) {
 }
 
 func TestPickAsset(t *testing.T) {
+	fork := Source{Owner: "MarkinAlexander", Repo: "sing-box-lx"}
+	alt := Source{Owner: "example", Repo: "sing-box-lx"}
 	reports := []SourceReport{
-		{Source: Sources[0], Error: "github ответил 403"},
-		{Source: Sources[1], Releases: []Release{
+		{Source: alt, Error: "github ответил 403"},
+		{Source: fork, Releases: []Release{
 			{Tag: "v1.14.2-lx.8", Matrix: map[string]Flavors{"amd64": {Plain: true}}, Names: map[string]FlavorAssets{"amd64": {Plain: "sing-box-1.14.2-lx.8-linux-amd64.tar.gz"}}},
 			{Tag: "v1.14.2-lx.7", Matrix: map[string]Flavors{"mipsle-softfloat": {Plain: true, UPX: true}},
 				Names: map[string]FlavorAssets{"mipsle-softfloat": {Plain: "p7.tar.gz", PlainSz: 100, UPX: "u7.tar.gz", UPXSz: 30}}},
@@ -103,7 +105,7 @@ func TestPickAsset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pick.Asset != "p7.tar.gz" || pick.Tag != "v1.14.2-lx.7" || pick.Source != Sources[1] {
+	if pick.Asset != "p7.tar.gz" || pick.Tag != "v1.14.2-lx.7" || pick.Source != fork {
 		t.Fatalf("plain: %+v", pick)
 	}
 	if !strings.HasSuffix(pick.URL(), "/releases/download/v1.14.2-lx.7/p7.tar.gz") {
@@ -249,7 +251,7 @@ func TestInstallLXCoreFresh(t *testing.T) {
 		t.Fatalf("бинарь не установлен: %v", err)
 	}
 	marker, err := os.ReadFile(filepath.Join(f.markerDir, LXMarkerName))
-	if err != nil || !strings.Contains(string(marker), "version=1.14.2-lx.7") || !strings.Contains(string(marker), "flavor=plain") {
+	if err != nil || !strings.Contains(string(marker), "version=1.14.2-lx.7") || !strings.Contains(string(marker), "flavor=plain") || !strings.Contains(string(marker), "source="+Sources[0].String()) {
 		t.Fatalf("маркер: %s err=%v", marker, err)
 	}
 	if !strings.Contains(res.Log, "checksum ok") || !strings.Contains(res.Log, "тест-запуск") {
@@ -366,5 +368,72 @@ func TestInstallLXCoreMissingArch(t *testing.T) {
 	_, err := InstallLXCore(context.Background(), opts)
 	if err == nil || !strings.Contains(err.Error(), "нет ассета для mipsle-softfloat") {
 		t.Fatalf("честный ответ про отсутствие: %v", err)
+	}
+}
+
+// равная версия нашей сборки (маркер с источником) - не перекачиваем
+func TestInstallLXCoreUpToDateOurs(t *testing.T) {
+	f := newFakeLXCore(t, "1.14.2-lx.7")
+	f.targetVer = "1.14.2-lx.7"
+	if err := os.MkdirAll(filepath.Dir(f.targetBin), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(f.targetBin, []byte("our-lx"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(f.markerDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := fmt.Sprintf("tag=v1.14.2-lx.7\nversion=1.14.2-lx.7\nsource=%s\nflavor=plain\n", Sources[0])
+	if err := os.WriteFile(filepath.Join(f.markerDir, LXMarkerName), []byte(marker), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := InstallLXCore(context.Background(), f.opts(false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.UpToDate {
+		t.Fatalf("наша сборка той же версии не требует перекачки: %+v", res)
+	}
+	if got, _ := os.ReadFile(f.targetBin); string(got) != "our-lx" {
+		t.Fatalf("бинарь не должен меняться: %q", got)
+	}
+	if !strings.Contains(res.Log, "наша сборка") {
+		t.Fatalf("лог: %s", res.Log)
+	}
+}
+
+// равная версия, но сборка не наша (маркера нет или старый без source=) -
+// заменяем своей сборкой той же версии
+func TestInstallLXCoreSameVersionForeignSourceReplaces(t *testing.T) {
+	f := newFakeLXCore(t, "1.14.2-lx.7")
+	f.targetVer = "1.14.2-lx.7"
+	if err := os.MkdirAll(filepath.Dir(f.targetBin), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(f.targetBin, []byte("foreign-lx"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// старый маркер без source= - ставили до появления источника в маркере
+	if err := os.MkdirAll(f.markerDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := "tag=v1.14.2-lx.7\nversion=1.14.2-lx.7\nflavor=plain\n"
+	if err := os.WriteFile(filepath.Join(f.markerDir, LXMarkerName), []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := InstallLXCore(context.Background(), f.opts(false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.UpToDate {
+		t.Fatalf("чужая сборка той же версии должна заменяться: %+v", res)
+	}
+	if got, _ := os.ReadFile(f.targetBin); string(got) != f.binContent {
+		t.Fatalf("бинарь не заменён нашей сборкой: %q", got)
+	}
+	marker, _ := os.ReadFile(filepath.Join(f.markerDir, LXMarkerName))
+	if !strings.Contains(string(marker), "source="+Sources[0].String()) {
+		t.Fatalf("маркер без источника: %s", marker)
 	}
 }

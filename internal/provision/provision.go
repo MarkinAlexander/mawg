@@ -395,10 +395,10 @@ func lxCoreItem(run Runner, platform string) Item {
 		item.Installed = true
 		item.Action = "singbox-lx"
 		item.ActionLabel = "обновить lx"
-		item.Confirm = fmt.Sprintf("Сейчас стоит lx-ядро %s. mawg сравнит его со свежим релизом и установит новый только если тот старее по суффиксу -lx.N, иначе ничего не изменится. ", ver) + confirm
+		item.Confirm = fmt.Sprintf("Сейчас стоит lx-ядро %s. mawg переустановит его нашей сборкой, если релиз новее по суффиксу -lx.N или стоящая сборка не наша (нет маркера источника mawg). ", ver) + confirm
 		if !marked {
-			item.Note = "Ядро lx стоит без маркера mawg (ставили вручную) - считается своим, после установки появится маркер."
-			item.ActionLabel = "пометить своим и обновить"
+			item.Note = "Ядро lx стоит без маркера mawg (ставили вручную или оригинальной сборкой автора) - обновление заменит бинарь нашей сборкой той же версии."
+			item.ActionLabel = "заменить своей сборкой"
 		}
 	default:
 		item.StatusText = "чужое upstream"

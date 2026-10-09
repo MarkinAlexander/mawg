@@ -34,7 +34,7 @@ func TestParseAssetName(t *testing.T) {
 func TestBuildReleaseMatrix(t *testing.T) {
 	r := buildRelease(ghRelease{
 		TagName:   "v1.14.2-lx.12",
-		HTMLURL:   "https://github.com/Leadaxe/sing-box-lx/releases/tag/v1.14.2-lx.12",
+		HTMLURL:   "https://github.com/MarkinAlexander/sing-box-lx/releases/tag/v1.14.2-lx.12",
 		Published: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC),
 		Assets: []ghAsset{
 			{Name: "sing-box-1.14.2-lx.12-linux-amd64.tar.gz"},
