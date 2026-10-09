@@ -90,6 +90,9 @@ type PoolSettings struct {
 	MagitrickleGroupID string       `json:"magitrickleGroupID,omitempty"`
 	Source             string       `json:"source,omitempty"`     // URL/ссылка, из которой собраны конфиги пула (для цикла обновлений)
 	EngineMode         string       `json:"engineMode,omitempty"` // "singbox" - узлы пула в tun-интерфейсе движка, а не в нативном слоте
+	// EngineDetour - каскад движка: туннель пула (wireguard-эндпоинт)
+	// заводится через группу другого движкового пула (detour в sing-box).
+	EngineDetour string `json:"engineDetour,omitempty"`
 	TunName            string       `json:"tunName,omitempty"`
 	Amnezia            *AmneziaMeta `json:"amnezia,omitempty"`
 	// UpdateIntervalH - интервал автообновления источника в часах;

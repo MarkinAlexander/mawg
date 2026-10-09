@@ -171,3 +171,32 @@ func (s *Server) getPoolMembers(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"members": members})
 }
+
+// getPoolConfigRaw - выданный конфиг пула как текст: юзер может унести
+// его в официальный клиент или проверить.
+func (s *Server) getPoolConfigRaw(w http.ResponseWriter, r *http.Request) {
+	name, file := r.PathValue("name"), r.PathValue("file")
+	p, ok := s.store.Pool(name)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	found := false
+	for _, c := range p.Configs {
+		if c.File == file {
+			found = true
+			break
+		}
+	}
+	if !found {
+		http.NotFound(w, r)
+		return
+	}
+	data, err := os.ReadFile(filepath.Join(s.store.PoolDir(name), file))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write(data)
+}
