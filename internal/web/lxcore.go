@@ -49,6 +49,7 @@ func (s *Server) installLXCore(w http.ResponseWriter, r *http.Request, flavor st
 	// движок пересобирается в фоне: в shared это рестарт чужого сервиса,
 	// ответ клиенту его не ждёт
 	s.resetSB()
+	s.sysCache.reset()
 	if len(s.enginePools()) > 0 {
 		go func() {
 			// после установки с нуля сервиса нет; start идемпотентен
