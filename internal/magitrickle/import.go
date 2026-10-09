@@ -109,6 +109,11 @@ func makeEntry(tok, typ string, stripURL, toSecond bool) (Rule, bool) {
 		tok = tok[i+1:]
 	}
 	if net.ParseIP(tok) != nil {
+		// одиночный IP нормализуем в /32: демон magitrickled применяет
+		// subnet-правила только в форме CIDR, голый IP молча не работает
+		if !strings.Contains(tok, ":") {
+			tok += "/32"
+		}
 		return Rule{Type: "subnet", Rule: tok}, true
 	}
 	if _, _, err := net.ParseCIDR(tok); err == nil {

@@ -33,10 +33,16 @@ func TestParseImportReduceToSecond(t *testing.T) {
 }
 
 func TestParseImportIPAlwaysSubnet(t *testing.T) {
-	for _, in := range []string{"149.154.160.0/20", "1.2.3.4", "2001:db8::1"} {
-		rs, bad, _ := ParseImport(in, "auto", true, true)
-		if bad != 0 || len(rs) != 1 || rs[0].Type != "subnet" || rs[0].Rule != in {
-			t.Fatalf("%q: got %+v bad=%d", in, rs, bad)
+	// одиночный IPv4 нормализуется в /32: демон magitrickled применяет
+	// subnet-правила только в CIDR-форме, голый IP молча не работает
+	for _, c := range []struct{ in, rule string }{
+		{"149.154.160.0/20", "149.154.160.0/20"},
+		{"1.2.3.4", "1.2.3.4/32"},
+		{"2001:db8::1", "2001:db8::1"},
+	} {
+		rs, bad, _ := ParseImport(c.in, "auto", true, true)
+		if bad != 0 || len(rs) != 1 || rs[0].Type != "subnet" || rs[0].Rule != c.rule {
+			t.Fatalf("%q: got %+v bad=%d", c.in, rs, bad)
 		}
 	}
 	rs, _, _ := ParseImport("1.2.3.4", "domain", false, false)
@@ -84,7 +90,7 @@ func TestParseImportRegexLines(t *testing.T) {
 
 func TestParseImportSubnetTypeRejectsDomains(t *testing.T) {
 	rs, bad, _ := ParseImport("example.com\n1.2.3.4", "subnet", true, false)
-	if bad != 1 || len(rs) != 1 || rs[0].Rule != "1.2.3.4" {
+	if bad != 1 || len(rs) != 1 || rs[0].Rule != "1.2.3.4/32" {
 		t.Fatalf("got %+v bad=%d", rs, bad)
 	}
 }

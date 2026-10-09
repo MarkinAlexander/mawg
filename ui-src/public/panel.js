@@ -1232,7 +1232,9 @@ function editRule(g, rl, tr) {
     const value = edit.querySelector('.er-value').value.trim();
     if (!value) return toast('Введите значение правила', true);
     try {
-      await api('PUT', `/mt/groups/${g.id}/rules/${rl.id}`, { type: typeSel.value, rule: value, name: edit.querySelector('.er-name').value.trim() });
+      let norm = value;
+      if (typeSel.value === 'subnet' && /^\d{1,3}(\.\d{1,3}){3}$/.test(norm)) norm += '/32';
+      await api('PUT', `/mt/groups/${g.id}/rules/${rl.id}`, { type: typeSel.value, rule: norm, name: edit.querySelector('.er-name').value.trim() });
       lastMtJSON = ''; refreshRules(true);
     } catch (e) { toast(e.message, true); }
   };
@@ -1493,10 +1495,11 @@ function renderRules() {
     };
     el.querySelector('.nr-add').onclick = e => withBusy(e.currentTarget, () => {
       const type = el.querySelector('.nr-type').value;
-      const value = nrValue.value.trim();
+      let value = nrValue.value.trim();
       if (!value) return toast('Введите значение правила', true);
+      if (type === 'subnet' && /^\d{1,3}(\.\d{1,3}){3}$/.test(value)) value += '/32';
       openMtGroups.add(g.id);
-      return mtApi('POST', `/mt/groups/${g.id}/rules`, { type, rule: value });
+      return mtApi('POST', `/mt/groups/${g.id}/rules`, { type, rule: value }).then(() => toast('Правило добавлено'));
     });
     el.querySelector('.nr-import').onclick = () => openImportDlg(g);
     el.querySelector('.nr-copy').onclick = () => copyGroupRules(g);
