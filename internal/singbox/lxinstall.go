@@ -362,14 +362,16 @@ func InstallLXCore(ctx context.Context, opts LXInstallOptions) (LXInstallResult,
 		}
 	}
 
-	// ядро не старее релиза и стоит НАША сборка - не перекачиваем;
-	// чужую/ручную сборку той же версии (маркера с нашим источником нет)
-	// заменяем своей: храним только то, что сами собираем
+	// ядро не старее релиза, НАША сборка и тот же профиль - не перекачиваем;
+	// чужую/ручную сборку или другой профиль (plain<->upx) той же версии
+	// переустанавливаем своей: храним только то, что сами собираем
 	releaseVer := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(pick.Tag), "v"))
-	if HasLXSuffix(prevVer) && !LXNewer(releaseVer, prevVer) && markerSource(opts.Target.MarkerDir) == pick.Source.String() {
+	if HasLXSuffix(prevVer) && !LXNewer(releaseVer, prevVer) &&
+		markerSource(opts.Target.MarkerDir) == pick.Source.String() &&
+		markerFlavor(opts.Target.MarkerDir) == opts.Flavor {
 		res.Version = prevVer
 		res.UpToDate = true
-		step("lx-ядро %s уже актуально (наша сборка из %s)", prevVer, pick.Source)
+		step("lx-ядро %s уже актуально (наша сборка из %s, профиль %s)", prevVer, pick.Source, opts.Flavor)
 		res.Log = log.String()
 		return res, nil
 	}
@@ -435,7 +437,9 @@ func InstallLXCore(ctx context.Context, opts LXInstallOptions) (LXInstallResult,
 	}
 	staged := opts.Target.Bin + ".lx-new"
 	if err := copyFile(bin, staged, 0o755); err != nil {
-		_ = os.RemoveAll(dir)
+		os.RemoveAll(dir)
+		// недописанный staged не должен занимать место (устройства без запаса)
+		os.Remove(staged)
 		return res, err
 	}
 	_ = os.RemoveAll(dir)
@@ -488,6 +492,16 @@ func markerExists(dir string) bool {
 // для старых маркеров и ручных установок: такое ядро ставили не из нашего
 // форка, равноверсионная замена своей сборкой разрешена.
 func markerSource(dir string) string {
+	return markerField(dir, "source")
+}
+
+// markerFlavor - профиль последней установки (flavor= в маркере): смена
+// plain/upx при той же версии - полноценная переустановка, а не «актуально».
+func markerFlavor(dir string) string {
+	return markerField(dir, "flavor")
+}
+
+func markerField(dir, key string) string {
 	if dir == "" {
 		return ""
 	}
@@ -495,8 +509,9 @@ func markerSource(dir string) string {
 	if err != nil {
 		return ""
 	}
+	prefix := key + "="
 	for _, line := range strings.Split(string(data), "\n") {
-		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "source="); ok {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), prefix); ok {
 			return strings.TrimSpace(v)
 		}
 	}
