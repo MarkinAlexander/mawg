@@ -34,7 +34,7 @@ func (s *Server) serveFreePool(w http.ResponseWriter, r *http.Request, withAnswe
 	d := json.NewDecoder(r.Body)
 	d.DisallowUnknownFields()
 	if d.Decode(&req) != nil || req.Name == "" || d.Decode(new(any)) != io.EOF {
-		writeErr(w, errors.New("expected a Free pool name, without credentials or region override"))
+		writeErr(w, errors.New("нужно имя пула для Amnezia Free - без ключей, аккаунтов и выбора региона"))
 		return
 	}
 	if withAnswer && (req.CaptchaID == "" || req.CaptchaSolution == "") {

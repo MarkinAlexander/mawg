@@ -55,7 +55,7 @@ func (s *Store) SavePremium(v PremiumSubscription) error {
 
 func (s *Store) savePremiumLocked(v PremiumSubscription) error {
 	if err := s.saveLocked(filepath.Join(s.base, "premium.json"), v); err != nil {
-		return errors.New("could not persist Premium subscription")
+		return errors.New("не удалось сохранить подписку Premium")
 	}
 	s.premium = v
 	return nil
@@ -67,33 +67,33 @@ func (s *Store) ImportPremium(pool, key, userCountry string) (PremiumSubscriptio
 	pi := -1
 	for i, p := range s.root.Pools {
 		if p.Premium && p.Name != pool {
-			return PremiumSubscription{}, errors.New("Premium subscription already belongs to another pool")
+			return PremiumSubscription{}, errors.New("подписка Premium уже привязана к другому пулу")
 		}
 		if p.Name == pool {
 			pi = i
 		}
 	}
 	if pi < 0 {
-		return PremiumSubscription{}, errors.New("Premium pool not found")
+		return PremiumSubscription{}, errors.New("пул Premium не найден")
 	}
 	p := s.root.Pools[pi]
 	if p.Settings.EngineMode != "" {
-		return PremiumSubscription{}, errors.New("Premium requires a native AWG pool")
+		return PremiumSubscription{}, errors.New("Premium работает только с нативным AWG-пулом")
 	}
 	if !p.Premium && len(p.Configs) > 0 {
-		return PremiumSubscription{}, errors.New("import Premium into an empty AWG pool")
+		return PremiumSubscription{}, errors.New("импортируйте Premium в пустой AWG-пул")
 	}
 	if p.Settings.Platform == PlatformOpenwrt && p.Settings.OpenwrtProto != "amneziawg" {
-		return PremiumSubscription{}, errors.New("Premium requires an amneziawg pool")
+		return PremiumSubscription{}, errors.New("для Premium нужен пул с протоколом amneziawg")
 	}
 	v := s.premium
 	if v.Key != "" && v.Key != key {
-		return PremiumSubscription{}, errors.New("another Premium subscription is already stored")
+		return PremiumSubscription{}, errors.New("уже сохранена другая подписка Premium")
 	}
 	if v.UUID == "" {
 		id, err := premium.UUID()
 		if err != nil {
-			return PremiumSubscription{}, errors.New("could not create Premium identity")
+			return PremiumSubscription{}, errors.New("не удалось создать идентичность Premium")
 		}
 		v.UUID = id
 	}
@@ -107,7 +107,7 @@ func (s *Store) ImportPremium(pool, key, userCountry string) (PremiumSubscriptio
 	root.Pools[pi].Settings.Source = ""
 	root.Pools[pi].Settings.Amnezia = nil
 	if err := s.saveLocked(filepath.Join(s.base, "config.json"), root); err != nil {
-		return PremiumSubscription{}, errors.New("could not bind Premium pool")
+		return PremiumSubscription{}, errors.New("не удалось привязать пул Premium")
 	}
 	s.root = root
 	return v, nil
@@ -116,7 +116,7 @@ func (s *Store) ImportPremium(pool, key, userCountry string) (PremiumSubscriptio
 func (s *Store) ReplacePremiumConfig(pool string, raw []byte) (string, error) {
 	cfg, err := wgconf.Parse(raw)
 	if err != nil {
-		return "", errors.New("invalid Premium configuration")
+		return "", errors.New("gateway вернул неразборчивый конфиг Premium")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -128,16 +128,16 @@ func (s *Store) ReplacePremiumConfig(pool string, raw []byte) (string, error) {
 		}
 	}
 	if pi < 0 {
-		return "", errors.New("Premium pool not found")
+		return "", errors.New("пул Premium не найден")
 	}
 	hash := sha256.Sum256(raw)
 	file := fmt.Sprintf("premium-%x.conf", hash[:8])
 	path := filepath.Join(s.PoolDir(pool), file)
 	if err := os.WriteFile(path+".tmp", raw, 0600); err != nil {
-		return "", errors.New("could not stage Premium configuration")
+		return "", errors.New("не удалось подготовить конфиг Premium")
 	}
 	if err := os.Rename(path+".tmp", path); err != nil {
-		return "", errors.New("could not persist Premium configuration")
+		return "", errors.New("не удалось сохранить конфиг Premium")
 	}
 	root := s.root
 	root.Pools = append([]Pool{}, s.root.Pools...)
@@ -153,7 +153,7 @@ func (s *Store) ReplacePremiumConfig(pool string, raw []byte) (string, error) {
 		if !retained {
 			os.Remove(path)
 		}
-		return "", errors.New("could not select Premium configuration")
+		return "", errors.New("не удалось выбрать конфиг Premium")
 	}
 	s.root = root
 	for _, c := range old {

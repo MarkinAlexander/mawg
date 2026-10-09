@@ -29,7 +29,7 @@ func (s *Store) SaveFree(v FreeInstallation) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.saveLocked(filepath.Join(s.base, "free.json"), v); err != nil {
-		return errors.New("could not persist Amnezia Free installation")
+		return errors.New("не удалось сохранить данные Amnezia Free")
 	}
 	s.free = v
 	return nil

@@ -46,25 +46,25 @@ func (c *Client) FreeService(ctx context.Context, id string) (string, string, er
 		} `json:"services"`
 	}
 	if json.Unmarshal(raw, &response) != nil || (response.Country != "default" && !countryCode.MatchString(response.Country)) || response.Services == nil {
-		return "", "", errors.New("invalid Amnezia Free services catalog")
+		return "", "", errors.New("gateway вернул неразборчивый каталог Amnezia Free")
 	}
 	for _, service := range response.Services {
 		if service.Type != "amnezia-free" {
 			continue
 		}
 		if string(service.Available) == "false" {
-			return "", "", fmt.Errorf("Amnezia Free is unavailable in detected region %s", response.Country)
+			return "", "", fmt.Errorf("Amnezia Free недоступен в вашем регионе %s", response.Country)
 		}
 		if service.Protocol == "" {
-			return "", "", errors.New("invalid Amnezia Free service protocol")
+			return "", "", errors.New("gateway вернул неразборчивый протокол Amnezia Free")
 		}
 		return response.Country, service.Protocol, nil
 	}
-	return "", "", fmt.Errorf("Amnezia Free is not offered in detected region %s", response.Country)
+	return "", "", fmt.Errorf("в вашем регионе %s Amnezia Free не предлагается", response.Country)
 }
 
 func (c *Client) FreeConfig(ctx context.Context, id, country, private string, answer *CaptchaAnswer) ([]byte, json.RawMessage, error) {
-	bad := errors.New("unsupported or invalid Amnezia Free AWG configuration")
+	bad := errors.New("выданный конфиг Amnezia Free не разбирается")
 	b, err := base64.StdEncoding.DecodeString(private)
 	if err != nil {
 		return nil, nil, bad
