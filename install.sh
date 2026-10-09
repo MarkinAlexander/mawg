@@ -24,7 +24,15 @@ STEP_TS=$START_TS
 
 say() { echo "== $*"; }
 warn() { echo "-- ВНИМАНИЕ: $*" >&2; }
-die() { echo "ОШИБКА: $*" >&2; rm -rf "$TMP"; exit 1; }
+die() {
+    echo "ОШИБКА: $*" >&2
+    rm -rf "$TMP"
+    if [ "${SERVICE_STOPPED:-}" = 1 ]; then
+        echo "восстанавливаю сервис прежней версии" >&2
+        svc_start 2>/dev/null
+    fi
+    exit 1
+}
 mark() {
     [ "$DEBUG" = 1 ] || return 0
     now=$(date +%s)
@@ -85,12 +93,16 @@ pick_fetcher() {
         echo curl
     elif command -v wget >/dev/null 2>&1; then
         echo wget
+    elif command -v uclient-fetch >/dev/null 2>&1; then
+        echo uclient-fetch
     fi
 }
 
 do_fetch() {
     if [ "$FETCHER" = curl ]; then
         curl -fsSL "$1" -o "$2"
+    elif [ "$FETCHER" = uclient-fetch ]; then
+        uclient-fetch -qO "$2" "$1"
     else
         wget -qO "$2" "$1"
     fi
@@ -414,6 +426,7 @@ size=$(wc -c < "$TMP/mawg" 2>/dev/null || echo 0)
 
 say "установка $BIN"
 svc_stop
+SERVICE_STOPPED=1
 mark "остановка сервиса"
 mv "$TMP/mawg" "$BIN" || die "не удалось записать $BIN"
 chmod +x "$BIN"
@@ -426,6 +439,7 @@ else
 fi
 
 svc_start
+SERVICE_STOPPED=0
 sleep 1
 mark "запуск сервиса"
 if [ "$PLATFORM" = openwrt ]; then

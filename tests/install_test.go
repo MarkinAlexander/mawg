@@ -322,6 +322,48 @@ ensure_fetcher
 	}
 }
 
+func TestInstallerUpdateModeUclientFetch(t *testing.T) {
+	// OpenWrt с apk и без curl/wget: uclient-fetch качает сам,
+	// пакетный менеджер в update-режиме не зовётся
+	source := installerSource(t)
+	definitions := before(t, source, "\nPLATFORM=$(detect_platform)")
+	download := before(t, after(t, source, "\nsay \"загрузка mawg-linux-$ARCH\""), "\nsize=$(wc -c")
+	dir := t.TempDir()
+	log := filepath.Join(dir, "calls.log")
+	script := definitions + packageCommands + "\nPLATFORM=openwrt\nMODE=update\nARCH=arm64\n"
+	script += "TMP=" + shellQuote(filepath.Join(dir, "tmp")) + "\nmkdir -p \"$TMP\"\n"
+	script += `
+command() {
+    case "$*" in
+        "-v curl") return 1;;
+        "-v wget") return 1;;
+        "-v uclient-fetch") return 0;;
+        "-v opkg") return 1;;
+        *) builtin command "$@";;
+    esac
+}
+uclient-fetch() {
+    printf 'uclient %s\n' "$*" >> "$PKG_LOG"
+    printf 'fake-mawg-binary' > "$2"
+}
+ensure_fetcher
+` + download
+	output, err := runShell(t, script, "PKG_LOG="+filepath.ToSlash(log))
+	if err != nil {
+		t.Fatalf("update через uclient-fetch не прошёл: %v\n%s", err, output)
+	}
+	calls, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(calls), "apk") {
+		t.Fatalf("update-режим не должен вызывать apk: %s", calls)
+	}
+	if !strings.Contains(string(calls), "uclient") {
+		t.Fatalf("скачивание должно идти uclient-fetch-ом: %s", calls)
+	}
+}
+
 func TestInstallerLocalBinary(t *testing.T) {
 	source := installerSource(t)
 	definitions := before(t, source, "\nPLATFORM=$(detect_platform)")
