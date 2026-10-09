@@ -789,7 +789,7 @@ async function hidePremSourceRows(p) {
   if (upd && upd.closest('label')) upd.closest('label').style.display = (isPrem || p.free) ? 'none' : '';
 }
 
-function loadPoolMembers(name) {
+async function loadPoolMembers(name) {
   const row = document.getElementById('spMembersRow');
   const box = document.getElementById('spMembers');
   if (!row || !box) return;
