@@ -19,11 +19,15 @@ func (e *Engine) CreateFreePool(ctx context.Context, name string, settings store
 	if settings.EngineMode != "" || settings.Source != "" || !store.ValidProbeTarget(settings.WithDefaults().ProbeHost) {
 		return store.Pool{}, errors.New("Amnezia Free requires a native AWG pool with a valid probe target")
 	}
-	if settings.Platform == store.PlatformKeenetic {
-		return store.Pool{}, errors.New("accountless Amnezia Free AWG requires OpenWrt or Linux")
-	}
+	// Keenetic: конфиг Free - AWG 2.0 (I/J/H/S-параметры), прошивка 5.1+
+	// умеет их нативно; применяется в слот Wireguard как любой AWG-конфиг.
+	// На более старой прошивке пул поднимется, но хендшейка не будет -
+	// «Система -> Зависимости» предупреждает о 5.1+ отдельно.
 	if settings.Platform == store.PlatformOpenwrt {
 		settings.OpenwrtProto = "amneziawg"
+	}
+	if settings.Platform == store.PlatformKeenetic && settings.KeeneticSlot == "" {
+		return store.Pool{}, errors.New("для Amnezia Free нужен слот WireGuard - создайте его кнопкой «+ слот» в диалоге пула")
 	}
 	for _, p := range e.store.Pools() {
 		if p.Free && p.Name == clean && len(p.Configs) > 0 {
