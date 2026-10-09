@@ -150,8 +150,8 @@ func cleanNdmcError(command string, err error, text string) error {
 
 func (b *Backend) ndmc(command string) (string, error) {
 	cmd := exec.Command("/bin/ndmc", "-c", command)
-	out, err := cmd.CombinedOutput()
-	text := ndmcJunkRe.ReplaceAllString(string(out), "")
+	out, err := platform.RunBoundedCombined(cmd, 30*time.Second)
+	text := ndmcJunkRe.ReplaceAllString(out, "")
 	if err != nil || strings.Contains(text, "Error") || strings.Contains(text, "error:") {
 		return text, cleanNdmcError(command, err, text)
 	}
@@ -621,7 +621,7 @@ func linkUpFlag(device string) bool {
 
 // ifaceAddrCIDR - первый IPv4 с маской ("10.2.0.2/32").
 func ifaceAddrCIDR(device string) string {
-	out, err := exec.Command("ip", "-4", "-o", "addr", "show", "dev", device).CombinedOutput()
+	out, err := platform.RunBoundedOutput(exec.Command("ip", "-4", "-o", "addr", "show", "dev", device), 15*time.Second)
 	if err != nil {
 		return ""
 	}
@@ -656,5 +656,6 @@ func (b *Backend) IfaceHandshake(device string) int {
 
 func (b *Backend) RestartMagitrickle() error {
 	cmd := exec.Command("/bin/sh", "-c", "/opt/etc/init.d/S99magitrickle restart")
-	return cmd.Run()
+	_, err := platform.RunBoundedCombined(cmd, 60*time.Second)
+	return err
 }
