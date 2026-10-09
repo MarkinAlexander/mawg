@@ -146,6 +146,12 @@ func (s *Server) Handler() http.Handler {
 	if err != nil {
 		panic(err)
 	}
+	// основная панель - Vue на /app/; вход с корня идёт туда. Классическая
+	// (самодостаточная страница без panel.js) остаётся страховкой на /legacy/.
+	// {$} - только точный корень, прочая статика (favicon.ico) - как раньше.
+	mux.Handle("GET /{$}", http.RedirectHandler("/app/", http.StatusFound))
+	mux.Handle("GET /legacy", http.RedirectHandler("/legacy/", http.StatusMovedPermanently))
+	mux.Handle("GET /legacy/", http.StripPrefix("/legacy/", http.FileServer(http.FS(sub))))
 	mux.Handle("/", http.FileServer(http.FS(sub)))
 
 	// новая панель (Vue, исходники в ui-src) собирается в ui/app командой
@@ -1000,6 +1006,45 @@ func (s *Server) createSlot(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"slot": id, "device": keenetic.DeviceName(id)})
 }
 
+// resolveKeeneticSlot - слот пула для Keenetic: явно выбранный проверяется
+// на существование (выпадение выбора в панели больше не роняет создание
+// пула с путаным «не удалось получить список слотов»), пустой выбор
+// добирается первым свободным слотом - как их подсвечивает панель.
+func (s *Server) resolveKeeneticSlot(slot string) (string, error) {
+	if s.backend.Name() != store.PlatformKeenetic {
+		return "", nil
+	}
+	slots, err := s.backend.Slots()
+	if err != nil {
+		return "", fmt.Errorf("список слотов WireGuard недоступен: %v", err)
+	}
+	taken := map[string]bool{}
+	for _, p := range s.store.Pools() {
+		if p.Settings.KeeneticSlot != "" {
+			taken[p.Settings.KeeneticSlot] = true
+		}
+	}
+	if slot != "" {
+		for _, sl := range slots {
+			if sl.ID != slot {
+				continue
+			}
+			if taken[slot] {
+				return "", fmt.Errorf("слот %s уже используется другим пулом mawg", slot)
+			}
+			return slot, nil
+		}
+		return "", fmt.Errorf("слот %s не найден на роутере, обновите список слотов", slot)
+	}
+	for _, sl := range slots {
+		if taken[sl.ID] || sl.LinkUp || sl.Connected || sl.Description != "" {
+			continue
+		}
+		return sl.ID, nil
+	}
+	return "", fmt.Errorf("нет свободных слотов WireGuard - создайте новый кнопкой «+ слот» в диалоге пула")
+}
+
 func (s *Server) createPool(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name         string `json:"name"`
@@ -1024,10 +1069,12 @@ func (s *Server) createPool(w http.ResponseWriter, r *http.Request) {
 			settings.OpenwrtProto = "wireguard"
 		}
 	}
-	if s.backend.Name() == store.PlatformKeenetic && settings.KeeneticSlot == "" {
-		writeErr(w, fmt.Errorf("не выбран слот Keenetic: не удалось получить список слотов, повторите позже"))
+	slot, err := s.resolveKeeneticSlot(req.KeeneticSlot)
+	if err != nil {
+		writeErr(w, err)
 		return
 	}
+	settings.KeeneticSlot = slot
 	if err := s.validFallback(req.Name, settings.Fallback); err != nil {
 		writeErr(w, err)
 		return
