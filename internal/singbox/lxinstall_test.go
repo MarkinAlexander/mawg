@@ -376,6 +376,77 @@ func TestInstallLXCoreMissingArch(t *testing.T) {
 	}
 }
 
+// места в ПЗУ мало, но стоит НАША сборка - она снимается до копирования
+// (восстановима повторным скачиванием) и установка проходит
+func TestInstallLXCoreTightSpaceRemovesOurOld(t *testing.T) {
+	f := newFakeLXCore(t, "1.14.2-lx.7")
+	f.targetVer = "1.14.2-lx.7"
+	if err := os.MkdirAll(filepath.Dir(f.targetBin), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(f.targetBin, []byte("old-our-lx"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(f.markerDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// flavor=upx в маркере при запрошенном plain - смена профиля, не «актуально»
+	marker := fmt.Sprintf("tag=v1.14.2-lx.7\nversion=1.14.2-lx.7\nsource=%s\nflavor=upx\n", Sources[0])
+	if err := os.WriteFile(filepath.Join(f.markerDir, LXMarkerName), []byte(marker), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	oldFree := diskFree
+	calls := 0
+	diskFree = func(p string) int64 {
+		calls++
+		if calls == 1 {
+			return 1 // до снятия старой сборки места нет
+		}
+		return 1 << 30
+	}
+	t.Cleanup(func() { diskFree = oldFree })
+	res, err := InstallLXCore(context.Background(), f.opts(false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.UpToDate {
+		t.Fatalf("должна быть переустановка: %+v", res)
+	}
+	if !strings.Contains(res.Log, "снята до копирования") {
+		t.Fatalf("лог: %s", res.Log)
+	}
+	if got, _ := os.ReadFile(f.targetBin); string(got) != f.binContent {
+		t.Fatalf("бинарь не заменён: %q", got)
+	}
+}
+
+// чужое ядро и места мало - понятный отказ по-русски с цифрами, ядро не тронуто
+func TestInstallLXCoreTightSpaceFriendlyError(t *testing.T) {
+	f := newFakeLXCore(t, "1.14.2-lx.7")
+	f.targetVer = "1.13.3"
+	if err := os.MkdirAll(filepath.Dir(f.targetBin), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(f.targetBin, []byte("upstream-binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldFree := diskFree
+	diskFree = func(p string) int64 { return 1 }
+	t.Cleanup(func() { diskFree = oldFree })
+	res, err := InstallLXCore(context.Background(), f.opts(true))
+	if err == nil || !strings.Contains(err.Error(), "не хватает места в ПЗУ") {
+		t.Fatalf("ожидался отказ про место: %v", err)
+	}
+	if !strings.Contains(err.Error(), "upx") || !strings.Contains(err.Error(), "свободно") {
+		t.Fatalf("в ошибке нет подсказок и цифр: %v", err)
+	}
+	if got, _ := os.ReadFile(f.targetBin); string(got) != "upstream-binary" {
+		t.Fatalf("чужое ядро тронуто: %q", got)
+	}
+	if res.Log == "" {
+		t.Fatal("лог шагов должен попасть в диалог вместе с ошибкой")
+	}
+}
 // смена профиля при той же версии - полноценная переустановка, а не «актуально»
 func TestInstallLXCoreFlavorSwitch(t *testing.T) {
 	f := newFakeLXCore(t, "1.14.2-lx.7")
