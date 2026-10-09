@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 
+	"mawg/internal/platform/openwrt"
 	"mawg/internal/premium"
 	"mawg/internal/store"
 )
@@ -41,13 +42,21 @@ func (s *Server) serveFreePool(w http.ResponseWriter, r *http.Request, withAnswe
 		writeErr(w, errors.New("нет решения капчи: введите цифры с картинки"))
 		return
 	}
-	// Конфиг Free у gateway - AWG 3.x: пул работает через движок sing-box-lx
-	// (tun-интерфейс), слот/прототип платформы не нужны. Ядро может быть
-	// не установлено на момент создания - пул создаётся выключенным,
-	// предупредим в плане.
+	// Путь Free зависит от платформы:
+	//  - OpenWrt с kmod amneziawg 3.x - НАТИВНО (без движка sing-box:
+	//    юзеру без ядра или места под него Free всё равно доступен);
+	//  - иначе (Keenetic; OpenWrt со старым kmod) - движок sing-box-lx
+	//    (tun-интерфейс). Ядро может быть не установлено на момент
+	//    создания - пул создаётся выключенным, предупредим в плане.
+	native := false
+	if ob, ok := s.backend.(*openwrt.Backend); ok && ob.SupportsNativeAWG3() {
+		native = true
+	}
 	engineMissing := false
-	if _, err := s.sb(); err != nil {
-		engineMissing = true
+	if !native {
+		if _, err := s.sb(); err != nil {
+			engineMissing = true
+		}
 	}
 	// Проба Free ФИКСИРОВАНА: 1.1.1.1 - адрес из allowlist-а сервиса.
 	// Free - сплит-туннель: сервер пускает только к адресам из выданного
@@ -57,15 +66,22 @@ func (s *Server) serveFreePool(w http.ResponseWriter, r *http.Request, withAnswe
 	// для Free менять нельзя - иначе «работает/падает» без причины.
 	settings := store.PoolSettings{
 		Platform: s.backend.Name(), Fallback: req.Fallback, ProbeHost: FreeProbeURL,
-		EngineMode: engineMode,
+	}
+	if native {
+		settings.NativeAWG3 = true
+		settings.OpenwrtProto = "amneziawg"
+	} else {
+		settings.EngineMode = engineMode
 	}
 	if err := s.validFallback(req.Name, settings.Fallback); err != nil {
 		writeErr(w, err)
 		return
 	}
-	s.tunMu.Lock()
-	settings.TunName = s.allocTun()
-	s.tunMu.Unlock()
+	if !native {
+		s.tunMu.Lock()
+		settings.TunName = s.allocTun()
+		s.tunMu.Unlock()
+	}
 	var plan sourcePlan
 	if withAnswer {
 		pool, err := s.engine.AnswerFreeCaptcha(r.Context(), req.Name, settings, premium.CaptchaAnswer{ID: req.CaptchaID, Solution: req.CaptchaSolution})
@@ -82,7 +98,11 @@ func (s *Server) serveFreePool(w http.ResponseWriter, r *http.Request, withAnswe
 		}
 		plan = sourcePlan{Pool: pool.Name, Added: len(pool.Configs)}
 	}
-	plan.Warnings = []string{"Amnezia Free получен без аккаунта (конфиг AmneziaWG 3.x идёт через ядро sing-box, " + settings.TunName + "). Пул не активирован: используйте обычную кнопку активации после проверки настроек."}
+	via := "через ядро sing-box, " + settings.TunName
+	if native {
+		via = "нативно (kmod amneziawg 3.x), движок sing-box не требуется"
+	}
+	plan.Warnings = []string{"Amnezia Free получен без аккаунта (конфиг AmneziaWG 3.x идёт " + via + "). Пул не активирован: используйте обычную кнопку активации после проверки настроек."}
 	if engineMissing {
 		plan.Warnings = append(plan.Warnings, "Ядро sing-box-lx не установлено - пул заработает после установки в «Система -> Зависимости».")
 	}

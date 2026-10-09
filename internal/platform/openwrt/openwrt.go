@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"mawg/internal/platform"
@@ -30,6 +31,30 @@ type Backend struct{}
 func New() *Backend { return &Backend{} }
 
 func (b *Backend) Name() string { return store.PlatformOpenwrt }
+
+// SupportsNativeAWG3 - kmod amneziawg 3.x поднимает AWG 3.x-конфиги
+// (HP-ключ, таймеры) нативно: free-пулам на OpenWrt движок не нужен.
+// Определяем по версии awg-tools (awg --version), кэш на час.
+var (
+	nawg3Mu   sync.Mutex
+	nawg3At   time.Time
+	nawg3Prev bool
+)
+
+func (b *Backend) SupportsNativeAWG3() bool {
+	nawg3Mu.Lock()
+	defer nawg3Mu.Unlock()
+	if !nawg3At.IsZero() && time.Since(nawg3At) < time.Hour {
+		return nawg3Prev
+	}
+	nawg3At = time.Now()
+	out, err := run("awg", "--version")
+	// вывод: «amneziawg-tools v3.1.20260812 - https://amnezia.org» -
+	// версия идёт с префиксом v (1.x/2.x так же)
+	v := strings.Fields(out)
+	nawg3Prev = err == nil && len(v) >= 2 && strings.HasPrefix(strings.TrimPrefix(v[1], "v"), "3.")
+	return nawg3Prev
+}
 
 func (b *Backend) Detect() error {
 	if _, err := os.Stat("/etc/openwrt_release"); err != nil {

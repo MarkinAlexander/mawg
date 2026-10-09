@@ -51,16 +51,22 @@ func (e *Engine) createFreePool(ctx context.Context, name string, settings store
 	if err != nil {
 		return store.Pool{}, errors.New("имя пула не подходит: строчная латиница, цифры, дефис")
 	}
-	// Конфиг Free у gateway - формат AWG 3.x (защита заголовка, диапазонные
-	// таймеры): нативные интерфейсы его не поднимают, пул создаётся в
-	// режиме движка (sing-box-lx) - web-слой задаёт EngineMode и tun.
+	// Конфиг Free у gateway - формат AWG 3.x. Поднимают его:
+	//  - kmod amneziawg 3.x (OpenWrt) - нативно, без движка sing-box
+	//    (полезно, когда ядра нет или под него нет места);
+	//  - движок sing-box-lx (Keenetic: слот AWG 2.0 HP-ключ не применяет).
+	// Путь выбирает web-слой: nativeAWG3=true -> обычный пул (EngineMode
+	// пуст), иначе EngineMode + tun.
 	if settings.Source != "" || !store.ValidProbeTarget(settings.WithDefaults().ProbeHost) {
 		return store.Pool{}, errors.New("для Amnezia Free нужна корректная цель пробы")
 	}
-	if settings.EngineMode == "" {
+	if settings.Platform == store.PlatformOpenwrt {
+		settings.OpenwrtProto = "amneziawg"
+	}
+	if settings.EngineMode == "" && !settings.NativeAWG3 {
 		return store.Pool{}, errors.New("Amnezia Free идёт через движок sing-box-lx - установите ядро в «Система -> Зависимости»")
 	}
-	if settings.TunName == "" {
+	if settings.EngineMode != "" && settings.TunName == "" {
 		return store.Pool{}, errors.New("для Amnezia Free не выделен tun-интерфейс")
 	}
 	for _, p := range e.store.Pools() {

@@ -84,17 +84,21 @@ type PoolSettings struct {
 	Keepalive        int    `json:"keepalive"`
 	MaxRTTms         int    `json:"maxRttMs,omitempty"`
 
-	Platform           string       `json:"platform"`
-	KeeneticSlot       string       `json:"keeneticSlot,omitempty"`
-	OpenwrtProto       string       `json:"openwrtProto,omitempty"`
-	MagitrickleGroupID string       `json:"magitrickleGroupID,omitempty"`
-	Source             string       `json:"source,omitempty"`     // URL/ссылка, из которой собраны конфиги пула (для цикла обновлений)
-	EngineMode         string       `json:"engineMode,omitempty"` // "singbox" - узлы пула в tun-интерфейсе движка, а не в нативном слоте
+	Platform           string `json:"platform"`
+	KeeneticSlot       string `json:"keeneticSlot,omitempty"`
+	OpenwrtProto       string `json:"openwrtProto,omitempty"`
+	MagitrickleGroupID string `json:"magitrickleGroupID,omitempty"`
+	Source             string `json:"source,omitempty"`     // URL/ссылка, из которой собраны конфиги пула (для цикла обновлений)
+	EngineMode         string `json:"engineMode,omitempty"` // "singbox" - узлы пула в tun-интерфейсе движка, а не в нативном слоте
 	// EngineDetour - каскад движка: туннель пула (wireguard-эндпоинт)
 	// заводится через группу другого движкового пула (detour в sing-box).
 	EngineDetour string `json:"engineDetour,omitempty"`
-	TunName            string       `json:"tunName,omitempty"`
-	Amnezia            *AmneziaMeta `json:"amnezia,omitempty"`
+	// NativeAWG3 - free-пул поднимается нативным kmod amneziawg 3.x
+	// (OpenWrt), без движка sing-box. Служебный: задаёт web-слой при
+	// создании, в JSON настроек не пишем.
+	NativeAWG3 bool         `json:"-"`
+	TunName    string       `json:"tunName,omitempty"`
+	Amnezia    *AmneziaMeta `json:"amnezia,omitempty"`
 	// UpdateIntervalH - интервал автообновления источника в часах;
 	// 0 = из заголовка подписки Profile-Update-Interval, без него сутки.
 	UpdateIntervalH float64 `json:"updateIntervalH,omitempty"`
