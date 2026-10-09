@@ -705,12 +705,16 @@ func (e *Engine) probeStatus(device string) string {
 	cfg := probe.Normalized()
 	var ok bool
 	var rtt int
+	var perr error
 	if store.IsHTTPProbe(cfg.Target) {
-		ok, rtt, _ = httpProbe(device, cfg.Target, 5*time.Second)
+		ok, rtt, perr = httpProbe(device, cfg.Target, 5*time.Second)
 	} else {
 		ok, rtt = e.backend.ProbeDevice(device, cfg.Target)
 	}
 	if !ok {
+		if perr != nil {
+			return "проба: нет ответа (" + perr.Error() + ")"
+		}
 		return "проба: нет ответа"
 	}
 	if cfg.MaxRTTms > 0 && rtt > cfg.MaxRTTms {

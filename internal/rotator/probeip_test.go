@@ -24,6 +24,23 @@ func TestBlockedIP(t *testing.T) {
 	}
 }
 
+func TestSafeAddrs(t *testing.T) {
+	// публичный v4 - единственный адрес
+	addrs, err := safeAddrs("8.8.8.8", "443")
+	if err != nil || len(addrs) != 1 || addrs[0] != "8.8.8.8:443" {
+		t.Fatalf("v4: %v %v", addrs, err)
+	}
+	// публичный v6 - валидная цель (интерфейсы без v6 отсеются перебором)
+	addrs, err = safeAddrs("2606:4700::1", "443")
+	if err != nil || len(addrs) != 1 || addrs[0] != "[2606:4700::1]:443" {
+		t.Fatalf("v6: %v %v", addrs, err)
+	}
+	// заблокированный - ошибка
+	if _, err := safeAddrs("192.168.0.1", "80"); err == nil {
+		t.Fatal("приватный адрес должен отклоняться")
+	}
+}
+
 func TestSafeAddrLiterals(t *testing.T) {
 	if _, err := safeAddr("127.0.0.1", "80"); err == nil {
 		t.Fatal("loopback должен отклоняться")
