@@ -207,7 +207,7 @@ function updateCard(p) {
   card.summary.textContent = `Конфиги (${(p.configs || []).length})`;
 
   const premium = p.premium || {};
-  card.root.querySelector('.premium-panel').style.display = !isEng && (premium.imported || (!(p.configs || []).length && (p.settings.openwrtProto === 'amneziawg' || p.platform === 'keenetic'))) ? '' : 'none';
+  card.root.querySelector('.premium-panel').style.display = (premium.imported || (!isEng && (!(p.configs || []).length && (p.settings.openwrtProto === 'amneziawg' || p.platform === 'keenetic')))) ? '' : 'none';
   card.root.querySelector('.premium-import').style.display = premium.imported && (premium.countries || []).length ? 'none' : '';
   card.root.querySelector('.premium-switch').style.display = premium.imported ? '' : 'none';
   const countrySel = card.root.querySelector('.premium-country');
@@ -781,7 +781,15 @@ function wireProbeSwitch(typeSel, targetInput) {
 
 let settingsPool = null;
 // состав пула для шестерёнки: конфиги WG и прокси-узлы с протоколами
-async function loadPoolMembers(name) {
+async function hidePremSourceRows(p) {
+  const isPrem = !!(p.premium || {}).imported;
+  const src = document.getElementById('spSourceRow');
+  if (src) src.style.display = (!p.free && !isPrem && (p.settings.engineMode === 'singbox' || p.settings.source)) ? '' : 'none';
+  const upd = document.getElementById('spUpdateInt');
+  if (upd && upd.closest('label')) upd.closest('label').style.display = (isPrem || p.free) ? 'none' : '';
+}
+
+function loadPoolMembers(name) {
   const row = document.getElementById('spMembersRow');
   const box = document.getElementById('spMembers');
   if (!row || !box) return;
@@ -837,6 +845,8 @@ function openSettings(name) {
   loadPoolMembers(name);
   loadFreeConfig(p);
   lockFreeProbe(p);
+  wirePremSettings(p);
+  hidePremSourceRows(p);
   $('#spName').textContent = p.name;
   $('#spSourceRow').style.display = (!p.free && (p.settings.engineMode === 'singbox' || p.settings.source)) ? '' : 'none';
   $('#spSource').value = p.settings.source || '';
