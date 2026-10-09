@@ -16,7 +16,7 @@ func hasRule(rules []magitrickle.Rule, typ, rule string) bool {
 }
 
 func TestBuildRules(t *testing.T) {
-	res := map[string][]string{"engage.example.com": {"162.159.192.1", "162.159.192.1"}}
+	res := map[string][]string{"engage.example.com": {"198.51.100.11", "198.51.100.11"}}
 	rules := BuildRules([]string{
 		"162.159.192.6",
 		"engage.example.com:1387",
@@ -36,7 +36,7 @@ func TestBuildRules(t *testing.T) {
 	if !hasRule(rules, "domain", "engage.example.com") {
 		t.Fatal("нет доменного правила")
 	}
-	if !hasRule(rules, "subnet", "162.159.192.1/32") {
+	if !hasRule(rules, "subnet", "198.51.100.11/32") {
 		t.Fatal("нет резолва домена")
 	}
 }

@@ -126,10 +126,19 @@ func (f *fakeGateway) handler(t *testing.T, serverConfig func(api map[string]any
 
 func vpnKeyForTests(t *testing.T, protocol string) string {
 	t.Helper()
+	service := "amnezia-premium"
+	if protocol == "awg" {
+		service = "amnezia-free"
+	}
+	return vpnServiceKeyForTests(t, service, protocol)
+}
+
+func vpnServiceKeyForTests(t *testing.T, service, protocol string) string {
+	t.Helper()
 	doc := map[string]any{
 		"name":           "тест",
 		"config_version": 2,
-		"api_config":     map[string]string{"service_type": "amnezia-premium", "service_protocol": protocol, "user_country_code": "RU"},
+		"api_config":     map[string]string{"service_type": service, "service_protocol": protocol, "user_country_code": "RU"},
 		"auth_data":      map[string]string{"api_key": testAPIKey},
 	}
 	raw, err := json.Marshal(doc)
@@ -179,6 +188,17 @@ func testServerConfig(api map[string]any, protocol string) any {
 			"container": "amnezia-xray",
 			"vless":     map[string]any{"last_config": "vless://" + pubKey + "@203.0.113.51:443?type=tcp&security=reality#amnezia-vless"},
 		}},
+	}
+}
+
+func TestPremiumAWGCannotBypassManagedLifecycle(t *testing.T) {
+	key := vpnServiceKeyForTests(t, "amnezia-premium", "awg")
+	calls := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls++; w.WriteHeader(503) }))
+	defer ts.Close()
+	_, err := ExchangeAmneziaKey(context.Background(), key, ExchangeOptions{GatewayURL: ts.URL})
+	if err == nil || !strings.Contains(err.Error(), "Premium") || calls != 0 {
+		t.Fatalf("unmanaged Premium exchange: calls=%d err=%v", calls, err)
 	}
 }
 

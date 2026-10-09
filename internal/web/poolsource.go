@@ -15,6 +15,7 @@ import (
 
 type sourcePlan struct {
 	Pool       string            `json:"pool,omitempty"`
+	Premium    bool              `json:"premium,omitempty"`
 	Tun        string            `json:"tun,omitempty"`
 	Applied    int               `json:"applied,omitempty"`
 	Added      int               `json:"added,omitempty"`
@@ -115,6 +116,10 @@ func (s *Server) createPoolFromSource(w http.ResponseWriter, r *http.Request) {
 					"Это ключ Amnezia %s API (не конфиг). Нажмите «Запросить конфиг», чтобы mawg обменял его у gateway Амнезии на пул (AWG или VLESS).",
 					strings.TrimPrefix(key.ServiceType, "amnezia-"))},
 			})
+			return
+		}
+		if key.ServiceType == "amnezia-premium" && (key.ServiceProtocol == "awg" || key.ServiceProtocol == "") {
+			s.createPremiumPoolFromSource(w, r, req)
 			return
 		}
 		via := strings.TrimPrefix(strings.TrimSpace(req.Via), "socks5://")

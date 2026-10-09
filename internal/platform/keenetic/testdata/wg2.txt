@@ -20,7 +20,7 @@ Interface, name = "Wireguard2"
    security-level: public
              ipv6: 
         wireguard: 
-           public-key: GXDYRK4KwLXQhdexhrxxZIX8Ik+ao2kCNweMOYYXkG4=
+           public-key: TExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTEw=
           listen-port: 42391
                status: up
           summary: 
@@ -47,7 +47,7 @@ Interface, name = "Wireguard3"
              ipv6: 
             defaultgw: no
         wireguard: 
-           public-key: 629pYXdOzTegb+KdAc3zV7ncnSVJPYFnXGQqH/ztdjo=
+           public-key: TU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU0=
           listen-port: 43202
                status: down
           summary: 

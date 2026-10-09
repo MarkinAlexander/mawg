@@ -144,6 +144,8 @@ type ManagedConfig struct {
 }
 
 type Pool struct {
+	Free     bool            `json:"free,omitempty"`
+	Premium  bool            `json:"premium,omitempty"`
 	Name     string          `json:"name"`
 	Settings PoolSettings    `json:"settings"`
 	Configs  []ManagedConfig `json:"configs"`

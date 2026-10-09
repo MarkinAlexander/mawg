@@ -21,6 +21,8 @@ type Store struct {
 	state         StateFile
 	log           []Event
 	lastStateJSON string
+	premium       PremiumSubscription
+	free          FreeInstallation
 }
 
 func Open(base string) (*Store, error) {
@@ -35,6 +37,12 @@ func Open(base string) (*Store, error) {
 	}
 	if err := s.load(filepath.Join(base, "state.json"), &s.state); err != nil {
 		return nil, err
+	}
+	if err := s.load(filepath.Join(base, "premium.json"), &s.premium); err != nil {
+		return nil, errors.New("could not load Premium subscription")
+	}
+	if err := s.load(filepath.Join(base, "free.json"), &s.free); err != nil {
+		return nil, errors.New("could not load Amnezia Free installation")
 	}
 	if s.state.Pools == nil {
 		s.state.Pools = map[string]*PoolState{}
@@ -305,8 +313,11 @@ func (s *Store) MutateDegraded(fn func(map[string]DegradedGroup)) error {
 	if string(data) == s.lastStateJSON {
 		return nil
 	}
+	if err := s.saveLocked(filepath.Join(s.base, "state.json"), &s.state); err != nil {
+		return err
+	}
 	s.lastStateJSON = string(data)
-	return s.saveLocked(filepath.Join(s.base, "state.json"), &s.state)
+	return nil
 }
 
 func (s *Store) DegradedGroups() map[string]DegradedGroup {
@@ -463,6 +474,10 @@ func (s *Store) State(name string) *PoolState {
 }
 
 func (s *Store) CreatePool(name string, settings PoolSettings) (Pool, error) {
+	return s.createPool(name, settings, nil)
+}
+
+func (s *Store) createPool(name string, settings PoolSettings, freeConfig *wgconf.NamedConfig) (Pool, error) {
 	clean, err := wgconf.SanitizePoolName(name)
 	if err != nil {
 		return Pool{}, err
@@ -473,6 +488,9 @@ func (s *Store) CreatePool(name string, settings PoolSettings) (Pool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, p := range s.root.Pools {
+		if freeConfig != nil && p.Free {
+			return Pool{}, errors.New("Amnezia Free already belongs to another pool")
+		}
 		if p.Name == clean {
 			return Pool{}, fmt.Errorf("пул %q уже существует", clean)
 		}
@@ -490,11 +508,34 @@ func (s *Store) CreatePool(name string, settings PoolSettings) (Pool, error) {
 		return Pool{}, err
 	}
 	pool := Pool{Name: clean, Settings: settings.WithDefaults()}
-	s.root.Pools = append(s.root.Pools, pool)
-	s.state.Pools[clean] = NewPoolState()
-	if err := s.saveLocked(filepath.Join(s.base, "config.json"), s.root); err != nil {
+	if freeConfig != nil {
+		pool.Free = true
+		pool.Disabled = true
+		cfg := freeConfig.Config
+		file := "amnezia-free.conf"
+		path := filepath.Join(s.PoolDir(clean), file)
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		if err != nil {
+			return Pool{}, errors.New("could not stage Amnezia Free configuration; existing file retained")
+		}
+		_, writeErr := f.Write(freeConfig.Raw)
+		closeErr := f.Close()
+		if writeErr != nil || closeErr != nil {
+			os.Remove(path)
+			return Pool{}, errors.New("could not persist Amnezia Free configuration")
+		}
+		pool.Configs = []ManagedConfig{{File: file, Original: "Amnezia Free", Endpoint: cfg.Endpoint(), PublicKey: cfg.Peer.PublicKey, Addresses: cfg.Addresses, Enabled: true}}
+	}
+	root := s.root
+	root.Pools = append(append([]Pool{}, s.root.Pools...), pool)
+	if err := s.saveLocked(filepath.Join(s.base, "config.json"), root); err != nil {
+		if freeConfig != nil {
+			os.Remove(filepath.Join(s.PoolDir(clean), "amnezia-free.conf"))
+		}
 		return Pool{}, err
 	}
+	s.root = root
+	s.state.Pools[clean] = NewPoolState()
 	return pool, nil
 }
 
@@ -506,6 +547,10 @@ func (s *Store) UpdatePool(name string, settings PoolSettings) error {
 	defer s.mu.Unlock()
 	for i := range s.root.Pools {
 		if s.root.Pools[i].Name == name {
+			p := s.root.Pools[i]
+			if p.Premium && (settings.EngineMode != "" || settings.Platform != p.Settings.Platform || (settings.Platform == PlatformOpenwrt && settings.OpenwrtProto != "amneziawg") || settings.Source != "") {
+				return errors.New("Premium requires a native AWG pool without a static source")
+			}
 			s.root.Pools[i].Settings = settings.WithDefaults()
 			return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
 		}
@@ -544,6 +589,9 @@ func (s *Store) AddConfigs(pool string, configs []wgconf.NamedConfig) (added int
 	}
 	if pi < 0 {
 		return 0, nil, fmt.Errorf("пул %q не найден", pool)
+	}
+	if s.root.Pools[pi].Premium {
+		return 0, nil, errors.New("Premium pool uses country switching, not static configs")
 	}
 	dir := s.PoolDir(pool)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -624,6 +672,9 @@ func (s *Store) RemoveConfig(pool, file string) error {
 		}
 		for j, c := range s.root.Pools[i].Configs {
 			if c.File == file {
+				if s.root.Pools[i].Premium {
+					return errors.New("Premium current config cannot be deleted; delete the pool instead")
+				}
 				s.root.Pools[i].Configs = append(s.root.Pools[i].Configs[:j], s.root.Pools[i].Configs[j+1:]...)
 				if err := s.saveLocked(filepath.Join(s.base, "config.json"), s.root); err != nil {
 					return err
@@ -709,8 +760,11 @@ func (s *Store) MutateState(pool string, fn func(*PoolState)) error {
 	if string(data) == s.lastStateJSON {
 		return nil
 	}
+	if err := s.saveLocked(filepath.Join(s.base, "state.json"), &s.state); err != nil {
+		return err
+	}
 	s.lastStateJSON = string(data)
-	return s.saveLocked(filepath.Join(s.base, "state.json"), &s.state)
+	return nil
 }
 
 func (s *Store) Bundles() []Bundle {
@@ -814,8 +868,11 @@ func (s *Store) MutateBundleState(name string, fn func(*BundleState)) error {
 	if string(data) == s.lastStateJSON {
 		return nil
 	}
+	if err := s.saveLocked(filepath.Join(s.base, "state.json"), &s.state); err != nil {
+		return err
+	}
 	s.lastStateJSON = string(data)
-	return s.saveLocked(filepath.Join(s.base, "state.json"), &s.state)
+	return nil
 }
 
 func (s *Store) LogEvent(pool, kind, message string) {
