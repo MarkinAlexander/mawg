@@ -3,11 +3,36 @@ package rotator
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"time"
 
 	"mawg/internal/premium"
 	"mawg/internal/store"
 	"mawg/internal/wgconf"
 )
+
+// saveRejectedFree - конфиг, который mawg не принял, сохраняется рядом с
+// данными: годен для импорта в официальный клиент (настоящий ключ), плюс
+// событие в журнал панели с точной причиной отказа.
+func (e *Engine) saveRejectedFree(err error) {
+	var bad *premium.BadConfigError
+	if !errors.As(err, &bad) || (bad.Raw == "" && bad.Config == "") {
+		return
+	}
+	path := filepath.Join(e.store.Base(), "free-rejected.txt")
+	content := "# mawg не смог применить конфиг Amnezia Free: " + bad.Reason + "\n" +
+		"# время: " + time.Now().Format(time.RFC3339) + "\n" +
+		"# ниже - выданный конфиг целиком (можно импортировать в официальный клиент Amnezia)\n"
+	if bad.Config != "" {
+		content += bad.Config + "\n"
+	} else {
+		content += bad.Raw + "\n"
+	}
+	if os.WriteFile(path, []byte(content), 0o600) == nil {
+		e.store.LogEvent("free", "config", "выданный конфиг отклонён ("+bad.Reason+"); конфиг сохранён: "+path)
+	}
+}
 
 func (e *Engine) CreateFreePool(ctx context.Context, name string, settings store.PoolSettings) (store.Pool, error) {
 	return e.createFreePool(ctx, name, settings, nil)
@@ -80,6 +105,7 @@ func (e *Engine) createFreePool(ctx context.Context, name string, settings store
 		}
 		v.Config, v.Auth, err = e.PremiumClient.FreeConfig(ctx, v.UUID, country, v.Private, answer)
 		if err != nil {
+			e.saveRejectedFree(err)
 			return store.Pool{}, err
 		}
 		if err := e.store.SaveFree(v); err != nil {

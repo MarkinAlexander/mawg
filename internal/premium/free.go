@@ -25,6 +25,10 @@ func freeError(err error) error {
 	if errors.As(err, &cap) {
 		return err
 	}
+	var bad *BadConfigError
+	if errors.As(err, &bad) {
+		return err
+	}
 	return errors.New(strings.ReplaceAll(err.Error(), "Premium", "Amnezia Free"))
 }
 

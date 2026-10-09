@@ -10,6 +10,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/netip"
 	"regexp"
@@ -126,11 +127,32 @@ func (c *Client) Config(ctx context.Context, key, id, userCountry, country, priv
 
 var endpointHost = regexp.MustCompile(`^[a-zA-Z0-9.-]+$`)
 
+// BadConfigError - gateway выдал конфиг, но mawg его не принял. Raw -
+// исходная ссылка vpn:// (в ней заглушка ключа), Config - готовый
+// native-конфиг с настоящим приватным ключом: юзер может забрать его
+// в официальный клиент, даже если mawg применить не смог.
+type BadConfigError struct {
+	Reason string
+	Raw    string
+	Config string
+}
+
+func (e *BadConfigError) Error() string { return e.Reason }
+
 func deviceConfig(link, private string) ([]byte, wgconf.Config, error) {
-	bad := errors.New("unsupported or invalid Premium AWG configuration")
+	// причина отказа - в ошибке: живой gateway выдаёт реальные конфиги,
+	// глухое «unsupported» не оставляет следов для разбора
+	var substituted string
+	reject := func(reason string) ([]byte, wgconf.Config, error) {
+		return nil, wgconf.Config{}, &BadConfigError{
+			Reason: fmt.Sprintf("конфиг AWG не принят: %s", reason),
+			Raw:    strings.Trim(link, "\r\n"),
+			Config: substituted,
+		}
+	}
 	raw, err := decodeLink(strings.Trim(link, "\r\n"))
 	if err != nil {
-		return nil, wgconf.Config{}, bad
+		return reject("ссылка vpn:// не разбирается")
 	}
 	var root struct {
 		Containers []struct {
@@ -141,7 +163,7 @@ func deviceConfig(link, private string) ([]byte, wgconf.Config, error) {
 		} `json:"containers"`
 	}
 	if json.Unmarshal(raw, &root) != nil {
-		return nil, wgconf.Config{}, bad
+		return reject("структура ответа gateway")
 	}
 	for _, container := range root.Containers {
 		if container.Container != "amnezia-awg" {
@@ -154,6 +176,7 @@ func deviceConfig(link, private string) ([]byte, wgconf.Config, error) {
 			continue
 		}
 		text := strings.ReplaceAll(last.Config, "$WIREGUARD_CLIENT_PRIVATE_KEY", private)
+		substituted = text
 		section := ""
 		for _, line := range strings.Split(text, "\n") {
 			line = strings.TrimSpace(line)
@@ -167,12 +190,12 @@ func deviceConfig(link, private string) ([]byte, wgconf.Config, error) {
 			key, value, ok := strings.Cut(line, "=")
 			key, value = strings.ToLower(strings.TrimSpace(key)), strings.TrimSpace(value)
 			if !ok || strings.ContainsAny(value, "'\r\n\x00") {
-				return nil, wgconf.Config{}, bad
+				return reject("строка «" + line + "»")
 			}
 			if key == "mtu" || key == "persistentkeepalive" {
 				n, err := strconv.Atoi(value)
 				if err != nil || n < 0 || n > 65535 {
-					return nil, wgconf.Config{}, bad
+					return reject("значение " + key + "=" + value)
 				}
 			}
 			allowed := false
@@ -186,13 +209,17 @@ func deviceConfig(link, private string) ([]byte, wgconf.Config, error) {
 						parts = strings.Split(value, "-")
 					}
 					if len(parts) > 2 {
-						return nil, wgconf.Config{}, bad
+						return reject("значение " + key + "=" + value)
 					}
 					var previous uint64
 					for i, part := range parts {
+						// uint32 без преобразования в int: на 32-битных
+						// роутерах int(n) переполнялся на больших h-значениях
+						// (реальные конфигы дают h до 4294967295) и рабочий
+						// конфиг отвергался
 						n, err := strconv.ParseUint(part, 10, 32)
-						if err != nil || uint64(int(n)) != n || int(n) < 0 || (i > 0 && n < previous) {
-							return nil, wgconf.Config{}, bad
+						if err != nil || (i > 0 && n < previous) {
+							return reject("значение " + key + "=" + value)
 						}
 						previous = n
 					}
@@ -207,29 +234,32 @@ func deviceConfig(link, private string) ([]byte, wgconf.Config, error) {
 				}
 			}
 			if !allowed {
-				return nil, wgconf.Config{}, bad
+				return reject("неизвестное поле " + key + " в " + section)
 			}
 		}
 		data := []byte(text)
 		cfg, err := wgconf.Parse(data)
-		if err != nil || cfg.PrivateKey != private || !cfg.AWG.Present() {
-			return nil, wgconf.Config{}, bad
+		if err != nil {
+			return reject("разбор конфига: " + err.Error())
+		}
+		if cfg.PrivateKey != private || !cfg.AWG.Present() {
+			return reject("в конфиге нет приватного ключа клиента или AWG-параметров")
 		}
 		for _, ip := range append(append([]string{}, cfg.Addresses...), cfg.Peer.AllowedIPs...) {
 			if _, err := netip.ParsePrefix(ip); err != nil {
-				return nil, wgconf.Config{}, bad
+				return reject("адрес " + ip)
 			}
 		}
 		for _, ip := range cfg.DNS {
 			if _, err := netip.ParseAddr(ip); err != nil {
-				return nil, wgconf.Config{}, bad
+				return reject("dns " + ip)
 			}
 		}
 		host := strings.Trim(cfg.Peer.EndpointHost, "[]")
 		if _, err := netip.ParseAddr(host); err != nil && !endpointHost.MatchString(host) {
-			return nil, wgconf.Config{}, bad
+			return reject("endpoint " + cfg.Peer.EndpointHost)
 		}
 		return data, cfg, nil
 	}
-	return nil, wgconf.Config{}, bad
+	return reject("в ответе gateway нет контейнера amnezia-awg")
 }
