@@ -219,7 +219,7 @@ function probeStatusBadge(it) {
   const detail = st.slice(st.indexOf('(') + 1).replace(/\)$/, '');
   window.setTimeout(() => {
     const el = document.querySelector(`[data-probe="${it.device}"]`);
-    if (el) el.onclick = () => askModal('Проба ' + it.device, detail, 'Понятно');
+    if (el) el.onclick = () => askModal('Проба ' + it.device, detail, 'Закрыть', true);
   }, 0);
   return `<span class="badge ${cls}" data-probe="${esc(it.device)}" title="${esc(st)}" style="cursor:pointer">${esc(short)}</span>`;
 }
@@ -1693,13 +1693,14 @@ async function refreshSystem(force) {
 }
 
 let confirmResolve = null, confirmOk = false;
-function askModal(title, text, okLabel) {
+function askModal(title, text, okLabel, info) {
   return new Promise(resolve => {
     confirmResolve = resolve;
     confirmOk = false;
     document.getElementById('cfTitle').textContent = title;
     document.getElementById('cfText').textContent = text;
-    document.getElementById('cfOk').textContent = okLabel || 'ОК';
+    document.getElementById('cfCancel').style.display = info ? 'none' : '';
+    document.getElementById('cfOk').textContent = okLabel || (info ? 'Закрыть' : 'ОК');
     dlgConfirm.showModal();
   });
 }
