@@ -1216,6 +1216,13 @@ func (e *Engine) checkGroupPolicies() {
 	if e.casc != nil && e.tickN%10 == 0 {
 		e.casc.RefreshDNS(ctx)
 	}
+	// сверка OUTPUT-хуков каскадов каждый цикл (30с): хук - runtime-состояние
+	// iptables, его снимают перезагрузка (порядок старта mawg/MagiTrickle не
+	// гарантирован), рестарт сети или сторонний iptables-restore. SyncHooks
+	// идемпотентен и молчит при недоступном MT - доделает на следующем цикле
+	if e.casc != nil {
+		e.casc.SyncHooks()
+	}
 
 	groups, err := e.mt.GroupsWithRules(ctx)
 	if err != nil {
