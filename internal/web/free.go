@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 
+	"mawg/internal/platform/keenetic"
 	"mawg/internal/platform/openwrt"
 	"mawg/internal/premium"
 	"mawg/internal/store"
@@ -18,6 +19,19 @@ type freePoolReq struct {
 	KeeneticSlot    string `json:"keeneticSlot"`
 	CaptchaID       string `json:"captchaId"`
 	CaptchaSolution string `json:"captchaSolution"`
+}
+
+// nativeAWG3 - роутер поднимает AWG 3.x нативно (OpenWrt с kmod
+// amneziawg 3.x, Keenetic 5.2+): /status отдаёт флаг, панели по нему
+// прячут блок нативного импорта Premium в карточке пула.
+func (s *Server) nativeAWG3() bool {
+	if ob, ok := s.backend.(*openwrt.Backend); ok {
+		return ob.SupportsNativeAWG3()
+	}
+	if kb, ok := s.backend.(*keenetic.Backend); ok {
+		return kb.SupportsNativeAWG3()
+	}
+	return false
 }
 
 func (s *Server) createFreePool(w http.ResponseWriter, r *http.Request) {

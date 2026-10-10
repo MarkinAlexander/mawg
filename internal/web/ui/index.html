@@ -882,8 +882,11 @@ function updateCard(p) {
   card.summary.textContent = `Конфиги (${(p.configs || []).length})`;
 
   const premium = p.premium || {};
-  card.root.querySelector('.premium-panel').style.display = (premium.imported || (!isEng && (!(p.configs || []).length && (p.settings.openwrtProto === 'amneziawg' || p.platform === 'keenetic')))) ? '' : 'none';
-  card.root.querySelector('.premium-import').style.display = premium.imported && (premium.countries || []).length ? 'none' : '';
+  // нативный импорт Premium - только там, где слот поднимает AWG 3.x
+  // (OpenWrt kmod 3.1, Keenetic 5.2+): слот AWG 2.0 HP-ключ не применит
+  const nativePrem = !!(STATUS && STATUS.nativeAWG3);
+  card.root.querySelector('.premium-panel').style.display = (premium.imported || (!isEng && !(p.configs || []).length && nativePrem && (p.settings.openwrtProto === 'amneziawg' || p.platform === 'keenetic'))) ? '' : 'none';
+  card.root.querySelector('.premium-import').style.display = (premium.imported && (premium.countries || []).length) || !nativePrem ? 'none' : '';
   card.root.querySelector('.premium-switch').style.display = premium.imported ? '' : 'none';
   const countrySel = card.root.querySelector('.premium-country');
   const countryJSON = JSON.stringify([premium.countries, premium.country]);

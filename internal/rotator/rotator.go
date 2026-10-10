@@ -465,10 +465,31 @@ func (e *Engine) checkPool(name string) {
 		return
 	}
 	st := e.store.State(name)
-	if len(p.EligibleConfigs()) == 0 && st.ActiveFile == "" {
+	if len(p.EligibleConfigs()) == 0 {
+		if st.ActiveFile != "" {
+			// конфигов не осталось (удалили последний / выключили
+			// все): туннель надо погасить - интерфейс роутера иначе
+			// продолжает работать с последним применённым конфигом,
+			// которого в пуле уже нет, и пул выглядит «работает»
+			if err := e.backend.Down(p); err != nil {
+				e.store.LogEvent(name, "rotate", "конфигов нет, интерфейс не выключился: "+err.Error())
+			} else {
+				e.ifaceTouched()
+			}
+			e.store.MutateState(name, func(s *store.PoolState) {
+				s.LastCheck = e.now()
+				s.LastResult = "конфигов нет - туннель остановлен"
+				s.ActiveFile = ""
+				s.Mode = store.ModeFallback
+				s.ConsecFails = 0
+			})
+			e.store.LogEvent(name, "rotate", "конфигов не осталось - туннель остановлен")
+			e.saveRouterConfig(name)
+			return
+		}
 		e.store.MutateState(name, func(s *store.PoolState) {
 			s.LastCheck = e.now()
-			s.LastResult = "no eligible configs"
+			s.LastResult = "конфигов для ротации нет"
 		})
 		return
 	}

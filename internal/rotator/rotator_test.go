@@ -592,3 +592,44 @@ func TestProbeStatusCacheServesIfaces(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+// конфиги кончились (удалили последний) - туннель должен погаснуть
+// немедленно, а не числиться «работает» с последним применённым конфигом
+func TestEmptyPoolStopsTunnel(t *testing.T) {
+	st, fb, cl := setup(t, store.FallbackDirect)
+	e := newEngine(st.Store, fb, cl, "")
+	e.checkPool("proton")
+	if len(fb.Applied()) != 1 {
+		t.Fatal("не применился")
+	}
+	pool, ok := st.Pool("proton")
+	if !ok {
+		t.Fatal("пул исчез")
+	}
+	files := make([]string, 0, len(pool.Configs))
+	for _, c := range pool.Configs {
+		files = append(files, c.File)
+	}
+	for _, f := range files {
+		if err := st.RemoveConfig("proton", f); err != nil {
+			t.Fatal(err)
+		}
+	}
+	downs := fb.Downs()
+	e.checkPool("proton")
+	if fb.Downs() != downs+1 {
+		t.Fatalf("интерфейс не погашен: downs %d -> %d", downs, fb.Downs())
+	}
+	state := st.State("proton")
+	if state.ActiveFile != "" || state.Mode != store.ModeFallback {
+		t.Fatalf("state: file=%q mode=%q", state.ActiveFile, state.Mode)
+	}
+	if !strings.Contains(state.LastResult, "конфигов нет") {
+		t.Fatalf("lastResult = %q", state.LastResult)
+	}
+	// повторный цикл не должен дёргать Down повторно
+	e.checkPool("proton")
+	if fb.Downs() != downs+1 {
+		t.Fatal("повторный Down")
+	}
+}
