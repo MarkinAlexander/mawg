@@ -14,6 +14,7 @@ type Fake struct {
 
 	AppliedEndpoints []string
 	DownCalled       []string
+	DestroyCalled    []string
 	UpCalled         []string
 
 	ProbeOK     map[string]bool
@@ -66,6 +67,13 @@ func (f *Fake) Down(pool store.Pool) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.DownCalled = append(f.DownCalled, pool.Name)
+	return nil
+}
+
+func (f *Fake) Destroy(pool store.Pool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.DestroyCalled = append(f.DestroyCalled, pool.Name)
 	return nil
 }
 
@@ -132,3 +140,9 @@ func (f *Fake) Applied() []string {
 func (f *Fake) RestartMagitrickle() error { return nil }
 
 func (f *Fake) SaveConfig() error { return nil }
+
+func (f *Fake) Destroys() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.DestroyCalled)
+}

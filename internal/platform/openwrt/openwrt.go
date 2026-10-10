@@ -332,6 +332,19 @@ func ensureMawgZone(iface string) error {
 	return nil
 }
 
+// Destroy вычищает uci-секции пула при его удалении: Down оставляет
+// секцию (auto=0) как призрак в LuCI. Членство в общей зоне mawg не
+// трогаем - fw4 переживает ссылку на пропавший интерфейс, зону
+// пересоберёт следующий ensureZone.
+func (b *Backend) Destroy(pool store.Pool) error {
+	name := pool.DeviceName()
+	if out, err := runShell(dropSectionsScript(name)); err != nil {
+		return fmt.Errorf("uci drop: %v: %s", err, out)
+	}
+	_, err := run("ifdown", name)
+	return err
+}
+
 func (b *Backend) Up(pool store.Pool) error {
 	_, err := run("ifup", pool.DeviceName())
 	return err
@@ -435,8 +448,12 @@ func sysTunnelsImpl() ([]platform.SlotInfo, error) {
 		}
 		linkUp := false
 		if flags, err := os.ReadFile("/sys/class/net/" + name + "/flags"); err == nil {
-			t := strings.TrimSpace(string(flags))
-			linkUp = strings.HasPrefix(t, "0x1") || strings.HasPrefix(t, "1")
+			// младший бит IFF_UP: 0x91 = поднят, 0x90 = выключен
+			// (префиксное сравнение путает 0x90/0x91)
+			t := strings.TrimPrefix(strings.TrimSpace(string(flags)), "0x")
+			if v, e := strconv.ParseUint(t, 16, 32); e == nil {
+				linkUp = v&1 == 1
+			}
 		}
 		out = append(out, platform.SlotInfo{Device: name, LinkUp: linkUp, Address: ifaceAddr(name)})
 	}

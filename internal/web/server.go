@@ -601,7 +601,10 @@ func (s *Server) liveAddressConflict(poolName, file string) error {
 	own := pool.DeviceName()
 	for _, a := range cfg.Addresses {
 		for _, sl := range tunnels {
-			if sl.Device == own || sl.Address == "" {
+			// выключенный интерфейс адрес не держит: выключенный в UI
+			// Кинетика WARP не должен мешать включить конфиг с тем же
+			// адресом - мешают только два одновременно поднятых
+			if sl.Device == own || sl.Address == "" || !sl.LinkUp {
 				continue
 			}
 			if normAddr(sl.Address) == normAddr(a) {
