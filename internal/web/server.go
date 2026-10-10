@@ -23,6 +23,7 @@ import (
 	"mawg/internal/magitrickle"
 	"mawg/internal/platform"
 	"mawg/internal/platform/keenetic"
+	"mawg/internal/platform/openwrt"
 	"mawg/internal/provision"
 	"mawg/internal/rotator"
 	"mawg/internal/selfupdate"
@@ -441,10 +442,15 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 		Platform    string         `json:"platform"`
 		BackendName string         `json:"backendName"`
 		AuthEnabled bool           `json:"authEnabled"`
+		// NativeAWG3 - роутер поднимает AWG 3.x нативно (OpenWrt c kmod
+		// amneziawg 3.x, Keenetic 5.2+): только там нативный Premium.
+		// Панели по флагу прячут блок «Amnezia Premium vpn://» в карточке
+		// пула - на Keenetic до 5.2 слот AWG 2.0 HP-ключ не применит.
+		NativeAWG3  bool           `json:"nativeAWG3"`
 		Pools       []poolView     `json:"pools"`
 		Engine      map[string]any `json:"engine,omitempty"`
 	}{Version: s.version, Platform: s.backend.Name(), BackendName: s.backend.Name(),
-		AuthEnabled: s.auth == nil || s.auth.Enabled, Pools: []poolView{}}
+		AuthEnabled: s.auth == nil || s.auth.Enabled, NativeAWG3: s.nativeAWG3(), Pools: []poolView{}}
 
 	for _, p := range pools {
 		st := s.store.State(p.Name)
@@ -1249,6 +1255,20 @@ func (s *Server) uploadConfigs(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	// конфиг, который нативный интерфейс не поднимет (AWG 3.x-поля или
+	// <r>-случайность на старом kmod), сохраняем, но честно предупреждаем:
+	// при активации он бы умирал глухой ошибкой применения
+	if pool, ok := s.store.Pool(name); ok && pool.Settings.EngineMode == "" {
+		rNeedEngine := false
+		if ob, ok := s.backend.(*openwrt.Backend); ok && !ob.SupportsNativeAWG3() {
+			rNeedEngine = true
+		}
+		for _, nc := range unique {
+			if nc.Config.NeedsEngine() || (rNeedEngine && nc.Config.AWG.HasRandomInit()) {
+				warnings = append(warnings, nc.OriginalName+": конфиг AmneziaWG 3.x - нативный интерфейс его поля не применит, нужен движок sing-box-lx («Система -> Зависимости»); конфиг сохранён")
+			}
+		}
+	}
 	for _, w := range warnings {
 		s.store.LogEvent(name, "conflict", w)
 	}
@@ -1260,6 +1280,15 @@ func (s *Server) deleteConfig(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.RemoveConfig(r.PathValue("name"), r.PathValue("file")); err != nil {
 		writeErr(w, err)
 		return
+	}
+	// удаление последнего/активного конфига должно сразу отразиться на
+	// туннеле, а не ждать очередного цикла с «работающим» интерфейсом
+	if pool, ok := s.store.Pool(r.PathValue("name")); ok && pool.Settings.EngineMode == engineMode {
+		if _, err := s.applyEngine(); err != nil {
+			s.store.LogEvent(r.PathValue("name"), "applied", "движок не пересобран после удаления конфига: "+err.Error())
+		}
+	} else {
+		s.engine.CheckNow(r.PathValue("name"))
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "deleted"})
 }
@@ -1278,6 +1307,11 @@ func (s *Server) enableConfig(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.SetConfigEnabled(r.PathValue("name"), r.PathValue("file"), req.Enabled); err != nil {
 		writeErr(w, err)
 		return
+	}
+	// выключение последнего активного конфига - тот же случай: без
+	// немедленной перепроверки туннель продолжит работать
+	if !req.Enabled {
+		s.engine.CheckNow(r.PathValue("name"))
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "ok"})
 }

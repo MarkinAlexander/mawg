@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"mawg/internal/links"
+	"mawg/internal/platform/openwrt"
 	"mawg/internal/singbox"
 	"mawg/internal/store"
 	"mawg/internal/wgconf"
@@ -181,9 +182,17 @@ func (s *Server) createPoolFromNodes(w http.ResponseWriter, r *http.Request, req
 	// AWG 3.x-конфиги (защита заголовка, диапазоны, паддинг) нативные
 	// интерфейсы не поднимают: такой импорт целиком идёт движком,
 	// конфиги хранятся в пуле и едут wireguard-эндпоинтами sing-box-lx.
+	// Исключение - <r>-маркеры при статичной <b>-части (формат
+	// warp-генераторов): Keenetic случайные байты отбрасывает (статике
+	// сервер верит - проверено live), kmod amneziawg 3.1 на OpenWrt
+	// понимает синтаксис нативно, а старый kmod - нет: там движок.
+	rNeedEngine := false
+	if ob, ok := s.backend.(*openwrt.Backend); ok && !ob.SupportsNativeAWG3() {
+		rNeedEngine = true
+	}
 	needsEngine := false
 	for _, nc := range ncs {
-		if nc.Config.NeedsEngine() {
+		if nc.Config.NeedsEngine() || (rNeedEngine && nc.Config.AWG.HasRandomInit()) {
 			needsEngine = true
 			break
 		}

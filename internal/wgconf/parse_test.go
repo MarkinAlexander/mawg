@@ -64,7 +64,7 @@ func TestParseAWGExtended(t *testing.T) {
 		t.Fatal("extended params not parsed")
 	}
 	got := cfg.AWG.AscArgs()
-	want := []string{"3", "50", "1000", "100", "110", "1", "96", "99", "99", "30", "39", "\"15\"", "\"16\"", "\"17\"", "\"18\"", "\"19\""}
+	want := []string{"3", "50", "1000", "100", "110", "1", "96", "99", "99", "30", "39", "\"<b 0x15>\"", "\"<b 0x16>\"", "\"<b 0x17>\"", "\"<b 0x18>\"", "\"<b 0x19>\""}
 	if len(got) != len(want) {
 		t.Fatalf("AscArgs len = %d (%v)", len(got), got)
 	}
@@ -174,3 +174,71 @@ func TestParseEndpointForms(t *testing.T) {
 		}
 	}
 }
+
+// warp-генераторы нового формата: H1-H4 в конфиге нет вовсе, I1 несёт
+// префикс <r 2> (два случайных байта). Keenetic: H=0 не принимает -
+// подставляем 1,2,3,4 (их же несут рабочие конфиги этих генераторов),
+// случайный префикс отбрасываем - серверу warp статики достаточно
+// (проверено live-хендшейком на Keinetic 5.1.3).
+func TestAscArgsWarpScout(t *testing.T) {
+	cfg := loadConf(t, "warp-scout.conf")
+	if !cfg.AWG.Present() {
+		t.Fatal("awg params not parsed")
+	}
+	if cfg.NeedsEngine() {
+		t.Fatal("конфиг с статичной <b>-частью не должен требовать движок")
+	}
+	if !cfg.AWG.HasRandomInit() {
+		t.Fatal("HasRandomInit должен видеть <r>-маркер")
+	}
+	got := cfg.AWG.AscArgs()
+	want := []string{"6", "10", "50", "0", "0", "1", "2", "3", "4", "0", "0",
+		"\"<r 2><b 0x858000010001000000000474657374036f72670000010001c00c000100010000105a000441424344>\"",
+		"\"\"", "\"\"", "\"\"", "\"\""}
+	if len(got) != len(want) {
+		t.Fatalf("AscArgs len = %d (%v)", len(got), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("AscArgs[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestInitStatic(t *testing.T) {
+	for _, c := range []struct {
+		in, want string
+	}{
+		{"<r 2><b 0xABCD>", "<b 0xabcd>"},
+		{"<b 0xAB>", "<b 0xab>"},
+		{"<r 640>", ""},
+		{"<b 0xAB><r 5><b 0xcdEF>", "<b 0xabcdef>"},
+		{"DEADBEEF", "<b 0xdeadbeef>"},
+		{"<b 0xABC>", ""}, // нечётный hex - не блоб
+		{"", ""},
+	} {
+		if got := initStatic(c.in); got != c.want {
+			t.Fatalf("initStatic(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// <r>-маркеры не делают конфиг AWG3-движковым: Keenetic и kmod 3.1
+// понимают их нативно; движок нужен только старому kmod (web-слой
+// смотрит HasRandomInit)
+func TestAWG3RandomInitNotEngine(t *testing.T) {
+	for _, v := range []string{"<b 0x1234><r 64>", "<r 64>", "<r 2><b 0xab>"} {
+		p := AWGParams{Jc: strp("6"), I1: strp(v)}
+		if p.AWG3() {
+			t.Fatalf("%q не должен быть признаком AWG3", v)
+		}
+		if !p.HasRandomInit() {
+			t.Fatalf("HasRandomInit(%q)", v)
+		}
+	}
+	if (AWGParams{I1: strp("<r 5>")}).HasRandomInit() == false {
+		t.Fatal("HasRandomInit(<r 5>)")
+	}
+}
+
+func strp(v string) *string { return &v }

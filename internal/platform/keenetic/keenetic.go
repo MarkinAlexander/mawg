@@ -106,6 +106,29 @@ func collectComponents(dst map[string]bool, list string) {
 	}
 }
 
+// SupportsNativeAWG3 - нативный слот применяет AWG 3.x (HP-ключ) только
+// с прошивки 5.2; до неё слот умеет AWG 2.0 и нативный Premium не
+// поднимет (только движок). Версию кэшируем на час - прошивка на лету
+// не меняется, а /status панель дёргает часто.
+var (
+	kawg3Mu   sync.Mutex
+	kawg3At   time.Time
+	kawg3Prev bool
+)
+
+func (b *Backend) SupportsNativeAWG3() bool {
+	kawg3Mu.Lock()
+	defer kawg3Mu.Unlock()
+	if !kawg3At.IsZero() && time.Since(kawg3At) < time.Hour {
+		return kawg3Prev
+	}
+	kawg3At = time.Now()
+	out, err := b.ndmc("show version")
+	info := b.parseVersion(out)
+	kawg3Prev = err == nil && (info.major > 5 || (info.major == 5 && info.minor >= 2))
+	return kawg3Prev
+}
+
 func (b *Backend) Detect() error {
 	if _, err := os.Stat("/bin/ndmc"); err != nil {
 		return fmt.Errorf("ndmc не найден: это не Keenetic")

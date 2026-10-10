@@ -1,6 +1,7 @@
 package wgconf
 
 import (
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -33,7 +34,11 @@ func (p AWGParams) Present() bool {
 		p.anyInitPacket()
 }
 
-// AWG3 - признаки формата AmneziaWG 3.x: нативные слоты такое не поднимут.
+// AWG3 - признаки формата AmneziaWG 3.x, которые нативные интерфейсы не
+// поднимут (HP-ключ, диапазонные таймеры). <r>-маркеры в I-полях сюда
+// не входят: Keenetic и kmod amneziawg 3.1 понимают их нативно, старому
+// kmod OpenWrt такой конфиг вместо натива даёт движок (web-слой,
+// HasRandomInit).
 func (p AWGParams) AWG3() bool {
 	if p.HeaderProtectionKey != nil {
 		return true
@@ -44,6 +49,13 @@ func (p AWGParams) AWG3() bool {
 			return true
 		}
 	}
+	return false
+}
+
+// HasRandomInit - в I-полях есть маркеры <r N> случайных байтов. Кинетик
+// их отбрасывает (статика работает), а вот kmod amneziawg 1.x/2.x на
+// OpenWrt синтаксис не знает вовсе - там такие конфиги нужны движком.
+func (p AWGParams) HasRandomInit() bool {
 	for _, f := range []*string{p.I1, p.I2, p.I3, p.I4, p.I5} {
 		if f != nil && strings.Contains(*f, "<r ") {
 			return true
@@ -63,19 +75,66 @@ func awgVal(p *string) string {
 	return strings.TrimSpace(*p)
 }
 
+// keeneticH - Keenetic не принимает H=0 («invalid ASC parameters»), а
+// конфиги warp-генераторов H1-H4 просто не пишут, ожидая 1,2,3,4:
+// их собственные рабочие конфиги для Кинетиков несут ровно эти значения.
+func keeneticH(p *string, def string) string {
+	if p == nil || strings.TrimSpace(*p) == "" || strings.TrimSpace(*p) == "0" {
+		return def
+	}
+	return strings.TrimSpace(*p)
+}
+
+var initBlobRe = regexp.MustCompile(`<b\s+0x([0-9A-Fa-f]+)\s*>`)
+var bareHexRe = regexp.MustCompile(`^([0-9A-Fa-f]+)$`)
+
+// initTokenRe - I-поле из токенов, которые понимает прошивка Keenetic
+// (strings /lib/libndmWireguard.so): <b 0x...> статичный блоб, <r N> N
+// случайных байтов, <rc N>, <t>. Последовательность передаётся как есть.
+var initTokenRe = regexp.MustCompile(`^(?:<b 0x(?:[0-9A-Fa-f]{2})+>|<t>|<r [0-9]+>|<rc [0-9]+>)+$`)
+
+// initStatic - статичная форма I-поля: все <b>-куски склеиваются в один
+// блоб (Keenetic не склеивает сам), голый hex оборачивается, <r>-маркеры
+// случайных байтов выпадают. Фолбэк для значений мимо токен-формата.
+func initStatic(v string) string {
+	var hex strings.Builder
+	for _, m := range initBlobRe.FindAllStringSubmatch(v, -1) {
+		hex.WriteString(strings.ToLower(m[1]))
+	}
+	s := hex.String()
+	if s == "" {
+		if m := bareHexRe.FindStringSubmatch(strings.TrimSpace(v)); m != nil {
+			s = strings.ToLower(m[1])
+		}
+	}
+	if s == "" || len(s)%2 != 0 {
+		return ""
+	}
+	return "<b 0x" + s + ">"
+}
+
 func initArg(v *string) string {
 	if v == nil {
 		return "\"\""
 	}
-	return "\"" + strings.TrimSpace(*v) + "\""
+	s := strings.TrimSpace(*v)
+	// <b>/<r>/<rc>/<t>-последовательность прошивка понимает нативно -
+	// передаём без искажений (проверено live на 5.01.C.3.0-1)
+	if initTokenRe.MatchString(s) {
+		return "\"" + s + "\""
+	}
+	if st := initStatic(s); st != "" {
+		return "\"" + st + "\""
+	}
+	return "\"\""
 }
 
 func (p AWGParams) AscArgs() []string {
-	classic := []*string{p.Jc, p.Jmin, p.Jmax, p.S1, p.S2, p.H1, p.H2, p.H3, p.H4}
-	out := make([]string, 0, len(classic)+7)
-	for _, v := range classic {
-		out = append(out, awgVal(v))
-	}
+	out := make([]string, 0, 16)
+	out = append(out, awgVal(p.Jc), awgVal(p.Jmin), awgVal(p.Jmax),
+		awgVal(p.S1), awgVal(p.S2),
+		keeneticH(p.H1, "1"), keeneticH(p.H2, "2"), keeneticH(p.H3, "3"), keeneticH(p.H4, "4"),
+	)
 	if p.HasExtended() {
 		out = append(out, awgVal(p.S3), awgVal(p.S4))
 		out = append(out, initArg(p.I1), initArg(p.I2), initArg(p.I3), initArg(p.I4), initArg(p.I5))
