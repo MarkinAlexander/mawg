@@ -29,6 +29,9 @@ type Backend interface {
 	Apply(pool store.Pool, cfg wgconf.Config) error
 	Up(pool store.Pool) error
 	Down(pool store.Pool) error
+	// Destroy вычищает интерфейс роутера при удалении пула: Down гасит
+	// линк/адрес, но сам слот/uci-секция остаются призраками в вебе роутера
+	Destroy(pool store.Pool) error
 	Status(pool store.Pool) (TunnelStatus, error)
 	Probe(pool store.Pool, host string) (ok bool, rttMs int, err error)
 	IfaceHandshake(device string) int

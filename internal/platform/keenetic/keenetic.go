@@ -501,6 +501,29 @@ func (b *Backend) Apply(pool store.Pool, cfg wgconf.Config) error {
 	return nil
 }
 
+// Destroy вычищает слот при удалении пула: Down гасит линк и адрес,
+// но сам интерфейс остаётся призраком в вебе Кинетика (peer, asc,
+// описание) и числится в нумерации слотов. Удаляем целиком, но только
+// когда слот явно наш: mawg пишет description = имя пула; слот, который
+// юзер выбрал из своих существующих, не трогаем.
+func (b *Backend) Destroy(pool store.Pool) error {
+	slot, _, err := b.slotOf(pool)
+	if err != nil {
+		return err
+	}
+	iface, err := b.ndmcInterface(slot)
+	if err == nil && iface.Description != "" && iface.Description != pool.Name {
+		if err := b.Down(pool); err != nil {
+			return err
+		}
+		return b.SaveConfig()
+	}
+	if _, err := b.ndmc("no interface " + slot); err != nil {
+		return err
+	}
+	return b.SaveConfig()
+}
+
 func (b *Backend) Up(pool store.Pool) error {
 	slot, _, err := b.slotOf(pool)
 	if err != nil {
@@ -638,14 +661,18 @@ func sysTunnelsImpl() ([]platform.SlotInfo, error) {
 	return out, nil
 }
 
-// linkUpFlag: IFF_UP из flags (значение в hex: 0x1...).
+// linkUpFlag: бит IFF_UP (0x1) из /sys/class/net/<dev>/flags. Hex-значение
+// вроде 0x91 (UP|NOARP|POINTOPOINT) нельзя сравнивать префиксом - у 0x90
+// (выключенный wg) префикс тот же "0x9"; смотрим именно младший бит.
 func linkUpFlag(device string) bool {
 	flags, err := os.ReadFile("/sys/class/net/" + device + "/flags")
 	if err != nil {
 		return false
 	}
 	t := strings.TrimSpace(string(flags))
-	return strings.HasPrefix(t, "0x1") || strings.HasPrefix(t, "1")
+	t = strings.TrimPrefix(strings.TrimPrefix(t, "0x"), "0X")
+	v, err := strconv.ParseUint(t, 16, 32)
+	return err == nil && v&1 == 1
 }
 
 // ifaceAddrCIDR - первый IPv4 с маской ("10.2.0.2/32").

@@ -54,6 +54,13 @@ func (b *premiumBackend) Down(p store.Pool) error {
 	return b.Fake.Down(p)
 }
 
+func (b *premiumBackend) Destroy(p store.Pool) error {
+	if b.downErr != nil {
+		return b.downErr
+	}
+	return b.Fake.Destroy(p)
+}
+
 func TestPremiumDeletePreservesLegacyPools(t *testing.T) {
 	st, _ := store.Open(t.TempDir())
 	st.CreatePool("static", store.PoolSettings{})

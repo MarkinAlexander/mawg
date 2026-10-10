@@ -134,7 +134,9 @@ func (e *Engine) DeletePool(name string) error {
 	// движковый пул: tun гасится пересборкой конфига движка на web-слое
 	if !p.Disabled && p.Settings.EngineMode == "" {
 		e.ifaceTouched()
-		if err := e.backend.Down(p); err != nil && p.Premium {
+		// Destroy, а не Down: слот/uci-секция не должны оставаться
+		// призраками в вебе роутера после удаления пула
+		if err := e.backend.Destroy(p); err != nil && p.Premium {
 			return errors.New("не удалось выключить интерфейс Premium; пул оставлен как есть")
 		}
 	}
