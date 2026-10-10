@@ -13,7 +13,6 @@ import (
 	"os"
 	"os/exec"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -511,16 +510,14 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 			if ns, err := s.readPoolNodes(p.Name); err == nil {
 				nodes = len(ns)
 			}
-			idx := 1
-			if n, err := strconv.Atoi(strings.TrimPrefix(p.Settings.TunName, "tun")); err == nil && n > 0 {
-				idx = n
-			}
 			entry := map[string]any{
 				"pool": p.Name, "tun": p.Settings.TunName,
 				"disabled": p.Disabled, "nodes": nodes,
-				"probePort": st.Mixed + 1 + idx - 1,
 			}
 			if ps, ok := mgr.PoolStatus(p.Name); ok {
+				// порт сокс-пробы - из фактической спецификации пула;
+				// номер туна тут ни при чём (порты идут по порядку пулов)
+				entry["probePort"] = ps.MixedPort
 				entry["probeOk"] = ps.ProbeOK
 				entry["probeMs"] = ps.ProbeMs
 				entry["probeErr"] = ps.ProbeErr
