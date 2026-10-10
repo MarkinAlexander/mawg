@@ -515,6 +515,12 @@ func (b *Backend) Down(pool store.Pool) error {
 	if err != nil {
 		return err
 	}
+	// down гасит линк, но адрес остаётся в конфиге роутера и продолжает
+	// считаться занятым - другой пул с тем же адресом (клон warp-конфига)
+	// тогда не включить. Снимаем и адрес (идемпотентно, проверено live).
+	if _, err := b.ndmc("interface " + slot + " no ip address"); err != nil {
+		return err
+	}
 	_, err = b.ndmc("interface " + slot + " down")
 	return err
 }

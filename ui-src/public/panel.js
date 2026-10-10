@@ -241,7 +241,7 @@ function updateCard(p) {
           <button class="iconbtn r-down" title="ниже в ротации"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></button>
           <label class="switch" title="участвует в ротации"><input type="checkbox" class="r-toggle" ${c.enabled ? 'checked' : ''}><span class="knob"></span></label>
           <button class="iconbtn r-del" title="удалить конфиг"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14"/></svg></button></div></td>`;
-      row.querySelector('.r-toggle').onchange = e => { toggleCfg(p.name, c.file, e.target.checked); };
+      row.querySelector('.r-toggle').onchange = e => { toggleCfg(p.name, c.file, e.target.checked, e.target); };
       row.querySelector('.r-del').onclick = () => { delCfg(p.name, c.file); };
       row.querySelector('.r-up').onclick = () => { moveCfg(p.name, c.file, -1); };
       row.querySelector('.r-down').onclick = () => { moveCfg(p.name, c.file, 1); };
@@ -374,8 +374,14 @@ async function activate(pool, file) {
   setTimeout(refresh, 700);
 }
 
-async function toggleCfg(pool, file, enabled) {
-  try { await api('POST', `/pools/${pool}/configs/${file}/enable`, { enabled }); } catch (e) { toast(e.message, true); }
+async function toggleCfg(pool, file, enabled, el) {
+  try { await api('POST', `/pools/${pool}/configs/${file}/enable`, { enabled }); }
+  catch (e) {
+    toast(e.message, true);
+    // сервер отказал (например, адрес занят другим интерфейсом) -
+    // тумблер не должен выглядеть включённым
+    if (el) el.checked = !enabled;
+  }
   refresh();
 }
 

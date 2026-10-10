@@ -42,6 +42,12 @@ func (p Pool) DeviceName() string {
 	if p.Settings.Platform == PlatformKeenetic && p.Settings.KeeneticSlot != "" {
 		return "nwg" + strings.TrimPrefix(strings.ToLower(p.Settings.KeeneticSlot), "wireguard")
 	}
+	// OpenWrt: uci не принимает дефис в имени секции - «set network.a-b=...»
+	// молча игнорируется (тихий rc=0), интерфейс не создаётся. Секция и
+	// устройство зовутся с подчёркиванием вместо дефиса.
+	if p.Settings.Platform == PlatformOpenwrt {
+		return strings.ReplaceAll(p.Name, "-", "_")
+	}
 	return p.Name
 }
 
