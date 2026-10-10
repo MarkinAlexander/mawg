@@ -41,6 +41,10 @@ type Engine struct {
 	mtHealAt    time.Time
 	mtEverAlive bool
 	mtSyncAt    time.Time
+	// mtHadGroups - в этом запуске magitrickle уже отдаёт непустой список
+	// групп: последующее пустое чтение при живом API = усечение рантайма
+	// (сбой массового PUT), а не честная пустая конфигурация
+	mtHadGroups bool
 
 	ifaceAt time.Time
 
@@ -1022,6 +1026,22 @@ func (e *Engine) monitorMagitrickle() {
 	}
 	if e.now().Sub(e.mtSyncAt) >= time.Minute {
 		e.mtSyncAt = e.now()
+		// усечение рантайма MT при живом API (сорванный массовый PUT):
+		// панели/каскады видят «групп нет», дисковый конфиг цел. Честные
+		// пустые конфигурации не трогаем - только если группы УЖЕ были
+		// в этом запуске. Shadow пустым чтением не затираем.
+		groups, err := e.mt.GroupsWithRules(ctx)
+		if err != nil {
+			return
+		}
+		if len(groups) == 0 {
+			if e.mtHadGroups {
+				e.store.LogEvent("magitrickle", "monitor", "рантайм magitrickle усечён (группы пропали при живом API) - перезапускаю демона, конфиг на диске цел")
+				e.healMagitrickle("monitor", time.Minute)
+			}
+			return
+		}
+		e.mtHadGroups = true
 		e.mt.RefreshShadow(ctx)
 	}
 }
