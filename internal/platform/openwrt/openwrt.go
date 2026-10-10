@@ -114,7 +114,7 @@ func (b *Backend) Slots() ([]platform.SlotInfo, error) {
 }
 
 func (b *Backend) Apply(pool store.Pool, cfg wgconf.Config) error {
-	name := pool.Name
+	name := pool.DeviceName()
 	proto := pool.Settings.OpenwrtProto
 	if proto == "" {
 		proto = "wireguard"
@@ -128,6 +128,9 @@ func (b *Backend) Apply(pool store.Pool, cfg wgconf.Config) error {
 	batch = append(batch,
 		"set network."+name+"=interface",
 		"set "+ifRef+"proto='"+proto+"'",
+		// авто-поднятие: Down ставит auto='0', иначе netifd сам поднимет
+		// туннель на загрузке роутера - пул выключен/пуст, а адрес занят
+		"set "+ifRef+"auto='1'",
 		"set "+ifRef+"private_key='"+cfg.PrivateKey+"'",
 	)
 	for _, a := range cfg.Addresses {
@@ -330,12 +333,18 @@ func ensureMawgZone(iface string) error {
 }
 
 func (b *Backend) Up(pool store.Pool) error {
-	_, err := run("ifup", pool.Name)
+	_, err := run("ifup", pool.DeviceName())
 	return err
 }
 
 func (b *Backend) Down(pool store.Pool) error {
-	_, err := run("ifdown", pool.Name)
+	name := pool.DeviceName()
+	// auto='0' - иначе netifd поднимет туннель сам на загрузке роутера:
+	// пул выключен/без конфигов, а интерфейс живёт и держит адрес,
+	// блокируя другие пулы с тем же адресом (клоны warp-конфигов).
+	// Best effort: секции может не быть (пул ни разу не применялся).
+	_, _ = runShell("uci -q batch <<'EOF'\nset network." + name + ".auto='0'\ncommit network\nEOF")
+	_, err := run("ifdown", name)
 	return err
 }
 
@@ -352,12 +361,12 @@ func (b *Backend) toolFor(pool store.Pool) string {
 
 func (b *Backend) Status(pool store.Pool) (platform.TunnelStatus, error) {
 	var st platform.TunnelStatus
-	linkOut, err := run("ip", "-o", "link", "show", "dev", pool.Name)
+	linkOut, err := run("ip", "-o", "link", "show", "dev", pool.DeviceName())
 	if err != nil {
-		return st, fmt.Errorf("интерфейс %s не найден", pool.Name)
+		return st, fmt.Errorf("интерфейс %s не найден", pool.DeviceName())
 	}
 	st.LinkUp = strings.Contains(linkOut, ",UP,") && strings.Contains(linkOut, "LOWER_UP")
-	out, err := run(b.toolFor(pool), "show", pool.Name, "latest-handshakes")
+	out, err := run(b.toolFor(pool), "show", pool.DeviceName(), "latest-handshakes")
 	st.HandshakeAgo = -1
 	if err == nil {
 		best := int64(-1)
@@ -389,7 +398,7 @@ func pingRTT(out string) int {
 }
 
 func (b *Backend) Probe(pool store.Pool, host string) (bool, int, error) {
-	cmd := prep(exec.Command("ping", "-I", pool.Name, "-c", "3", "-W", "3", host))
+	cmd := prep(exec.Command("ping", "-I", pool.DeviceName(), "-c", "3", "-W", "3", host))
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return false, 0, nil

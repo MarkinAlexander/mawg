@@ -176,7 +176,7 @@ onMounted(() => {
       <button type="button" id="pModeFree">Amnezia Free без аккаунта</button>
     </div>
     <label class="f">Имя (латиница, цифры, дефис)
-      <input id="pName" placeholder="proton" pattern="[a-z][a-z0-9-]{0,14}" title="строчная латиница, цифры и дефисы, начинается с буквы, до 15 символов" required>
+      <input id="pName" placeholder="proton" pattern="[a-z][a-z0-9\-]{0,14}" title="строчная латиница, цифры и дефисы, начинается с буквы, до 15 символов" required>
     </label>
     <label class="f" id="slotRow" style="display:none">Слот Keenetic
       <div class="btnrow" style="margin-top:3px">
@@ -287,7 +287,7 @@ onMounted(() => {
       <div class="muted" style="font-size:11px;margin-top:2px">Сервер сменил IP или ссылка протухла - вставьте новую и нажмите. Старые конфиги пула будут заменены разобранными. Для ключа Amnezia mawg повторит обмен (тем же устройством, без новой выдачи); можно сменить локацию списком.</div>
     </div>
     <label class="f" id="spRenameRow">Имя (переименование)
-      <input id="spRename" pattern="[a-z][a-z0-9-]{0,14}" title="строчная латиница, цифры и дефисы, начинается с буквы, до 15 символов">
+      <input id="spRename" pattern="[a-z][a-z0-9\-]{0,14}" title="строчная латиница, цифры и дефисы, начинается с буквы, до 15 символов">
     </label>
     <div class="f" id="spFreeConfRow" style="display:none">
       <div style="font-size:13px;margin-bottom:2px">Выданный конфиг Amnezia Free (можно скопировать в официальный клиент)</div>
