@@ -266,6 +266,10 @@ type Settings struct {
 	// интерфейса и сколько здоровых до возврата (по умолчанию 2 и 2).
 	PolicyFailCycles    int `json:"policyFailCycles,omitempty"`
 	PolicyRestoreCycles int `json:"policyRestoreCycles,omitempty"`
+	// MTGlitchy - проба совместимости при старте поймала усечение на
+	// no-op PUT: глючная сборка MagiTrickle, панели показывают баннер со
+	// ссылкой на форк.
+	MTGlitchy bool `json:"mtGlitchy,omitempty"`
 }
 
 func (s Settings) WithDefaults() Settings {
