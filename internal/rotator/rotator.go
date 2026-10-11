@@ -42,6 +42,7 @@ type Engine struct {
 	wanCache    wanCacheEntry
 	mtHealAt    time.Time
 	mtEverAlive bool
+	mtRestarts  []time.Time // автоперезапуски за скользящий час (бюджет)
 	mtSyncAt    time.Time
 
 	ifaceAt time.Time
@@ -984,6 +985,36 @@ func (e *Engine) bundleGroupIDs() map[string]bool {
 // рантайм группы уже выключен; пересборку даёт только массовый PUT списка.
 func (e *Engine) applyGroupChanges(key string, mutate func(groups []magitrickle.Group) bool) error {
 	e.settleAfterIfaceOp()
+	err := e.tryApplyGroups(key, mutate)
+	if err == nil {
+		return nil
+	}
+	e.store.LogEvent(key, "magitrickle", "groups save failed: "+err.Error())
+	// стоковый MT с «грязными» nf-объектами (после рестарта демона) валит
+	// массовые PUT нестабильно: то 400, то молчаливое усечение. рестарт
+	// демона лечит, одной повторной попытки обычно хватает - стоковый MT
+	// становится самолечащимся. кап рестартов в час не даёт молотить по
+	// мёртвому.
+	restarted := e.healMagitrickle(key, 10*time.Minute)
+	if !restarted && !e.waitMagitrickleAlive(2*time.Second) {
+		// рестарт не состоялся (кулдаун/кап), MT мёртв - повтор бесполезен
+		return err
+	}
+	if !e.waitMagitrickleAlive(90 * time.Second) {
+		e.store.LogEvent(key, "magitrickle", "MT не поднялся за 90с после рестарта, повторная запись отложена до следующего повода")
+		return err
+	}
+	e.store.LogEvent(key, "magitrickle", "повторная попытка записи после рестарта MT")
+	if err2 := e.tryApplyGroups(key, mutate); err2 != nil {
+		e.store.LogEvent(key, "magitrickle", "повторная запись не удалась: "+err2.Error()+" - проверьте группу вручную или перезапустите MT")
+		return err2
+	}
+	e.store.LogEvent(key, "magitrickle", "повторная запись удалась после рестарта MT")
+	return nil
+}
+
+// tryApplyGroups - одна попытка массовой записи с каскадными хуками.
+func (e *Engine) tryApplyGroups(key string, mutate func(groups []magitrickle.Group) bool) error {
 	if e.casc != nil {
 		e.casc.BeforeMutate(mutate)
 	}
@@ -995,11 +1026,27 @@ func (e *Engine) applyGroupChanges(key string, mutate func(groups []magitrickle.
 	}
 	if err == nil {
 		e.mtEverAlive = true
-		return nil
 	}
-	e.store.LogEvent(key, "magitrickle", "groups save failed: "+err.Error())
-	e.healMagitrickle(key, 10*time.Minute)
 	return err
+}
+
+// waitMagitrickleAlive опрашивает API MT до успеха или дедлайна (демон
+// после рестарта поднимается не мгновенно, на буте Кинетика иногда висит
+// на IPv4-лупбеке - mawg корректно ждёт).
+func (e *Engine) waitMagitrickleAlive(max time.Duration) bool {
+	deadline := e.now().Add(max)
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_, err := e.mt.GroupsWithRules(ctx)
+		cancel()
+		if err == nil {
+			return true
+		}
+		if !e.now().Before(deadline) {
+			return false
+		}
+		time.Sleep(3 * time.Second)
+	}
 }
 
 // magitrickle падает сам по себе; раз в тик проверяем живость и поднимаем,
@@ -1047,17 +1094,44 @@ func (e *Engine) monitorMagitrickle() {
 
 // сбой массового PUT оставляет рантайм magitrickle усечённым, но конфиг
 // на диске цел: рестарт демона собирает группы обратно. мертвому демону
-// рестартим часто, живому после сбоя записи - редко.
-func (e *Engine) healMagitrickle(key string, cooldown time.Duration) {
+// рестартим часто, живому после сбоя записи - редко. возвращает true,
+// если рестарт реально состоялся.
+func (e *Engine) healMagitrickle(key string, cooldown time.Duration) bool {
 	if e.now().Sub(e.mtHealAt) < cooldown {
-		return
+		return false
+	}
+	if !e.mtRestartBudget() {
+		e.store.LogEvent(key, "magitrickle", "кап автоперезапусков MT исчерпан (6/час) - не молочу по мёртвому, разберитесь с демоном")
+		return false
 	}
 	e.mtHealAt = e.now()
 	if err := e.backend.RestartMagitrickle(); err != nil {
 		e.store.LogEvent(key, "magitrickle", "автоперезапуск не удался: "+err.Error())
-		return
+		return false
 	}
 	e.store.LogEvent(key, "magitrickle", "автоперезапуск после сбоя сохранения")
+	return true
+}
+
+// mtHealHourlyCap - предел автоперезапусков MT в час: битый демон или
+// глючная сборка не должны превращаться в рестарт-лупп.
+const mtHealHourlyCap = 6
+
+// mtRestartBudget учитывает рестарты за скользящий час.
+func (e *Engine) mtRestartBudget() bool {
+	now := e.now()
+	var kept []time.Time
+	for _, t := range e.mtRestarts {
+		if now.Sub(t) < time.Hour {
+			kept = append(kept, t)
+		}
+	}
+	if len(kept) >= mtHealHourlyCap {
+		e.mtRestarts = kept
+		return false
+	}
+	e.mtRestarts = append(kept, now)
+	return true
 }
 
 // mtBackupKeep - сколько последних копий каждого вида держим в
