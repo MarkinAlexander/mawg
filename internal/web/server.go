@@ -1938,7 +1938,7 @@ func (s *Server) cascList(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"available": false})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"available": true, "cascades": c.Infos(r.Context())})
+	writeJSON(w, http.StatusOK, map[string]any{"available": true, "cascades": c.Infos(r.Context()), "wrapper": c.WrapperDetected()})
 }
 
 func (s *Server) cascCreate(w http.ResponseWriter, r *http.Request) {
