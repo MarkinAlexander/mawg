@@ -20,7 +20,8 @@ type Manager struct {
 	Store *store.Store
 	MT    *magitrickle.Client
 
-	mu sync.Mutex
+	mu      sync.Mutex
+	wrapper bool // в mangle OUTPUT видны чужие MR_*-цепочки (обёртка юзера)
 }
 
 func New(st *store.Store, mt *magitrickle.Client) *Manager {
@@ -69,6 +70,15 @@ func (m *Manager) HookAdd(groupID string) error {
 }
 
 func (m *Manager) HookRemove(groupID string) error {
+	// RETURN-исключения эндпоинтов жили внутри цепочки группы; цепочка
+	// могла уже быть снесена MT - ошибки игнорируем, снимаем только у
+	// живой цепочки и известного каскада
+	if entry, ok := m.Store.CascadeByGroup(groupID); ok && m.ChainExists(groupID) {
+		chain := m.chainName(groupID)
+		for _, ip := range m.viaEndpointIPs(entry.Via) {
+			m.ipt("-t", "mangle", "-D", chain, "-d", ip, "-j", "RETURN")
+		}
+	}
 	if !m.HookPresent(groupID) {
 		return nil
 	}
@@ -186,18 +196,104 @@ func (m *Manager) SyncHooks() {
 		return
 	}
 	enabled := map[string]bool{}
+	byID := map[string]magitrickle.Group{}
 	for _, g := range groups {
 		enabled[g.ID] = g.Enable
+		byID[g.ID] = g
 	}
+	// обёртка юзера (гайд: подмена PATH в procd-ините MT) сама выводит
+	// ВСЕ группы в OUTPUT через MR_*-цепочки - второй прыжок дублировал
+	// бы обработку, свои хуки в её присутствии не ставим
+	wrapper := m.outputWrapperPresent()
+	m.noteWrapper(wrapper)
 	for _, c := range casc {
-		if enabled[c.Group] {
-			if err := m.HookAdd(c.Group); err != nil {
-				m.log("cascade", "hook", "не поставил хук: "+err.Error())
+		if !enabled[c.Group] {
+			if err := m.HookRemove(c.Group); err != nil {
+				m.log("cascade", "hook", "не снял хук: "+err.Error())
 			}
-		} else if err := m.HookRemove(c.Group); err != nil {
-			m.log("cascade", "hook", "не снял хук: "+err.Error())
+			continue
+		}
+		if wrapper {
+			continue
+		}
+		if err := m.HookAdd(c.Group); err != nil {
+			m.log("cascade", "hook", "не поставил хук: "+err.Error())
+			continue
+		}
+		m.syncHookExclusions(c)
+	}
+}
+
+// outputWrapperPresent ищет в mangle OUTPUT ссылки на чужие MR_*-цепочки.
+func (m *Manager) outputWrapperPresent() bool {
+	out, err := m.ipt("-t", "mangle", "-S", "OUTPUT")
+	if err != nil {
+		return false
+	}
+	return strings.Contains(out, "-j MR_") || strings.Contains(out, "-g MR_")
+}
+
+func (m *Manager) noteWrapper(v bool) {
+	if m.wrapper == v {
+		return
+	}
+	m.wrapper = v
+	if v {
+		m.log("cascade", "hook", "обнаружена обёртка юзера (MR_* в mangle OUTPUT): каскадные OUTPUT-хуки не ставлю - обёртка выводит группы в OUTPUT сама")
+	} else {
+		m.log("cascade", "hook", "обёртка юзера исчезла - возвращаю свои каскадные OUTPUT-хуки")
+	}
+}
+
+// WrapperDetected - для статуса каскадов в панели.
+func (m *Manager) WrapperDetected() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.wrapper
+}
+
+// syncHookExclusions ставит RETURN-исключения для эндпоинтов туннеля, в
+// который ведёт каскад: пакеты самого туннеля не должны маркироваться
+// группой, ведущей в этот же туннель (антицикл). Правила живут внутри
+// цепочки MT_<id> - точечно для этой группы, чужие группы не трогаем.
+// MT перетирает цепочку при каждом refresh своих правил - SyncHooks
+// восстанавливает исключения каждый цикл.
+func (m *Manager) syncHookExclusions(entry store.CascadeEntry) {
+	ips := m.viaEndpointIPs(entry.Via)
+	if len(ips) == 0 {
+		return
+	}
+	chain := m.chainName(entry.Group)
+	for _, ip := range ips {
+		if _, err := m.ipt("-t", "mangle", "-C", chain, "-d", ip, "-j", "RETURN"); err == nil {
+			continue
+		}
+		if _, err := m.ipt("-t", "mangle", "-I", chain, "1", "-d", ip, "-j", "RETURN"); err == nil {
+			m.log("cascade", "hook", "RETURN-исключение эндпоинта "+ip+" в "+chain)
 		}
 	}
+}
+
+// viaEndpointIPs - фактические адреса туннеля via из конфигов пула
+// (домены резолвятся с коротким таймаутом: SyncHooks ходит каждые 30с,
+// мёртвый DNS не должен тормозить цикл).
+func (m *Manager) viaEndpointIPs(via string) []string {
+	kind, name, err := parseSource(via)
+	if err != nil || kind != "pool" {
+		return nil
+	}
+	p, ok := m.Store.Pool(name)
+	if !ok {
+		return nil
+	}
+	hosts, domains := m.poolEndpoints(p)
+	ips := append([]string(nil), hosts...)
+	for _, d := range domains {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ips = append(ips, m.resolve(ctx, d)...)
+		cancel()
+	}
+	return ips
 }
 
 // FlushConns чистит conntrack: залипший connmark тащит поток в мёртвый путь.
