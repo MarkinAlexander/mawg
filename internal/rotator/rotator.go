@@ -107,6 +107,7 @@ func New(st *store.Store, b platform.Backend, mt *magitrickle.Client) *Engine {
 	}
 	if mt != nil {
 		e.casc = cascade.New(st, mt)
+		e.casc.Retry = e.RetryMTWrite
 	}
 	return e
 }
