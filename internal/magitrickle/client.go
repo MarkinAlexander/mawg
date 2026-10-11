@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -244,6 +245,7 @@ var (
 	LoadShadow   func() []Group
 	SaveShadow   func(groups []Group)
 	OnRepair     func(restoredIDs []string)
+	OnDedup      func(message string)
 	restoredOnce map[string]int
 )
 
@@ -384,7 +386,13 @@ func (c *Client) transformGroups(ctx context.Context, transform func([]Group) ([
 	}
 	groups, repaired := repairFromShadow(groups)
 	groups, changed := transform(groups)
-	if !changed && !repaired {
+	// дедуп ПОСЛЕ transform: накрывает и мутацию (импорт/пресеты принесли
+	// дубликаты), и дубликаты, уже живущие в рантайме
+	groups, dedupInfo := dedupeGroupRules(groups)
+	if len(dedupInfo) > 0 && OnDedup != nil {
+		OnDedup(strings.Join(dedupInfo, ", "))
+	}
+	if !changed && !repaired && len(dedupInfo) == 0 {
 		updateShadowLocked(groups)
 		return nil
 	}
@@ -416,6 +424,33 @@ func (c *Client) transformGroups(ctx context.Context, transform func([]Group) ([
 // постоянным.
 func (c *Client) EnsureHealthy(ctx context.Context) error {
 	return c.MutateGroups(ctx, func(groups []Group) bool { return false })
+}
+
+// dedupeGroupRules убирает дубликаты правил внутри каждой группы: внешним
+// спискам доверия нет - в скачанных geoblock-ах встречаются прямые
+// повторы доменов, и подсветка «одинаковый паттерн в группах» начинает
+// ругаться на группу саму на себя. Ключ = тип + нормализованный паттерн
+// (как в детекте дубликатов панели); первый экземпляр остаётся.
+// Возвращает сообщения вида «имя: N» по затронутым группам.
+func dedupeGroupRules(groups []Group) ([]Group, []string) {
+	var info []string
+	for gi := range groups {
+		seen := map[string]bool{}
+		kept := groups[gi].Rules[:0]
+		for _, rl := range groups[gi].Rules {
+			key := rl.Type + " " + strings.ToLower(strings.TrimSpace(rl.Rule))
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			kept = append(kept, rl)
+		}
+		if removed := len(groups[gi].Rules) - len(kept); removed > 0 {
+			groups[gi].Rules = kept
+			info = append(info, fmt.Sprintf("%s: %d", groups[gi].Name, removed))
+		}
+	}
+	return groups, info
 }
 
 // RefreshShadow перечитывает список групп в тень после одиночных
