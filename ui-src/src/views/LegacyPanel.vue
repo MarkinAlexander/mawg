@@ -59,6 +59,14 @@ onMounted(() => {
       <button type="button" id="polCyclesSave" disabled>сохранить</button>
     </div>
     <div class="muted" style="font-size:11px;margin-top:4px">Цикл проверки - каждые 30 секунд. Меньше 2 не рекомендуется: «переключать после 1» уводит группы на запасной интерфейс из-за одной потерянной пробы (разовый таймаут или скачок пинга - ложное срабатывание), «возвращать после 1» дёргает группы обратно при первом же удачном прогоне - флапающий канал будет переключать их каждые 30-60 секунд и рвать соединения. Значения 2/2 - разумный компромисс: реакция на отвала ~1-1.5 минуты, возврат только после устойчивого восстановления.</div>
+    <div id="mtGlitchyBanner" class="sub" hidden style="color:var(--err);margin-top:6px">Обнаружена глючная сборка MagiTrickle: массовые записи усекают группы. Поставьте наш форк с фиксами - <a href="https://gitlab.com/magitrickle/magitrickle/-/merge_requests/222" target="_blank" rel="noopener">MR !222</a>.</div>
+    <div id="mtWrapperBanner" class="sub" hidden style="color:#d9a032;margin-top:6px">В mangle OUTPUT видна обёртка юзера (MR_*): она выводит группы в OUTPUT сама, каскадные хуки mawg не ставятся, чтобы не дублировать обработку.</div>
+    <div class="btnrow" style="align-items:center;margin-top:10px;flex-wrap:wrap">
+      <input id="ruleSearch" placeholder="поиск по правилам и группам (подсветит совпадения)" style="flex:1;min-width:200px">
+      <button id="ruleDupsBtn" title="паттерны, встречающиеся в нескольких группах">показать совпадения в группах</button>
+      <button id="mtBackupBtn" title="сохранить дисковый конфиг MagiTrickle и shadow-копию в base/backups">бэкап MT+shadow</button>
+      <button id="mtBackupsBtn" title="скачать или восстановить правила из бэкапа">бекапы</button>
+    </div>
     <div id="mtgroups" style="margin-top:10px"></div>
   </div>
   <div class="card" id="bundcard" style="margin-top:16px">
@@ -554,5 +562,27 @@ onMounted(() => {
 
 <div id="topbar"></div>
 <div class="msg" id="msg"></div>
+
+<dialog id="dlgMTDups">
+  <form method="dialog" style="display:grid;gap:8px;min-width:420px;max-width:620px">
+    <h3 style="margin:0">Совпадения паттернов между группами</h3>
+    <div class="muted" style="font-size:12px">Одинаковый паттерн в нескольких группах: MagiTrickle применит только первое правило. Дубликаты внутри группы mawg вычищает сам при каждой записи; совпадения между группами показаны здесь, чтобы вы сами решали, чьё правило главнее.</div>
+    <div id="dlgMTDupsList" style="max-height:50vh;overflow:auto;margin-top:4px"></div>
+    <div class="btnrow" style="justify-content:end;margin:0">
+      <button class="primary" value="close">Закрыть</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="dlgMTBackups">
+  <form method="dialog" style="display:grid;gap:8px;min-width:460px;max-width:680px">
+    <h3 style="margin:0">Бэкапы MT-конфига и shadow</h3>
+    <div class="muted" style="font-size:12px">Копии в base/backups: mt-shadow - правила в нашем формате (восстановление штатной записью с валидацией), mt-config - сырой config.yaml MagiTrickle (восстановление файла + рестарт демона). Перед каждой массовой записью копия делается автоматически, хранятся последние 10.</div>
+    <div id="dlgMTBackupsList" style="max-height:50vh;overflow:auto;margin-top:4px"></div>
+    <div class="btnrow" style="justify-content:end;margin:0">
+      <button class="primary" value="close">Закрыть</button>
+    </div>
+  </form>
+</dialog>
 
 </template>
