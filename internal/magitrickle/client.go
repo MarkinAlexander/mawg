@@ -240,12 +240,12 @@ func (c *Client) GroupByID(ctx context.Context, id string, withRules bool) (Grou
 // усечения после записи. одиночные удаления (пользователь в UI
 // magitrickle) уважаются и переносятся в тень.
 var (
-	groupsMu     sync.Mutex
-	mtShadow     []Group
-	LoadShadow   func() []Group
-	SaveShadow   func(groups []Group)
-	OnRepair     func(restoredIDs []string)
-	OnDedup      func(message string)
+	groupsMu   sync.Mutex
+	mtShadow   []Group
+	LoadShadow func() []Group
+	SaveShadow func(groups []Group)
+	OnRepair   func(restoredIDs []string)
+	OnDedup    func(message string)
 	// PreSave вызывается перед каждым фактическим PUT групп в рантайм MT
 	// (не на no-op выходах): точка для авто-бэкапа дискового конфига и
 	// shadow - сорванный массовый PUT главный враг групп.

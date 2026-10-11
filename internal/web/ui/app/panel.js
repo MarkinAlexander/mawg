@@ -1203,6 +1203,12 @@ const openMtGroups = new Set();
 let lastMtJSON = '';
 let MT_GROUPS = null;
 let MT_DUPS = {};
+// пробы/детекты от движка: глючная сборка MT (усекает записи) и обёртка
+// юзера поверх MT (MR_* в mangle OUTPUT)
+let MT_GLITCHY = false;
+let MT_WRAPPER = false;
+// живой поиск по правилам: несовпадения НЕ скрываем, только подсвечиваем
+let ruleSearchQ = '';
 
 const GRIP_SVG = '<svg viewBox="0 0 24 24" width="14" height="18" fill="currentColor"><circle cx="9" cy="5" r="1.4"/><circle cx="15" cy="5" r="1.4"/><circle cx="9" cy="12" r="1.4"/><circle cx="15" cy="12" r="1.4"/><circle cx="9" cy="19" r="1.4"/><circle cx="15" cy="19" r="1.4"/></svg>';
 const PENCIL_SVG = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>';
@@ -1437,6 +1443,9 @@ async function refreshRules(force) {
       return;
     }
     MT_GROUPS = r.groups || [];
+    MT_GLITCHY = !!r.glitchy;
+    MT_WRAPPER = !!r.wrapper;
+    updateMTBanners();
     const json = JSON.stringify(MT_GROUPS);
     if (!force && json === lastMtJSON) {
       if (pendingRulesRender && !editingRulesPanel()) rulesRenderIfIdle();
@@ -1455,6 +1464,36 @@ document.getElementById('mtgroups').addEventListener('focusout', () => {
   setTimeout(() => { if (pendingRulesRender && !editingRulesPanel()) rulesRenderIfIdle(); }, 0);
 });
 
+function updateMTBanners() {
+  const g = document.getElementById('mtGlitchyBanner');
+  if (g) g.hidden = !MT_GLITCHY;
+  const w = document.getElementById('mtWrapperBanner');
+  if (w) w.hidden = !MT_WRAPPER;
+}
+
+// поиск: подсветка на экранированном тексте строится из сырой строки -
+// экранируем до/совпадение/после по отдельности, HTML не ломается
+function hlText(raw, q) {
+  const s = String(raw ?? '');
+  if (!q) return esc(s);
+  const i = s.toLowerCase().indexOf(q);
+  if (i < 0) return esc(s);
+  return esc(s.slice(0, i)) + '<mark>' + esc(s.slice(i, i + q.length)) + '</mark>' + esc(s.slice(i + q.length));
+}
+function ruleMatches(rl, q) {
+  return (rl.rule || '').toLowerCase().includes(q) || (rl.name || '').toLowerCase().includes(q);
+}
+function groupMatches(g, q) {
+  if (!q) return false;
+  return (g.name || '').toLowerCase().includes(q) || (g.rules || []).some(rl => ruleMatches(rl, q));
+}
+function groupMatchCount(g, q) {
+  if (!q) return 0;
+  let n = (g.name || '').toLowerCase().includes(q) ? 1 : 0;
+  for (const rl of (g.rules || [])) if (ruleMatches(rl, q)) n++;
+  return n;
+}
+
 function renderRules() {
   const box = document.getElementById('mtgroups');
   if (!MT_GROUPS || !MT_GROUPS.length) {
@@ -1462,7 +1501,12 @@ function renderRules() {
     return;
   }
   box.innerHTML = '';
+  const q = ruleSearchQ;
   for (const g of MT_GROUPS) {
+    const matched = groupMatches(g, q);
+    // при активном поиске группа с совпадениями раскрывается сама;
+    // несовпадающие группы и правила НЕ прячем - только подсветка
+    if (matched) openMtGroups.add(g.id);
     const el = document.createElement('div');
     el.className = 'mtgroup' + (g.interface === 'blackhole' ? ' mtgroup-block' : '');
     el.dataset.id = g.id;
@@ -1481,9 +1525,9 @@ function renderRules() {
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
         <span class="grip" title="перетащите, чтобы изменить порядок">${GRIP_SVG}</span>
         <span class="gcolor" style="background:${esc(g.color || '#4a9eff')}"></span>
-        <b>${esc(g.name)}</b>${groupWarnSvg(g)}${cascBadge}${blockBadge}${polBadge}
+        <b>${hlText(g.name, q)}</b>${groupWarnSvg(g)}${cascBadge}${blockBadge}${polBadge}
         <span class="iface-badge"><span class="badge">${esc(g.interface)}</span>${g.interfaceTitle ? `<span class="iface-title">${esc(g.interfaceTitle)}</span>` : ''}</span>
-        <span class="muted" style="font-size:12px">правил: ${(g.rules||[]).length}</span>
+        <span class="muted" style="font-size:12px">правил: ${(g.rules||[]).length}${q && matched ? ` · <span style="color:var(--ok)">совпадений: ${groupMatchCount(g, q)}</span>` : ''}</span>
         <span style="flex:1"></span>
         <label class="switch" title="${g.enable ? 'выключить группу' : 'включить группу'}"><input type="checkbox" class="mt-toggle" ${g.enable ? 'checked' : ''}><span class="knob"></span></label>
         <button class="iconbtn edit mt-edit" title="изменить группу">${PENCIL_SVG}</button>
@@ -1518,7 +1562,7 @@ function renderRules() {
       if (!rl.enable) tr.style.opacity = .45;
       tr.innerHTML = `<td style="width:18px"><span class="grip" title="перетащите, чтобы изменить порядок">${GRIP_SVG}</span></td>
         <td><span class="badge cool">${RULE_TYPES[rl.type]||esc(rl.type)}</span></td>
-        <td style="word-break:break-all">${esc(rl.rule)}${rl.enable ? warnSvgFor(rl.rule) : ''}${rl.name?` <span class="muted">(${esc(rl.name)})</span>`:''}</td>
+        <td style="word-break:break-all">${hlText(rl.rule, q)}${rl.enable ? warnSvgFor(rl.rule) : ''}${rl.name?` <span class="muted">(${hlText(rl.name, q)})</span>`:''}</td>
         <td style="white-space:nowrap;display:flex;align-items:center;gap:8px;justify-content:flex-end">
           <label class="switch" title="${rl.enable ? 'выключить правило' : 'включить правило'}"><input type="checkbox" class="r-tg" ${rl.enable ? 'checked' : ''}><span class="knob"></span></label>
           <button class="iconbtn edit r-edit" title="изменить правило">${PENCIL_SVG}</button>
@@ -1554,6 +1598,75 @@ function renderRules() {
       mtApi('POST', '/mt/groups/order', { ids: orderIDs(box, '.mtgroup') });
     });
     box.appendChild(el);
+  }
+}
+
+document.getElementById('ruleSearch').addEventListener('input', e => {
+  ruleSearchQ = e.target.value.trim().toLowerCase();
+  rulesRenderIfIdle();
+});
+document.getElementById('ruleDupsBtn').onclick = () => showMTDupsDlg();
+document.getElementById('mtBackupBtn').onclick = e => withBusy(e.currentTarget, async () => {
+  await api('POST', '/mt/backup');
+  toast('Бэкап MT-конфига и shadow сохранён в base/backups');
+  await showMTBackupsDlg();
+});
+document.getElementById('mtBackupsBtn').onclick = () => showMTBackupsDlg();
+
+function showMTDupsDlg() {
+  const box = document.getElementById('dlgMTDupsList');
+  const q = ruleSearchQ;
+  const entries = Object.entries(MT_DUPS || {})
+    .filter(([pat]) => !q || pat.toLowerCase().includes(q))
+    .sort((a, b) => a[0].localeCompare(b[0]));
+  box.innerHTML = entries.length ? entries.map(([pat, refs]) => {
+    const types = [...new Set((refs || []).map(r => RULE_TYPES[r.ruleType] || r.ruleType))].join(', ');
+    const groups = [...new Set((refs || []).map(r => r.groupName))].join(', ');
+    return `<div style="margin-bottom:10px">
+      <div style="word-break:break-all"><b>${esc(pat)}</b> <span class="muted" style="font-size:12px">(${esc(types)})</span></div>
+      <div class="muted" style="font-size:12px">группы: ${esc(groups)}</div>
+    </div>`;
+  }).join('') : `<div class="muted">Совпадений нет${q ? ` по запросу «${esc(q)}»` : ''}.</div>`;
+  document.getElementById('dlgMTDups').showModal();
+}
+
+async function showMTBackupsDlg() {
+  const box = document.getElementById('dlgMTBackupsList');
+  box.innerHTML = '<div class="muted">загружаю...</div>';
+  document.getElementById('dlgMTBackups').showModal();
+  let list = [];
+  try {
+    list = (await api('GET', '/mt/backups')).backups || [];
+  } catch (e) {
+    box.innerHTML = `<div class="muted">не удалось получить список: ${esc(String(e.message || e))}</div>`;
+    return;
+  }
+  if (!list.length) {
+    box.innerHTML = '<div class="muted">Бэкапов пока нет - сделайте первый кнопкой «бэкап MT+shadow».</div>';
+    return;
+  }
+  box.innerHTML = list.map(b => `
+    <div class="btnrow" data-file="${esc(b.name)}" style="align-items:center;border-bottom:1px solid rgba(128,128,128,.25);padding:5px 0">
+      <span style="flex:1;word-break:break-all;font-size:12px">${b.kind === 'config' ? '<b>MT-конфиг</b>' : '<b>shadow</b>'} <span class="muted">${esc(b.name)} · ${b.size} Б · ${esc(b.modified)}</span></span>
+      <button data-act="get" title="скачать файл бэкапа">скачать</button>
+      <button data-act="restore" title="применить содержимое бэкапа">восстановить</button>
+    </div>`).join('');
+  for (const row of box.querySelectorAll('[data-file]')) {
+    const file = row.dataset.file;
+    row.querySelector('[data-act="get"]').onclick = () => {
+      window.location.href = '/api/v1/mt/backups/' + encodeURIComponent(file);
+    };
+    row.querySelector('[data-act="restore"]').onclick = e => withBusy(e.currentTarget, async () => {
+      const kind = file.startsWith('mt-config-')
+        ? 'сырой MT-конфиг: файл вернётся на место, демон MagiTrickle перезапустится'
+        : 'правила из shadow: ВСЕ группы будут заменены на сохранённые';
+      if (!(await askModal('Восстановление из бэкапа', `Восстановить ${esc(file)}? Применится: ${kind}.`, 'Восстановить'))) return;
+      await api('POST', '/mt/restore', { file });
+      toast('Восстановлено из ' + file);
+      lastMtJSON = '';
+      refreshRules(true);
+      showMTBackupsDlg();
+    });
   }
 }
 
