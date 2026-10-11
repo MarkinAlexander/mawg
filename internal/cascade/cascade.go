@@ -20,8 +20,22 @@ type Manager struct {
 	Store *store.Store
 	MT    *magitrickle.Client
 
+	// Retry подключает самолечение записей (Engine.RetryMTWrite): сбой
+	// bulk-PUT -> рестарт MT -> одна повторная попытка. Каскадные ручки
+	// без него теряли группу каскада при первом же 500-м (кейс владельца
+	// с созданием каскада 2026-10-11).
+	Retry func(key string, attempt func() error) error
+
 	mu      sync.Mutex
 	wrapper bool // в mangle OUTPUT видны чужие MR_*-цепочки (обёртка юзера)
+}
+
+// retry применяет самолечение, если оно подключено, иначе прямую запись.
+func (m *Manager) retry(key string, attempt func() error) error {
+	if m.Retry == nil {
+		return attempt()
+	}
+	return m.Retry(key, attempt)
 }
 
 func New(st *store.Store, mt *magitrickle.Client) *Manager {
@@ -476,10 +490,12 @@ func (m *Manager) Create(ctx context.Context, source, via string, hosts []string
 		return magitrickle.Group{}, err
 	}
 	g := magitrickle.Group{Name: name, Color: serviceColor, Interface: device, Enable: true, Rules: rules}
-	if err := m.MT.EnsureHealthy(ctx); err != nil {
-		return magitrickle.Group{}, err
-	}
-	if err := m.MT.AddGroup(ctx, g); err != nil {
+	if err := m.retry("cascade", func() error {
+		if err := m.MT.EnsureHealthy(ctx); err != nil {
+			return err
+		}
+		return m.MT.AddGroup(ctx, g)
+	}); err != nil {
 		return magitrickle.Group{}, err
 	}
 	groups, err := m.MT.GroupsWithRules(ctx)
@@ -546,7 +562,7 @@ func (m *Manager) Delete(ctx context.Context, groupID string) error {
 	if err := m.HookRemove(groupID); err != nil {
 		return err
 	}
-	if err := m.MT.EnsureHealthy(ctx); err != nil {
+	if err := m.retry("cascade", func() error { return m.MT.EnsureHealthy(ctx) }); err != nil {
 		return err
 	}
 	casc := m.Store.Cascades()
@@ -576,7 +592,7 @@ func (m *Manager) SetEnabled(ctx context.Context, groupID string, enable bool) e
 	if !ok {
 		return fmt.Errorf("каскад %s не найден", groupID)
 	}
-	if err := m.MT.EnsureHealthy(ctx); err != nil {
+	if err := m.retry("cascade", func() error { return m.MT.EnsureHealthy(ctx) }); err != nil {
 		return err
 	}
 	if enable {
@@ -604,17 +620,19 @@ func (m *Manager) SetEnabled(ctx context.Context, groupID string, enable bool) e
 }
 
 func (m *Manager) toggle(ctx context.Context, groupID string, enable bool) error {
-	return m.MT.MutateGroups(ctx, func(groups []magitrickle.Group) bool {
-		for i := range groups {
-			if groups[i].ID == groupID {
-				if groups[i].Enable == enable {
-					return false
+	return m.retry("cascade", func() error {
+		return m.MT.MutateGroups(ctx, func(groups []magitrickle.Group) bool {
+			for i := range groups {
+				if groups[i].ID == groupID {
+					if groups[i].Enable == enable {
+						return false
+					}
+					groups[i].Enable = enable
+					return true
 				}
-				groups[i].Enable = enable
-				return true
 			}
-		}
-		return false
+			return false
+		})
 	})
 }
 
@@ -697,15 +715,17 @@ func (m *Manager) syncRules(ctx context.Context, entry store.CascadeEntry, hosts
 	if len(added) == 0 {
 		return
 	}
-	err = m.MT.MutateGroups(ctx, func(groups []magitrickle.Group) bool {
-		for i := range groups {
-			if groups[i].ID != entry.Group {
-				continue
+	err = m.retry("cascade", func() error {
+		return m.MT.MutateGroups(ctx, func(groups []magitrickle.Group) bool {
+			for i := range groups {
+				if groups[i].ID != entry.Group {
+					continue
+				}
+				groups[i].Rules = append(groups[i].Rules, added...)
+				return true
 			}
-			groups[i].Rules = append(groups[i].Rules, added...)
-			return true
-		}
-		return false
+			return false
+		})
 	})
 	if err != nil {
 		m.log("cascade", "sync", "не добавил адреса в "+entry.Name+": "+err.Error())
