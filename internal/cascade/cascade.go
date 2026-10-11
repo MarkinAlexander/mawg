@@ -486,6 +486,14 @@ func (m *Manager) Create(ctx context.Context, source, via string, hosts []string
 	}
 
 	name := "Служебная: " + srcTitle + " через " + viaTitle
+	// дубли каскадов запрещены: второй ipset-to-link на тот же интерфейс
+	// роняет iptables-restore всего батча (живой кейс 2026-10-11 - 500 и
+	// деградация рантайма до ручного восстановления)
+	for _, c := range m.Store.Cascades() {
+		if c.Source == source && c.Via == via {
+			return magitrickle.Group{}, fmt.Errorf("каскад %s -> %s уже есть", srcTitle, viaTitle)
+		}
+	}
 	if err := m.guardLoop(source, via, true); err != nil {
 		return magitrickle.Group{}, err
 	}
@@ -493,6 +501,17 @@ func (m *Manager) Create(ctx context.Context, source, via string, hosts []string
 	if err := m.retry("cascade", func() error {
 		if err := m.MT.EnsureHealthy(ctx); err != nil {
 			return err
+		}
+		// группа с таким именем уже есть в MT (в т.ч. вне стора) - дубль
+		// уронит батч на ipset-to-link
+		groups, err := m.MT.GroupsWithRules(ctx)
+		if err != nil {
+			return err
+		}
+		for _, x := range groups {
+			if x.Name == name {
+				return fmt.Errorf("группа %q уже есть в magitrickle, дубли каскадов запрещены", name)
+			}
 		}
 		return m.MT.AddGroup(ctx, g)
 	}); err != nil {
