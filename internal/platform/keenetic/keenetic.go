@@ -715,3 +715,5 @@ func (b *Backend) RestartMagitrickle() error {
 	_, err := platform.RunBoundedCombined(cmd, 60*time.Second)
 	return err
 }
+
+func (b *Backend) MTConfigPath() string { return "/opt/var/lib/magitrickle/config.yaml" }

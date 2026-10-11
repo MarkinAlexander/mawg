@@ -246,6 +246,10 @@ var (
 	SaveShadow   func(groups []Group)
 	OnRepair     func(restoredIDs []string)
 	OnDedup      func(message string)
+	// PreSave вызывается перед каждым фактическим PUT групп в рантайм MT
+	// (не на no-op выходах): точка для авто-бэкапа дискового конфига и
+	// shadow - сорванный массовый PUT главный враг групп.
+	PreSave      func()
 	restoredOnce map[string]int
 )
 
@@ -375,6 +379,15 @@ func (c *Client) AddGroup(ctx context.Context, g Group) error {
 	})
 }
 
+// ReplaceGroups заменяет ВЕСЬ список групп в рантайме MT - восстановление
+// из бэкапа. Одна массовая запись; валидация, дедуп и контроль усечения
+// transformGroups действуют.
+func (c *Client) ReplaceGroups(ctx context.Context, groups []Group) error {
+	return c.transformGroups(ctx, func([]Group) ([]Group, bool) {
+		return groups, true
+	})
+}
+
 func (c *Client) transformGroups(ctx context.Context, transform func([]Group) ([]Group, bool)) error {
 	groupsMu.Lock()
 	defer groupsMu.Unlock()
@@ -395,6 +408,9 @@ func (c *Client) transformGroups(ctx context.Context, transform func([]Group) ([
 	if !changed && !repaired && len(dedupInfo) == 0 {
 		updateShadowLocked(groups)
 		return nil
+	}
+	if PreSave != nil {
+		PreSave()
 	}
 	if err := c.UpdateGroups(ctx, groups, true); err != nil {
 		return err

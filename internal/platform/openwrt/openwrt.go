@@ -491,6 +491,8 @@ func (b *Backend) RestartMagitrickle() error {
 	return err
 }
 
+func (b *Backend) MTConfigPath() string { return "/etc/magitrickle/state/config.yaml" }
+
 // SaveConfig: mawg коммитит uci сразу в Apply/Up/Down, LuCI видит живое
 // состояние; отдельное сохранение не нужно.
 func (b *Backend) SaveConfig() error { return nil }

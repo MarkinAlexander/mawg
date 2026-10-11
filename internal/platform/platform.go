@@ -37,5 +37,9 @@ type Backend interface {
 	IfaceHandshake(device string) int
 	ProbeDevice(device, target string) (ok bool, rttMs int)
 	RestartMagitrickle() error
+	// MTConfigPath - дисковый конфиг MagiTrickle на этой платформе
+	// (цел при усечённом рантайме, спасает группы рестартом демона);
+	// пусто = платформа не знает пути, бэкапится только shadow.
+	MTConfigPath() string
 	SaveConfig() error
 }

@@ -129,6 +129,49 @@ func (m *Manager) AfterMutate() {
 	m.SyncHooks()
 }
 
+// BeforeReplace - BeforeMutate для записи, заменяющей ВЕСЬ список групп
+// (восстановление из бэкапа): снимает хуки каскадов, которых в новой
+// редакции нет или которые выключены/переехали по интерфейсу - иначе
+// iptables-restore MT валится на цепочке удаляемой группы.
+func (m *Manager) BeforeReplace(replacement []magitrickle.Group) {
+	casc := m.Store.Cascades()
+	if len(casc) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	groups, err := m.MT.GroupsWithRules(ctx)
+	if err != nil {
+		// состояния рантайма не видим - снимаем всё консервативно
+		for _, c := range casc {
+			if err := m.HookRemove(c.Group); err != nil {
+				m.log("cascade", "hook", "не снял хук перед заменой: "+err.Error())
+			}
+		}
+		return
+	}
+	before := map[string]magitrickle.Group{}
+	for _, g := range groups {
+		before[g.ID] = g
+	}
+	after := map[string]magitrickle.Group{}
+	for _, g := range replacement {
+		after[g.ID] = g
+	}
+	for _, c := range casc {
+		was, okBefore := before[c.Group]
+		now, okAfter := after[c.Group]
+		if !okBefore {
+			continue
+		}
+		if !okAfter || (was.Enable && !now.Enable) || was.Interface != now.Interface {
+			if err := m.HookRemove(c.Group); err != nil {
+				m.log("cascade", "hook", "не снял хук перед заменой: "+err.Error())
+			}
+		}
+	}
+}
+
 func (m *Manager) SyncHooks() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
