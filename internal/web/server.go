@@ -1479,7 +1479,7 @@ func (s *Server) mtClient() *magitrickle.Client {
 	if s.mt != nil {
 		return s.mt
 	}
-	return magitrickle.New("http://127.0.0.1:8080")
+	return magitrickle.New("http://localhost:8080")
 }
 
 type mtSnapshot struct {
