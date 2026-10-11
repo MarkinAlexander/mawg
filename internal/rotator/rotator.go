@@ -1028,20 +1028,16 @@ func (e *Engine) bundleGroupIDs() map[string]bool {
 	return out
 }
 
-// magitrickle 0.8.2: single-group PUT не пересоздаёт iptables-цепочку, если
-// рантайм группы уже выключен; пересборку даёт только массовый PUT списка.
-func (e *Engine) applyGroupChanges(key string, mutate func(groups []magitrickle.Group) bool) error {
-	e.settleAfterIfaceOp()
-	err := e.tryApplyGroups(key, mutate)
+// RetryMTWrite - самолечение записей в MT: сбой -> рестарт демона -> одна
+// повторная попытка. Общий путь движка и веб-ручек панели: на Кинетике
+// bulk-PUT регулярно ловит 500 на грязных nf-объектах, и веб-запись без
+// ретрая теряла группы (кейс владельца: правка telega из панели).
+func (e *Engine) RetryMTWrite(key string, attempt func() error) error {
+	err := attempt()
 	if err == nil {
 		return nil
 	}
 	e.store.LogEvent(key, "magitrickle", "groups save failed: "+err.Error())
-	// стоковый MT с «грязными» nf-объектами (после рестарта демона) валит
-	// массовые PUT нестабильно: то 400, то молчаливое усечение. рестарт
-	// демона лечит, одной повторной попытки обычно хватает - стоковый MT
-	// становится самолечащимся. кап рестартов в час не даёт молотить по
-	// мёртвому.
 	restarted := e.healMagitrickle(key, 10*time.Minute)
 	if !restarted && !e.waitMagitrickleAlive(2*time.Second) {
 		// рестарт не состоялся (кулдаун/кап), MT мёртв - повтор бесполезен
@@ -1052,12 +1048,21 @@ func (e *Engine) applyGroupChanges(key string, mutate func(groups []magitrickle.
 		return err
 	}
 	e.store.LogEvent(key, "magitrickle", "повторная попытка записи после рестарта MT")
-	if err2 := e.tryApplyGroups(key, mutate); err2 != nil {
+	if err2 := attempt(); err2 != nil {
 		e.store.LogEvent(key, "magitrickle", "повторная запись не удалась: "+err2.Error()+" - проверьте группу вручную или перезапустите MT")
 		return err2
 	}
 	e.store.LogEvent(key, "magitrickle", "повторная запись удалась после рестарта MT")
 	return nil
+}
+
+// magitrickle 0.8.2: single-group PUT не пересоздаёт iptables-цепочку, если
+// рантайм группы уже выключен; пересборку даёт только массовый PUT списка.
+func (e *Engine) applyGroupChanges(key string, mutate func(groups []magitrickle.Group) bool) error {
+	e.settleAfterIfaceOp()
+	return e.RetryMTWrite(key, func() error {
+		return e.tryApplyGroups(key, mutate)
+	})
 }
 
 // tryApplyGroups - одна попытка массовой записи с каскадными хуками.

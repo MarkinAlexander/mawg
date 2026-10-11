@@ -124,7 +124,10 @@ func (s *Server) mtRestore(w http.ResponseWriter, r *http.Request) {
 			c.BeforeReplace(dump.Groups)
 			defer c.AfterMutate()
 		}
-		if err := s.mtClient().ReplaceGroups(r.Context(), dump.Groups); err != nil {
+		// рестор тоже через самолечение: большой bulk-PUT валится чаще всех
+		if err := s.engine.RetryMTWrite("restore", func() error {
+			return s.mtClient().ReplaceGroups(r.Context(), dump.Groups)
+		}); err != nil {
 			writeErrCode(w, http.StatusBadGateway, err)
 			return
 		}
