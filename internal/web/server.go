@@ -1717,7 +1717,11 @@ func (s *Server) mtApplyGroups(ctx context.Context, mutate func(groups []magitri
 		c.BeforeMutate(mutate)
 		defer c.AfterMutate()
 	}
-	return s.mtClient().MutateGroups(ctx, mutate)
+	// веб-записи через тот же самолечащийся путь, что и движок: 500-й на
+	// bulk-PUT иначе терял группы (кейс владельца с правкой telega)
+	return s.engine.RetryMTWrite("panel", func() error {
+		return s.mtClient().MutateGroups(ctx, mutate)
+	})
 }
 
 func (s *Server) mtUpdateGroup(w http.ResponseWriter, r *http.Request) {

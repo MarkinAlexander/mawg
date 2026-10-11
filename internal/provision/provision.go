@@ -388,6 +388,7 @@ func lxCoreItem(run Runner, platform string) Item {
 	}
 	ver := cachedBinVersion(bin, run)
 	_, _, marked := lxFileStat(markerDir + "/.installed-by-mawg")
+	_, _, binExists := lxFileStat(bin)
 	// свободное место и размер бинаря: хватит ли на копию старого ядра
 	var backupBytes int64
 	if size, _, ok := lxFileStat(bin); ok {
@@ -399,6 +400,14 @@ func lxCoreItem(run Runner, platform string) Item {
 	}
 	confirm := fmt.Sprintf("mawg скачает свежий релиз sing-box-lx, проверит контрольную сумму, прогонит тест-запуск во временном каталоге и только потом установит в %s. После установки движок mawg работает на lx-профиле; в режиме «общего ядра» сервис sing-box будет перезапущен - соединения порвутся на несколько секунд.", bin)
 	switch {
+	case ver == "" && binExists:
+		// бинарь стоит, но version-запуск не уложился в таймаут (upx-
+		// распаковка на загруженном роутере) - показывать «не установлен»
+		// и звать ставить заново было враньём, владельца это сбило
+		item.StatusText = "файл есть, версия не читается (роутер занят?)"
+		item.Action = "singbox-lx"
+		item.ActionLabel = "переустановить lx"
+		item.Confirm = "Ядро sing-box стоит, но версию прочитать не удалось - вероятно, роутер был занят и запуск не уложился в таймаут. Переустановка заменит бинарь нашей сборкой. " + confirm
 	case ver == "":
 		item.StatusText = "не установлен"
 		item.Action = "singbox-lx"
