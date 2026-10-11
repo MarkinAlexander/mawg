@@ -962,9 +962,59 @@ func (s *Store) Events() []Event {
 func (s *Store) SaveBackup(name, content string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.saveBackupLocked(name, content)
+}
+
+func (s *Store) saveBackupLocked(name, content string) (string, error) {
 	if err := os.MkdirAll(s.backupDir(), 0o700); err != nil {
 		return "", err
 	}
-	path := filepath.Join(s.backupDir(), fmt.Sprintf("%s-%s.conf", name, time.Now().Format("20060102-150405")))
+	base := fmt.Sprintf("%s-%s", name, time.Now().Format("20060102-150405"))
+	path := filepath.Join(s.backupDir(), base+".conf")
+	// две записи в одну секунду: не перетираем первую копию - суффикс
+	if _, err := os.Stat(path); err == nil {
+		for i := 1; ; i++ {
+			p := filepath.Join(s.backupDir(), fmt.Sprintf("%s-%02d.conf", base, i))
+			if _, err := os.Stat(p); os.IsNotExist(err) {
+				path = p
+				break
+			}
+		}
+	}
 	return path, os.WriteFile(path, []byte(content), 0o600)
+}
+
+// SaveBackupRotated пишет бэкап и подчищает старые копии того же имени,
+// оставляя keep самых свежих (формат имени name-YYYYMMDD-HHMMSS.conf).
+// Авто-бэкапы перед массовыми записями могут сыпаться часто - без ротации
+// каталог распухает на флеше роутера.
+func (s *Store) SaveBackupRotated(name, content string, keep int) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	path, err := s.saveBackupLocked(name, content)
+	if err != nil {
+		return "", err
+	}
+	entries, err := os.ReadDir(s.backupDir())
+	if err != nil {
+		return path, nil
+	}
+	prefix := name + "-"
+	var files []string
+	for _, e := range entries {
+		n := e.Name()
+		if strings.HasPrefix(n, prefix) && strings.HasSuffix(n, ".conf") {
+			files = append(files, n)
+		}
+	}
+	// свежее = лексически больше (формат метки времени сортируется сам)
+	for i, j := 0, len(files)-1; i < j; i, j = i+1, j-1 {
+		files[i], files[j] = files[j], files[i]
+	}
+	if len(files) > keep {
+		for _, n := range files[keep:] {
+			os.Remove(filepath.Join(s.backupDir(), n))
+		}
+	}
+	return path, nil
 }

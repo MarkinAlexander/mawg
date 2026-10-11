@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -1056,6 +1058,27 @@ func (e *Engine) healMagitrickle(key string, cooldown time.Duration) {
 		return
 	}
 	e.store.LogEvent(key, "magitrickle", "автоперезапуск после сбоя сохранения")
+}
+
+// mtBackupKeep - сколько последних копий каждого вида держим в
+// base/backups (mt-shadow-*.conf, mt-config-*.conf).
+const mtBackupKeep = 10
+
+// BackupMagitrickleState снимает копии дискового конфига MT и нашей
+// shadow-копии в base/backups. Вызывается перед каждым фактическим PUT
+// групп (через magitrickle.PreSave) и вручную из панели. Инцидент
+// 2026-10-10: сорванный массовый PUT усёк рантайм, 7 юзерских групп
+// потеряны - дисковый конфиг остался цел и спас рестартом; теперь
+// спасательная верёвка делается кодом автоматически.
+func (e *Engine) BackupMagitrickleState() {
+	if data, err := os.ReadFile(filepath.Join(e.store.Base(), "magitrickle-shadow.json")); err == nil {
+		e.store.SaveBackupRotated("mt-shadow", string(data), mtBackupKeep)
+	}
+	if path := e.backend.MTConfigPath(); path != "" {
+		if data, err := os.ReadFile(path); err == nil {
+			e.store.SaveBackupRotated("mt-config", string(data), mtBackupKeep)
+		}
+	}
 }
 
 func (e *Engine) suspendGroups(p store.Pool) {

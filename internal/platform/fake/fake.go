@@ -139,6 +139,10 @@ func (f *Fake) Applied() []string {
 
 func (f *Fake) RestartMagitrickle() error { return nil }
 
+// MTConfigPath пуст: в синтетике дискового конфига MT нет, бэкапится
+// только shadow.
+func (f *Fake) MTConfigPath() string { return "" }
+
 func (f *Fake) SaveConfig() error { return nil }
 
 func (f *Fake) Destroys() int {
