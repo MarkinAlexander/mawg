@@ -248,6 +248,9 @@ func main() {
 	magitrickle.OnRepair = func(names []string) {
 		st.LogEvent("magitrickle", "repair", "magitrickle терял группы, возвращены: "+strings.Join(names, ", "))
 	}
+	magitrickle.OnDedup = func(message string) {
+		st.LogEvent("magitrickle", "dedup", "удалены дубликаты правил: "+message)
+	}
 	magitrickle.SetShadowStorage(
 		func() []magitrickle.Group {
 			data, err := os.ReadFile(shadowPath)
