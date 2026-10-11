@@ -1562,7 +1562,13 @@ function renderRules() {
     const det = el.querySelector('details');
     det.ontoggle = () => { if (det.open) openMtGroups.add(g.id); else openMtGroups.delete(g.id); };
     const tbody = el.querySelector('.mt-rules');
+    // при поиске внутри совпавшей группы показываем только совпавшие
+    // правила; если запрос совпал с именем группы - группа целиком.
+    // DnD правил при поиске отключён: фильтрованный tbody отправил бы
+    // частичный список id и перемешал порядок
+    const nameMatched = q && (g.name || '').toLowerCase().includes(q);
     for (const rl of (g.rules||[])) {
+      if (q && !nameMatched && !ruleMatches(rl, q)) continue;
       const tr = document.createElement('tr');
       tr.dataset.id = rl.id;
       if (!rl.enable) tr.style.opacity = .45;
@@ -1576,7 +1582,7 @@ function renderRules() {
       tr.querySelector('.r-tg').onchange = e => { mtApi('POST', `/mt/groups/${g.id}/rules/${rl.id}/enable`, { enable: e.target.checked }); };
       tr.querySelector('.r-edit').onclick = () => editRule(g, rl, tr);
       tr.querySelector('.r-del').onclick = e => withBusy(e.currentTarget, () => mtApi('DELETE', `/mt/groups/${g.id}/rules/${rl.id}`));
-      attachDnD(tr, 'rules:' + g.id, (dragged, target, before) => {
+      if (!q) attachDnD(tr, 'rules:' + g.id, (dragged, target, before) => {
         target.parentNode.insertBefore(dragged, before ? target : target.nextSibling);
         mtApi('POST', `/mt/groups/${g.id}/rules/order`, { ids: orderIDs(tbody, 'tr[data-id]') });
       });
