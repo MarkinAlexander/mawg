@@ -145,21 +145,34 @@ func (e *Engine) Start(parent context.Context) {
 // идемпотентный no-op PUT того же списка групп со сравнением до/после.
 // Глючная сборка MT усекает список (инцидент 2026-10-10) - флаг в панель
 // со ссылкой на форк и рестарт демона, чтобы группы собрать с диска.
-// Ждём поднятия демона до 2 минут: на буте он иногда виснет на IPv4.
+// Первый PUT после старта на Кинетике часто валится 500-м (грязные
+// nf-объекты после прошлого сеанса - известная история) - это НЕ глючная
+// сборка, а транзиент: рестарт демона + одна повторная попытка, флаг
+// только если не помогло. Ждём поднятия демона до 2 минут (на буте
+// иногда виснет).
 func (e *Engine) probeMagitrickleCompatibility(ctx context.Context) {
 	if !e.waitMagitrickleAlive(2 * time.Minute) {
 		return
 	}
-	pctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	pctx, cancel := context.WithTimeout(ctx, 4*time.Minute)
 	defer cancel()
 	before, err := e.mt.GroupsWithRules(pctx)
 	if err != nil || len(before) == 0 {
 		return // честная пустая конфигурация - пробовать не на чем
 	}
 	if err := e.mt.ReplaceGroups(pctx, before); err != nil {
-		e.store.SetMTGlitchy(true)
-		e.store.LogEvent("magitrickle", "probe", "проба совместимости: массовая запись не удалась ("+err.Error()+") - похоже, глючная сборка MT")
-		return
+		e.store.LogEvent("magitrickle", "probe", "проба совместимости: первая запись не удалась ("+err.Error()+") - рестартую MT и повторяю")
+		if e.healMagitrickle("probe", time.Minute) || e.waitMagitrickleAlive(2*time.Second) {
+			if !e.waitMagitrickleAlive(90*time.Second) || e.mt.ReplaceGroups(pctx, before) != nil {
+				e.store.SetMTGlitchy(true)
+				e.store.LogEvent("magitrickle", "probe", "проба совместимости: запись не удалась и после рестарта - похоже, глючная сборка MT")
+				return
+			}
+		} else {
+			e.store.SetMTGlitchy(true)
+			e.store.LogEvent("magitrickle", "probe", "проба совместимости: MT не поднялся для повтора - похоже, глючная сборка MT")
+			return
+		}
 	}
 	after, err := e.mt.GroupsWithRules(pctx)
 	if err != nil {
