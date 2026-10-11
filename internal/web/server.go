@@ -118,6 +118,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/mt/groups", s.mtCreateGroup)
 	mux.HandleFunc("PUT /api/v1/mt/groups/{id}", s.mtUpdateGroup)
 	mux.HandleFunc("POST /api/v1/mt/groups/order", s.mtGroupsOrder)
+	mux.HandleFunc("POST /api/v1/mt/groups/import", s.mtImportGroups)
 	mux.HandleFunc("POST /api/v1/mt/groups/{id}/rules/order", s.mtRulesOrder)
 	mux.HandleFunc("POST /api/v1/mt/groups/{id}/enable", s.mtToggleGroup)
 	mux.HandleFunc("DELETE /api/v1/mt/groups/{id}", s.mtDeleteGroup)

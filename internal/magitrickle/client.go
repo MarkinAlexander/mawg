@@ -259,7 +259,14 @@ func SetShadowStorage(load func() []Group, save func([]Group)) {
 	LoadShadow = load
 	SaveShadow = save
 	restoredOnce = map[string]int{}
-	if mtShadow == nil && load != nil {
+	if load == nil {
+		// сброс хранилища (тесты): тень обнуляем вместе с ним, иначе
+		// состояние предыдущего теста воскресает в рантайме следующего
+		mtShadow = nil
+		lastShadowJSON = ""
+		return
+	}
+	if mtShadow == nil {
 		mtShadow = load()
 	}
 }
@@ -387,6 +394,18 @@ func (c *Client) MutateGroups(ctx context.Context, mutate func(groups []Group) b
 func (c *Client) AddGroup(ctx context.Context, g Group) error {
 	return c.transformGroups(ctx, func(groups []Group) ([]Group, bool) {
 		return append(groups, g), true
+	})
+}
+
+// AddGroups добавляет несколько групп с правилами одним bulk PUT (импорт
+// из файла): тот же атомарный путь, что у AddGroup - append в mutate-
+// замыкании наружу не выходит, поэтому отдельный transform.
+func (c *Client) AddGroups(ctx context.Context, add []Group) error {
+	return c.transformGroups(ctx, func(groups []Group) ([]Group, bool) {
+		if len(add) == 0 {
+			return groups, false
+		}
+		return append(groups, add...), true
 	})
 }
 

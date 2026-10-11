@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -20,6 +21,7 @@ import (
 type restoreMTState struct {
 	mu     sync.Mutex
 	groups []magitrickle.Group
+	n      int // счётчик ID для групп без ID - как настоящий MT
 }
 
 func restoreMTServer(t *testing.T) (*httptest.Server, *restoreMTState) {
@@ -40,6 +42,13 @@ func restoreMTServer(t *testing.T) (*httptest.Server, *restoreMTState) {
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				w.WriteHeader(400)
 				return
+			}
+			// настоящий MT назначает ID новым группам (как в моке каскадов)
+			for i := range req.Groups {
+				if req.Groups[i].ID == "" {
+					st.n++
+					req.Groups[i].ID = fmt.Sprintf("mig%d", st.n)
+				}
 			}
 			st.groups = req.Groups
 			w.WriteHeader(200)
