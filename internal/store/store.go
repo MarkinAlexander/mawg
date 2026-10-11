@@ -126,6 +126,25 @@ func (s *Store) SetSingboxMode(mode string) error {
 	return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
 }
 
+// SetMTGlitchy пишет флаг «глючная сборка MT» только при смене значения -
+// проба совместимости ходит при каждом старте, config.json не надо
+// перезаписывать впустую.
+func (s *Store) SetMTGlitchy(v bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.root.Settings.MTGlitchy == v {
+		return nil
+	}
+	s.root.Settings.MTGlitchy = v
+	return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
+}
+
+func (s *Store) MTGlitchy() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.root.Settings.MTGlitchy
+}
+
 func (s *Store) SetSettings(v Settings) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -96,3 +96,58 @@ func TestMTRestartBudget(t *testing.T) {
 		t.Fatal("бюджет не восстановился после часа")
 	}
 }
+
+// проба совместимости: MT, усекающий массовые PUT, ловится при старте -
+// флаг глючной сборки в конфиг, здоровый MT флаг снимает
+func TestProbeDetectsGlitchyMT(t *testing.T) {
+	magitrickle.SetShadowStorage(nil, nil)
+	truncate := atomic.Bool{}
+	var state []magitrickle.Group
+	mt := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/groups":
+			json.NewEncoder(w).Encode(map[string]any{"groups": state})
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/groups":
+			var req struct {
+				Groups []magitrickle.Group `json:"groups"`
+			}
+			json.NewDecoder(r.Body).Decode(&req)
+			if truncate.Load() {
+				req.Groups = req.Groups[:1] // глючная сборка роняет список
+			}
+			state = req.Groups
+			w.WriteHeader(200)
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	t.Cleanup(mt.Close)
+
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := New(st, fake.New(), magitrickle.New(mt.URL))
+	state = []magitrickle.Group{
+		{ID: "g1", Name: "a", Enable: true},
+		{ID: "g2", Name: "b", Enable: true},
+	}
+	truncate.Store(true)
+	e.probeMagitrickleCompatibility(t.Context())
+	if !st.MTGlitchy() {
+		t.Fatal("усечение на no-op PUT не поймано")
+	}
+	// владелец поставил форк: PUT больше не усекает - флаг снимается
+	truncate.Store(false)
+	e.probeMagitrickleCompatibility(t.Context())
+	if st.MTGlitchy() {
+		t.Fatal("флаг глючной сборки не снят после починки")
+	}
+	// честно пустая конфигурация: проба молчит и не ставит флаг
+	state = nil
+	st.SetMTGlitchy(false)
+	e.probeMagitrickleCompatibility(t.Context())
+	if st.MTGlitchy() {
+		t.Fatal("пустой рантайм не должен ловиться как глючный")
+	}
+}

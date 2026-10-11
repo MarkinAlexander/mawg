@@ -138,6 +138,40 @@ func (e *Engine) Start(parent context.Context) {
 	ctx, cancel := context.WithCancel(parent)
 	e.stop = cancel
 	go e.loop(ctx)
+	go e.probeMagitrickleCompatibility(ctx)
+}
+
+// probeMagitrickleCompatibility - проба совместимости при старте:
+// идемпотентный no-op PUT того же списка групп со сравнением до/после.
+// Глючная сборка MT усекает список (инцидент 2026-10-10) - флаг в панель
+// со ссылкой на форк и рестарт демона, чтобы группы собрать с диска.
+// Ждём поднятия демона до 2 минут: на буте он иногда виснет на IPv4.
+func (e *Engine) probeMagitrickleCompatibility(ctx context.Context) {
+	if !e.waitMagitrickleAlive(2 * time.Minute) {
+		return
+	}
+	pctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	before, err := e.mt.GroupsWithRules(pctx)
+	if err != nil || len(before) == 0 {
+		return // честная пустая конфигурация - пробовать не на чем
+	}
+	if err := e.mt.ReplaceGroups(pctx, before); err != nil {
+		e.store.SetMTGlitchy(true)
+		e.store.LogEvent("magitrickle", "probe", "проба совместимости: массовая запись не удалась ("+err.Error()+") - похоже, глючная сборка MT")
+		return
+	}
+	after, err := e.mt.GroupsWithRules(pctx)
+	if err != nil {
+		return
+	}
+	if len(after) < len(before) {
+		e.store.SetMTGlitchy(true)
+		e.store.LogEvent("magitrickle", "probe", fmt.Sprintf("глючная сборка MT: no-op PUT усёк список групп (%d -> %d) - рестартую демона, ставьте форк mawgfix", len(before), len(after)))
+		e.healMagitrickle("probe", time.Minute)
+		return
+	}
+	e.store.SetMTGlitchy(false)
 }
 
 func (e *Engine) Stop() {

@@ -1639,7 +1639,7 @@ func (s *Server) mtGetGroups(w http.ResponseWriter, r *http.Request) {
 		seen[g.Interface] = true
 		out = append(out, gv)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"available": true, "groups": out})
+	writeJSON(w, http.StatusOK, map[string]any{"available": true, "groups": out, "glitchy": s.store.MTGlitchy()})
 }
 
 func (s *Server) mtGetInterfaces(w http.ResponseWriter, r *http.Request) {
