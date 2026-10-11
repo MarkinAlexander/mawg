@@ -240,7 +240,10 @@ func main() {
 	if kb, ok := backend.(*keenetic.Backend); ok {
 		kb.SetTokenProvider(st.RCIToken)
 	}
-	mt := magitrickle.New("http://127.0.0.1:8080")
+	// localhost, а не 127.0.0.1: на буте magitrickled иногда висит только
+	// на [::1], IPv4-лупбек отказывает - имя с BOTH-резолвом дотягивается
+	// до любого из двух
+	mt := magitrickle.New("http://localhost:8080")
 	shadowPath := filepath.Join(dir, "magitrickle-shadow.json")
 	magitrickle.OnRepair = func(names []string) {
 		st.LogEvent("magitrickle", "repair", "magitrickle терял группы, возвращены: "+strings.Join(names, ", "))
