@@ -1502,11 +1502,17 @@ function renderRules() {
   }
   box.innerHTML = '';
   const q = ruleSearchQ;
-  for (const g of MT_GROUPS) {
-    const matched = groupMatches(g, q);
-    // при активном поиске группа с совпадениями раскрывается сама;
-    // несовпадающие группы и правила НЕ прячем - только подсветка
-    if (matched) openMtGroups.add(g.id);
+  // поиск = фильтр: показываем только группы с реальным совпадением,
+  // остальные прячем (упрощаем навигацию); группа с совпадением
+  // раскрывается сама. при очистке запроса состояние открытых групп
+  // до поиска восстанавливается (снапшот в обработчике ruleSearch)
+  const list = q ? MT_GROUPS.filter(g => groupMatches(g, q)) : MT_GROUPS;
+  if (q && !list.length) {
+    box.innerHTML = `<div class="muted">Ничего не найдено по «${esc(q)}».</div>`;
+    return;
+  }
+  for (const g of list) {
+    if (q) openMtGroups.add(g.id);
     const el = document.createElement('div');
     el.className = 'mtgroup' + (g.interface === 'blackhole' ? ' mtgroup-block' : '');
     el.dataset.id = g.id;
@@ -1527,7 +1533,7 @@ function renderRules() {
         <span class="gcolor" style="background:${esc(g.color || '#4a9eff')}"></span>
         <b>${hlText(g.name, q)}</b>${groupWarnSvg(g)}${cascBadge}${blockBadge}${polBadge}
         <span class="iface-badge"><span class="badge">${esc(g.interface)}</span>${g.interfaceTitle ? `<span class="iface-title">${esc(g.interfaceTitle)}</span>` : ''}</span>
-        <span class="muted" style="font-size:12px">правил: ${(g.rules||[]).length}${q && matched ? ` · <span style="color:var(--ok)">совпадений: ${groupMatchCount(g, q)}</span>` : ''}</span>
+        <span class="muted" style="font-size:12px">правил: ${(g.rules||[]).length}${q ? ` · <span style="color:var(--ok)">совпадений: ${groupMatchCount(g, q)}</span>` : ''}</span>
         <span style="flex:1"></span>
         <label class="switch" title="${g.enable ? 'выключить группу' : 'включить группу'}"><input type="checkbox" class="mt-toggle" ${g.enable ? 'checked' : ''}><span class="knob"></span></label>
         <button class="iconbtn edit mt-edit" title="изменить группу">${PENCIL_SVG}</button>
@@ -1593,7 +1599,9 @@ function renderRules() {
     });
     el.querySelector('.nr-import').onclick = () => openImportDlg(g);
     el.querySelector('.nr-copy').onclick = () => copyGroupRules(g);
-    attachDnD(el, 'groups', (dragged, target, before) => {
+    // порядок групп таскаем только без поиска: при фильтре перетаскивание
+    // отправило бы частичный список id и перемешало порядок
+    if (!q) attachDnD(el, 'groups', (dragged, target, before) => {
       target.parentNode.insertBefore(dragged, before ? target : target.nextSibling);
       mtApi('POST', '/mt/groups/order', { ids: orderIDs(box, '.mtgroup') });
     });
@@ -1601,8 +1609,20 @@ function renderRules() {
   }
 }
 
+let savedOpenGroups = null; // открытые группы до начала поиска
 document.getElementById('ruleSearch').addEventListener('input', e => {
-  ruleSearchQ = e.target.value.trim().toLowerCase();
+  const v = e.target.value.trim().toLowerCase();
+  if (v && !ruleSearchQ) {
+    // старт поиска: запоминаем, какие группы были открыты
+    savedOpenGroups = new Set(openMtGroups);
+  }
+  ruleSearchQ = v;
+  if (!v && savedOpenGroups) {
+    // запрос очищен: возвращаем ровно прежнее состояние открытости
+    openMtGroups.clear();
+    for (const id of savedOpenGroups) openMtGroups.add(id);
+    savedOpenGroups = null;
+  }
   rulesRenderIfIdle();
 });
 document.getElementById('ruleDupsBtn').onclick = () => showMTDupsDlg();
@@ -1616,17 +1636,34 @@ document.getElementById('mtBackupsBtn').onclick = () => showMTBackupsDlg();
 function showMTDupsDlg() {
   const box = document.getElementById('dlgMTDupsList');
   const q = ruleSearchQ;
-  const entries = Object.entries(MT_DUPS || {})
-    .filter(([pat]) => !q || pat.toLowerCase().includes(q))
-    .sort((a, b) => a[0].localeCompare(b[0]));
+  let entries;
+  if (q) {
+    // с активным поиском: ВСЕ вхождения найденных паттернов по группам
+    // (t.me может жить в одной группе - это не межгрупповой дубликат,
+    // но юзеру важно увидеть, где правило живёт)
+    const map = new Map();
+    for (const g of (MT_GROUPS || [])) {
+      for (const rl of (g.rules || [])) {
+        const key = (rl.rule || '').trim().toLowerCase();
+        if (!key || !key.includes(q)) continue;
+        if (!map.has(key)) map.set(key, []);
+        map.get(key).push({ group: g.name, type: rl.type });
+      }
+    }
+    entries = [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  } else {
+    // без поиска: только межгрупповые дубликаты (как бейджи-предупреждения)
+    entries = Object.entries(MT_DUPS || {}).sort((a, b) => a[0].localeCompare(b[0]));
+  }
   box.innerHTML = entries.length ? entries.map(([pat, refs]) => {
-    const types = [...new Set((refs || []).map(r => RULE_TYPES[r.ruleType] || r.ruleType))].join(', ');
-    const groups = [...new Set((refs || []).map(r => r.groupName))].join(', ');
+    const types = [...new Set((refs || []).map(r => RULE_TYPES[r.ruleType] || r.ruleType || RULE_TYPES[r.type] || r.type))].join(', ');
+    const groupNames = [...new Set((refs || []).map(r => r.groupName || r.group))];
+    const dup = groupNames.length > 1;
     return `<div style="margin-bottom:10px">
-      <div style="word-break:break-all"><b>${esc(pat)}</b> <span class="muted" style="font-size:12px">(${esc(types)})</span></div>
-      <div class="muted" style="font-size:12px">группы: ${esc(groups)}</div>
+      <div style="word-break:break-all"><b>${esc(pat)}</b> <span class="muted" style="font-size:12px">(${esc(types)})</span>${dup ? ` <span class="badge" style="border-color:var(--warn);color:var(--warn)">дубликат: ${groupNames.length} группы</span>` : ''}</div>
+      <div class="muted" style="font-size:12px">группы: ${esc(groupNames.join(', '))}</div>
     </div>`;
-  }).join('') : `<div class="muted">Совпадений нет${q ? ` по запросу «${esc(q)}»` : ''}.</div>`;
+  }).join('') : `<div class="muted">${q ? `Ничего не найдено по «${esc(q)}».` : 'Межгрупповых дубликатов нет.'}</div>`;
   document.getElementById('dlgMTDups').showModal();
 }
 
