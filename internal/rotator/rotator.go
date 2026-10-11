@@ -160,10 +160,13 @@ func (e *Engine) probeMagitrickleCompatibility(ctx context.Context) {
 	if err != nil || len(before) == 0 {
 		return // честная пустая конфигурация - пробовать не на чем
 	}
-	if err := e.mt.ReplaceGroups(pctx, before); err != nil {
+	// форс-PUT отремонтированного списка: changed=true - проверяем именно
+	// массовую запись (путь всех наших правок), при этом repair из тени
+	// живёт внутри и чинит потери, а не закрепляет их
+	if err := e.mt.MutateGroups(pctx, func(groups []magitrickle.Group) bool { return true }); err != nil {
 		e.store.LogEvent("magitrickle", "probe", "проба совместимости: первая запись не удалась ("+err.Error()+") - рестартую MT и повторяю")
 		if e.healMagitrickle("probe", time.Minute) || e.waitMagitrickleAlive(2*time.Second) {
-			if !e.waitMagitrickleAlive(90*time.Second) || e.mt.ReplaceGroups(pctx, before) != nil {
+			if !e.waitMagitrickleAlive(90*time.Second) || e.mt.MutateGroups(pctx, func(groups []magitrickle.Group) bool { return true }) != nil {
 				e.store.SetMTGlitchy(true)
 				e.store.LogEvent("magitrickle", "probe", "проба совместимости: запись не удалась и после рестарта - похоже, глючная сборка MT")
 				return
@@ -178,6 +181,7 @@ func (e *Engine) probeMagitrickleCompatibility(ctx context.Context) {
 	if err != nil {
 		return
 	}
+	// усечение: после записи групп меньше, чем было прочитано до ремонта
 	if len(after) < len(before) {
 		e.store.SetMTGlitchy(true)
 		e.store.LogEvent("magitrickle", "probe", fmt.Sprintf("глючная сборка MT: no-op PUT усёк список групп (%d -> %d) - рестартую демона, ставьте форк mawgfix", len(before), len(after)))
