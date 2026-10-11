@@ -25,6 +25,11 @@ type Store struct {
 	free          FreeInstallation
 }
 
+const (
+	eventsMemCap   = 500              // сколько событий живёт в памяти
+	eventsMaxBytes = 256 << 10        // ротация дискового журнала при превышении
+)
+
 func Open(base string) (*Store, error) {
 	s := &Store{base: base, state: StateFile{Pools: map[string]*PoolState{}}}
 	for _, dir := range []string{base, s.poolsDir(), s.backupDir()} {
@@ -47,6 +52,7 @@ func Open(base string) (*Store, error) {
 	if s.state.Pools == nil {
 		s.state.Pools = map[string]*PoolState{}
 	}
+	s.loadEvents()
 	for i := range s.root.Pools {
 		s.root.Pools[i].Settings = s.root.Pools[i].Settings.WithDefaults()
 		if s.state.Pools[s.root.Pools[i].Name] == nil {
@@ -85,6 +91,9 @@ func (s *Store) saveLocked(path string, v any) error {
 
 func (s *Store) poolsDir() string  { return filepath.Join(s.base, "pools") }
 func (s *Store) backupDir() string { return filepath.Join(s.base, "backups") }
+
+func (s *Store) eventsPath() string    { return filepath.Join(s.base, "events.json") }
+func (s *Store) eventsOldPath() string { return s.eventsPath() + ".old" }
 
 func (s *Store) Base() string { return s.base }
 
@@ -888,10 +897,58 @@ func (s *Store) MutateBundleState(name string, fn func(*BundleState)) error {
 func (s *Store) LogEvent(pool, kind, message string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.log = append(s.log, Event{Time: time.Now(), Pool: pool, Kind: kind, Message: message})
-	if len(s.log) > 500 {
-		s.log = s.log[len(s.log)-500:]
+	ev := Event{Time: time.Now(), Pool: pool, Kind: kind, Message: message}
+	s.log = append(s.log, ev)
+	if len(s.log) > eventsMemCap {
+		s.log = s.log[len(s.log)-eventsMemCap:]
 	}
+	s.appendEventLocked(ev)
+}
+
+// appendEventLocked пишет событие в дисковый журнал (JSONL, append).
+// События больше не умирают при рестарте mawg: при старте хвост читается
+// обратно (loadEvents). Ошибки диска игнорируются - журнал не должен
+// ронять работу; при переполнении файл ротируется в .old (одна копия
+// истории, старшая теряется).
+func (s *Store) appendEventLocked(ev Event) {
+	path := s.eventsPath()
+	if st, err := os.Stat(path); err == nil && st.Size() >= eventsMaxBytes {
+		os.Rename(path, s.eventsOldPath())
+	}
+	line, err := json.Marshal(ev)
+	if err != nil {
+		return
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	f.Write(append(line, '\n'))
+}
+
+func (s *Store) loadEvents() {
+	var evs []Event
+	for _, path := range []string{s.eventsOldPath(), s.eventsPath()} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			var ev Event
+			if json.Unmarshal([]byte(line), &ev) == nil {
+				evs = append(evs, ev)
+			}
+		}
+	}
+	if len(evs) > eventsMemCap {
+		evs = evs[len(evs)-eventsMemCap:]
+	}
+	s.log = evs
 }
 
 func (s *Store) Events() []Event {
