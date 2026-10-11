@@ -70,11 +70,22 @@ func TestMTUpdateGroupRetriesAfter500(t *testing.T) {
 	if restarts.Load() != 1 {
 		t.Fatalf("рестартов %d, want 1", restarts.Load())
 	}
-	if len(state) == 0 || state[0].Interface != "nwg9" {
-		raw, _ := json.Marshal(state)
-		t.Fatalf("правка не применилась после ретрая: %s", raw)
+	// ремонт из пакентной тени может добавить группы других тестов - ищем
+	// именно g1 и проверяем, что правка применилась и правила целы
+	var g1 *magitrickle.Group
+	for i := range state {
+		if state[i].ID == "g1" {
+			g1 = &state[i]
+		}
 	}
-	if len(state[0].Rules) != 1 {
+	if g1 == nil {
+		raw, _ := json.Marshal(state)
+		t.Fatalf("группа g1 потерялась после ретрая: %s", raw)
+	}
+	if g1.Interface != "nwg9" {
+		t.Fatalf("правка не применилась: iface=%s", g1.Interface)
+	}
+	if len(g1.Rules) != 1 {
 		t.Fatal("правила группы потерялись при ретрае")
 	}
 }

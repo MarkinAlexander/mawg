@@ -267,6 +267,17 @@ func SetShadowStorage(load func() []Group, save func([]Group)) {
 var lastShadowJSON string
 
 func updateShadowLocked(groups []Group) {
+	// тень не ужимается вслед за деградировавшим рантаймом: частичные
+	// потери (сбой PUT с роллбэком, ReplaceGroups без ремонта) не должны
+	// стирать историю - иначе следующая запись закрепляет потерю, а
+	// авто-бэкапы становятся хуже оригинала. Живой кейс 2026-10-11:
+	// проба ReplaceGroups переписала тень усечённым рантаймом
+	// (31 -> 23 группы). Легитимное удаление пары групп проходит
+	// (порог -3), массовое - остаётся в тени и уважается логикой
+	// fought-групп в repairFromShadow.
+	if len(groups)+3 < len(mtShadow) {
+		return
+	}
 	data, err := json.Marshal(groups)
 	if err != nil {
 		return
