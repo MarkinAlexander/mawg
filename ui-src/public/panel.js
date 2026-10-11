@@ -1562,13 +1562,16 @@ function renderRules() {
     const det = el.querySelector('details');
     det.ontoggle = () => { if (det.open) openMtGroups.add(g.id); else openMtGroups.delete(g.id); };
     const tbody = el.querySelector('.mt-rules');
-    // при поиске внутри совпавшей группы показываем только совпавшие
-    // правила; если запрос совпал с именем группы - группа целиком.
-    // DnD правил при поиске отключён: фильтрованный tbody отправил бы
-    // частичный список id и перемешал порядок
+    // при поиске внутри группы показываем только совпавшие правила -
+    // ВСЕГДА, даже если запрос совпал с именем группы. исключение одно:
+    // запрос поймал имя, но ни одно правило не совпало - тогда группа
+    // целиком (иначе она выглядела бы пустой). DnD правил при поиске
+    // отключён: фильтрованный tbody отправил бы частичный список id
     const nameMatched = q && (g.name || '').toLowerCase().includes(q);
+    const hasRuleMatches = q && (g.rules || []).some(rl => ruleMatches(rl, q));
+    const showAllRules = !q || (nameMatched && !hasRuleMatches);
     for (const rl of (g.rules||[])) {
-      if (q && !nameMatched && !ruleMatches(rl, q)) continue;
+      if (!showAllRules && !ruleMatches(rl, q)) continue;
       const tr = document.createElement('tr');
       tr.dataset.id = rl.id;
       if (!rl.enable) tr.style.opacity = .45;
