@@ -1,0 +1,35 @@
+{
+  "groups": [
+    {
+      "id": "file-1",
+      "name": "зарубежное",
+      "color": "#4a9eff",
+      "interface": "awg0",
+      "enable": true,
+      "rules": [
+        {"id": "f1", "name": "трекер", "type": "domain", "rule": "rutracker.org", "enable": true}
+      ]
+    },
+    {
+      "id": "file-2",
+      "name": "видео",
+      "color": "#ff5555",
+      "interface": "awg0",
+      "enable": true,
+      "rules": [
+        {"id": "f2", "type": "domain", "rule": "youtube.com", "enable": true},
+        {"id": "f3", "type": "domain", "rule": "youtube.com", "enable": true},
+        {"id": "f4", "type": "domain", "rule": "vimeo.com", "enable": false}
+      ]
+    },
+    {
+      "id": "file-3",
+      "name": "мессенджеры",
+      "interface": "warp0",
+      "enable": false,
+      "rules": [
+        {"id": "f5", "type": "ip", "rule": "95.161.76.100", "enable": true}
+      ]
+    }
+  ]
+}

@@ -162,3 +162,127 @@ func (s *Server) mtRestore(w http.ResponseWriter, r *http.Request) {
 		writeErrCode(w, http.StatusBadRequest, fmt.Errorf("неизвестный вид бэкапа"))
 	}
 }
+
+// импорт групп из файла (нативный config.mtrickle, наша тень или бэкап
+// mt-shadow-*.conf с ПК - формат один и тот же): клиент парсит файл,
+// показывает чекбоксы и шлёт выбранные группы; здесь - применение
+func (s *Server) mtImportGroups(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Mode   string              `json:"mode"` // add | replace
+		Groups []magitrickle.Group `json:"groups"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErrCode(w, http.StatusBadRequest, err)
+		return
+	}
+	if req.Mode != "add" && req.Mode != "replace" {
+		writeErrCode(w, http.StatusBadRequest, fmt.Errorf("неизвестный режим импорта %q (add|replace)", req.Mode))
+		return
+	}
+	if len(req.Groups) == 0 {
+		writeErrCode(w, http.StatusBadRequest, fmt.Errorf("в импорте нет групп"))
+		return
+	}
+	// импорт всегда создаёт НОВЫЕ группы: ID из файла выбрасываем (MT
+	// назначает сам, как у каскадов и нативного импорта), пустой цвет -
+	// дефолтный
+	var bad []string
+	for i := range req.Groups {
+		g := &req.Groups[i]
+		g.ID = ""
+		for j := range g.Rules {
+			g.Rules[j].ID = ""
+		}
+		if g.Color == "" {
+			g.Color = "#4a9eff"
+		}
+		if strings.TrimSpace(g.Name) == "" || strings.TrimSpace(g.Interface) == "" {
+			bad = append(bad, fmt.Sprintf("#%d", i+1))
+		}
+	}
+	if len(bad) > 0 {
+		writeErrCode(w, http.StatusBadRequest, fmt.Errorf("в файле группы без имени или интерфейса: %s", strings.Join(bad, ", ")))
+		return
+	}
+
+	if req.Mode == "add" {
+		// добавление: append идёт отдельным атомарным методом (в mutate-
+		// замыкании срез наружу не выходит), самолечение и хуки каскадов -
+		// как у прочих правок панели
+		cur, err := s.mtClient().GroupsWithRules(r.Context())
+		if err != nil {
+			writeErrCode(w, http.StatusBadGateway, err)
+			return
+		}
+		existing := make(map[string]bool, len(cur)+len(s.store.Cascades()))
+		for _, g := range cur {
+			existing[g.Name] = true
+		}
+		// имя живого каскада тоже занято: второй ipset-to-link с тем же
+		// именем ронял iptables-restore всего батча (корень 500-х)
+		for _, c := range s.store.Cascades() {
+			existing[c.Group] = true
+		}
+		var add []magitrickle.Group
+		var skipped []string
+		added, rules := 0, 0
+		for _, g := range req.Groups {
+			if existing[g.Name] {
+				skipped = append(skipped, g.Name)
+				continue
+			}
+			existing[g.Name] = true // и внутри партии дубли имени не плодим
+			add = append(add, g)
+			added++
+			rules += len(g.Rules)
+		}
+		if len(add) > 0 {
+			if c := s.casc(); c != nil {
+				// хуки снимаются по драфт-мутации: чистое добавление
+				// существующие каскадные группы не трогает - снимать нечего
+				c.BeforeMutate(func([]magitrickle.Group) bool { return false })
+				defer c.AfterMutate()
+			}
+			// тот же самолечащийся путь записи, что и у прочих правок
+			if err := s.engine.RetryMTWrite("panel", func() error {
+				return s.mtClient().AddGroups(r.Context(), add)
+			}); err != nil {
+				writeErrCode(w, http.StatusBadGateway, err)
+				return
+			}
+		}
+		note := fmt.Sprintf("импорт групп: добавлено %d (%d правил)", added, rules)
+		if len(skipped) > 0 {
+			note += ", пропущены дубли имени: " + strings.Join(skipped, ", ")
+		}
+		s.store.LogEvent("magitrickle", "import", note)
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "mode": "add", "added": added, "rules": rules, "skipped": skipped})
+		return
+	}
+
+	// replace: полный список выбранными группами - тем же путём, что
+	// рестор shadow-бэкапа (валидация, дедуп и контроль усечения тени
+	// внутри transformGroups)
+	if c := s.casc(); c != nil {
+		c.BeforeReplace(req.Groups)
+		defer c.AfterMutate()
+	}
+	if err := s.engine.RetryMTWrite("import", func() error {
+		return s.mtClient().ReplaceGroups(r.Context(), req.Groups)
+	}); err != nil {
+		writeErrCode(w, http.StatusBadGateway, err)
+		return
+	}
+	// дедуп чистит req.Groups на месте - честное число то, что записалось
+	rules := countRules(req.Groups)
+	s.store.LogEvent("magitrickle", "import", fmt.Sprintf("импорт групп: список заменён (%d групп, %d правил)", len(req.Groups), rules))
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "mode": "replace", "added": len(req.Groups), "rules": rules})
+}
+
+func countRules(groups []magitrickle.Group) int {
+	n := 0
+	for _, g := range groups {
+		n += len(g.Rules)
+	}
+	return n
+}
