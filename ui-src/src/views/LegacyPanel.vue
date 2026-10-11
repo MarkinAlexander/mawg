@@ -64,8 +64,7 @@ onMounted(() => {
     <div class="btnrow" style="align-items:center;margin-top:10px;flex-wrap:wrap">
       <input id="ruleSearch" placeholder="поиск: показываются только группы с совпадениями" style="flex:1;min-width:200px">
       <button id="ruleDupsBtn" title="без поиска - межгрупповые дубликаты, с поиском - все вхождения найденных паттернов">показать совпадения в группах</button>
-      <button id="mtBackupBtn" title="сохранить дисковый конфиг MagiTrickle и shadow-копию в base/backups">бэкап MT+shadow</button>
-      <button id="mtBackupsBtn" title="скачать или восстановить правила из бэкапа">бекапы</button>
+      <button id="mtBackupsBtn" title="бэкап сейчас, список бэкапов (скачать/восстановить), импорт и выгрузка групп файлом">Резервные копии</button>
     </div>
     <div id="mtgroups" style="margin-top:10px"></div>
   </div>
@@ -576,11 +575,54 @@ onMounted(() => {
 
 <dialog id="dlgMTBackups">
   <form method="dialog" style="display:grid;gap:8px;min-width:460px;max-width:680px">
-    <h3 style="margin:0">Бэкапы MT-конфига и shadow</h3>
-    <div class="muted" style="font-size:12px">Копии в base/backups: mt-shadow - правила в нашем формате (восстановление штатной записью с валидацией), mt-config - сырой config.yaml MagiTrickle (восстановление файла + рестарт демона). Перед каждой массовой записью копия делается автоматически, хранятся последние 10.</div>
+    <h3 style="margin:0">Резервные копии правил</h3>
+    <div class="muted" style="font-size:12px">Копии в base/backups: mt-shadow - правила в нашем формате (восстановление штатной записью с валидацией), mt-config - сырой config.yaml MagiTrickle (восстановление файла + рестарт демона). Перед каждой массовой записью копия делается автоматически, хранятся последние 10. Группы можно выгрузить файлом на ПК и импортировать обратно с выбором.</div>
+    <div class="btnrow" style="justify-content:end;margin:0;flex-wrap:wrap">
+      <button type="button" id="mtExportBtn" title="скачать текущие группы файлом (с выбором) - вечная копия на ПК, серверные бэкапы ротируются">выгрузить группы в файл</button>
+      <button type="button" id="mtImportBtn" title="добавить выбранные группы из файла или заменить ими весь список: нативный config.mtrickle, наша тень, бэкап mt-shadow-*.conf">импорт из файла</button>
+      <button type="button" id="mtBackupNowBtn" title="сохранить дисковый конфиг MagiTrickle и shadow-копию в base/backups">создать бэкап сейчас</button>
+    </div>
+    <input type="file" id="mtImportFile" accept=".mtrickle,.json,.conf" hidden>
     <div id="dlgMTBackupsList" style="max-height:50vh;overflow:auto;margin-top:4px"></div>
     <div class="btnrow" style="justify-content:end;margin:0">
       <button class="primary" value="close">Закрыть</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="dlgMTImport">
+  <form method="dialog" style="display:grid;gap:8px;min-width:460px;max-width:680px">
+    <h3 style="margin:0">Импорт групп из файла</h3>
+    <div class="muted" id="mtImportInfo" style="font-size:12px;word-break:break-all"></div>
+    <div class="btnrow" style="margin:0">
+      <button type="button" id="mtImpAll">выбрать все</button>
+      <button type="button" id="mtImpNone">снять все</button>
+    </div>
+    <div id="mtImportList" style="max-height:45vh;overflow:auto"></div>
+    <div class="f" style="display:grid;gap:5px">
+      <label style="display:flex;gap:8px;align-items:center"><input type="radio" name="mtImpMode" value="add" checked> добавить выбранные к существующим</label>
+      <label style="display:flex;gap:8px;align-items:center"><input type="radio" name="mtImpMode" value="replace"> заменить ВСЕ группы на выбранные</label>
+      <div class="muted" id="mtImportReplaceWarn" style="display:none;font-size:11px;color:var(--err)">Текущие группы будут удалены и заменены выбранными из файла. Каскады перестроятся.</div>
+    </div>
+    <div class="btnrow" style="justify-content:end;margin:0">
+      <button type="button" id="mtImpCancel">отмена</button>
+      <button type="button" class="primary" id="mtImpGo" disabled>импортировать</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="dlgMTExport">
+  <form method="dialog" style="display:grid;gap:8px;min-width:460px;max-width:680px">
+    <h3 style="margin:0">Выгрузка групп в файл</h3>
+    <div class="muted" style="font-size:12px">Формат тот же, что у нативного экспорта config.mtrickle и бэкапов shadow: файл на ПК - вечная копия (серверные бэкапы ротируются, последние 10), импортируется здесь же или в нативной панели.</div>
+    <div class="btnrow" style="margin:0">
+      <button type="button" id="mtExpAll">выбрать все</button>
+      <button type="button" id="mtExpNone">снять все</button>
+    </div>
+    <div id="mtExportList" style="max-height:45vh;overflow:auto"></div>
+    <div class="btnrow" style="justify-content:end;margin:0">
+      <button type="button" id="mtExpCancel">отмена</button>
+      <button type="button" class="primary" id="mtExpGo">скачать файл</button>
     </div>
   </form>
 </dialog>

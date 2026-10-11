@@ -1635,11 +1635,6 @@ document.getElementById('ruleSearch').addEventListener('input', e => {
   rulesRenderIfIdle();
 });
 document.getElementById('ruleDupsBtn').onclick = () => showMTDupsDlg();
-document.getElementById('mtBackupBtn').onclick = e => withBusy(e.currentTarget, async () => {
-  await api('POST', '/mt/backup');
-  toast('Бэкап MT-конфига и shadow сохранён в base/backups');
-  await showMTBackupsDlg();
-});
 document.getElementById('mtBackupsBtn').onclick = () => showMTBackupsDlg();
 
 function showMTDupsDlg() {
@@ -1688,7 +1683,7 @@ async function showMTBackupsDlg() {
     return;
   }
   if (!list.length) {
-    box.innerHTML = '<div class="muted">Бэкапов пока нет - сделайте первый кнопкой «бэкап MT+shadow».</div>';
+    box.innerHTML = '<div class="muted">Бэкапов пока нет - сделайте первый кнопкой «создать бэкап сейчас».</div>';
     return;
   }
   box.innerHTML = list.map(b => `
@@ -1715,6 +1710,192 @@ async function showMTBackupsDlg() {
     });
   }
 }
+
+// единая секция резервных копий: список серверных бэкапов выше, тут -
+// бэкап сейчас, импорт групп из файла и выгрузка на ПК
+document.getElementById('mtBackupNowBtn').onclick = e => withBusy(e.currentTarget, async () => {
+  await api('POST', '/mt/backup');
+  toast('Бэкап MT-конфига и shadow сохранён в base/backups');
+  showMTBackupsDlg();
+});
+document.getElementById('mtImportBtn').onclick = () => document.getElementById('mtImportFile').click();
+document.getElementById('mtImportFile').onchange = e => {
+  const f = e.currentTarget.files && e.currentTarget.files[0];
+  e.currentTarget.value = ''; // повторный выбор того же файла тоже открывает модалку
+  if (f) mtImportPick(f);
+};
+
+let MT_IMPORT = null; // разобранный файл импорта: {name, groups, bad}
+async function mtImportPick(file) {
+  if (/^mt-config-/.test(file.name)) {
+    toast('Это сырой MT-конфиг (config.yaml), группы из него не импортируются - восстановите его кнопкой «восстановить» в списке бэкапов', true);
+    return;
+  }
+  let obj;
+  try {
+    obj = JSON.parse(await file.text());
+  } catch (err) {
+    toast('Файл не похож на mtrickle/json: ' + err.message, true);
+    return;
+  }
+  const groups = Array.isArray(obj && obj.groups) ? obj.groups : null;
+  if (!groups || !groups.length) {
+    toast('В файле нет групп - импортировать нечего', true);
+    return;
+  }
+  // пригодные группы: имя и интерфейс; правила с пустым паттерном выкидываем
+  const ok = [];
+  let bad = 0;
+  for (const g of groups) {
+    if (!g || typeof g.name !== 'string' || !g.name.trim() || typeof g.interface !== 'string' || !g.interface.trim()) { bad++; continue; }
+    const rules = Array.isArray(g.rules) ? g.rules.filter(rl => rl && typeof rl.rule === 'string' && rl.rule.trim() && typeof rl.type === 'string' && rl.type.trim()) : [];
+    ok.push({ name: g.name.trim(), color: typeof g.color === 'string' ? g.color : '', interface: g.interface, enable: !!g.enable, rules });
+  }
+  if (!ok.length) {
+    toast('В файле нет групп с именем и интерфейсом', true);
+    return;
+  }
+  // каждый импорт начинается с безопасного режима «добавить»
+  const addRadio = document.querySelector('input[name=mtImpMode][value=add]');
+  if (addRadio) addRadio.checked = true;
+  document.getElementById('mtImportReplaceWarn').style.display = 'none';
+  MT_IMPORT = { name: file.name, groups: ok, bad };
+  mtImportRender();
+  document.getElementById('dlgMTImport').showModal();
+}
+
+function mtImportMode() {
+  const el = document.querySelector('input[name=mtImpMode]:checked');
+  return el ? el.value : 'add';
+}
+
+function mtImportRender() {
+  const imp = MT_IMPORT;
+  if (!imp) return;
+  // в режиме add группы с уже существующим именем будут пропущены:
+  // показываем бейдж и снимаем по умолчанию (второй ipset с тем же
+  // именем ронял iptables-restore всего батча)
+  const names = new Set((MT_GROUPS || []).map(g => g.name));
+  const replace = mtImportMode() === 'replace';
+  const box = document.getElementById('mtImportList');
+  box.innerHTML = imp.groups.map((g, i) => {
+    const dup = !replace && names.has(g.name);
+    return `<label class="btnrow" style="align-items:center;border-bottom:1px solid rgba(128,128,128,.25);padding:5px 0;margin:0">
+      <input type="checkbox" data-i="${i}" ${dup ? '' : 'checked'}>
+      <span style="flex:1;word-break:break-all;font-size:13px"><b>${esc(g.name)}</b> <span class="muted" style="font-size:12px">${esc(ifaceLabel(g.interface))} · правил: ${g.rules.length} · ${g.enable ? 'вкл' : 'выкл'}</span></span>
+      ${dup ? '<span class="badge" style="border-color:var(--warn);color:var(--warn)" title="группа с таким именем уже есть - при добавлении будет пропущена">дубль имени</span>' : ''}
+    </label>`;
+  }).join('');
+  for (const cb of box.querySelectorAll('input[type=checkbox]')) cb.onchange = mtImportUpdateGo;
+  const rules = imp.groups.reduce((n, g) => n + g.rules.length, 0);
+  document.getElementById('mtImportInfo').textContent = `Файл ${imp.name}: групп ${imp.groups.length}, правил ${rules}${imp.bad ? `, непригодных: ${imp.bad}` : ''}`;
+  mtImportUpdateGo();
+}
+
+function mtImportChecked() {
+  return [...document.querySelectorAll('#mtImportList input[type=checkbox]:checked')].map(cb => MT_IMPORT.groups[+cb.dataset.i]);
+}
+
+function mtImportUpdateGo() {
+  document.getElementById('mtImpGo').disabled = mtImportChecked().length === 0;
+}
+
+for (const el of document.querySelectorAll('input[name=mtImpMode]')) {
+  el.onchange = () => {
+    document.getElementById('mtImportReplaceWarn').style.display = mtImportMode() === 'replace' ? '' : 'none';
+    mtImportRender();
+  };
+}
+document.getElementById('mtImpAll').onclick = () => { for (const cb of document.querySelectorAll('#mtImportList input[type=checkbox]')) cb.checked = true; mtImportUpdateGo(); };
+document.getElementById('mtImpNone').onclick = () => { for (const cb of document.querySelectorAll('#mtImportList input[type=checkbox]')) cb.checked = false; mtImportUpdateGo(); };
+document.getElementById('mtImpCancel').onclick = () => document.getElementById('dlgMTImport').close();
+document.getElementById('mtImpGo').onclick = e => withBusy(e.currentTarget, async () => {
+  const chosen = mtImportChecked();
+  if (!chosen.length) return;
+  const mode = mtImportMode();
+  // дубликаты правил внутри группы вычищаем сразу, счётчик - в отчёт
+  let dedup = 0;
+  const groups = chosen.map(g => {
+    const seen = new Set();
+    const rules = [];
+    for (const rl of g.rules) {
+      const key = rl.type + ' ' + rl.rule.trim().toLowerCase();
+      if (seen.has(key)) { dedup++; continue; }
+      seen.add(key);
+      rules.push({ type: rl.type, rule: rl.rule.trim(), enable: !!rl.enable, name: typeof rl.name === 'string' ? rl.name : '' });
+    }
+    return { name: g.name, color: g.color, interface: g.interface, enable: g.enable, rules };
+  });
+  const dlg = document.getElementById('dlgMTImport');
+  dlg.classList.add('busy');
+  try {
+    const r = await api('POST', '/mt/groups/import', { mode, groups });
+    const skipped = r.skipped || [];
+    const clean = dedup ? `, вычищено дубликатов: ${dedup}` : '';
+    let msg;
+    if (mode === 'add') {
+      msg = `Импортировано групп: ${r.added} (правил: ${r.rules}${clean})`;
+      if (skipped.length) msg += `. Пропущены дубли имени: ${skipped.join(', ')}`;
+    } else {
+      msg = `Список заменён: ${r.added} групп (правил: ${r.rules}${clean})`;
+    }
+    toast(msg);
+    dlg.close();
+    document.getElementById('dlgMTBackups').close();
+    lastMtJSON = '';
+    refreshRules(true);
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    dlg.classList.remove('busy');
+  }
+});
+
+// выгрузка текущих групп файлом: вечная копия на ПК в формате нативного
+// экспорта (id оставляем - при импорте они всё равно выбрасываются)
+document.getElementById('mtExportBtn').onclick = () => {
+  if (!(MT_GROUPS || []).length) {
+    toast('Групп нет - выгружать нечего', true);
+    return;
+  }
+  showMTExportDlg();
+};
+function showMTExportDlg() {
+  const box = document.getElementById('mtExportList');
+  box.innerHTML = (MT_GROUPS || []).map((g, i) => `
+    <label class="btnrow" style="align-items:center;border-bottom:1px solid rgba(128,128,128,.25);padding:5px 0;margin:0">
+      <input type="checkbox" data-i="${i}" checked>
+      <span style="flex:1;word-break:break-all;font-size:13px"><b>${esc(g.name)}</b> <span class="muted" style="font-size:12px">${esc(ifaceLabel(g.interface))} · правил: ${(g.rules || []).length} · ${g.enable ? 'вкл' : 'выкл'}</span></span>
+    </label>`).join('');
+  for (const cb of box.querySelectorAll('input[type=checkbox]')) cb.onchange = mtExportUpdateGo;
+  document.getElementById('dlgMTExport').showModal();
+  mtExportUpdateGo();
+}
+function mtExportChecked() {
+  return [...document.querySelectorAll('#mtExportList input[type=checkbox]:checked')].map(cb => (MT_GROUPS || [])[+cb.dataset.i]);
+}
+function mtExportUpdateGo() {
+  document.getElementById('mtExpGo').disabled = mtExportChecked().length === 0;
+}
+document.getElementById('mtExpAll').onclick = () => { for (const cb of document.querySelectorAll('#mtExportList input[type=checkbox]')) cb.checked = true; mtExportUpdateGo(); };
+document.getElementById('mtExpNone').onclick = () => { for (const cb of document.querySelectorAll('#mtExportList input[type=checkbox]')) cb.checked = false; mtExportUpdateGo(); };
+document.getElementById('mtExpCancel').onclick = () => document.getElementById('dlgMTExport').close();
+document.getElementById('mtExpGo').onclick = e => withBusy(e.currentTarget, () => {
+  const chosen = mtExportChecked();
+  if (!chosen.length) return;
+  const d = new Date(), p = n => String(n).padStart(2, '0');
+  const stamp = d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds());
+  const url = URL.createObjectURL(new Blob([JSON.stringify({ groups: chosen }, null, 2)], { type: 'application/json' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'mtrickle-groups-' + stamp + '.mtrickle';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  toast('Выгружено групп: ' + chosen.length);
+  document.getElementById('dlgMTExport').close();
+});
 
 let MT_IFACES = [];
 let lastIfaceOptsJSON = '';
