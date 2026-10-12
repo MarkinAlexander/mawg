@@ -172,6 +172,42 @@ func TestMTSourcesCapability(t *testing.T) {
 	}
 }
 
+// пресет «DNS через туннель»: применение через панель доезжает до MT
+// как группа с subnet-правилами (матч по адресу назначения без DNS)
+func TestMTPresetDNSTunnel(t *testing.T) {
+	ts, mtState, _ := newImportTestServer(t)
+
+	code, raw := httpDo(t, ts.URL, "POST", "/api/v1/mt/presets/dns-tunnel/apply", `{"interface":"awg0","name":"dns-check"}`)
+	if code != 200 {
+		t.Fatalf("apply: %d %s", code, raw)
+	}
+	var out struct {
+		OK    bool   `json:"ok"`
+		Rules int    `json:"rules"`
+		Group string `json:"groupId"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !out.OK || out.Rules != 14 || out.Group == "" {
+		t.Fatalf("отчёт пресета: %+v", out)
+	}
+	mtState.mu.Lock()
+	defer mtState.mu.Unlock()
+	var created *magitrickle.Group
+	for i := range mtState.groups {
+		if mtState.groups[i].Name == "dns-check" {
+			created = &mtState.groups[i]
+		}
+	}
+	if created == nil || len(created.Rules) != 14 {
+		t.Fatalf("группа не дошла до MT: %+v", created)
+	}
+	if created.Rules[0].Type != "subnet" || created.Rules[0].Rule != "8.8.8.8/32" || !created.Rules[0].Enable {
+		t.Fatalf("первое правило: %+v", created.Rules[0])
+	}
+}
+
 // дрейф: роутер сменил адрес (ppp-переподключение) - повторная синхронизация
 // пересобирает эффективный список (в живой системе это 30-секундный цикл)
 func TestMTGroupSourcesDrift(t *testing.T) {

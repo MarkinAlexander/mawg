@@ -163,12 +163,40 @@ func buildPreset(spec presetSpec) Preset {
 	return p
 }
 
+// dnsTunnelPreset - пресет «DNS через туннель»: публичные резолверы
+// (часто жёстко вшиты в телевизорах/приставках) уходят в туннель целиком,
+// DHCP-резолв при этом остаётся как настроен. В отличие от allow-domains
+// список встроен в код (subnet-правила матчатся по адресу назначения без
+// DNS); после создания группа обычная - правила правятся, источники
+// навешиваются политикой «кто ходит в группу».
+var dnsTunnelPreset = Preset{
+	ID:     "dns-tunnel",
+	Title:  "DNS через туннель (публичные резолверы)",
+	Source: "встроенный список",
+	Rules: []Rule{
+		{Type: "subnet", Rule: "8.8.8.8/32", Enable: true},
+		{Type: "subnet", Rule: "8.8.4.4/32", Enable: true},
+		{Type: "subnet", Rule: "1.1.1.1/32", Enable: true},
+		{Type: "subnet", Rule: "1.0.0.1/32", Enable: true},
+		{Type: "subnet", Rule: "9.9.9.9/32", Enable: true},
+		{Type: "subnet", Rule: "149.112.112.112/32", Enable: true},
+		{Type: "subnet", Rule: "208.67.222.222/32", Enable: true},
+		{Type: "subnet", Rule: "208.67.220.220/32", Enable: true},
+		{Type: "subnet6", Rule: "2001:4860:4860::8888/128", Enable: true},
+		{Type: "subnet6", Rule: "2001:4860:4860::8844/128", Enable: true},
+		{Type: "subnet6", Rule: "2606:4700:4700::1111/128", Enable: true},
+		{Type: "subnet6", Rule: "2606:4700:4700::1001/128", Enable: true},
+		{Type: "subnet6", Rule: "2620:fe::fe/128", Enable: true},
+		{Type: "subnet6", Rule: "2620:fe::9/128", Enable: true},
+	},
+}
+
 var Presets = func() []Preset {
-	out := make([]Preset, 0, len(presetSpecs))
+	out := make([]Preset, 0, len(presetSpecs)+1)
 	for _, spec := range presetSpecs {
 		out = append(out, buildPreset(spec))
 	}
-	return out
+	return append(out, dnsTunnelPreset)
 }()
 
 func PresetByID(id string) (Preset, bool) {
