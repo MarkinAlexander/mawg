@@ -27,6 +27,35 @@ jobs:
           go vet ./...
           sh -n install.sh
 
+  # UI (Фаза 0 рерайта): ловит TS/линт/тестовые ошибки до мерджа. Go-сборка
+  # встраивает уже закоммиченные артефакты internal/web/ui/app, этот job -
+  # только проверка, релиз он не кормит.
+  ui:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui-src/package-lock.json
+      - name: Install, lint, test, build
+        working-directory: ui-src
+        run: |
+          npm ci
+          npm run lint
+          npm test
+          npm run build
+      - name: Upload webui artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: webui
+          path: internal/web/ui/app/
+          if-no-files-found: error
+
   build:
     needs: test
     name: linux ${{ matrix.arch }}

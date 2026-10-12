@@ -1,0 +1,9 @@
+#!/bin/sh
+# Фаза 0 рерайта UI (44-дока): типы, линт и тесты перед коммитом, если
+# тронут ui-src. Включается один раз: git config core.hooksPath .githooks
+if git diff --cached --name-only | grep -q '^ui-src/'; then
+  cd ui-src || exit 1
+  npx vue-tsc --noEmit || exit 1
+  npx eslint . || exit 1
+  npx vitest run || exit 1
+fi
