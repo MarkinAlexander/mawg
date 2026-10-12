@@ -26,8 +26,10 @@ type Manager struct {
 	// с созданием каскада 2026-10-11).
 	Retry func(key string, attempt func() error) error
 
-	mu      sync.Mutex
-	wrapper bool // в mangle OUTPUT видны чужие MR_*-цепочки (обёртка юзера)
+	mu       sync.Mutex
+	wrapper  bool     // в mangle OUTPUT видны чужие MR_*-цепочки (обёртка юзера)
+	mutating int      // глубина окна мутации: SyncHooks в нём молчит (см. beginMutate)
+	iptRun   func(args ...string) (string, error) // подменяется в тестах
 }
 
 // retry применяет самолечение, если оно подключено, иначе прямую запись.
@@ -94,6 +96,11 @@ func (m *Manager) syncGroupSources(id string, want []string) error {
 	if !found || !drift {
 		return nil
 	}
+	// sources-правка пересобирает цепочку группы форком, а на группе может
+	// висеть её же роутерный хук - пишем в том же защитном окне, что и все
+	// записи (сняли хуки, проверили, записали, вернули)
+	m.beginMutate()
+	m.reportStuck(m.sweepOutputHooks())
 	err = m.retry("sources", func() error {
 		return m.MT.MutateGroups(context.Background(), func(groups []magitrickle.Group) bool {
 			for i := range groups {
@@ -106,6 +113,7 @@ func (m *Manager) syncGroupSources(id string, want []string) error {
 			return false
 		})
 	})
+	m.endMutate()
 	if err != nil {
 		return err
 	}
@@ -138,6 +146,9 @@ func (m *Manager) chainName(groupID string) string {
 }
 
 func (m *Manager) ipt(args ...string) (string, error) {
+	if m.iptRun != nil {
+		return m.iptRun(args...)
+	}
 	cmd := exec.Command("iptables", args...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
@@ -190,134 +201,129 @@ func (m *Manager) HookRemove(groupID string) error {
 	return err
 }
 
-// BeforeMutate снимает хуки групп, которые запись удалит или выключит:
-// атомарный restore magitrickle роняет батч об удаляемую цепочку.
-func (m *Manager) BeforeMutate(mutate func([]magitrickle.Group) bool) {
-	casc := m.Store.Cascades()
-	routerPolicies := m.routerHookPolicies()
-	if len(casc) == 0 && len(routerPolicies) == 0 {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	groups, err := m.MT.GroupsWithRules(ctx)
-	if err != nil {
-		for _, c := range casc {
-			if err := m.HookRemove(c.Group); err != nil {
-				m.log("cascade", "hook", "не снял хук перед записью: "+err.Error())
-			}
-		}
-		for id := range routerPolicies {
-			if err := m.HookRemove(id); err != nil {
-				m.log("policy", "hook", "не снял роутерный хук перед записью: "+err.Error())
-			}
-		}
-		return
-	}
-	before := map[string]magitrickle.Group{}
-	for _, g := range groups {
-		before[g.ID] = g
-	}
-	draft := make([]magitrickle.Group, len(groups))
-	for i, g := range groups {
-		g.Rules = append([]magitrickle.Rule(nil), g.Rules...)
-		draft[i] = g
-	}
-	mutate(draft)
-	after := map[string]magitrickle.Group{}
-	for _, g := range draft {
-		after[g.ID] = g
-	}
-	for _, c := range casc {
-		was, okBefore := before[c.Group]
-		now, okAfter := after[c.Group]
-		if !okBefore {
-			continue
-		}
-		if !okAfter || (was.Enable && !now.Enable) || was.Interface != now.Interface {
-			if err := m.HookRemove(c.Group); err != nil {
-				m.log("cascade", "hook", "не снял хук перед записью: "+err.Error())
-			}
-		}
-	}
-	m.beforeWriteRouterHooks(routerPolicies, before, after)
+// beginMutate/endMutate - окно мутации. Внутри него SyncHooks (30-секундный
+// тик, ApplyGroupSources) молчит: если тик вернёт хук между снятием и
+// записью, restore MT снова упрётся в CHAIN_DEL busy (кейс awgfree
+// 2026-10-12: параллельные policy/repair-записи и тик сражались за хуки).
+func (m *Manager) beginMutate() {
+	m.mu.Lock()
+	m.mutating++
+	m.mu.Unlock()
 }
 
-// beforeWriteRouterHooks - общая часть BeforeMutate/BeforeReplace: снять
-// роутерные хуки групп, которых после записи не будет или которые
-// выключаются (висячий прыжок из OUTPUT роняет restore батча).
-func (m *Manager) beforeWriteRouterHooks(policies map[string]store.GroupPolicy, before, after map[string]magitrickle.Group) {
-	for id := range policies {
-		was, okBefore := before[id]
-		if !okBefore {
-			continue
-		}
-		now, okAfter := after[id]
-		if !okAfter || (was.Enable && !now.Enable) {
-			if err := m.HookRemove(id); err != nil {
-				m.log("policy", "hook", "не снял роутерный хук перед записью: "+err.Error())
-			}
-		}
+func (m *Manager) endMutate() {
+	m.mu.Lock()
+	if m.mutating > 0 {
+		m.mutating--
 	}
-}
-
-func (m *Manager) AfterMutate() {
+	m.mu.Unlock()
 	m.SyncHooks()
 }
 
-// BeforeReplace - BeforeMutate для записи, заменяющей ВЕСЬ список групп
-// (восстановление из бэкапа): снимает хуки каскадов и роутерных групп,
-// которых в новой редакции нет или которые выключены/переехали по
-// интерфейсу - иначе iptables-restore MT валится на цепочке удаляемой группы.
-func (m *Manager) BeforeReplace(replacement []magitrickle.Group) {
-	casc := m.Store.Cascades()
-	routerPolicies := m.routerHookPolicies()
-	if len(casc) == 0 && len(routerPolicies) == 0 {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	groups, err := m.MT.GroupsWithRules(ctx)
+// outputMTJumps - какие MT_-цепочки сейчас прыгаются из mangle OUTPUT.
+func (m *Manager) outputMTJumps() []string {
+	out, err := m.ipt("-t", "mangle", "-S", "OUTPUT")
 	if err != nil {
-		// состояния рантайма не видим - снимаем всё консервативно
-		for _, c := range casc {
-			if err := m.HookRemove(c.Group); err != nil {
-				m.log("cascade", "hook", "не снял хук перед заменой: "+err.Error())
-			}
-		}
-		for id := range routerPolicies {
-			if err := m.HookRemove(id); err != nil {
-				m.log("policy", "hook", "не снял роутерный хук перед заменой: "+err.Error())
-			}
-		}
-		return
+		return nil
 	}
-	before := map[string]magitrickle.Group{}
-	for _, g := range groups {
-		before[g.ID] = g
-	}
-	after := map[string]magitrickle.Group{}
-	for _, g := range replacement {
-		after[g.ID] = g
-	}
-	for _, c := range casc {
-		was, okBefore := before[c.Group]
-		now, okAfter := after[c.Group]
-		if !okBefore {
+	var refs []string
+	for _, ln := range strings.Split(out, "\n") {
+		ln = strings.TrimSpace(ln)
+		if !strings.HasPrefix(ln, "-A OUTPUT") {
 			continue
 		}
-		if !okAfter || (was.Enable && !now.Enable) || was.Interface != now.Interface {
-			if err := m.HookRemove(c.Group); err != nil {
-				m.log("cascade", "hook", "не снял хук перед заменой: "+err.Error())
+		for _, f := range strings.Fields(ln) {
+			if strings.HasPrefix(f, "MT_") {
+				refs = append(refs, f)
 			}
 		}
 	}
-	m.beforeWriteRouterHooks(routerPolicies, before, after)
+	return refs
+}
+
+// removeHookVerified снимает хук и читает состояние обратно, пока хук
+// реально не уйдёт (грубая верификация: ошибка -D не значит «снят» и не
+// значит «не снят» - факт узнаём свежим чтением OUTPUT).
+func (m *Manager) removeHookVerified(id string) {
+	for attempt := 0; attempt < 3 && m.HookPresent(id); attempt++ {
+		if err := m.HookRemove(id); err != nil {
+			m.log("cascade", "hook", "не снял хук перед записью: "+err.Error())
+		}
+	}
+}
+
+// sweepOutputHooks - предзаписная проверка (слово владельца 2026-10-12:
+// «все проверки перед тем как править что-то связанное с каскадом»).
+// Форк при bulk-PUT пересобирает цепочки не только удаляемых групп, и
+// ЛЮБОЙ висящий прыжок из OUTPUT роняет весь restore-батч: CHAIN_DEL busy
+// -> 500 -> рестарт MT -> рантайм пустеет (кейс awgfree 2026-10-12).
+// Снимаем все свои хуки (каскадные и роутерные) и протухшие MT_-прыжки,
+// потом читаем OUTPUT до нуля. Возврат - что снять не удалось (запись
+// всё равно пойдёт: RetryMTWrite при сбое перезапустит MT, чей старт
+// сносит чужие -j MT_; но теперь это только для реально упрямых).
+func (m *Manager) sweepOutputHooks() []string {
+	for _, c := range m.Store.Cascades() {
+		m.removeHookVerified(c.Group)
+	}
+	for id := range m.routerHookPolicies() {
+		m.removeHookVerified(id)
+	}
+	var stuck []string
+	for attempt := 0; attempt < 3; attempt++ {
+		refs := m.outputMTJumps()
+		if len(refs) == 0 {
+			return nil
+		}
+		stuck = refs
+		for _, chain := range refs {
+			if _, err := m.ipt("-t", "mangle", "-D", "OUTPUT", "-j", chain); err == nil {
+				m.log("cascade", "hook", "OUTPUT-хук снят: "+chain)
+			}
+		}
+	}
+	return stuck
+}
+
+func (m *Manager) reportStuck(stuck []string) {
+	if len(stuck) > 0 {
+		m.log("cascade", "hook", "ПЕРЕД ЗАПИСЬЮ не снялись хуки: "+strings.Join(stuck, ", ")+" - запись может упасть, самолечение перезапустит MT")
+	}
+}
+
+// BeforeMutate снимает ВСЕ наши OUTPUT-хуки перед записью и верифицирует
+// снятие чтением. Предугадывать, какие цепочки форк пересоберёт при
+// bulk-PUT (пресет, правка правил, repair, смена политики), нельзя - кейс
+// 2026-10-12: снимали только «обречённые», а форк пересобрал соседние с
+// живыми хуками. Короткое окно без хуков (каскад/роутер на секунды идут
+// мимо группы) дешевле 500-шторма с рестартом MT; AfterMutate возвращает
+// хуки по SyncHooks.
+func (m *Manager) BeforeMutate(_ func([]magitrickle.Group) bool) {
+	m.beginMutate()
+	m.reportStuck(m.sweepOutputHooks())
+}
+
+// AfterMutate закрывает окно мутации и возвращает хуки по SyncHooks.
+func (m *Manager) AfterMutate() {
+	m.endMutate()
+}
+
+// BeforeReplace - BeforeMutate для записи, заменяющей ВЕСЬ список групп
+// (восстановление из бэкапа, импорт «заменить всё»): там пересобираются
+// вообще все цепочки, так что снимать нужно все хуки без исключений.
+func (m *Manager) BeforeReplace(_ []magitrickle.Group) {
+	m.beginMutate()
+	m.reportStuck(m.sweepOutputHooks())
 }
 
 func (m *Manager) SyncHooks() {
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	inWindow := m.mutating > 0
+	m.mu.Unlock()
+	if inWindow {
+		// окно мутации: хуки поставит AfterMutate по завершении записи,
+		// иначе тик вернёт хук между снятием и записью - CHAIN_DEL busy
+		return
+	}
 	casc := m.Store.Cascades()
 	routerPolicies := m.routerHookPolicies()
 	if len(casc) == 0 && len(routerPolicies) == 0 {
