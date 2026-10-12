@@ -1549,18 +1549,21 @@ function renderRules() {
     };
     const cascBadge = g.cascade ? '<span class="badge" style="border-color:#8a8f98;color:#aab0ba">каскад</span>' : '';
     const blockBadge = g.interface === 'blackhole' ? '<span class="badge" style="border-color:var(--err);color:var(--err)">блокировка</span>' : '';
-    const polBadge = g.policy ? `<span class="badge" style="border-color:#d9a032;color:#d9a032">при отвале: ${POLICY_SHORT[g.policy.onDead] || esc(g.policy.onDead)}</span>` : '';
-    // кто ходит в группу: режим из политики; для групп без политики -
-    // фактические sources (созданы вне mawg или импортом)
+    // «при отвале» - только когда политика реально задана (иначе пустой
+    // чип слипался с чипом источников и читался как «при отвале: локалка + роутер»)
+    const polBadge = g.policy && g.policy.onDead ? `<span class="badge" style="border-color:#d9a032;color:#d9a032">при отвале: ${POLICY_SHORT[g.policy.onDead] || esc(g.policy.onDead)}</span>` : '';
+    // кто ходит в группу: отдельный подписанный чип (зелёный, чтобы не
+    // путался с политикой отвала); для групп без политики - фактические
+    // sources (созданы вне mawg или импортом)
     let srcBadge = '';
     const sm = (g.policy || {}).sourcesMode;
     if (sm === 'all+router') {
-      srcBadge = `<span class="badge" title="в группу ходит вся локалка и сам роутер">локалка + роутер</span>`;
+      srcBadge = `<span class="badge" style="border-color:var(--ok);color:var(--ok)" title="в группу ходит вся локалка и сам роутер">источники: локалка + роутер</span>`;
     } else if (sm === 'list') {
       const rn = g.policy.sourcesRouter ? ' + роутер' : '';
-      srcBadge = `<span class="badge" title="в группу ходит трафик только с этих адресов: ${esc((g.sources || []).join(', '))}">источники: ${(g.policy.sources || []).length}${esc(rn)}</span>`;
+      srcBadge = `<span class="badge" style="border-color:var(--ok);color:var(--ok)" title="в группу ходит трафик только с этих адресов: ${esc((g.sources || []).join(', '))}">источники: IP-список (${(g.policy.sources || []).length})${esc(rn)}</span>`;
     } else if (!sm && (g.sources || []).length) {
-      srcBadge = `<span class="badge" title="в группу ходит трафик только с этих адресов: ${esc(g.sources.join(', '))}">источники: ${g.sources.length}</span>`;
+      srcBadge = `<span class="badge" style="border-color:var(--ok);color:var(--ok)" title="в группу ходит трафик только с этих адресов: ${esc(g.sources.join(', '))}">источники: IP-список (${g.sources.length})</span>`;
     }
     const degTxt = g.degraded ? (DEGRADED_TXT[g.degraded.split(':')[0]] || ('состояние: ' + esc(g.degraded))) : '';
     el.innerHTML = `
