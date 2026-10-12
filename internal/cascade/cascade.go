@@ -38,6 +38,93 @@ func (m *Manager) retry(key string, attempt func() error) error {
 	return m.Retry(key, attempt)
 }
 
+// RouterAddrs - адреса самого роутера для источников групп; переопределяется
+// в тестах (на живом роутере это все не-loopback и не link-local адреса
+// интерфейсов: LAN-адрес, WAN-адрес ppp-туннеля и т.д. - трафик роутера
+// проходит guard группы в OUTPUT-пути по собственным адресам).
+var RouterAddrs = func() []string {
+	ifaces, err := net.InterfaceAddrs()
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, a := range ifaces {
+		ipn, ok := a.(*net.IPNet)
+		if !ok {
+			continue
+		}
+		ip := ipn.IP
+		if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
+			continue
+		}
+		out = append(out, ip.String())
+	}
+	return out
+}
+
+// ApplyGroupSources - применить sources-политику к группе: эффективный
+// список (юзер + адреса роутера) перезаписывается в MagiTrickle при
+// расхождении, OUTPUT-хук приводится по RouterHook.
+func (m *Manager) ApplyGroupSources(id string, p store.GroupPolicy) error {
+	want := p.EffectiveSources(RouterAddrs())
+	if err := m.syncGroupSources(id, want); err != nil {
+		return err
+	}
+	m.SyncHooks()
+	return nil
+}
+
+// syncGroupSources перезаписывает sources группы, если фактический список
+// разошёлся с ожидаемым (смена политики, новый WAN-адрес роутера).
+func (m *Manager) syncGroupSources(id string, want []string) error {
+	groups, err := m.MT.GroupsWithRules(context.Background())
+	if err != nil {
+		return err
+	}
+	drift := false
+	found := false
+	for _, g := range groups {
+		if g.ID != id {
+			continue
+		}
+		found = true
+		drift = !equalStrings(g.Sources, want)
+		break
+	}
+	if !found || !drift {
+		return nil
+	}
+	err = m.retry("sources", func() error {
+		return m.MT.MutateGroups(context.Background(), func(groups []magitrickle.Group) bool {
+			for i := range groups {
+				if groups[i].ID != id {
+					continue
+				}
+				groups[i].Sources = want
+				return true
+			}
+			return false
+		})
+	})
+	if err != nil {
+		return err
+	}
+	m.log("policy", "sources", "источники группы "+id+" обновлены: "+strings.Join(want, ", "))
+	return nil
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func New(st *store.Store, mt *magitrickle.Client) *Manager {
 	return &Manager{Store: st, MT: mt}
 }
@@ -107,7 +194,8 @@ func (m *Manager) HookRemove(groupID string) error {
 // атомарный restore magitrickle роняет батч об удаляемую цепочку.
 func (m *Manager) BeforeMutate(mutate func([]magitrickle.Group) bool) {
 	casc := m.Store.Cascades()
-	if len(casc) == 0 {
+	routerPolicies := m.routerHookPolicies()
+	if len(casc) == 0 && len(routerPolicies) == 0 {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -117,6 +205,11 @@ func (m *Manager) BeforeMutate(mutate func([]magitrickle.Group) bool) {
 		for _, c := range casc {
 			if err := m.HookRemove(c.Group); err != nil {
 				m.log("cascade", "hook", "не снял хук перед записью: "+err.Error())
+			}
+		}
+		for id := range routerPolicies {
+			if err := m.HookRemove(id); err != nil {
+				m.log("policy", "hook", "не снял роутерный хук перед записью: "+err.Error())
 			}
 		}
 		return
@@ -147,6 +240,25 @@ func (m *Manager) BeforeMutate(mutate func([]magitrickle.Group) bool) {
 			}
 		}
 	}
+	m.beforeWriteRouterHooks(routerPolicies, before, after)
+}
+
+// beforeWriteRouterHooks - общая часть BeforeMutate/BeforeReplace: снять
+// роутерные хуки групп, которых после записи не будет или которые
+// выключаются (висячий прыжок из OUTPUT роняет restore батча).
+func (m *Manager) beforeWriteRouterHooks(policies map[string]store.GroupPolicy, before, after map[string]magitrickle.Group) {
+	for id := range policies {
+		was, okBefore := before[id]
+		if !okBefore {
+			continue
+		}
+		now, okAfter := after[id]
+		if !okAfter || (was.Enable && !now.Enable) {
+			if err := m.HookRemove(id); err != nil {
+				m.log("policy", "hook", "не снял роутерный хук перед записью: "+err.Error())
+			}
+		}
+	}
 }
 
 func (m *Manager) AfterMutate() {
@@ -154,12 +266,13 @@ func (m *Manager) AfterMutate() {
 }
 
 // BeforeReplace - BeforeMutate для записи, заменяющей ВЕСЬ список групп
-// (восстановление из бэкапа): снимает хуки каскадов, которых в новой
-// редакции нет или которые выключены/переехали по интерфейсу - иначе
-// iptables-restore MT валится на цепочке удаляемой группы.
+// (восстановление из бэкапа): снимает хуки каскадов и роутерных групп,
+// которых в новой редакции нет или которые выключены/переехали по
+// интерфейсу - иначе iptables-restore MT валится на цепочке удаляемой группы.
 func (m *Manager) BeforeReplace(replacement []magitrickle.Group) {
 	casc := m.Store.Cascades()
-	if len(casc) == 0 {
+	routerPolicies := m.routerHookPolicies()
+	if len(casc) == 0 && len(routerPolicies) == 0 {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -170,6 +283,11 @@ func (m *Manager) BeforeReplace(replacement []magitrickle.Group) {
 		for _, c := range casc {
 			if err := m.HookRemove(c.Group); err != nil {
 				m.log("cascade", "hook", "не снял хук перед заменой: "+err.Error())
+			}
+		}
+		for id := range routerPolicies {
+			if err := m.HookRemove(id); err != nil {
+				m.log("policy", "hook", "не снял роутерный хук перед заменой: "+err.Error())
 			}
 		}
 		return
@@ -194,13 +312,15 @@ func (m *Manager) BeforeReplace(replacement []magitrickle.Group) {
 			}
 		}
 	}
+	m.beforeWriteRouterHooks(routerPolicies, before, after)
 }
 
 func (m *Manager) SyncHooks() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	casc := m.Store.Cascades()
-	if len(casc) == 0 {
+	routerPolicies := m.routerHookPolicies()
+	if len(casc) == 0 && len(routerPolicies) == 0 {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -236,6 +356,41 @@ func (m *Manager) SyncHooks() {
 		}
 		m.syncHookExclusions(c)
 	}
+	// группы с роутером в источниках: тот же хук, что у каскадов, плюс
+	// дрейф эффективных источников - роутер сменил адрес (ppp-переподключение),
+	// список надо пересобрать, иначе роутер перестаёт проходить guard
+	for id, p := range routerPolicies {
+		if !enabled[id] {
+			if err := m.HookRemove(id); err != nil {
+				m.log("policy", "hook", "не снял роутерный хук: "+err.Error())
+			}
+			continue
+		}
+		if wrapper {
+			continue
+		}
+		if err := m.HookAdd(id); err != nil {
+			m.log("policy", "hook", "не поставил роутерный хук: "+err.Error())
+			continue
+		}
+		want := p.EffectiveSources(RouterAddrs())
+		if g, ok := byID[id]; ok && !equalStrings(g.Sources, want) {
+			if err := m.syncGroupSources(id, want); err != nil {
+				m.log("policy", "sources", "не пересобрал источники "+id+": "+err.Error())
+			}
+		}
+	}
+}
+
+// routerHookPolicies - политики групп, которым нужен OUTPUT-хук.
+func (m *Manager) routerHookPolicies() map[string]store.GroupPolicy {
+	out := map[string]store.GroupPolicy{}
+	for id, p := range m.Store.GroupPoliciesAll() {
+		if p.RouterHook() {
+			out[id] = p
+		}
+	}
+	return out
 }
 
 // outputWrapperPresent ищет в mangle OUTPUT ссылки на чужие MR_*-цепочки.

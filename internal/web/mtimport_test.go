@@ -15,13 +15,14 @@ import (
 	"strings"
 	"testing"
 
+	"mawg/internal/cascade"
 	"mawg/internal/magitrickle"
 	"mawg/internal/platform/fake"
 	"mawg/internal/rotator"
 	"mawg/internal/store"
 )
 
-func newImportTestServer(t *testing.T) (*httptest.Server, *restoreMTState) {
+func newImportTestServer(t *testing.T) (*httptest.Server, *restoreMTState, *cascade.Manager) {
 	t.Helper()
 	magitrickle.SetShadowStorage(nil, nil)
 	mtSrv, mtState := restoreMTServer(t)
@@ -34,7 +35,7 @@ func newImportTestServer(t *testing.T) (*httptest.Server, *restoreMTState) {
 	srv := New(st, e, fb, magitrickle.New(mtSrv.URL), "test", nil)
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
-	return ts, mtState
+	return ts, mtState, e.Cascade()
 }
 
 // fixtureGroups читает репозиторную фикстуру нативного формата и заодно
@@ -78,7 +79,7 @@ func importBody(t *testing.T, mode string, groups []magitrickle.Group) string {
 }
 
 func TestMTImportGroupsAdd(t *testing.T) {
-	ts, mtState := newImportTestServer(t)
+	ts, mtState, _ := newImportTestServer(t)
 	// в рантайме уже есть группа с именем из файла - дубль имени
 	mtState.mu.Lock()
 	mtState.groups = []magitrickle.Group{{
@@ -140,7 +141,7 @@ func TestMTImportGroupsAdd(t *testing.T) {
 }
 
 func TestMTImportGroupsReplace(t *testing.T) {
-	ts, mtState := newImportTestServer(t)
+	ts, mtState, _ := newImportTestServer(t)
 	mtState.mu.Lock()
 	mtState.groups = []magitrickle.Group{
 		{ID: "g1", Name: "один"}, {ID: "g2", Name: "два"}, {ID: "g3", Name: "три"},
@@ -180,7 +181,7 @@ func TestMTImportGroupsReplace(t *testing.T) {
 }
 
 func TestMTImportGroupsValidation(t *testing.T) {
-	ts, mtState := newImportTestServer(t)
+	ts, mtState, _ := newImportTestServer(t)
 	cases := []string{
 		`{"mode":"upsert","groups":[{"name":"x","interface":"awg0"}]}`, // плохой mode
 		`{"mode":"add","groups":[]}`,
@@ -206,7 +207,7 @@ func TestMTImportGroupsValidation(t *testing.T) {
 
 // поле sources группы: сквозной прогон через создание и правку
 func TestMTGroupSources(t *testing.T) {
-	ts, _ := newImportTestServer(t)
+	ts, _, _ := newImportTestServer(t)
 
 	// создание с источниками
 	code, raw := httpDo(t, ts.URL, "POST", "/api/v1/mt/groups",

@@ -191,12 +191,62 @@ type PoolState struct {
 // фоллбеке пула). Direct - прямой ход после проверки WAN, Iface -
 // переписать на запасной интерфейс. Блокировка (blackhole) делается
 // выбором интерфейса группы, а не политикой.
+//
+// SourcesMode ограничивает, кто ходит в группу: "" | "all" - вся
+// локальная сеть (как всегда), "all+router" - локалка плюс сам роутер
+// (его трафик выводится в цепочку группы OUTPUT-хуком), "list" - только
+// перечисленные IP/CIDR; SourcesRouter добавляет к списку адреса самого
+// роутера. Трафик роутера идёт через OUTPUT, а не PREROUTING - без хука
+// он в группу не попадает вовсе, потому режим - не поле в списке, а хук.
 type GroupPolicy struct {
 	OnDead string `json:"onDead"`          // "" | "direct" | "iface"
 	Iface  string `json:"iface,omitempty"` // для OnDead == "iface"
+
+	SourcesMode   string   `json:"sourcesMode,omitempty"`   // "" | "all" | "all+router" | "list"
+	Sources       []string `json:"sources,omitempty"`       // список юзера для "list"
+	SourcesRouter bool     `json:"sourcesRouter,omitempty"` // "list": включить адреса роутера
 }
 
 func (p GroupPolicy) Default() bool { return p.OnDead == "" }
+
+// SourcesEmpty - источниковый режим не задан или дефолтный (вся локалка,
+// без роутера): запись политики с таким режимом хранить не нужно.
+func (p GroupPolicy) SourcesEmpty() bool {
+	return p.SourcesMode == "" || p.SourcesMode == "all"
+}
+
+// RouterHook - группе нужен OUTPUT-хук: роутер входит в её источники.
+func (p GroupPolicy) RouterHook() bool {
+	return p.SourcesMode == "all+router" || (p.SourcesMode == "list" && p.SourcesRouter)
+}
+
+// EffectiveSources - список источников для MagiTrickle. Режимы all и
+// all+router guard не ставят (локалка не ограничена); в list адреса
+// роутера дописываются к пользовательскому списку - его трафик проходит
+// guard в OUTPUT-пути по собственным адресам.
+func (p GroupPolicy) EffectiveSources(routerIPs []string) []string {
+	if p.SourcesMode != "list" {
+		return nil
+	}
+	out := make([]string, 0, len(p.Sources)+len(routerIPs))
+	seen := map[string]bool{}
+	for _, s := range p.Sources {
+		s = strings.TrimSpace(s)
+		if s == "" || seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	for _, s := range routerIPs {
+		if s == "" || seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	return out
+}
 
 // CascadeEntry - служебная группа-каскад: адреса эндпоинтов источника
 // направляются через интерфейс Via.

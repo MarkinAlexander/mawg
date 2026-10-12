@@ -283,12 +283,16 @@ func (s *Store) GroupPoliciesAll() map[string]GroupPolicy {
 }
 
 func (s *Store) SetGroupPolicy(id string, p *GroupPolicy) error {
+	if p != nil && p.OnDead != "" && p.OnDead != "direct" && p.OnDead != "iface" {
+		return fmt.Errorf("невалидный режим отвала %q", p.OnDead)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.root.Settings.GroupPolicies == nil {
 		s.root.Settings.GroupPolicies = map[string]GroupPolicy{}
 	}
-	if p == nil || p.OnDead == "" || (p.OnDead != "direct" && p.OnDead != "iface") {
+	// запись живёт, пока задан хоть один из разделов: отвал или источники
+	if p == nil || (p.OnDead == "" && p.SourcesEmpty()) {
 		delete(s.root.Settings.GroupPolicies, id)
 	} else {
 		s.root.Settings.GroupPolicies[id] = *p
