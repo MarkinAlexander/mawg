@@ -1,0 +1,7 @@
+<script setup lang="ts">
+import PlaceholderView from './PlaceholderView.vue'
+</script>
+
+<template>
+  <PlaceholderView title="Группы правил" />
+</template>
