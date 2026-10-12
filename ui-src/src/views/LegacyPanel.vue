@@ -320,6 +320,10 @@ onMounted(() => {
       <pre id="spFreeConf" style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px;font:11px/1.5 ui-monospace,monospace;margin:0;white-space:pre-wrap;word-break:break-all;max-height:220px;overflow:auto"></pre>
       <div class="btnrow" style="margin-top:4px;justify-content:flex-end"><button type="button" id="spFreeConfCopy">Скопировать</button></div>
     </div>
+    <div class="f" id="spFreeReissueRow" style="display:none">
+      <div class="muted" style="font-size:11px;margin-bottom:4px">Amnezia Free: один конфиг на устройство - выдача привязана к идентичности (UUID+ключ), второго конфига для ротации в этом пуле быть не может. «Перевыпустить» = сброс идентичности и новый запрос конфига: сервер может быть другим; пул пересоздаётся с теми же настройками и остаётся выключенным. Если у сервиса сервер один - вернётся тот же.</div>
+      <div class="btnrow" style="justify-content:flex-end"><button type="button" id="spFreeReissue" title="сбросить идентичность устройства и запросить новый конфиг у gateway">Перевыпустить конфиг</button></div>
+    </div>
         <div class="f" id="spPremRow" style="display:none">
       <div style="font-size:13px;margin-bottom:2px">Amnezia Premium: страна</div>
       <div class="btnrow" style="margin:0;align-items:center">

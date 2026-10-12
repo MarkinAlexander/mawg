@@ -136,3 +136,37 @@ func (s *Server) writeFreeErr(w http.ResponseWriter, err error) {
 	}
 	writeErr(w, err)
 }
+
+type freeReissueReq struct {
+	CaptchaID       string `json:"captchaId"`
+	CaptchaSolution string `json:"captchaSolution"`
+}
+
+// reissueFreePool - перевыпуск Amnezia Free: конфиг привязан к устройству
+// и выдаётся один на идентичность, поэтому старая идентичность сбрасывается
+// и gateway просится заново - свежий конфиг может быть от другого сервера.
+// Капча возвращается как задание человеку, повтор - тем же эндпоинтом
+// с решением (пул до успешной выдачи не трогается).
+func (s *Server) reissueFreePool(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	var req freeReissueReq
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		req = freeReissueReq{} // пустое тело = первый запрос без капчи
+	}
+	if (req.CaptchaID == "") != (req.CaptchaSolution == "") {
+		writeErr(w, errors.New("нет решения капчи: введите цифры с картинки"))
+		return
+	}
+	var answer *premium.CaptchaAnswer
+	if req.CaptchaID != "" {
+		answer = &premium.CaptchaAnswer{ID: req.CaptchaID, Solution: req.CaptchaSolution}
+	}
+	pool, err := s.engine.ReissueFreePool(r.Context(), name, answer)
+	if err != nil {
+		s.writeFreeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, sourcePlan{Pool: pool.Name, Added: len(pool.Configs),
+		Warnings: []string{"Amnezia Free перевыпущен: новая идентичность устройства, конфиг может быть от другого сервера. Пул не активирован - включите обычной кнопкой."}})
+}

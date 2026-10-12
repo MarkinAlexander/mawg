@@ -35,6 +35,21 @@ func (s *Store) SaveFree(v FreeInstallation) error {
 	return nil
 }
 
+// ClearFree сбрасывает идентичность Amnezia Free (UUID, ключ, кэш конфига):
+// gateway привязывает выдачу к устройству и даёт один конфиг, так что
+// перевыпуск начинается с чистой идентичности. Пулы не трогаются - их
+// конфиги живут отдельно.
+func (s *Store) ClearFree() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v := FreeInstallation{}
+	if err := s.saveLocked(filepath.Join(s.base, "free.json"), v); err != nil {
+		return errors.New("не удалось сбросить данные Amnezia Free")
+	}
+	s.free = v
+	return nil
+}
+
 func (s *Store) CreateFreePool(name string, settings PoolSettings, cfg wgconf.NamedConfig) (Pool, error) {
 	return s.createPool(name, settings, &cfg)
 }

@@ -81,6 +81,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/pools", s.createPool)
 	mux.HandleFunc("POST /api/v1/pools/amnezia-free", s.createFreePool)
 	mux.HandleFunc("POST /api/v1/pools/amnezia-free/captcha", s.answerFreeCaptcha)
+	mux.HandleFunc("POST /api/v1/pools/{name}/free/reissue", s.reissueFreePool)
 	mux.HandleFunc("POST /api/v1/pools/from-source", s.createPoolFromSource)
 	mux.HandleFunc("POST /api/v1/links/inspect", s.inspectSource)
 	mux.HandleFunc("POST /api/v1/singbox/mode", s.postSingboxMode)
