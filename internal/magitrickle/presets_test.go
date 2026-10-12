@@ -19,7 +19,7 @@ func TestPresetsBuilt(t *testing.T) {
 		if len(p.Rules) == 0 {
 			t.Fatalf("пресет %s пустой", p.ID)
 		}
-		if p.Source != AllowDomainsURL {
+		if p.Source != AllowDomainsURL && p.Source != "встроенный список" {
 			t.Fatalf("пресет %s: source = %q", p.ID, p.Source)
 		}
 		for _, rl := range p.Rules {
@@ -48,8 +48,37 @@ func TestPresetsBuilt(t *testing.T) {
 			}
 		}
 	}
-	if len(Presets) != len(presetSpecs) {
-		t.Fatalf("пресетов %d, ожидалось %d", len(Presets), len(presetSpecs))
+	// allow-domains спеки + встроенный dns-tunnel
+	if len(Presets) != len(presetSpecs)+1 {
+		t.Fatalf("пресетов %d, ожидалось %d", len(Presets), len(presetSpecs)+1)
+	}
+}
+
+func TestDNSTunnelPreset(t *testing.T) {
+	p, ok := PresetByID("dns-tunnel")
+	if !ok {
+		t.Fatal("нет пресета dns-tunnel")
+	}
+	var v4, v6 int
+	hasGoogle := false
+	for _, rl := range p.Rules {
+		switch rl.Type {
+		case "subnet":
+			v4++
+		case "subnet6":
+			v6++
+		default:
+			t.Fatalf("dns-tunnel: неожиданный тип %q у %q", rl.Type, rl.Rule)
+		}
+		if rl.Rule == "8.8.8.8/32" {
+			hasGoogle = true
+		}
+	}
+	if v4 != 8 || v6 != 6 {
+		t.Fatalf("dns-tunnel: v4=%d v6=%d, ожидалось 8+6", v4, v6)
+	}
+	if !hasGoogle {
+		t.Fatal("dns-tunnel: нет 8.8.8.8/32")
 	}
 }
 
