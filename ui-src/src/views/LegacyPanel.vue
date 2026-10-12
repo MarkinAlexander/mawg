@@ -240,9 +240,20 @@ onMounted(() => {
     <label class="f">Интерфейс
       <select id="egIface"></select>
     </label>
-    <label class="f" id="egSourcesWrap">Источники (IP или CIDR, через запятую; пусто - вся сеть)
+    <label class="f" id="egSourcesWrap">Кто ходит в группу
+      <select id="egSrcMode">
+        <option value="all">вся локальная сеть</option>
+        <option value="all+router">локальная сеть + роутер</option>
+        <option value="list">только выбранные IP</option>
+      </select>
+    </label>
+    <label class="f" id="egSourcesListWrap" style="display:none">IP или CIDR, через запятую
       <input id="egSources" placeholder="192.168.1.50, 192.168.2.0/24">
     </label>
+    <label class="f" id="egSourcesRouterWrap" style="display:none;flex-direction:row;align-items:center;gap:8px">
+      <input type="checkbox" id="egSrcRouter"> включая роутер (его адреса добавятся сами)
+    </label>
+    <div class="muted" id="egSourcesHint" style="font-size:11px"></div>
     <label class="f">Если основной интерфейс недоступен
       <select id="egPolicy">
         <option value="">по умолчанию (как у пула)</option>

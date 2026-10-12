@@ -1976,6 +1976,11 @@ func (s *Server) mtDeleteGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	client.RefreshShadow(r.Context())
+	// роутерный OUTPUT-хук и политика - рантайм-след группы, чистим вслед
+	if c := s.casc(); c != nil {
+		_ = c.HookRemove(r.PathValue("id"))
+	}
+	_ = s.store.SetGroupPolicy(r.PathValue("id"), nil)
 	s.store.LogEvent("rules", "magitrickle", "удалена группа "+r.PathValue("id"))
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "deleted"})
 }
@@ -2063,38 +2068,96 @@ func (s *Server) putPolicyCycles(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) mtSetPolicy(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		OnDead string `json:"onDead"`
-		Iface  string `json:"iface"`
+		OnDead        string   `json:"onDead"`
+		Iface         string   `json:"iface"`
+		SourcesMode   string   `json:"sourcesMode"` // "" | all | all+router | list
+		Sources       []string `json:"sources"`
+		SourcesRouter bool     `json:"sourcesRouter"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, err)
 		return
 	}
-	var p *store.GroupPolicy
 	switch req.OnDead {
-	case "":
-		p = nil
-	case store.PolicyDirect:
-		p = &store.GroupPolicy{OnDead: req.OnDead}
-	case store.PolicyIface:
-		if req.Iface == "" {
-			writeErr(w, fmt.Errorf("укажите запасной интерфейс"))
-			return
-		}
-		p = &store.GroupPolicy{OnDead: req.OnDead, Iface: req.Iface}
+	case "", store.PolicyDirect, store.PolicyIface:
 	default:
 		writeErr(w, fmt.Errorf("неизвестный режим %q", req.OnDead))
 		return
 	}
+	switch req.SourcesMode {
+	case "", "all", "all+router", "list":
+	default:
+		writeErr(w, fmt.Errorf("неизвестный режим источников %q", req.SourcesMode))
+		return
+	}
+	var userSources []string
+	if req.SourcesMode == "list" {
+		var err error
+		userSources, err = normalizeSources(req.Sources)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		if len(userSources) == 0 && !req.SourcesRouter {
+			writeErr(w, fmt.Errorf("пустой список: добавьте IP или включите роутер"))
+			return
+		}
+	} else {
+		userSources = nil
+	}
+	pol := store.GroupPolicy{
+		OnDead:        req.OnDead,
+		Iface:         req.Iface,
+		SourcesMode:   req.SourcesMode,
+		Sources:       userSources,
+		SourcesRouter: req.SourcesRouter,
+	}
+	if pol.OnDead == store.PolicyIface && pol.Iface == "" {
+		writeErr(w, fmt.Errorf("укажите запасной интерфейс"))
+		return
+	}
 	id := r.PathValue("id")
-	if err := s.store.SetGroupPolicy(id, p); err != nil {
+	if req.SourcesMode != "" && req.SourcesMode != "all" {
+		if _, isCasc := s.store.CascadeByGroup(id); isCasc {
+			writeErr(w, fmt.Errorf("у каскадной группы источники задаются при создании каскада"))
+			return
+		}
+	}
+	if err := s.store.SetGroupPolicy(id, &pol); err != nil {
 		writeErr(w, err)
 		return
 	}
-	if p == nil {
-		s.store.LogEvent("policy", "set", "группа "+id+": политика сброшена")
-	} else {
-		s.store.LogEvent("policy", "set", "группа "+id+": при отвале - "+p.OnDead)
+	// применяем только если группа ещё жива: сторе можно задать политику
+	// и будущей группе, а писать в MT - только существующей
+	applied := false
+	if groups, err := s.mtClient().GroupsWithRules(r.Context()); err == nil {
+		for _, g := range groups {
+			if g.ID == id {
+				applied = true
+				break
+			}
+		}
+	}
+	if applied {
+		if c := s.casc(); c != nil {
+			if err := c.ApplyGroupSources(id, pol); err != nil {
+				writeErr(w, err)
+				return
+			}
+		}
+	}
+	switch {
+	case pol.SourcesEmpty():
+		s.store.LogEvent("policy", "sources", "группа "+id+": источники - вся локалка")
+	case pol.SourcesMode == "all+router":
+		s.store.LogEvent("policy", "sources", "группа "+id+": локалка + роутер")
+	case pol.SourcesRouter:
+		s.store.LogEvent("policy", "sources", fmt.Sprintf("группа %s: только выбранные IP (%d) + роутер", id, len(userSources)))
+	default:
+		s.store.LogEvent("policy", "sources", fmt.Sprintf("группа %s: только выбранные IP (%d)", id, len(userSources)))
+	}
+	if pol.OnDead != "" {
+		s.store.LogEvent("policy", "set", "группа "+id+": при отвале - "+pol.OnDead)
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "ok"})
 }

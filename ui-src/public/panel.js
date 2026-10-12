@@ -1294,6 +1294,7 @@ function editRule(g, rl, tr) {
 }
 
 let editGroupID = null;
+let editCascadeNow = false;
 const POLICY_HINTS = {
   '': 'При отвале интерфейса группа ведет себя как обычно: на пуле выключится при его фоллбеке.',
   'direct': 'Если основной интерфейс умрет, трафик группы пойдет напрямую (проверив, что есть интернет) и вернется сам.',
@@ -1301,6 +1302,7 @@ const POLICY_HINTS = {
 };
 function editGroupDlg(g) {
   editGroupID = g.id;
+  editCascadeNow = !!g.cascade;
   $('#egName').value = g.name;
   $('#egColor').value = /^#[0-9a-fA-F]{6}$/.test(g.color || '') ? g.color : '#4a9eff';
   const sel = $('#egIface');
@@ -1312,10 +1314,14 @@ function editGroupDlg(g) {
     return `<option value="${esc(d)}"${d === g.interface ? ' selected' : ''}>${esc(d)}${t ? ' - ' + esc(t) : ''}</option>`;
   }).join('');
   sel.disabled = !!g.cascade;
-  // ограничение источников: у каскадной группы адреса добавляются сами
-  const srcInp = $('#egSources');
-  srcInp.value = (g.sources || []).join(', ');
+  // кто ходит в группу: режим из политики (для чужих групп - вывод из
+  // фактических sources); у каскадов источники задаются при создании
+  const pol2 = g.policy || {};
+  $('#egSrcMode').value = pol2.sourcesMode || (g.cascade ? 'all' : ((g.sources || []).length ? 'list' : 'all'));
+  $('#egSources').value = (pol2.sources && pol2.sources.length ? pol2.sources : (g.sources || [])).join(', ');
+  $('#egSrcRouter').checked = !!pol2.sourcesRouter;
   document.getElementById('egSourcesWrap').style.display = g.cascade ? 'none' : '';
+  egSourcesVisibility();
   const pol = g.policy || { onDead: '', iface: '' };
   const pdev = MT_IFACES.map(i => i.device).filter(d => d !== 'blackhole');
   if (pol.iface && !pdev.includes(pol.iface)) pdev.push(pol.iface);
@@ -1335,6 +1341,20 @@ function egPolicyVisibility() {
 }
 document.getElementById('egPolicy').onchange = egPolicyVisibility;
 document.getElementById('egIface').onchange = egPolicyVisibility;
+// видимость полей источников по режиму
+const SRC_MODE_HINTS = {
+  'all': 'Любое устройство локальной сети: группа ловит весь трафик к своим доменам. Роутер в группу не ходит.',
+  'all+router': 'Как «вся локалка», плюс собственный трафик роутера уходит в группу (проверка IP с роутера покажет адрес туннеля).',
+  'list': 'В группу ходят только перечисленные адреса (роутер - по галке). Остальная локалка - напрямую.'
+};
+function egSourcesVisibility() {
+  const mode = $('#egSrcMode').value;
+  const list = mode === 'list';
+  document.getElementById('egSourcesListWrap').style.display = list ? '' : 'none';
+  document.getElementById('egSourcesRouterWrap').style.display = list ? '' : 'none';
+  document.getElementById('egSourcesHint').textContent = SRC_MODE_HINTS[mode] || '';
+}
+document.getElementById('egSrcMode').onchange = egSourcesVisibility;
 
 function mtInterfaces() {
   const ifs = [];
@@ -1530,7 +1550,18 @@ function renderRules() {
     const cascBadge = g.cascade ? '<span class="badge" style="border-color:#8a8f98;color:#aab0ba">каскад</span>' : '';
     const blockBadge = g.interface === 'blackhole' ? '<span class="badge" style="border-color:var(--err);color:var(--err)">блокировка</span>' : '';
     const polBadge = g.policy ? `<span class="badge" style="border-color:#d9a032;color:#d9a032">при отвале: ${POLICY_SHORT[g.policy.onDead] || esc(g.policy.onDead)}</span>` : '';
-    const srcBadge = (g.sources || []).length ? `<span class="badge" title="в группу уходит трафик только с этих адресов: ${esc(g.sources.join(', '))}">источники: ${g.sources.length}</span>` : '';
+    // кто ходит в группу: режим из политики; для групп без политики -
+    // фактические sources (созданы вне mawg или импортом)
+    let srcBadge = '';
+    const sm = (g.policy || {}).sourcesMode;
+    if (sm === 'all+router') {
+      srcBadge = `<span class="badge" title="в группу ходит вся локалка и сам роутер">локалка + роутер</span>`;
+    } else if (sm === 'list') {
+      const rn = g.policy.sourcesRouter ? ' + роутер' : '';
+      srcBadge = `<span class="badge" title="в группу ходит трафик только с этих адресов: ${esc((g.sources || []).join(', '))}">источники: ${(g.policy.sources || []).length}${esc(rn)}</span>`;
+    } else if (!sm && (g.sources || []).length) {
+      srcBadge = `<span class="badge" title="в группу ходит трафик только с этих адресов: ${esc(g.sources.join(', '))}">источники: ${g.sources.length}</span>`;
+    }
     const degTxt = g.degraded ? (DEGRADED_TXT[g.degraded.split(':')[0]] || ('состояние: ' + esc(g.degraded))) : '';
     el.innerHTML = `
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
@@ -2020,13 +2051,19 @@ document.querySelector('#dlgGroup button[value=cancel]').onclick = () => dlgGrou
 $('#egSave').onclick = e => withBusy(e.currentTarget, async () => {
   const name = $('#egName').value.trim();
   if (!name || !editGroupID) return;
-  // источники: IP/CIDR через запятую или с новой строки; сервер валидирует
-  const sources = $('#egSources').value.split(/[,\n]+/).map(s => s.trim()).filter(Boolean);
+  // кто ходит в группу: сервер считает эффективный список (юзер + адреса
+  // роутера) и сам держит OUTPUT-хук для роутерных режимов
+  const srcMode = $('#egSrcMode').value;
+  const srcList = $('#egSources').value.split(/[,\n]+/).map(s => s.trim()).filter(Boolean);
+  const srcRouter = document.getElementById('egSrcRouter').checked;
+  if (!editCascadeNow && srcMode === 'list' && !srcList.length && !srcRouter) {
+    return toast('Пустой список: добавьте IP или включите роутер', true);
+  }
   try {
-    await api('PUT', '/mt/groups/' + editGroupID, { name, color: $('#egColor').value, interface: $('#egIface').value, sources });
+    await api('PUT', '/mt/groups/' + editGroupID, { name, color: $('#egColor').value, interface: $('#egIface').value });
     await api('PUT', '/mt/groups/' + editGroupID + '/policy', $('#egIface').value === 'blackhole'
-      ? { onDead: '' }
-      : { onDead: $('#egPolicy').value, iface: $('#egPolicyIface').value });
+      ? { onDead: '', sourcesMode: editCascadeNow ? '' : srcMode, sources: editCascadeNow ? [] : srcList, sourcesRouter: editCascadeNow ? false : srcRouter }
+      : { onDead: $('#egPolicy').value, iface: $('#egPolicyIface').value, sourcesMode: editCascadeNow ? '' : srcMode, sources: editCascadeNow ? [] : srcList, sourcesRouter: editCascadeNow ? false : srcRouter });
     dlgGroup.close();
     lastMtJSON = ''; refreshRules(true);
   } catch (err) { toast(err.message, true); }
