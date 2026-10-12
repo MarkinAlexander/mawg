@@ -588,6 +588,26 @@ function openCaptcha(cap) {
   if (!dlg.open) dlg.showModal();
   setTimeout(() => inp.focus(), 50);
 }
+
+// Перевыпуск Amnezia Free: конфиг привязан к устройству и выдаётся один
+// на идентичность - сбрасываем её и просим gateway заново (сервер может
+// быть другим). Капча - тот же диалог, что у создания пула.
+let reissuePending = null;
+async function reissueFree(name, answer) {
+  const body = answer ? { captchaId: answer.id, captchaSolution: answer.solution } : {};
+  const r = await api('POST', '/pools/' + encodeURIComponent(name) + '/free/reissue', body);
+  if (r && r.captchaRequired && r.captcha && r.captcha.image) {
+    reissuePending = name;
+    openCaptcha(r.captcha);
+    return null;
+  }
+  return r;
+}
+function reissueDone(plan) {
+  document.getElementById('dlgSettings').close();
+  toast('Amnezia Free перевыпущен - пул пересоздан, включите его кнопкой', !!(plan.warnings || []).length);
+  refresh();
+}
 function freePlanDone(plan) {
   const planBox = $('#pPlanResult');
   planBox.innerHTML = renderSourcePlan(plan);
@@ -600,16 +620,37 @@ function freePlanDone(plan) {
 document.getElementById('capSend').onclick = async e => {
   const v = document.getElementById('capInput').value.trim();
   if (!v) return toast('Введите цифры с картинки', true);
+  const answer = { id: dlgCaptchaId, solution: v };
+  if (reissuePending) {
+    const name = reissuePending;
+    await withBusy(e.currentTarget, async () => {
+      try {
+        const plan = await reissueFree(name, answer);
+        if (plan) { document.getElementById('dlgCaptcha').close(); reissuePending = null; reissueDone(plan); }
+      } catch (err) { toast(err.message, true); }
+    });
+    return;
+  }
   if (!freePending) return;
   await withBusy(e.currentTarget, async () => {
     try {
-      const plan = await requestFreePool(freePending, { id: dlgCaptchaId, solution: v });
+      const plan = await requestFreePool(freePending, answer);
       if (plan) { document.getElementById('dlgCaptcha').close(); freePending = null; freePlanDone(plan); }
     } catch (err) { toast(err.message, true); }
   });
 };
 document.getElementById('capInput').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('capSend').click(); });
 document.getElementById('capRefresh').onclick = async e => {
+  if (reissuePending) {
+    const name = reissuePending;
+    await withBusy(e.currentTarget, async () => {
+      try {
+        const plan = await reissueFree(name, null);
+        if (plan) { document.getElementById('dlgCaptcha').close(); reissuePending = null; reissueDone(plan); }
+      } catch (err) { toast(err.message, true); }
+    });
+    return;
+  }
   if (!freePending) return;
   await withBusy(e.currentTarget, async () => {
     try {
@@ -620,6 +661,7 @@ document.getElementById('capRefresh').onclick = async e => {
 };
 document.getElementById('capCancel').onclick = () => {
   freePending = null;
+  reissuePending = null;
   document.getElementById('dlgCaptcha').close();
   $('#pCancel').disabled = false;
   $('#pCreate').style.display = '';
@@ -868,11 +910,27 @@ function lockFreeProbe(p) {
   $('#spProbe').disabled = isFree;
   $('#spProbeType').disabled = isFree;
   if (note) note.style.display = isFree ? '' : 'none';
+  const re = document.getElementById('spFreeReissueRow');
+  if (re) re.style.display = isFree ? '' : 'none';
   if (isFree) {
     $('#spProbe').value = 'http://1.1.1.1/';
     $('#spProbeType').value = 'http';
   }
 }
+
+$('#spFreeReissue').onclick = async e => {
+  const p = settingsPool;
+  if (!p || !p.free) return;
+  const ok = await askModal('Перевыпустить Amnezia Free?',
+    'Конфиг привязан к устройству и выдаётся один на идентичность. Перевыпуск сбросит идентичность и запросит новый конфиг - он может быть от другого сервера. Пул будет пересоздан с теми же настройками и останется выключенным.');
+  if (!ok) return;
+  await withBusy(e.currentTarget, async () => {
+    try {
+      const plan = await reissueFree(p.name, null);
+      if (plan) reissueDone(plan);
+    } catch (err) { toast(err.message, true); }
+  });
+};
 
 function openSettings(name) {
   const p = STATUS && STATUS.pools.find(x => x.name === name);

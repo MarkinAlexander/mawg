@@ -3,6 +3,7 @@ package rotator
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -44,6 +45,53 @@ func (e *Engine) AnswerFreeCaptcha(ctx context.Context, name string, settings st
 	return e.createFreePool(ctx, name, settings, &answer)
 }
 
+// ensureFreeConfig гарантирует валидную идентичность и кэш конфига Free.
+// Идентичность (UUID + ключ) создаётся один раз и живёт в free.json:
+// gateway привязывает выдачу к устройству и даёт один конфиг; при пустом
+// кэше конфига идём в gateway (капча оттуда уходит вызывающему как есть).
+func (e *Engine) ensureFreeConfig(ctx context.Context, answer *premium.CaptchaAnswer) error {
+	v := e.store.Free()
+	if v.UUID == "" {
+		u, err := premium.UUID()
+		if err != nil {
+			return errors.New("не удалось создать идентичность Amnezia Free")
+		}
+		v.UUID = u
+	}
+	if v.Private == "" {
+		k, _, err := premium.WireGuardKeys()
+		if err != nil {
+			return errors.New("не удалось создать ключ Amnezia Free")
+		}
+		v.Private = k
+	}
+	if err := e.store.SaveFree(v); err != nil {
+		return err
+	}
+	if len(v.Config) == 0 {
+		country, protocol, err := e.PremiumClient.FreeService(ctx, v.UUID)
+		if err != nil {
+			return err
+		}
+		if protocol != "awg" {
+			return errors.New("gateway предлагает неподдерживаемый протокол Amnezia Free - конфиг не запрашивался")
+		}
+		v.UserCountry = country
+		if err := e.store.SaveFree(v); err != nil {
+			return err
+		}
+		v.Config, v.Auth, err = e.PremiumClient.FreeConfig(ctx, v.UUID, country, v.Private, answer)
+		if err != nil {
+			e.saveRejectedFree(err)
+			return err
+		}
+		if err := e.store.SaveFree(v); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (e *Engine) createFreePool(ctx context.Context, name string, settings store.PoolSettings, answer *premium.CaptchaAnswer) (store.Pool, error) {
 	e.actMu.Lock()
 	defer e.actMu.Unlock()
@@ -80,43 +128,10 @@ func (e *Engine) createFreePool(ctx context.Context, name string, settings store
 			return store.Pool{}, errors.New("пул с таким именем уже существует, его конфигурация сохранена")
 		}
 	}
-	v := e.store.Free()
-	if v.UUID == "" {
-		v.UUID, err = premium.UUID()
-		if err != nil {
-			return store.Pool{}, errors.New("не удалось создать идентичность Amnezia Free")
-		}
-	}
-	if v.Private == "" {
-		v.Private, _, err = premium.WireGuardKeys()
-		if err != nil {
-			return store.Pool{}, errors.New("не удалось создать ключ Amnezia Free")
-		}
-	}
-	if err := e.store.SaveFree(v); err != nil {
+	if err := e.ensureFreeConfig(ctx, answer); err != nil {
 		return store.Pool{}, err
 	}
-	if len(v.Config) == 0 {
-		country, protocol, err := e.PremiumClient.FreeService(ctx, v.UUID)
-		if err != nil {
-			return store.Pool{}, err
-		}
-		if protocol != "awg" {
-			return store.Pool{}, errors.New("gateway предлагает неподдерживаемый протокол Amnezia Free - конфиг не запрашивался")
-		}
-		v.UserCountry = country
-		if err := e.store.SaveFree(v); err != nil {
-			return store.Pool{}, err
-		}
-		v.Config, v.Auth, err = e.PremiumClient.FreeConfig(ctx, v.UUID, country, v.Private, answer)
-		if err != nil {
-			e.saveRejectedFree(err)
-			return store.Pool{}, err
-		}
-		if err := e.store.SaveFree(v); err != nil {
-			return store.Pool{}, err
-		}
-	}
+	v := e.store.Free()
 	cfg, err := wgconf.Parse(v.Config)
 	if err != nil || cfg.PrivateKey != v.Private || !cfg.AWG.Present() {
 		return store.Pool{}, errors.New("сохранённый конфиг Amnezia Free повреждён")
@@ -125,4 +140,32 @@ func (e *Engine) createFreePool(ctx context.Context, name string, settings store
 		return store.Pool{}, errors.New("адрес туннеля Amnezia Free уже занят; конфигурация сохранена")
 	}
 	return e.store.CreateFreePool(clean, settings, wgconf.NamedConfig{Raw: v.Config, Config: cfg, OriginalName: "Amnezia Free"})
+}
+
+// ReissueFreePool - перевыпуск Amnezia Free. Идентичность привязана к
+// устройству и даёт ОДИН конфиг, так что новый появляется только с чистой
+// идентичностью - сервер у свежевыданного конфига может быть другим.
+// Свежий конфиг запрашивается ДО удаления старого пула: капча или сбой
+// gateway оставляют пул как был; после успешной выдачи пул пересоздаётся
+// с теми же настройками и остаётся выключенным до ручной активации.
+func (e *Engine) ReissueFreePool(ctx context.Context, name string, answer *premium.CaptchaAnswer) (store.Pool, error) {
+	p, ok := e.store.Pool(name)
+	if !ok {
+		return store.Pool{}, fmt.Errorf("пул %s не найден", name)
+	}
+	if !p.Free {
+		return store.Pool{}, errors.New("перевыпуск - только для пулов Amnezia Free")
+	}
+	settings := p.Settings
+	if err := e.store.ClearFree(); err != nil {
+		return store.Pool{}, err
+	}
+	if err := e.ensureFreeConfig(ctx, answer); err != nil {
+		return store.Pool{}, err
+	}
+	if err := e.DeletePool(name); err != nil {
+		return store.Pool{}, fmt.Errorf("не удалил старый пул: %w", err)
+	}
+	// кэш уже со свежим конфигом - CreateFreePool в gateway не пойдёт
+	return e.CreateFreePool(ctx, name, settings)
 }
