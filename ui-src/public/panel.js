@@ -1207,6 +1207,9 @@ let MT_DUPS = {};
 // юзера поверх MT (MR_* в mangle OUTPUT)
 let MT_GLITCHY = false;
 let MT_WRAPPER = false;
+// MT умеет sources (форк rev3+): по флагу из /mt/groups прячем режимы
+// в редакторе группы; undefined (старый бэкенд) считаем умеющим
+let MT_SOURCES = true;
 // живой поиск по правилам: несовпадения НЕ скрываем, только подсвечиваем
 let ruleSearchQ = '';
 
@@ -1320,7 +1323,12 @@ function editGroupDlg(g) {
   $('#egSrcMode').value = pol2.sourcesMode || (g.cascade ? 'all' : ((g.sources || []).length ? 'list' : 'all'));
   $('#egSources').value = (pol2.sources && pol2.sources.length ? pol2.sources : (g.sources || [])).join(', ');
   $('#egSrcRouter').checked = !!pol2.sourcesRouter;
-  document.getElementById('egSourcesWrap').style.display = g.cascade ? 'none' : '';
+  // старый MT без sources: блок режимов прячем, вместо него - подсказка,
+  // режим принудительно «вся локалка» (иначе сохранение ушлёт невыполнимое)
+  const srcOK = MT_SOURCES !== false;
+  if (!srcOK && !g.cascade) $('#egSrcMode').value = 'all';
+  document.getElementById('egSourcesWrap').style.display = g.cascade || !srcOK ? 'none' : '';
+  document.getElementById('egSourcesUnsupported').style.display = !srcOK ? '' : 'none';
   egSourcesVisibility();
   const pol = g.policy || { onDead: '', iface: '' };
   const pdev = MT_IFACES.map(i => i.device).filter(d => d !== 'blackhole');
@@ -1470,6 +1478,7 @@ async function refreshRules(force) {
     MT_GROUPS = r.groups || [];
     MT_GLITCHY = !!r.glitchy;
     MT_WRAPPER = !!r.wrapper;
+    MT_SOURCES = r.sources !== false;
     updateMTBanners();
     const json = JSON.stringify(MT_GROUPS);
     if (!force && json === lastMtJSON) {
@@ -1494,6 +1503,8 @@ function updateMTBanners() {
   if (g) g.hidden = !MT_GLITCHY;
   const w = document.getElementById('mtWrapperBanner');
   if (w) w.hidden = !MT_WRAPPER;
+  const s = document.getElementById('mtSourcesBanner');
+  if (s) s.hidden = MT_SOURCES;
 }
 
 // поиск: подсветка на экранированном тексте строится из сырой строки -
