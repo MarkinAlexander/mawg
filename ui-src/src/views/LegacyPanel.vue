@@ -240,6 +240,9 @@ onMounted(() => {
     <label class="f">Интерфейс
       <select id="egIface"></select>
     </label>
+    <label class="f" id="egSourcesWrap">Источники (IP или CIDR, через запятую; пусто - вся сеть)
+      <input id="egSources" placeholder="192.168.1.50, 192.168.2.0/24">
+    </label>
     <label class="f">Если основной интерфейс недоступен
       <select id="egPolicy">
         <option value="">по умолчанию (как у пула)</option>

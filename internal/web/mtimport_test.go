@@ -203,3 +203,107 @@ func TestMTImportGroupsValidation(t *testing.T) {
 		t.Fatalf("рантайм изменился при отказе: %s", raw)
 	}
 }
+
+// поле sources группы: сквозной прогон через создание и правку
+func TestMTGroupSources(t *testing.T) {
+	ts, _ := newImportTestServer(t)
+
+	// создание с источниками
+	code, raw := httpDo(t, ts.URL, "POST", "/api/v1/mt/groups",
+		`{"name":"srct","interface":"awg0","sources":["192.168.1.50","10.0.0.0/24"]}`)
+	if code != 200 {
+		t.Fatalf("create: status %d, body %s", code, raw)
+	}
+	var created magitrickle.Group
+	if err := json.Unmarshal(raw, &created); err != nil {
+		t.Fatal(err)
+	}
+	if len(created.Sources) != 2 || created.Sources[0] != "192.168.1.50" {
+		t.Fatalf("created sources: %v", created.Sources)
+	}
+
+	// правка источников
+	code, raw = httpDo(t, ts.URL, "PUT", "/api/v1/mt/groups/"+created.ID, `{"sources":["10.9.9.9"]}`)
+	if code != 200 {
+		t.Fatalf("update: status %d, body %s", code, raw)
+	}
+	var got []string
+	for _, g := range getGroups(t, ts.URL) {
+		if g.ID == created.ID {
+			got = g.Sources
+		}
+	}
+	if len(got) != 1 || got[0] != "10.9.9.9" {
+		t.Fatalf("sources after update: %v", got)
+	}
+
+	// кривой источник -> 400, список не меняется
+	code, _ = httpDo(t, ts.URL, "PUT", "/api/v1/mt/groups/"+created.ID, `{"sources":["junk"]}`)
+	if code != 400 {
+		t.Fatalf("bad source: status %d, want 400", code)
+	}
+
+	// без поля sources список не трогается
+	code, _ = httpDo(t, ts.URL, "PUT", "/api/v1/mt/groups/"+created.ID, `{"name":"srct2"}`)
+	if code != 200 {
+		t.Fatalf("rename: status %d", code)
+	}
+	for _, g := range getGroups(t, ts.URL) {
+		if g.ID == created.ID && (len(g.Sources) != 1 || g.Sources[0] != "10.9.9.9") {
+			t.Fatalf("sources clobbered by unrelated PUT: %v", g.Sources)
+		}
+	}
+
+	// пустой массив чистит список
+	code, _ = httpDo(t, ts.URL, "PUT", "/api/v1/mt/groups/"+created.ID, `{"sources":[]}`)
+	if code != 200 {
+		t.Fatalf("clear: status %d", code)
+	}
+	for _, g := range getGroups(t, ts.URL) {
+		if g.ID == created.ID && len(g.Sources) != 0 {
+			t.Fatalf("sources not cleared: %v", g.Sources)
+		}
+	}
+}
+
+// getGroups - свежий список групп из панели (каждый раз с нулевым
+// декодером: json.Unmarshal не сбрасывает отсутствующие в JSON поля)
+func getGroups(t *testing.T, base string) []magitrickle.Group {
+	t.Helper()
+	code, raw := httpDo(t, base, "GET", "/api/v1/mt/groups", "")
+	if code != 200 {
+		t.Fatalf("get groups: status %d, body %s", code, raw)
+	}
+	var list struct {
+		Groups []magitrickle.Group `json:"groups"`
+	}
+	if err := json.Unmarshal(raw, &list); err != nil {
+		t.Fatal(err)
+	}
+	return list.Groups
+}
+
+func httpDo(t *testing.T, base, method, path, body string) (int, []byte) {
+	t.Helper()
+	var req *http.Request
+	var err error
+	if body != "" {
+		req, err = http.NewRequest(method, base+path, strings.NewReader(body))
+	} else {
+		req, err = http.NewRequest(method, base+path, nil)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp.StatusCode, raw
+}

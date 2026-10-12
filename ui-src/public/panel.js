@@ -1312,6 +1312,10 @@ function editGroupDlg(g) {
     return `<option value="${esc(d)}"${d === g.interface ? ' selected' : ''}>${esc(d)}${t ? ' - ' + esc(t) : ''}</option>`;
   }).join('');
   sel.disabled = !!g.cascade;
+  // ограничение источников: у каскадной группы адреса добавляются сами
+  const srcInp = $('#egSources');
+  srcInp.value = (g.sources || []).join(', ');
+  document.getElementById('egSourcesWrap').style.display = g.cascade ? 'none' : '';
   const pol = g.policy || { onDead: '', iface: '' };
   const pdev = MT_IFACES.map(i => i.device).filter(d => d !== 'blackhole');
   if (pol.iface && !pdev.includes(pol.iface)) pdev.push(pol.iface);
@@ -1526,12 +1530,13 @@ function renderRules() {
     const cascBadge = g.cascade ? '<span class="badge" style="border-color:#8a8f98;color:#aab0ba">каскад</span>' : '';
     const blockBadge = g.interface === 'blackhole' ? '<span class="badge" style="border-color:var(--err);color:var(--err)">блокировка</span>' : '';
     const polBadge = g.policy ? `<span class="badge" style="border-color:#d9a032;color:#d9a032">при отвале: ${POLICY_SHORT[g.policy.onDead] || esc(g.policy.onDead)}</span>` : '';
+    const srcBadge = (g.sources || []).length ? `<span class="badge" title="в группу уходит трафик только с этих адресов: ${esc(g.sources.join(', '))}">источники: ${g.sources.length}</span>` : '';
     const degTxt = g.degraded ? (DEGRADED_TXT[g.degraded.split(':')[0]] || ('состояние: ' + esc(g.degraded))) : '';
     el.innerHTML = `
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
         <span class="grip" title="перетащите, чтобы изменить порядок">${GRIP_SVG}</span>
         <span class="gcolor" style="background:${esc(g.color || '#4a9eff')}"></span>
-        <b>${hlText(g.name, q)}</b>${groupWarnSvg(g)}${cascBadge}${blockBadge}${polBadge}
+        <b>${hlText(g.name, q)}</b>${groupWarnSvg(g)}${cascBadge}${blockBadge}${polBadge}${srcBadge}
         <span class="iface-badge"><span class="badge">${esc(g.interface)}</span>${g.interfaceTitle ? `<span class="iface-title">${esc(g.interfaceTitle)}</span>` : ''}</span>
         <span class="muted" style="font-size:12px">правил: ${(g.rules||[]).length}${q ? ` · <span style="color:var(--ok)">совпадений: ${groupMatchCount(g, q)}</span>` : ''}</span>
         <span style="flex:1"></span>
@@ -2015,8 +2020,10 @@ document.querySelector('#dlgGroup button[value=cancel]').onclick = () => dlgGrou
 $('#egSave').onclick = e => withBusy(e.currentTarget, async () => {
   const name = $('#egName').value.trim();
   if (!name || !editGroupID) return;
+  // источники: IP/CIDR через запятую или с новой строки; сервер валидирует
+  const sources = $('#egSources').value.split(/[,\n]+/).map(s => s.trim()).filter(Boolean);
   try {
-    await api('PUT', '/mt/groups/' + editGroupID, { name, color: $('#egColor').value, interface: $('#egIface').value });
+    await api('PUT', '/mt/groups/' + editGroupID, { name, color: $('#egColor').value, interface: $('#egIface').value, sources });
     await api('PUT', '/mt/groups/' + editGroupID + '/policy', $('#egIface').value === 'blackhole'
       ? { onDead: '' }
       : { onDead: $('#egPolicy').value, iface: $('#egPolicyIface').value });
