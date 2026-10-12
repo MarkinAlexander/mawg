@@ -250,9 +250,12 @@ onMounted(() => {
     <label class="f" id="egSourcesListWrap" style="display:none">IP или CIDR, через запятую
       <input id="egSources" placeholder="192.168.1.50, 192.168.2.0/24">
     </label>
-    <label class="f" id="egSourcesRouterWrap" style="display:none;flex-direction:row;align-items:center;gap:8px">
-      <input type="checkbox" id="egSrcRouter"> включая роутер (его адреса добавятся сами)
-    </label>
+    <div class="f" id="egSourcesRouterWrap" style="display:none;align-items:center;justify-content:space-between;gap:12px">
+      <span style="flex:1">Включая роутер
+        <span class="muted" style="display:block;font-size:11px">его адреса добавятся в источники сами</span>
+      </span>
+      <label class="switch" title="включая роутер"><input type="checkbox" id="egSrcRouter"><span class="knob"></span></label>
+    </div>
     <div class="muted" id="egSourcesHint" style="font-size:11px"></div>
     <label class="f">Если основной интерфейс недоступен
       <select id="egPolicy">
