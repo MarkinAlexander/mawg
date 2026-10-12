@@ -1351,7 +1351,8 @@ function egSourcesVisibility() {
   const mode = $('#egSrcMode').value;
   const list = mode === 'list';
   document.getElementById('egSourcesListWrap').style.display = list ? '' : 'none';
-  document.getElementById('egSourcesRouterWrap').style.display = list ? '' : 'none';
+  // flex явно: div.f без класса стилей - block, тумблер уедет под текст
+  document.getElementById('egSourcesRouterWrap').style.display = list ? 'flex' : 'none';
   document.getElementById('egSourcesHint').textContent = SRC_MODE_HINTS[mode] || '';
 }
 document.getElementById('egSrcMode').onchange = egSourcesVisibility;
