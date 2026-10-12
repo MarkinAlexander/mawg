@@ -118,6 +118,60 @@ func TestMTGroupSourcesPolicies(t *testing.T) {
 	}
 }
 
+// capability-детект sources: форк с /api/v1/version - флаг в payload и
+// режимы принимаются; старый бинарь (404, в синтетике config.yaml нет -
+// фолбэк тоже мимо) - флаг false, режимы отвергаются, «all» работает
+func TestMTSourcesCapability(t *testing.T) {
+	withRouterAddrs(t, []string{"192.168.0.62"})
+	ts, mtState, _ := newImportTestServer(t)
+
+	sourcesFlag := func() bool {
+		t.Helper()
+		code, raw := httpDo(t, ts.URL, "GET", "/api/v1/mt/groups", "")
+		if code != 200 {
+			t.Fatalf("groups: %d", code)
+		}
+		var out struct {
+			Sources bool `json:"sources"`
+		}
+		if err := json.Unmarshal(raw, &out); err != nil {
+			t.Fatal(err)
+		}
+		return out.Sources
+	}
+
+	if !sourcesFlag() {
+		t.Fatal("capable MT must report sources:true")
+	}
+	code, raw := httpDo(t, ts.URL, "POST", "/api/v1/mt/groups", `{"name":"cap","interface":"awg0"}`)
+	if code != 200 {
+		t.Fatalf("create: %d %s", code, raw)
+	}
+	var created magitrickle.Group
+	json.Unmarshal(raw, &created)
+	code, _ = httpDo(t, ts.URL, "PUT", "/api/v1/mt/groups/"+created.ID+"/policy",
+		`{"sourcesMode":"list","sources":["10.0.0.5"],"sourcesRouter":true}`)
+	if code != 200 {
+		t.Fatalf("policy on capable MT: %d", code)
+	}
+
+	mtState.mu.Lock()
+	mtState.mtVersion = ""
+	mtState.mu.Unlock()
+	if sourcesFlag() {
+		t.Fatal("old MT must report sources:false")
+	}
+	code, raw = httpDo(t, ts.URL, "PUT", "/api/v1/mt/groups/"+created.ID+"/policy",
+		`{"sourcesMode":"list","sources":["10.0.0.5"],"sourcesRouter":true}`)
+	if code != 400 {
+		t.Fatalf("policy on old MT must be 400: %d %s", code, raw)
+	}
+	code, _ = httpDo(t, ts.URL, "PUT", "/api/v1/mt/groups/"+created.ID+"/policy", `{"sourcesMode":"all"}`)
+	if code != 200 {
+		t.Fatalf("«all» on old MT must work: %d", code)
+	}
+}
+
 // дрейф: роутер сменил адрес (ppp-переподключение) - повторная синхронизация
 // пересобирает эффективный список (в живой системе это 30-секундный цикл)
 func TestMTGroupSourcesDrift(t *testing.T) {

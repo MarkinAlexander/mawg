@@ -61,6 +61,7 @@ onMounted(() => {
     <div class="muted" style="font-size:11px;margin-top:4px">Цикл проверки - каждые 30 секунд. Меньше 2 не рекомендуется: «переключать после 1» уводит группы на запасной интерфейс из-за одной потерянной пробы (разовый таймаут или скачок пинга - ложное срабатывание), «возвращать после 1» дёргает группы обратно при первом же удачном прогоне - флапающий канал будет переключать их каждые 30-60 секунд и рвать соединения. Значения 2/2 - разумный компромисс: реакция на отвала ~1-1.5 минуты, возврат только после устойчивого восстановления.</div>
     <div id="mtGlitchyBanner" class="sub" hidden style="color:var(--err);margin-top:6px">Обнаружена глючная сборка MagiTrickle: массовые записи усекают группы. Поставьте наш форк с фиксами - <a href="https://gitlab.com/magitrickle/magitrickle/-/merge_requests/222" target="_blank" rel="noopener">MR !222</a>.</div>
     <div id="mtWrapperBanner" class="sub" hidden style="color:#d9a032;margin-top:6px">В mangle OUTPUT видна обёртка юзера (MR_*): она выводит группы в OUTPUT сама, каскадные хуки mawg не ставятся, чтобы не дублировать обработку.</div>
+    <div id="mtSourcesBanner" class="sub" hidden style="color:#d9a032;margin-top:6px">Подключённый MagiTrickle не поддерживает источники групп: режимы «кто ходит в группу» спрятаны. Поставьте форк 0.8.2-rev3 или новее.</div>
     <div class="btnrow" style="align-items:center;margin-top:10px;flex-wrap:wrap">
       <input id="ruleSearch" placeholder="поиск: показываются только группы с совпадениями" style="flex:1;min-width:200px">
       <button id="ruleDupsBtn" title="без поиска - межгрупповые дубликаты, с поиском - все вхождения найденных паттернов">показать совпадения в группах</button>
@@ -240,6 +241,7 @@ onMounted(() => {
     <label class="f">Интерфейс
       <select id="egIface"></select>
     </label>
+    <div class="muted" id="egSourcesUnsupported" style="display:none;font-size:11px">Подключённый MagiTrickle не поддерживает источники (нужен форк 0.8.2-rev3+). Обновите его - режимы появятся здесь.</div>
     <label class="f" id="egSourcesWrap">Кто ходит в группу
       <select id="egSrcMode">
         <option value="all">вся локальная сеть</option>

@@ -22,17 +22,26 @@ type restoreMTState struct {
 	mu     sync.Mutex
 	groups []magitrickle.Group
 	n      int // счётчик ID для групп без ID - как настоящий MT
+	// mtVersion имитирует /api/v1/version форка (rev5+); пусто = старый
+	// бинарь без эндпоинта (404) - тестирует configVersion-фолбэк
+	mtVersion string
 }
 
 func restoreMTServer(t *testing.T) (*httptest.Server, *restoreMTState) {
 	t.Helper()
 	st := &restoreMTState{groups: []magitrickle.Group{
 		{ID: "old1", Name: "старая", Enable: true},
-	}}
+	}, mtVersion: "0.8.2-rev4-mawgfix2"}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		st.mu.Lock()
 		defer st.mu.Unlock()
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/version":
+			if st.mtVersion == "" {
+				w.WriteHeader(404)
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]string{"version": st.mtVersion})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/groups":
 			json.NewEncoder(w).Encode(map[string]any{"groups": st.groups})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/groups":

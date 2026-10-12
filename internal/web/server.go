@@ -450,11 +450,14 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 		// amneziawg 3.x, Keenetic 5.2+): только там нативный Premium.
 		// Панели по флагу прячут блок «Amnezia Premium vpn://» в карточке
 		// пула - на Keenetic до 5.2 слот AWG 2.0 HP-ключ не применит.
-		NativeAWG3 bool           `json:"nativeAWG3"`
-		Pools      []poolView     `json:"pools"`
-		Engine     map[string]any `json:"engine,omitempty"`
+		NativeAWG3 bool `json:"nativeAWG3"`
+		// MtSources - подключённый MT понимает поле sources (форк rev3+).
+		// Детект и гейтинг - см. mtversion.go.
+		MtSources bool           `json:"mtSources"`
+		Pools     []poolView     `json:"pools"`
+		Engine    map[string]any `json:"engine,omitempty"`
 	}{Version: s.version, Platform: s.backend.Name(), BackendName: s.backend.Name(),
-		AuthEnabled: s.auth == nil || s.auth.Enabled, NativeAWG3: s.nativeAWG3(), Pools: []poolView{}}
+		AuthEnabled: s.auth == nil || s.auth.Enabled, NativeAWG3: s.nativeAWG3(), MtSources: s.mtSourcesCapable(r.Context()), Pools: []poolView{}}
 
 	for _, p := range pools {
 		st := s.store.State(p.Name)
@@ -1644,7 +1647,8 @@ func (s *Server) mtGetGroups(w http.ResponseWriter, r *http.Request) {
 	if c := s.casc(); c != nil {
 		wrapper = c.WrapperDetected()
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"available": true, "groups": out, "glitchy": s.store.MTGlitchy(), "wrapper": wrapper})
+	writeJSON(w, http.StatusOK, map[string]any{"available": true, "groups": out, "glitchy": s.store.MTGlitchy(), "wrapper": wrapper,
+		"sources": s.mtSourcesCapable(r.Context())})
 }
 
 func (s *Server) mtGetInterfaces(w http.ResponseWriter, r *http.Request) {
@@ -2120,6 +2124,12 @@ func (s *Server) mtSetPolicy(w http.ResponseWriter, r *http.Request) {
 	if req.SourcesMode != "" && req.SourcesMode != "all" {
 		if _, isCasc := s.store.CascadeByGroup(id); isCasc {
 			writeErr(w, fmt.Errorf("у каскадной группы источники задаются при создании каскада"))
+			return
+		}
+	}
+	if req.SourcesMode == "all+router" || req.SourcesMode == "list" {
+		if !s.mtSourcesCapable(r.Context()) {
+			writeErr(w, fmt.Errorf("подключённый MagiTrickle не умеет источники (нужен форк 0.8.2-rev3+)"))
 			return
 		}
 	}
