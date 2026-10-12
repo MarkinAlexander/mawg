@@ -442,17 +442,17 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 		Free           bool               `json:"free,omitempty"`
 	}
 	out := struct {
-		Version     string         `json:"version"`
-		Platform    string         `json:"platform"`
-		BackendName string         `json:"backendName"`
-		AuthEnabled bool           `json:"authEnabled"`
+		Version     string `json:"version"`
+		Platform    string `json:"platform"`
+		BackendName string `json:"backendName"`
+		AuthEnabled bool   `json:"authEnabled"`
 		// NativeAWG3 - роутер поднимает AWG 3.x нативно (OpenWrt c kmod
 		// amneziawg 3.x, Keenetic 5.2+): только там нативный Premium.
 		// Панели по флагу прячут блок «Amnezia Premium vpn://» в карточке
 		// пула - на Keenetic до 5.2 слот AWG 2.0 HP-ключ не применит.
-		NativeAWG3  bool           `json:"nativeAWG3"`
-		Pools       []poolView     `json:"pools"`
-		Engine      map[string]any `json:"engine,omitempty"`
+		NativeAWG3 bool           `json:"nativeAWG3"`
+		Pools      []poolView     `json:"pools"`
+		Engine     map[string]any `json:"engine,omitempty"`
 	}{Version: s.version, Platform: s.backend.Name(), BackendName: s.backend.Name(),
 		AuthEnabled: s.auth == nil || s.auth.Enabled, NativeAWG3: s.nativeAWG3(), Pools: []poolView{}}
 
@@ -1680,14 +1680,40 @@ func (s *Server) mtGetPresets(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// normalizeSources чистит список источников группы (IP/CIDR): пробелы,
+// пустые записи; кривое значение - ошибка с понятным текстом
+func normalizeSources(srcs []string) ([]string, error) {
+	out := make([]string, 0, len(srcs))
+	for _, src := range srcs {
+		src = strings.TrimSpace(src)
+		if src == "" {
+			continue
+		}
+		if _, _, err := net.ParseCIDR(src); err != nil && net.ParseIP(src) == nil {
+			return nil, fmt.Errorf("источник не похож на IP или CIDR: %s", src)
+		}
+		out = append(out, src)
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
+}
+
 func (s *Server) mtCreateGroup(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name      string `json:"name"`
-		Interface string `json:"interface"`
-		Color     string `json:"color"`
+		Name      string   `json:"name"`
+		Interface string   `json:"interface"`
+		Color     string   `json:"color"`
+		Sources   []string `json:"sources"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" || req.Interface == "" {
 		writeErr(w, fmt.Errorf("нужны name и interface"))
+		return
+	}
+	sources, err := normalizeSources(req.Sources)
+	if err != nil {
+		writeErr(w, err)
 		return
 	}
 	color := req.Color
@@ -1700,7 +1726,7 @@ func (s *Server) mtCreateGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	g, err := client.CreateGroup(r.Context(), magitrickle.Group{
-		Name: req.Name, Interface: req.Interface, Color: color, Enable: true,
+		Name: req.Name, Interface: req.Interface, Color: color, Enable: true, Sources: sources,
 	})
 	if err != nil {
 		writeErr(w, err)
@@ -1727,13 +1753,23 @@ func (s *Server) mtApplyGroups(ctx context.Context, mutate func(groups []magitri
 
 func (s *Server) mtUpdateGroup(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name      string `json:"name"`
-		Color     string `json:"color"`
-		Interface string `json:"interface"`
+		Name      string    `json:"name"`
+		Color     string    `json:"color"`
+		Interface string    `json:"interface"`
+		Sources   *[]string `json:"sources"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, err)
 		return
+	}
+	var sources []string
+	if req.Sources != nil {
+		norm, err := normalizeSources(*req.Sources)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		sources = norm
 	}
 	id := r.PathValue("id")
 	if req.Interface != "" {
@@ -1757,6 +1793,9 @@ func (s *Server) mtUpdateGroup(w http.ResponseWriter, r *http.Request) {
 			}
 			if req.Interface != "" {
 				g.Interface = req.Interface
+			}
+			if req.Sources != nil {
+				g.Sources = sources
 			}
 			found = true
 			return true

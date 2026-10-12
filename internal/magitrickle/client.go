@@ -24,12 +24,13 @@ type Rule struct {
 }
 
 type Group struct {
-	ID        string `json:"id,omitempty"`
-	Name      string `json:"name"`
-	Color     string `json:"color,omitempty"`
-	Interface string `json:"interface"`
-	Enable    bool   `json:"enable"`
-	Rules     []Rule `json:"rules,omitempty"`
+	ID        string   `json:"id,omitempty"`
+	Name      string   `json:"name"`
+	Color     string   `json:"color,omitempty"`
+	Interface string   `json:"interface"`
+	Enable    bool     `json:"enable"`
+	Sources   []string `json:"sources,omitempty"`
+	Rules     []Rule   `json:"rules,omitempty"`
 }
 
 type Client struct {

@@ -35,6 +35,18 @@ func restoreMTServer(t *testing.T) (*httptest.Server, *restoreMTState) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/groups":
 			json.NewEncoder(w).Encode(map[string]any{"groups": st.groups})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/groups":
+			var req magitrickle.Group
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				w.WriteHeader(400)
+				return
+			}
+			if req.ID == "" {
+				st.n++
+				req.ID = fmt.Sprintf("mig%d", st.n)
+			}
+			st.groups = append(st.groups, req)
+			json.NewEncoder(w).Encode(req)
 		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/groups":
 			var req struct {
 				Groups []magitrickle.Group `json:"groups"`
