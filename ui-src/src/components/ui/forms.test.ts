@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { h } from 'vue'
 import { mount } from '@vue/test-utils'
+import UiCheckbox from './UiCheckbox.vue'
 import UiField from './UiField.vue'
 import UiInput from './UiInput.vue'
 import UiSelect, { type UiSelectOption } from './UiSelect.vue'
@@ -92,6 +93,29 @@ const OPTS: UiSelectOption[] = [
   { value: 'proton', label: 'proton', hint: 'пул по умолчанию', count: 3 },
   { value: 'warp', label: 'warp' },
 ]
+
+describe('UiCheckbox', () => {
+  it('с подписью: раскладка как у свитча, клик эмитит, hint на месте', async () => {
+    const w = mount(UiCheckbox, { props: { modelValue: false, label: 'показать дубликаты', hint: 'правила из других групп' } })
+    expect(w.find('.lbl').text()).toBe('показать дубликаты')
+    expect(w.find('.uihint').text()).toBe('правила из других групп')
+    await w.find('input').setValue(true)
+    expect(w.emitted('update:modelValue')![0]).toEqual([true])
+  })
+
+  it('без label - голый бокс (строки таблиц), tooltip в title, aria по tooltip', () => {
+    const w = mount(UiCheckbox, { props: { modelValue: false, tooltip: 'правило включено' } })
+    expect(w.find('.lbl').exists()).toBe(false)
+    expect(w.attributes('title')).toBe('правило включено')
+    expect(w.find('input').attributes('aria-label')).toBe('правило включено')
+  })
+
+  it('disabled: бокс приглушён, инпут задизейблен', () => {
+    const w = mount(UiCheckbox, { props: { modelValue: false, label: 'x', disabled: true } })
+    expect(w.classes()).toContain('off')
+    expect(w.find('input').attributes('disabled')).toBeDefined()
+  })
+})
 
 describe('UiSelect', () => {
   it('показывает выбранный пункт, раскрытие и выбор эмитят значение', async () => {
