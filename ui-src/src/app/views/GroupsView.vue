@@ -1,7 +1,1142 @@
 <script setup lang="ts">
-import PlaceholderView from './PlaceholderView.vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import {
+  UiBadge, UiBanner, UiButton, UiCard, UiDialog, UiHint, UiIcon, UiInput,
+  UiSelect, type UiSelectOption, UiSwitch, UiTextarea,
+} from '../../components/ui'
+import { dropIndex, isBeforeHalf, reorder } from '../../components/ui/dnd'
+import { useConfirm } from '../../stores/confirm'
+import { useGroups } from '../../stores/groups'
+import { useToast } from '../../stores/toast'
+import type { GroupView, Rule } from '../../api/types'
+import {
+  cyclesValid, degradedText, dupsEntries, groupHasDup, groupMatchCount,
+  groupMatches, hlSegs, IMPORT_TYPE_OPTIONS, normRuleValue, POLICY_SHORT,
+  RULE_HINTS, RULE_PLACEHOLDERS, RULE_TYPES, ruleTypeOptions, showAllRules,
+  srcBadge, warnTitle,
+} from './groupsLogic'
+import GroupDialog from './GroupDialog.vue'
+
+// Фаза 3.7а «Группы правил» - список+поиск+правила+редактор базы (легаси
+// #rulescard, renderRules 1591). DnD групп и правил - порт attachDnD
+// (panel.js 1284) на хелперах dnd.ts; inline-правка правила и фокус в
+// полях списка держат editingLock стора (легаси editingRulesPanel 1512) -
+// перерендер откладывается до выхода. Пресеты/каскады - Ф3.7б, бэкапы и
+// импорт/выгрузка файлом - Ф3.7в.
+
+const groups = useGroups();
+const { state } = groups;
+const { push } = useToast();
+const { confirm } = useConfirm();
+
+onMounted(() => groups.start(30000)); // легаси: setInterval(refreshRules, 30000)
+onBeforeUnmount(() => groups.stop());
+
+async function run(fn: () => Promise<unknown>): Promise<void> {
+  try {
+    await fn();
+  } catch (e) {
+    push(e instanceof Error ? e.message : String(e), true);
+  }
+}
+
+// --- создание группы (легаси rgCreate 2109) ---
+const newName = ref('');
+const newColor = ref('#4a9eff');
+const newIface = ref('');
+const creating = ref(false);
+
+const createIfaceOptions = computed<UiSelectOption[]>(() => {
+  const out = state.ifaces.map((i) => ({
+    value: i.device,
+    label: i.device + (i.title && i.title !== i.device ? ' - ' + i.title : ''),
+  }));
+  out.push({ value: 'blackhole', label: 'blackhole - (блокировать трафик)' });
+  return out;
+});
+watch(() => state.ifaces, (list) => {
+  if (!newIface.value && list.length) newIface.value = list[0].device;
+}, { immediate: true });
+
+async function createG(): Promise<void> {
+  const name = newName.value.trim();
+  if (!name || !newIface.value) {
+    push('Укажите имя группы и интерфейс', true);
+    return;
+  }
+  creating.value = true;
+  try {
+    const g = await groups.createGroup({ name, interface: newIface.value, color: newColor.value });
+    newName.value = '';
+    if (g) {
+      openMt.value.add(g.id); // легаси: новая группа автораскрыта
+      await nextTick();
+      document.querySelector(`[data-gid="${window.CSS && CSS.escape ? CSS.escape(g.id) : g.id}"]`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  } catch (e) {
+    push(e instanceof Error ? e.message : String(e), true);
+  }
+  creating.value = false;
+}
+
+// --- гистерезис политик (легаси 1213-1246) ---
+const cycFail = ref('');
+const cycRestore = ref('');
+const cycSaving = ref(false);
+watch(() => state.cycles, (c) => {
+  if (!c) return;
+  cycFail.value = String(c.failCycles);
+  cycRestore.value = String(c.restoreCycles);
+}, { immediate: true, deep: true });
+const cycChanged = computed(() =>
+  cyclesValid(cycFail.value, cycRestore.value)
+  && (+cycFail.value !== state.cycles?.failCycles || +cycRestore.value !== state.cycles?.restoreCycles));
+
+async function saveCycles(): Promise<void> {
+  if (!cycChanged.value || cycSaving.value) return;
+  cycSaving.value = true;
+  try {
+    const r = await groups.saveCycles(+cycFail.value, +cycRestore.value);
+    push(`Гистерезис политик: переключение после ${r.failCycles} отказов, возврат после ${r.restoreCycles} здоровых циклов`);
+  } catch (e) {
+    push(e instanceof Error ? e.message : String(e), true);
+  }
+  cycSaving.value = false;
+}
+
+// --- поиск (легаси ruleSearch 1733 + renderRules 1591) ---
+const q = ref('');
+const searchQ = ref('');
+const savedOpen = ref<Set<string> | null>(null);
+const openMt = ref<Set<string>>(new Set()); // открытые details, переживают перерендер
+
+// открытость details в openMt (легаси det.ontoggle 1673)
+function onDetToggle(gid: string, e: Event): void {
+  const opened = (e.target as HTMLDetailsElement).open;
+  if (opened) openMt.value.add(gid);
+  else openMt.value.delete(gid);
+}
+
+watch(q, (v) => {
+  const nv = v.trim().toLowerCase();
+  if (nv && !searchQ.value) savedOpen.value = new Set(openMt.value); // снапшот до поиска
+  searchQ.value = nv;
+  if (!nv && savedOpen.value) {
+    openMt.value = new Set(savedOpen.value); // очистка - ровно прежняя открытость
+    savedOpen.value = null;
+    return;
+  }
+  for (const g of state.groups) if (groupMatches(g, nv)) openMt.value.add(g.id);
+});
+
+const visible = computed(() => {
+  const s = searchQ.value;
+  return s ? state.groups.filter((g) => groupMatches(g, s)) : state.groups;
+});
+
+// при поиске внутри группы - только совпавшие правила, кроме случая
+// «совпало имя, но ни одно правило» (легаси 1680-1684)
+function ruleRows(g: GroupView): Rule[] {
+  const list = g.rules || [];
+  const s = searchQ.value;
+  if (showAllRules(g, s)) return list;
+  return list.filter((rl) => (rl.rule || '').toLowerCase().includes(s) || (rl.name || '').toLowerCase().includes(s));
+}
+
+// --- editingLock: фокус в полях списка (легаси editingRulesPanel 1512
+// + focusout 1555): перерендер не сносит ввод ---
+const FOCUSABLE = /^(INPUT|SELECT|TEXTAREA)$/;
+const listBox = ref<HTMLElement | null>(null);
+function onFocusin(e: FocusEvent): void {
+  const t = e.target as HTMLElement | null;
+  if (t && FOCUSABLE.test(t.tagName)) groups.setEditing(1);
+}
+function onFocusout(): void {
+  setTimeout(() => {
+    const ae = document.activeElement as HTMLElement | null;
+    const box = listBox.value;
+    if (!ae || !box || !box.contains(ae) || !FOCUSABLE.test(ae.tagName)) {
+      void groups.setEditing(-1);
+    }
+  }, 0);
+}
+
+// --- DnD порядка групп и правил (легаси attachDnD 1284; при поиске
+// отключён - фильтрованный список отправил бы частичный список id) ---
+const armed = ref(''); // «scope:id» строки, чей grip нажат
+const dragCtx = ref<{ scope: string; id: string } | null>(null);
+const dropMark = ref<{ id: string; before: boolean } | null>(null);
+
+function rowKey(scope: string, id: string): string {
+  return scope + ':' + id;
+}
+function isDragRow(scope: string, id: string): boolean {
+  return !searchQ.value && armed.value === rowKey(scope, id);
+}
+function onDragStart(e: DragEvent, scope: string, id: string): void {
+  if (armed.value !== rowKey(scope, id)) {
+    e.preventDefault();
+    return;
+  }
+  dragCtx.value = { scope, id };
+  try {
+    e.dataTransfer?.setData('text/plain', id); // Firefox без данных не тащит
+  } catch { /* jsdom */ }
+  groups.setEditing(1); // drag сносит перерендером - как легаси dragEl
+}
+function onDragOver(e: DragEvent, scope: string, id: string): void {
+  const d = dragCtx.value;
+  if (!d || d.scope !== scope || d.id === id) return;
+  e.preventDefault();
+  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+  dropMark.value = { id, before: isBeforeHalf(rect, e.clientY) };
+}
+function onDragLeave(id: string): void {
+  if (dropMark.value?.id === id) dropMark.value = null;
+}
+async function onDrop(e: DragEvent, scope: string, id: string): Promise<void> {
+  const d = dragCtx.value;
+  const mark = dropMark.value;
+  dropMark.value = null;
+  if (!d || d.scope !== scope || d.id === id || !mark || mark.id !== id) return;
+  e.preventDefault();
+  if (scope === 'groups') {
+    const list = state.groups.map((g) => g.id);
+    const from = list.indexOf(d.id);
+    const to = dropIndex(from, list.indexOf(id), mark.before);
+    if (to !== from) await run(() => groups.reorderGroups(reorder(list, from, to)));
+  } else {
+    const gid = scope.slice('rules:'.length);
+    const g = state.groups.find((x) => x.id === gid);
+    const list = (g?.rules || []).map((r) => r.id);
+    const from = list.indexOf(d.id);
+    const to = dropIndex(from, list.indexOf(id), mark.before);
+    if (to !== from) await run(() => groups.reorderRules(gid, reorder(list, from, to)));
+  }
+}
+function onDragEnd(): void {
+  dragCtx.value = null;
+  dropMark.value = null;
+  armed.value = '';
+  void groups.setEditing(-1);
+}
+
+// --- мутации строк (легаси 1665-1671) ---
+async function delGroup(g: GroupView): Promise<void> {
+  const ok = await confirm({
+    title: 'Удаление группы',
+    text: `Удалить группу ${g.name} со всеми правилами?`,
+    okLabel: 'Удалить',
+  });
+  if (!ok) return;
+  await run(() => groups.deleteGroup(g.id));
+}
+
+// --- inline-редактор правила (легаси editRule 1325) ---
+const er = ref<{ groupId: string; ruleId: string; type: string; value: string; name: string } | null>(null);
+
+function editRule(g: GroupView, rl: Rule): void {
+  er.value = { groupId: g.id, ruleId: rl.id, type: rl.type, value: rl.rule, name: rl.name || '' };
+  groups.setEditing(1);
+}
+async function saveRule(): Promise<void> {
+  const e0 = er.value;
+  if (!e0) return;
+  const value = e0.value.trim();
+  if (!value) {
+    push('Введите значение правила', true);
+    return;
+  }
+  try {
+    await groups.updateRule(e0.groupId, e0.ruleId, {
+      type: e0.type,
+      rule: normRuleValue(e0.type, value),
+      name: e0.name.trim(),
+    });
+    er.value = null;
+    await groups.setEditing(-1);
+  } catch (e) {
+    push(e instanceof Error ? e.message : String(e), true);
+  }
+}
+async function cancelRule(): Promise<void> {
+  er.value = null;
+  await groups.setEditing(-1);
+}
+
+// --- добавление правила (легаси nr-add 1713) ---
+const nrType = reactive<Record<string, string>>({});
+const nrValue = reactive<Record<string, string>>({});
+const nrBusy = ref('');
+function nrTypeOf(gid: string): string {
+  return nrType[gid] || 'namespace';
+}
+async function addRule(g: GroupView): Promise<void> {
+  const value = (nrValue[g.id] || '').trim();
+  if (!value) {
+    push('Введите значение правила', true);
+    return;
+  }
+  nrBusy.value = g.id;
+  try {
+    await groups.addRule(g.id, { type: nrTypeOf(g.id), rule: normRuleValue(nrTypeOf(g.id), value) });
+    nrValue[g.id] = '';
+    openMt.value.add(g.id);
+    push('Правило добавлено');
+  } catch (e) {
+    push(e instanceof Error ? e.message : String(e), true);
+  }
+  nrBusy.value = '';
+}
+
+// --- импорт правил текстом (легаси dlgImport 1440-1470) ---
+const imOpen = ref(false);
+const imG = ref<GroupView | null>(null);
+const imType = ref('auto');
+const imSecond = ref(false);
+const imEnable = ref(true);
+const imText = ref('');
+const imBusy = ref(false);
+
+function openImport(g: GroupView): void {
+  imG.value = g;
+  imText.value = '';
+  imOpen.value = true;
+}
+async function doImport(): Promise<void> {
+  const g = imG.value;
+  if (!g) return;
+  if (!imText.value.trim()) {
+    push('Вставьте список', true);
+    return;
+  }
+  imBusy.value = true;
+  try {
+    const r = await groups.importRules(g.id, {
+      text: imText.value,
+      type: imType.value,
+      toSecond: imSecond.value,
+      enable: imEnable.value,
+    });
+    imOpen.value = false;
+    const badNote = r.bad && r.bad.length ? ' Отброшено: ' + r.bad.join('; ') : '';
+    push(r.added
+      ? `Импортировано: ${r.added}, пропущено: ${r.skipped}.${badNote}`
+      : 'Нового ничего не добавлено, все дубликаты' + badNote);
+  } catch (e) {
+    push(e instanceof Error ? e.message : String(e), true);
+  }
+  imBusy.value = false;
+}
+
+// --- копирование правил (легаси copyGroupRules 1472) ---
+const cpOpen = ref(false);
+const cpText = ref('');
+const cpTitle = ref('');
+
+async function copyRules(g: GroupView): Promise<void> {
+  const lines = (g.rules || []).map((r) => r.rule);
+  if (!lines.length) {
+    push('В группе нет правил', true);
+    return;
+  }
+  const text = lines.join('\n');
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text);
+      push(`Скопировано: ${lines.length}`);
+      return;
+    } catch { /* фолбэк в диалог */ }
+  }
+  cpTitle.value = `Список правил (${lines.length})`;
+  cpText.value = text;
+  cpOpen.value = true;
+}
+
+// --- совпадения в группах (легаси showMTDupsDlg 1752) ---
+const dupsOpen = ref(false);
+const dupsList = computed(() => dupsEntries(state.groups, state.duplicates, searchQ.value));
+
+// --- диалог группы ---
+const editOpen = ref(false);
+const editing = ref<GroupView | null>(null);
+function editGroup(g: GroupView): void {
+  editing.value = g;
+  editOpen.value = true;
+}
 </script>
 
 <template>
-  <PlaceholderView title="Группы правил" />
+  <UiCard
+    title="Правила маршрутизации"
+    subtitle="через MagiTrickle. Группы правил привязываются к интерфейсам пулов. Типы: домен, поддомены, подсеть, маска, регулярное выражение."
+  >
+    <template #actions>
+      <UiButton
+        tooltip="без поиска - межгрупповые дубликаты, с поиском - все вхождения найденных паттернов"
+        @click="dupsOpen = true"
+      >
+        показать совпадения в группах
+      </UiButton>
+    </template>
+
+    <!-- ряд создания (легаси rgName/rgColor/rgIface/rgCreate) -->
+    <div class="crow">
+      <UiInput
+        v-model="newName"
+        label="имя группы"
+        class="cname"
+      />
+      <input
+        v-model="newColor"
+        type="color"
+        class="ccolor"
+        title="цвет группы"
+      >
+      <UiSelect
+        v-model="newIface"
+        :options="createIfaceOptions"
+        label="интерфейс"
+      />
+      <UiButton
+        variant="primary"
+        :busy="creating"
+        @click="createG"
+      >
+        + группа
+      </UiButton>
+    </div>
+
+    <!-- гистерезис политик (легаси polFailCycles/polRestoreCycles) -->
+    <div class="cycles">
+      <span class="muted">Политики отвала: переключать</span>
+      <UiInput
+        v-model="cycFail"
+        type="number"
+        label="циклов отказа"
+        class="cnum"
+        placeholder="2"
+        tooltip="сколько циклов проверки (30с) интерфейс должен считаться мёртвым подряд"
+      />
+      <span class="muted">возвращать</span>
+      <UiInput
+        v-model="cycRestore"
+        type="number"
+        label="здоровых циклов"
+        class="cnum"
+        placeholder="2"
+        tooltip="сколько циклов подряд интерфейс должен быть живым перед возвратом"
+      />
+      <UiButton
+        :disabled="!cycChanged"
+        :busy="cycSaving"
+        @click="saveCycles"
+      >
+        сохранить
+      </UiButton>
+    </div>
+    <UiHint
+      class="cyshint"
+      text="Цикл проверки - каждые 30 секунд. Меньше 2 не рекомендуется: «переключать после 1» уводит группы на запасной интерфейс из-за одной потерянной пробы (разовый таймаут или скачок пинга - ложное срабатывание), «возвращать после 1» дёргает группы обратно при первом же удачном прогоне - флапающий канал будет переключать их каждые 30-60 секунд и рвать соединения. Значения 2/2 - разумный компромисс: реакция на отвала ~1-1.5 минуты, возврат только после устойчивого восстановления."
+    />
+
+    <!-- баннеры движка MT (легаси updateMTBanners 1559) -->
+    <UiBanner
+      v-if="state.glitchy"
+      kind="err"
+      text="Обнаружена глючная сборка MagiTrickle: массовые записи усекают группы. Поставьте наш форк с фиксами -"
+      :link="{ href: 'https://gitlab.com/magitrickle/magitrickle/-/merge_requests/222', label: 'MR !222' }"
+      class="mtnote"
+    />
+    <UiBanner
+      v-if="state.wrapper"
+      kind="warn"
+      text="В mangle OUTPUT видна обёртка юзера (MR_*): она выводит группы в OUTPUT сама, каскадные хуки mawg не ставятся, чтобы не дублировать обработку."
+      class="mtnote"
+    />
+    <UiBanner
+      v-if="!state.sourcesCapable"
+      kind="warn"
+      text="Подключённый MagiTrickle не поддерживает источники групп: режимы «кто ходит в группу» спрятаны. Поставьте форк 0.8.2-rev3 или новее."
+      class="mtnote"
+    />
+
+    <!-- поиск (легаси ruleSearch) -->
+    <div class="srow">
+      <UiInput
+        v-model="q"
+        label="поиск"
+        placeholder="поиск: показываются только группы с совпадениями"
+        class="sinput"
+      />
+    </div>
+
+    <!-- список групп (легаси renderRules 1591) -->
+    <div
+      ref="listBox"
+      class="mtlist"
+      @focusin="onFocusin"
+      @focusout="onFocusout"
+    >
+      <UiHint
+        v-if="!state.loaded"
+        text="загружаю группы..."
+      />
+      <UiHint
+        v-else-if="!state.available"
+        text="MagiTrickle недоступен"
+      />
+      <UiHint
+        v-else-if="searchQ && !visible.length"
+        :text="`Ничего не найдено по «${searchQ}».`"
+      />
+      <UiHint
+        v-else-if="!state.groups.length"
+        text="Групп нет. Создайте группу или примените шаблон."
+      />
+
+      <div
+        v-for="g in visible"
+        :key="g.id"
+        :data-gid="g.id"
+        class="mtgroup"
+        :class="{ block: g.interface === 'blackhole', dragging: dragCtx?.scope === 'groups' && dragCtx.id === g.id, 'drop-before': dropMark?.id === g.id && dropMark.before, 'drop-after': dropMark?.id === g.id && !dropMark.before }"
+        :style="{ '--gcol': g.color || '#4a9eff' }"
+        :draggable="isDragRow('groups', g.id)"
+        @dragstart="onDragStart($event, 'groups', g.id)"
+        @dragover="onDragOver($event, 'groups', g.id)"
+        @dragleave="onDragLeave(g.id)"
+        @drop="onDrop($event, 'groups', g.id)"
+        @dragend="onDragEnd"
+      >
+        <div class="grow">
+          <span
+            class="grip"
+            title="перетащите, чтобы изменить порядок"
+            @pointerdown="armed = rowKey('groups', g.id)"
+            @pointerup="armed = ''"
+          ><UiIcon name="grip" /></span>
+          <span
+            class="gcolor"
+            :style="{ background: g.color || '#4a9eff' }"
+          />
+          <b class="gname"><template
+            v-for="(s, i) in hlSegs(g.name, searchQ)"
+            :key="i"
+          ><mark v-if="s.hit">{{ s.text }}</mark><template v-else>{{ s.text }}</template></template></b>
+          <span
+            v-if="groupHasDup(g, state.duplicates)"
+            class="warnb"
+            title="в группе есть правила, дублирующиеся в других группах"
+          ><UiIcon name="warn" /></span>
+          <UiBadge
+            v-if="g.cascade"
+            text="каскад"
+            variant="muted"
+          />
+          <UiBadge
+            v-if="g.interface === 'blackhole'"
+            text="блокировка"
+            variant="err"
+          />
+          <UiBadge
+            v-if="g.policy && g.policy.onDead"
+            :text="`при отвале: ${POLICY_SHORT[g.policy.onDead] || g.policy.onDead}`"
+            variant="warn"
+          />
+          <UiBadge
+            v-if="srcBadge(g)"
+            :text="srcBadge(g)!.text"
+            :tooltip="srcBadge(g)!.tooltip"
+            variant="ok"
+          />
+          <span class="ifaceb">
+            <UiBadge :text="g.interface" />
+            <span
+              v-if="g.interfaceTitle"
+              class="iftitle"
+            >{{ g.interfaceTitle }}</span>
+          </span>
+          <span class="muted rcount">правил: {{ (g.rules || []).length }}<template v-if="searchQ"> · <span class="okc">совпадений: {{ groupMatchCount(g, searchQ) }}</span></template></span>
+          <span class="sp" />
+          <UiSwitch
+            :model-value="g.enable"
+            :tooltip="g.enable ? 'выключить группу' : 'включить группу'"
+            @update:model-value="(v: boolean) => run(() => groups.toggleGroup(g.id, v))"
+          />
+          <UiButton
+            variant="icon"
+            tooltip="изменить группу"
+            @click="editGroup(g)"
+          >
+            <UiIcon name="pencil" />
+          </UiButton>
+          <UiButton
+            variant="icon"
+            tooltip="удалить группу"
+            @click="delGroup(g)"
+          >
+            <UiIcon name="trash" />
+          </UiButton>
+          <div
+            v-if="degradedText(g)"
+            class="deg muted"
+          >
+            {{ degradedText(g) }}
+          </div>
+        </div>
+        <details
+          :open="openMt.has(g.id)"
+          @toggle="onDetToggle(g.id, $event)"
+        >
+          <summary>правила</summary>
+          <div
+            v-if="!g.enable"
+            class="muted offnote"
+          >
+            группа выключена - правила сейчас не работают; тумблеры показывают их собственное состояние
+          </div>
+          <div class="nrrow">
+            <UiSelect
+              :model-value="nrTypeOf(g.id)"
+              :options="ruleTypeOptions()"
+              label="тип"
+              class="nrtype"
+              @update:model-value="(v: string) => { nrType[g.id] = v }"
+            />
+            <UiInput
+              :model-value="nrValue[g.id] || ''"
+              label="значение"
+              class="nrval"
+              :placeholder="RULE_PLACEHOLDERS[nrTypeOf(g.id)]"
+              @update:model-value="(v: string) => { nrValue[g.id] = v }"
+            >
+              <template #action>
+                <UiButton
+                  :busy="nrBusy === g.id"
+                  @click="addRule(g)"
+                >
+                  + правило
+                </UiButton>
+              </template>
+            </UiInput>
+            <UiButton
+              class="nrx"
+              tooltip="вставить список доменов, подсетей или ссылок"
+              @click="openImport(g)"
+            >
+              импорт
+            </UiButton>
+            <UiButton
+              class="nrx"
+              tooltip="скопировать все правила группы списком"
+              @click="copyRules(g)"
+            >
+              копировать
+            </UiButton>
+          </div>
+          <div class="muted nrhint">
+            {{ RULE_HINTS[nrTypeOf(g.id)] }}
+          </div>
+          <table class="rules">
+            <thead>
+              <tr>
+                <th class="gripcol" />
+                <th>тип</th>
+                <th>значение</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              <template
+                v-for="rl in ruleRows(g)"
+                :key="rl.id"
+              >
+                <!-- inline-редактор вместо строки (легаси editRule 1325) -->
+                <tr
+                  v-if="er && er.groupId === g.id && er.ruleId === rl.id"
+                  class="erow"
+                >
+                  <td :colspan="4">
+                    <div class="erwrap">
+                      <UiSelect
+                        v-model="er.type"
+                        :options="ruleTypeOptions()"
+                        label="тип"
+                        class="ertype"
+                      />
+                      <UiInput
+                        v-model="er.value"
+                        label="значение"
+                        class="erval"
+                      >
+                        <template #action>
+                          <UiButton
+                            variant="primary"
+                            @click="saveRule"
+                          >
+                            сохранить
+                          </UiButton>
+                          <UiButton @click="cancelRule">
+                            отмена
+                          </UiButton>
+                        </template>
+                      </UiInput>
+                      <UiInput
+                        v-model="er.name"
+                        label="имя (необяз.)"
+                        class="ername"
+                      />
+                    </div>
+                    <div class="muted erhiant">
+                      {{ RULE_HINTS[er.type] || '' }}
+                    </div>
+                  </td>
+                </tr>
+                <tr
+                  v-else
+                  :class="{ dimmed: !rl.enable || !g.enable, dragging: dragCtx?.scope === 'rules:' + g.id && dragCtx.id === rl.id, 'drop-before': dropMark?.id === rl.id && dropMark.before, 'drop-after': dropMark?.id === rl.id && !dropMark.before }"
+                  :draggable="isDragRow('rules:' + g.id, rl.id)"
+                  @dragstart="onDragStart($event, 'rules:' + g.id, rl.id)"
+                  @dragover="onDragOver($event, 'rules:' + g.id, rl.id)"
+                  @dragleave="onDragLeave(rl.id)"
+                  @drop="onDrop($event, 'rules:' + g.id, rl.id)"
+                  @dragend="onDragEnd"
+                >
+                  <td class="gripcol">
+                    <span
+                      class="grip"
+                      title="перетащите, чтобы изменить порядок"
+                      @pointerdown="armed = rowKey('rules:' + g.id, rl.id)"
+                      @pointerup="armed = ''"
+                    ><UiIcon name="grip" /></span>
+                  </td>
+                  <td>
+                    <UiBadge
+                      :text="RULE_TYPES[rl.type] || rl.type"
+                      variant="muted"
+                    />
+                  </td>
+                  <td class="rval">
+                    <template
+                      v-for="(s, i) in hlSegs(rl.rule, searchQ)"
+                      :key="i"
+                    >
+                      <mark v-if="s.hit">{{ s.text }}</mark><template v-else>
+                        {{ s.text }}
+                      </template>
+                    </template><span
+                      v-if="rl.enable && (state.duplicates[(rl.rule || '').toLowerCase()] || []).length"
+                      class="warnb"
+                      :title="warnTitle(state.duplicates[(rl.rule || '').toLowerCase()] || [])"
+                    ><UiIcon name="warn" /></span><span
+                      v-if="rl.name"
+                      class="muted"
+                    > (<template
+                      v-for="(s, i) in hlSegs(rl.name, searchQ)"
+                      :key="i"
+                    ><mark v-if="s.hit">{{ s.text }}</mark><template v-else>{{ s.text }}</template></template>)</span>
+                  </td>
+                  <td class="ract">
+                    <UiSwitch
+                      :model-value="rl.enable"
+                      :tooltip="rl.enable ? 'выключить правило' : 'включить правило'"
+                      @update:model-value="(v: boolean) => run(() => groups.toggleRule(g.id, rl.id, v))"
+                    />
+                    <UiButton
+                      variant="icon"
+                      tooltip="изменить правило"
+                      @click="editRule(g, rl)"
+                    >
+                      <UiIcon name="pencil" />
+                    </UiButton>
+                    <UiButton
+                      variant="icon"
+                      tooltip="удалить правило"
+                      @click="run(() => groups.deleteRule(g.id, rl.id))"
+                    >
+                      <UiIcon name="trash" />
+                    </UiButton>
+                  </td>
+                </tr>
+              </template>
+              <tr v-if="!ruleRows(g).length">
+                <td
+                  colspan="4"
+                  class="muted"
+                >
+                  правил нет
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </details>
+      </div>
+    </div>
+
+    <!-- импорт правил текстом (легаси dlgImport) -->
+    <UiDialog
+      v-model:open="imOpen"
+      :title="imG ? 'Импорт правил в ' + imG.name : 'Импорт правил'"
+      :busy="imBusy"
+      width="520px"
+    >
+      <UiSelect
+        v-model="imType"
+        :options="IMPORT_TYPE_OPTIONS"
+        label="Тип для доменов"
+      />
+      <UiHint text="Ссылки всегда очищаются до домена: https://www.ozon.ru/path -> www.ozon.ru, ftp://files.example.com/dir -> files.example.com" />
+      <UiSwitch
+        v-model="imSecond"
+        label="Усекать до второго уровня"
+        hint="www.ozon.ru -> ozon.ru, зоны вроде bbc.co.uk не трогаются"
+      />
+      <UiSwitch
+        v-model="imEnable"
+        label="Импортировать включёнными"
+        hint="выключенное правило можно включить позже тумблером"
+      />
+      <UiTextarea
+        v-model="imText"
+        label="Список: по одному в строке, пробелы/запятые/точки с запятой тоже разделяют"
+        :rows="10"
+        mono
+      />
+      <UiHint text="Дубликаты внутри списка и совпадения с существующими правилами пропускаются. Кириллические домены вставляйте в punycode." />
+      <template #footer>
+        <UiButton
+          :disabled="imBusy"
+          @click="imOpen = false"
+        >
+          отмена
+        </UiButton>
+        <UiButton
+          variant="primary"
+          :busy="imBusy"
+          @click="doImport"
+        >
+          импортировать
+        </UiButton>
+      </template>
+    </UiDialog>
+
+    <!-- фолбэк копирования (легаси dlgCopy) -->
+    <UiDialog
+      v-model:open="cpOpen"
+      :title="cpTitle"
+      width="520px"
+    >
+      <textarea
+        :value="cpText"
+        readonly
+        rows="12"
+        class="cptext"
+        spellcheck="false"
+      />
+      <UiHint text="Если не скопировалось само - выделено, нажмите Ctrl+C." />
+      <template #footer>
+        <UiButton
+          variant="primary"
+          @click="cpOpen = false"
+        >
+          Закрыть
+        </UiButton>
+      </template>
+    </UiDialog>
+
+    <!-- совпадения в группах (легаси dlgMTDups) -->
+    <UiDialog
+      v-model:open="dupsOpen"
+      title="Совпадения в группах"
+      width="520px"
+    >
+      <template v-if="dupsList.length">
+        <div
+          v-for="e in dupsList"
+          :key="e.pat"
+          class="duprow"
+        >
+          <div class="duppat">
+            <b>{{ e.pat }}</b>
+            <span class="muted"> ({{ e.types }})</span>
+            <UiBadge
+              v-if="e.dup"
+              :text="`дубликат: ${e.groups.length} группы`"
+              variant="warn"
+            />
+          </div>
+          <div class="muted dupgroups">
+            группы: {{ e.groups.join(', ') }}
+          </div>
+        </div>
+      </template>
+      <UiHint
+        v-else
+        :text="searchQ ? `Ничего не найдено по «${searchQ}».` : 'Межгрупповых дубликатов нет.'"
+      />
+      <template #footer>
+        <UiButton
+          variant="primary"
+          @click="dupsOpen = false"
+        >
+          Закрыть
+        </UiButton>
+      </template>
+    </UiDialog>
+
+    <GroupDialog
+      v-model:open="editOpen"
+      :group="editing"
+    />
+  </UiCard>
 </template>
+
+<style scoped>
+.crow {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.cname {
+  width: 180px;
+}
+.ccolor {
+  width: 42px;
+  height: 34px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+.cycles {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  font-size: 12px;
+}
+.cnum {
+  width: 76px;
+}
+.cyshint {
+  margin-top: 4px;
+}
+.mtnote {
+  margin-top: 6px;
+}
+.srow {
+  display: flex;
+  margin-top: 10px;
+}
+.sinput {
+  flex: 1;
+  min-width: 200px;
+}
+.mtlist {
+  margin-top: 10px;
+}
+.mtgroup {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--gcol);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  background: var(--bg-panel, transparent);
+}
+.mtgroup.block {
+  border-left-color: var(--err);
+}
+.grow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.grip {
+  color: var(--dim);
+  cursor: grab;
+  display: inline-flex;
+  padding: 2px;
+}
+.grip:active {
+  cursor: grabbing;
+}
+.gcolor {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  flex: none;
+}
+.gname {
+  word-break: break-all;
+}
+.warnb {
+  color: var(--warn);
+  display: inline-flex;
+  cursor: help;
+}
+.ifaceb {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.iftitle {
+  color: var(--dim);
+  font-size: 11px;
+}
+.rcount {
+  font-size: 12px;
+}
+.okc {
+  color: var(--ok);
+}
+.sp {
+  flex: 1;
+}
+.deg {
+  flex-basis: 100%;
+  font-size: 11px;
+}
+details {
+  margin-top: 6px;
+}
+summary {
+  cursor: pointer;
+  color: var(--dim);
+  font-size: 12px;
+  user-select: none;
+}
+.offnote {
+  font-size: 11px;
+  margin: 2px 0 6px;
+}
+.nrrow {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+.nrtype {
+  width: 190px;
+}
+.nrval {
+  flex: 1;
+  min-width: 180px;
+}
+.nrx {
+  margin-bottom: 1px;
+}
+.nrhint {
+  font-size: 11px;
+  margin-top: 2px;
+}
+.rules {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+  margin-top: 8px;
+}
+.rules th {
+  text-align: left;
+  color: var(--dim);
+  font-weight: normal;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+}
+.rules td {
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+  word-break: break-all;
+}
+.gripcol {
+  width: 18px;
+}
+.rval mark,
+.gname mark {
+  background: rgba(217, 160, 50, 0.35); /* легаси mark: подсветка поиска */
+  color: inherit;
+  padding: 0 2px;
+  border-radius: 3px;
+}
+.ract {
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-end;
+}
+tr.dimmed td,
+.dimmed {
+  opacity: 0.45;
+}
+tr.dragging {
+  opacity: 0.4;
+}
+.drop-before {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+tr.drop-before td {
+  border-top: 2px solid var(--accent);
+}
+tr.drop-after td {
+  border-bottom: 2px solid var(--accent);
+}
+.mtgroup.drop-before {
+  border-top: 2px solid var(--accent);
+}
+.mtgroup.drop-after {
+  border-bottom: 2px solid var(--accent);
+}
+.erwrap {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+.ertype {
+  width: 170px;
+}
+.erval {
+  flex: 1;
+  min-width: 180px;
+}
+.ername {
+  width: 160px;
+}
+.erhiant {
+  font-size: 11px;
+  margin-top: 2px;
+}
+.cptext {
+  width: 100%;
+  box-sizing: border-box;
+  font: 12px/1.5 ui-monospace, monospace;
+  background: var(--bg-input, transparent);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px;
+}
+.duprow {
+  margin-bottom: 10px;
+}
+.duppat {
+  word-break: break-all;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.dupgroups {
+  font-size: 12px;
+}
+.muted {
+  color: var(--dim);
+}
+</style>

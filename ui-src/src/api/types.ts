@@ -32,9 +32,18 @@ export interface Group {
   rules?: Rule[]
 }
 
+// служебная группа-каскад (store.CascadeEntry); приходит внутри GroupView
+export interface CascadeEntry {
+  group: string
+  name?: string
+  source: string // "pool:x" | "iface:wg0"
+  via: string
+  domains?: string[]
+}
+
 export interface GroupView extends Group {
   policy?: GroupPolicy | null
-  cascade?: boolean
+  cascade?: CascadeEntry | null
   degraded?: string // '' | 'direct' | 'direct-pending' | 'iface' | 'iface:<...>'
   interfaceTitle?: string
 }
@@ -47,8 +56,16 @@ export interface MtGroupsRes {
   sources: boolean // MT понимает sources (форк rev3+)
 }
 
+// ссылка на вхождение паттерна (GET /mt/duplicates): где ещё живёт правило
+export interface DupInfo {
+  groupId?: string
+  groupName?: string
+  ruleId?: string
+  ruleType?: string
+}
+
 export interface DuplicatesRes {
-  duplicates: Record<string, string[]>
+  duplicates: Record<string, DupInfo[]>
 }
 
 export interface MtIface {
@@ -75,12 +92,19 @@ export interface PresetsRes {
   sourceNote: string
 }
 
-export interface CascadeInfo {
-  group: string
-  name?: string
-  source: string // "pool:x" | "iface:wg0"
-  via: string
-  hosts: string[]
+// ответ mtImportRules (server.go): импорт правил текстом
+export interface ImportRulesRes {
+  added: number
+  skipped: number
+  bad?: string[]
+}
+
+// GET /cascades (cascade.Info = CascadeEntry + статусы хука)
+export interface CascadeInfo extends CascadeEntry {
+  enabled: boolean
+  hook: boolean
+  rules: number
+  err?: string
 }
 
 export interface CascadesRes {
@@ -89,9 +113,10 @@ export interface CascadesRes {
   wrapper?: boolean
 }
 
+// гистерезис политик (server.go getPolicyCycles): {failCycles, restoreCycles}
 export interface PolicyCycles {
-  fail: number
-  restore: number
+  failCycles: number
+  restoreCycles: number
 }
 
 // --- бэкапы MT ---

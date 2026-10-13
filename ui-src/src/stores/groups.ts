@@ -4,7 +4,7 @@
 // Мутации - тонкие обёртки: вызов API + force-refresh.
 import { reactive } from 'vue'
 import { api } from '../api/client'
-import type { GroupPolicy, GroupView, MtGroupsRes } from '../api/types'
+import type { DupInfo, DuplicatesRes, GroupPolicy, GroupView, ImportRulesRes, MtGroupsRes, MtIface, PolicyCycles } from '../api/types'
 
 interface GroupsState {
   loaded: boolean
@@ -13,7 +13,9 @@ interface GroupsState {
   glitchy: boolean
   wrapper: boolean
   sourcesCapable: boolean
-  duplicates: Record<string, string[]>
+  duplicates: Record<string, DupInfo[]>
+  ifaces: MtIface[] // селекты интерфейсов (легаси MT_IFACES, опрос 60с)
+  cycles: PolicyCycles | null // гистерезис политик (легаси loadPolicyCycles)
   editing: number // глубина editingLock
   pending: boolean // есть неотрисованные изменения (правка открыта)
   lastJSON: string
@@ -27,12 +29,15 @@ const state = reactive<GroupsState>({
   wrapper: false,
   sourcesCapable: true,
   duplicates: {},
+  ifaces: [],
+  cycles: null,
   editing: 0,
   pending: false,
   lastJSON: '',
 });
 
 let timer: ReturnType<typeof setInterval> | null = null;
+let ifacesTimer: ReturnType<typeof setInterval> | null = null;
 let inflight = false;
 
 export function useGroups() {
@@ -81,23 +86,54 @@ export function useGroups() {
 
   async function refreshDuplicates(): Promise<void> {
     try {
-      const r = await api<{ duplicates: Record<string, string[]> }>('GET', '/mt/duplicates');
+      const r = await api<DuplicatesRes>('GET', '/mt/duplicates');
       state.duplicates = r.duplicates || {};
     } catch {
       state.duplicates = {};
     }
   }
 
+  // интерфейсы для селектов группы (легаси fillIfaceSelects: старт + 60с)
+  async function loadIfaces(): Promise<void> {
+    try {
+      const r = await api<{ interfaces: MtIface[] }>('GET', '/mt/interfaces');
+      state.ifaces = r.interfaces || [];
+    } catch {
+      state.ifaces = [];
+    }
+  }
+
+  // гистерезис политик (легаси loadPolicyCycles: старт, ошибки молча)
+  async function loadCycles(): Promise<void> {
+    try {
+      state.cycles = await api<PolicyCycles>('GET', '/mt/policy-cycles');
+    } catch {
+      /* поле просто останется пустым */
+    }
+  }
+  async function saveCycles(failCycles: number, restoreCycles: number): Promise<PolicyCycles> {
+    const r = await api<PolicyCycles>('PUT', '/mt/policy-cycles', { failCycles, restoreCycles });
+    state.cycles = r;
+    return r;
+  }
+
   function start(intervalMs = 30000) {
     void refresh(true);
     void refreshDuplicates();
+    void loadIfaces();
+    void loadCycles();
     if (timer) return;
     timer = setInterval(() => void refresh(), intervalMs);
+    ifacesTimer = setInterval(() => void loadIfaces(), 60000);
   }
   function stop() {
     if (timer) {
       clearInterval(timer);
       timer = null;
+    }
+    if (ifacesTimer) {
+      clearInterval(ifacesTimer);
+      ifacesTimer = null;
     }
   }
 
@@ -131,9 +167,11 @@ export function useGroups() {
     await api('POST', `/mt/groups/${encodeURIComponent(groupId)}/rules`, { ...rule, enable: true });
     await refresh(true);
   }
-  async function importRules(groupId: string, text: string): Promise<void> {
-    await api('POST', `/mt/groups/${encodeURIComponent(groupId)}/rules/import`, { text });
+  // импорт правил текстом (легаси шлёт {text, type, toSecond, enable})
+  async function importRules(groupId: string, body: { text: string; type?: string; toSecond?: boolean; enable?: boolean }): Promise<ImportRulesRes> {
+    const r = await api<ImportRulesRes>('POST', `/mt/groups/${encodeURIComponent(groupId)}/rules/import`, body);
     await refresh(true);
+    return r;
   }
   async function updateRule(groupId: string, ruleId: string, rule: Partial<{ type: string; rule: string; name: string; enable: boolean }>): Promise<void> {
     await api('PUT', `/mt/groups/${encodeURIComponent(groupId)}/rules/${encodeURIComponent(ruleId)}`, rule);
@@ -159,6 +197,9 @@ export function useGroups() {
     setEditing,
     start,
     stop,
+    loadIfaces,
+    loadCycles,
+    saveCycles,
     createGroup,
     updateGroup,
     deleteGroup,
