@@ -1651,6 +1651,7 @@ function renderRules() {
       </div>
       <details ${openMtGroups.has(g.id) ? 'open' : ''}>
         <summary>правила</summary>
+        ${g.enable ? '' : '<div class="muted" style="font-size:11px;margin:2px 0 6px">группа выключена - правила сейчас не работают; тумблеры показывают их собственное состояние</div>'}
         <div class="btnrow">
           <select class="nr-type">${Object.entries(RULE_TYPES).map(([v,l])=>`<option value="${v}">${l}</option>`).join('')}</select>
           <input class="nr-value" placeholder="${RULE_PLACEHOLDERS.namespace}" style="flex:1;min-width:160px">
@@ -1683,7 +1684,9 @@ function renderRules() {
       if (!showAllRules && !ruleMatches(rl, q)) continue;
       const tr = document.createElement('tr');
       tr.dataset.id = rl.id;
-      if (!rl.enable) tr.style.opacity = .45;
+      // приглушены: выключенные правила И ВСЕ правила выключенной группы
+      // (не работают целиком, хотя их собственные тумблеры включены)
+      if (!rl.enable || !g.enable) tr.style.opacity = .45;
       tr.innerHTML = `<td style="width:18px"><span class="grip" title="перетащите, чтобы изменить порядок">${GRIP_SVG}</span></td>
         <td><span class="badge cool">${RULE_TYPES[rl.type]||esc(rl.type)}</span></td>
         <td style="word-break:break-all">${hlText(rl.rule, q)}${rl.enable ? warnSvgFor(rl.rule) : ''}${rl.name?` <span class="muted">(${hlText(rl.name, q)})</span>`:''}</td>
