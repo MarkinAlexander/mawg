@@ -49,6 +49,21 @@ describe('UiSwitch', () => {
     expect(w.find('.uiswitch').classes()).toContain('off')
   })
 
+  it('крестик очистки: пусто - нет, с текстом - клик очищает; number/password без крестика', async () => {
+    const w = mount(UiInput, { props: { modelValue: '', label: 'адрес', placeholder: '0.0.0.0' } })
+    expect(w.find('.pclr').exists()).toBe(false)
+    await w.setProps({ modelValue: '192.168.0.5' })
+    expect(w.find('.pclr').exists()).toBe(true)
+    await w.find('.pclr').trigger('click')
+    expect(w.emitted('update:modelValue')!.at(-1)).toEqual([''])
+
+    const num = mount(UiInput, { props: { modelValue: '8090', label: 'порт', type: 'number' } })
+    expect(num.find('.pclr').exists()).toBe(false)
+    const pw = mount(UiInput, { props: { modelValue: 'secret', label: 'пароль', type: 'password' } })
+    expect(pw.find('.pclr').exists()).toBe(false)
+    expect(pw.find('.peye').exists()).toBe(true)
+  })
+
   it('bare-режим: без label - только тумблер, aria-label из tooltip', () => {
     const w = mount(UiSwitch, { props: { modelValue: true, tooltip: 'выключить запись' } })
     expect(w.find('.uiswitch').classes()).toContain('bare')
