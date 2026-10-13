@@ -53,9 +53,15 @@ const isDisabled = computed(() => props.disabled || isBusy.value)
   border-color: var(--accent);
   color: #fff;
 }
-.uibtn.v-danger:hover:not(:disabled) {
-  border-color: var(--err);
+.uibtn.v-danger {
+  /* опасность видна СРАЗУ (кейс владельца: на телефоне нет hover) -
+     наведение лишь усиливает рамку и добавляет красноватый фон */
   color: var(--err);
+  border-color: rgba(224, 86, 75, 0.55);
+}
+.uibtn.v-danger:hover:not(:disabled) {
+  background: rgba(224, 86, 75, 0.12);
+  border-color: var(--err);
 }
 .uibtn.v-icon {
   background: none;

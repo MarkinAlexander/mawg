@@ -48,6 +48,11 @@ describe('UiButton', () => {
     expect(w.emitted('click')).toHaveLength(1)
   })
 
+  it('danger красный по умолчанию (не только hover - кейс телефона)', () => {
+    const w = mount(UiButton, { props: { variant: 'danger' } })
+    expect(w.classes()).toContain('v-danger')
+  })
+
   it('busy: disabled + класс busy (спиннер), клик не проходит', async () => {
     const w = mount(UiButton, { props: { busy: true } })
     expect(w.classes()).toContain('busy')

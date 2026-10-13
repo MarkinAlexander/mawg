@@ -7,6 +7,7 @@ import {
   UiBanner,
   UiButton,
   UiCard,
+  UiCheckbox,
   UiDialog,
   UiField,
   UiIcon,
@@ -47,6 +48,7 @@ const poolOptions: UiSelectOption[] = [
 ]
 const dimmed = ref(false)
 const guarded = ref(true)
+const demoCheck = ref(false)
 
 // карточка
 const collapsed = ref(false)
@@ -221,6 +223,17 @@ function dlgSave() {
         tooltip="SyncHooks молчит 30с вокруг записи"
         busy
       />
+      <UiCheckbox
+        v-model="demoCheck"
+        label="Демо-галка с подписью"
+        hint="чекбокс - выбор/отметка; включение чего-то - свитч"
+      />
+      <UiCheckbox
+        :model-value="true"
+        disabled
+        label="Недоступная галка"
+        tooltip="disabled"
+      />
       <UiField
         label="Голый UiField"
         hint="слот под произвольный контрол"
@@ -277,7 +290,10 @@ function dlgSave() {
         @reorder="onReorder"
       >
         <template #cell-enable="{ row }">
-          <UiIcon :name="row.enable ? 'gear' : 'x'" />
+          <UiCheckbox
+            v-model="row.enable"
+            tooltip="правило включено"
+          />
         </template>
       </UiTable>
     </UiCard>
