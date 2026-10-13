@@ -2,7 +2,7 @@
 // ответ на 3 минуты, так что частый опрос дешёв).
 import { reactive } from 'vue'
 import { api } from '../api/client'
-import type { SystemCheckRes, UpdateInfo } from '../api/types'
+import type { InstallRes, SystemCheckRes, UpdateInfo } from '../api/types'
 
 const state = reactive<{ loaded: boolean; data: SystemCheckRes | null }>({ loaded: false, data: null });
 const upd = reactive<{ info: UpdateInfo | null }>({ info: null });
@@ -35,5 +35,21 @@ export function useSystem() {
     upd.info = info;
     return info;
   }
-  return { state, upd, refresh, start, stop, checkUpdate };
+  // установка компонента идёт до пары минут - raw fetch, БЕЗ 90с-таймаута
+  // api() (легаси тоже ходил сырым fetch)
+  async function install(payload: { id: string; flavor?: string; backup?: boolean }): Promise<InstallRes> {
+    const r = await fetch('/api/v1/system/install', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return (await r.json()) as InstallRes;
+  }
+  async function setSingboxMode(mode: string): Promise<{ mode?: string; warning?: string }> {
+    return api('POST', '/singbox/mode', { mode });
+  }
+  async function setSingboxCache(mode: 'off' | 'tmp'): Promise<void> {
+    await api('POST', '/singbox/cache-file', { mode });
+  }
+  return { state, upd, refresh, start, stop, checkUpdate, install, setSingboxMode, setSingboxCache };
 }

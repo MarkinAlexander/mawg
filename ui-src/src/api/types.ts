@@ -202,7 +202,7 @@ export interface Status {
   nativeAWG3: boolean
   mtSources: boolean
   pools: PoolView[]
-  engine?: Record<string, unknown>
+  engine?: EngineInfo
 }
 
 // GET /magitrickle: шапке нужен только available (легаси MTState);
@@ -256,6 +256,28 @@ export interface SystemItem {
   requiresReboot?: boolean
   note?: string
   statusText?: string
+  // для замены ядра: сколько займёт копия старого и сколько свободно
+  backupBytes?: number
+  freeBytes?: number
+}
+
+// STATUS.engine: движок sing-box (зеркало internal/web/server.go)
+export interface EngineInfo {
+  available?: boolean
+  running?: boolean
+  version?: string
+  mode?: string
+  fragment?: string
+  cacheFile?: string
+  tuns?: unknown[]
+  [key: string]: unknown
+}
+
+// POST /system/install: вывод установки (легаси showResult)
+export interface InstallRes {
+  ok: boolean
+  output?: string
+  error?: string
 }
 
 export interface SystemCheckRes {
