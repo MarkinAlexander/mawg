@@ -142,6 +142,14 @@ onMounted(() => {
         <span class="muted" style="font-size:11px">адрес и порт панели</span>
       </div>
       <div class="muted" style="font-size:11px;margin-top:2px">0.0.0.0 - все интерфейсы, 127.0.0.1 - только локально (для nginx-прокси), конкретный IP - один интерфейс. Авторизация и разрешённые адреса применяются сразу, адрес и порт - после перезапуска демона (кнопка появится здесь же).</div>
+      <div class="btnrow" style="margin-top:8px;justify-content:flex-end">
+        <button id="ssSave">сохранить</button>
+      </div>
+      <div class="btnrow" id="ssRestartRow" style="display:none;margin-top:6px;align-items:center;border:1px solid var(--warn);border-radius:8px;padding:8px 10px">
+        <span style="font-size:12px;color:var(--warn)">адрес или порт изменён - нужен перезапуск демона</span>
+        <span style="flex:1"></span>
+        <button class="primary" id="ssRestart">перезапустить панель</button>
+      </div>
       <div style="font-size:13px;margin-top:8px">Разрешённые адреса</div>
       <div id="ssChips" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px"></div>
       <div class="btnrow" style="align-items:center;margin-top:6px">
@@ -156,15 +164,7 @@ onMounted(() => {
         <select id="ssDevices" style="flex:1;min-width:170px"><option value="">устройства сети...</option></select>
         <button id="ssAddMine" title="добавить адрес, с которого вы открыли панель">мой адрес</button>
       </div>
-      <div class="muted" style="font-size:11px;margin-top:2px">IP или подсеть, с которых открыт доступ к панели. Пусто - доступ всем. Изменения списка (добавление, тумблер, удаление) применяются и сохраняются сразу, кнопка «Сохранить» для них не нужна. Роутер всегда может открыть панель сам. За реверс-прокси фильтруется адрес прокси, учитывайте.</div>
-      <div class="btnrow" style="margin-top:8px;justify-content:flex-end">
-        <button id="ssSave">сохранить</button>
-      </div>
-      <div class="btnrow" id="ssRestartRow" style="display:none;margin-top:6px;align-items:center;border:1px solid var(--warn);border-radius:8px;padding:8px 10px">
-        <span style="font-size:12px;color:var(--warn)">адрес или порт изменён - нужен перезапуск демона</span>
-        <span style="flex:1"></span>
-        <button class="primary" id="ssRestart">перезапустить панель</button>
-      </div>
+      <div class="muted" style="font-size:11px;margin-top:2px">IP или подсеть, с которых открыт доступ к панели. Пусто - доступ всем. Изменения применяются и сохраняются автоматически, сразу - кнопка «Сохранить» выше к ним не относится; действует сразу, так что не уберите адрес, с которого открыта панель (попытка сохранить список без него отклонится). Роутер всегда может открыть панель сам. За реверс-прокси фильтруется адрес прокси, учитывайте.</div>
     </div>
     <div class="btnrow" style="align-items:center;margin-top:12px;border-top:1px solid var(--border);padding-top:10px">
       <button id="setPassBtn">сменить пароль</button>
