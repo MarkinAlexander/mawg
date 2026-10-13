@@ -149,7 +149,8 @@ function pick(o: UiSelectOption) {
   border-radius: 6px;
   cursor: pointer;
 }
-/* стрелка-индикатор списка; при открытии разворачивается */
+/* стрелка-индикатор списка; при открытии разворачивается, при наведении
+   зеленеет (единый стиль контролов через --ctl/--ctl-hover) */
 .psel-btn::after {
   content: '';
   position: absolute;
@@ -157,8 +158,11 @@ function pick(o: UiSelectOption) {
   top: 50%;
   margin-top: -3px;
   border: 4px solid transparent;
-  border-top-color: var(--dim);
+  border-top-color: var(--ctl);
   transition: transform 0.15s;
+}
+.psel-btn:hover::after {
+  border-top-color: var(--ctl-hover);
 }
 .psel-btn.on::after {
   transform: rotate(180deg);

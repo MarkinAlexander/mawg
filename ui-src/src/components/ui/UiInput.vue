@@ -193,12 +193,12 @@ input.mono {
   background: none;
   border: none;
   padding: 2px;
-  color: var(--dim);
+  color: var(--ctl);
   line-height: 0;
   cursor: pointer;
 }
 .peye:hover {
-  color: var(--text);
+  color: var(--ctl-hover);
   border-color: transparent;
 }
 /* number: нативный спиннер спрятан, свои стрелки в стиле панели
@@ -225,12 +225,12 @@ input[type='number'] {
   background: none;
   border: none;
   padding: 0 2px;
-  color: var(--dim);
+  color: var(--ctl);
   line-height: 0;
   cursor: pointer;
 }
 .pnum-btn:hover {
-  color: var(--ok);
+  color: var(--ctl-hover);
 }
 .pclr {
   position: absolute;
@@ -240,12 +240,12 @@ input[type='number'] {
   background: none;
   border: none;
   padding: 2px;
-  color: var(--dim);
+  color: var(--ctl);
   line-height: 0;
   cursor: pointer;
 }
 .pclr:hover {
-  color: var(--text);
+  color: var(--ctl-hover);
   border-color: transparent;
 }
 </style>
