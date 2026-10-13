@@ -4,7 +4,7 @@
 // Мутации - тонкие обёртки: вызов API + force-refresh.
 import { reactive } from 'vue'
 import { api } from '../api/client'
-import type { DupInfo, DuplicatesRes, GroupPolicy, GroupView, ImportRulesRes, MtGroupsRes, MtIface, PolicyCycles } from '../api/types'
+import type { DupInfo, DuplicatesRes, GroupPolicy, GroupView, ImportRulesRes, MtGroupsRes, MtIface, PolicyCycles, PresetsRes } from '../api/types'
 
 interface GroupsState {
   loaded: boolean
@@ -16,6 +16,7 @@ interface GroupsState {
   duplicates: Record<string, DupInfo[]>
   ifaces: MtIface[] // селекты интерфейсов (легаси MT_IFACES, опрос 60с)
   cycles: PolicyCycles | null // гистерезис политик (легаси loadPolicyCycles)
+  presets: { list: PresetsRes['presets']; sourceUrl: string; sourceNote: string; loaded: boolean }
   editing: number // глубина editingLock
   pending: boolean // есть неотрисованные изменения (правка открыта)
   lastJSON: string
@@ -31,6 +32,7 @@ const state = reactive<GroupsState>({
   duplicates: {},
   ifaces: [],
   cycles: null,
+  presets: { list: [], sourceUrl: '', sourceNote: '', loaded: false },
   editing: 0,
   pending: false,
   lastJSON: '',
@@ -117,6 +119,30 @@ export function useGroups() {
     return r;
   }
 
+  // пресеты (легаси loadPresets 2149: старт, без поллинга, ошибки молча)
+  async function loadPresets(): Promise<void> {
+    try {
+      const r = await api<PresetsRes>('GET', '/mt/presets');
+      state.presets.list = r.presets || [];
+      state.presets.sourceUrl = r.sourceUrl || '';
+      state.presets.sourceNote = r.sourceNote || '';
+      state.presets.loaded = true;
+    } catch { /* список просто не появится */ }
+  }
+
+  // применение пресета -> новая группа (легаси presetApply 2255)
+  async function applyPreset(id: string, iface: string): Promise<number> {
+    const r = await api<{ rules: number }>('POST', `/mt/presets/${encodeURIComponent(id)}/apply`, { interface: iface });
+    await refresh(true);
+    return r.rules;
+  }
+
+  // создание каскада (легаси csCreate 2098)
+  async function createCascade(body: { source: string; via: string; hosts: string[] }): Promise<void> {
+    await api('POST', '/cascades', body);
+    await refresh(true);
+  }
+
   function start(intervalMs = 30000) {
     void refresh(true);
     void refreshDuplicates();
@@ -200,6 +226,9 @@ export function useGroups() {
     loadIfaces,
     loadCycles,
     saveCycles,
+    loadPresets,
+    applyPreset,
+    createCascade,
     createGroup,
     updateGroup,
     deleteGroup,

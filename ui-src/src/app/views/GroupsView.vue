@@ -8,28 +8,33 @@ import { dropIndex, isBeforeHalf, reorder } from '../../components/ui/dnd'
 import { useConfirm } from '../../stores/confirm'
 import { useGroups } from '../../stores/groups'
 import { useToast } from '../../stores/toast'
-import type { GroupView, Rule } from '../../api/types'
+import type { GroupView, Preset, Rule } from '../../api/types'
 import {
   cyclesValid, degradedText, dupsEntries, groupHasDup, groupMatchCount,
   groupMatches, hlSegs, IMPORT_TYPE_OPTIONS, normRuleValue, POLICY_SHORT,
-  RULE_HINTS, RULE_PLACEHOLDERS, RULE_TYPES, ruleTypeOptions, showAllRules,
-  srcBadge, warnTitle,
+  presetRulesLine, RULE_HINTS, RULE_PLACEHOLDERS, RULE_TYPES, ruleTypeOptions,
+  showAllRules, srcBadge, warnTitle,
 } from './groupsLogic'
+import CascadeDialog from './CascadeDialog.vue'
 import GroupDialog from './GroupDialog.vue'
 
-// Фаза 3.7а «Группы правил» - список+поиск+правила+редактор базы (легаси
-// #rulescard, renderRules 1591). DnD групп и правил - порт attachDnD
-// (panel.js 1284) на хелперах dnd.ts; inline-правка правила и фокус в
-// полях списка держат editingLock стора (легаси editingRulesPanel 1512) -
-// перерендер откладывается до выхода. Пресеты/каскады - Ф3.7б, бэкапы и
-// импорт/выгрузка файлом - Ф3.7в.
+// Фаза 3.7 «Группы правил» (легаси #rulescard, renderRules 1591).
+// 3.7а: список+поиск+правила+редактор базы; DnD групп и правил - порт
+// attachDnD (panel.js 1284) на хелперах dnd.ts; inline-правка правила и
+// фокус в полях списка держат editingLock стора (легаси editingRulesPanel
+// 1512) - перерендер откладывается до выхода. 3.7б: пресеты (ряд
+// «шаблон на интерфейс», легаси 2148-2259) и каскады (CascadeDialog,
+// легаси 2050-2107). Бэкапы и импорт/выгрузка файлом - Ф3.7в.
 
 const groups = useGroups();
 const { state } = groups;
 const { push } = useToast();
 const { confirm } = useConfirm();
 
-onMounted(() => groups.start(30000)); // легаси: setInterval(refreshRules, 30000)
+onMounted(() => {
+  groups.start(30000); // легаси: setInterval(refreshRules, 30000)
+  void groups.loadPresets(); // легаси loadPresets() на старте, без поллинга
+});
 onBeforeUnmount(() => groups.stop());
 
 async function run(fn: () => Promise<unknown>): Promise<void> {
@@ -79,6 +84,52 @@ async function createG(): Promise<void> {
   }
   creating.value = false;
 }
+
+// --- пресеты (легаси 2148-2259) ---
+const presetSel = ref('');
+const presetIface = ref('');
+const applying = ref(false);
+
+const presetOptions = computed<UiSelectOption[]>(() =>
+  state.presets.list.map((p: Preset) => ({ value: p.id, label: p.title, count: (p.rules || []).length })));
+
+// легаси: первый пресет предвыбран
+watch(() => state.presets.list, (list) => {
+  if (!presetSel.value && list.length) presetSel.value = list[0].id;
+}, { immediate: true });
+
+watch(() => state.ifaces, (list) => {
+  if (!presetIface.value && list.length) presetIface.value = list[0].device;
+}, { immediate: true });
+
+async function applyPreset(): Promise<void> {
+  const p = state.presets.list.find((x) => x.id === presetSel.value) || null;
+  const iface = presetIface.value;
+  if (!presetSel.value || !iface) {
+    push('Выберите шаблон и интерфейс', true);
+    return;
+  }
+  const ifaceTxt = createIfaceOptions.value.find((o) => o.value === iface)?.label || iface;
+  const lines = [presetRulesLine(p, presetSel.value), `Интерфейс: ${ifaceTxt}`];
+  if (p && p.source) lines.push(`Источник: ${p.source.replace(/^https?:\/\//, '')}`);
+  const ok = await confirm({
+    title: 'Применение шаблона',
+    text: lines.join('\n') + '\n\nСоздать группу?',
+    okLabel: 'Создать',
+  });
+  if (!ok) return;
+  applying.value = true;
+  try {
+    const n = await groups.applyPreset(presetSel.value, iface);
+    push(`Группа создана, правил: ${n}`);
+  } catch (e) {
+    push(e instanceof Error ? e.message : String(e), true);
+  }
+  applying.value = false;
+}
+
+// --- каскад (легаси 2050-2107) ---
+const cascadeOpen = ref(false);
 
 // --- гистерезис политик (легаси 1213-1246) ---
 const cycFail = ref('');
@@ -406,6 +457,43 @@ function editGroup(g: GroupView): void {
       >
         + группа
       </UiButton>
+      <UiButton
+        tooltip="направить трафик одного подключения через другое"
+        @click="cascadeOpen = true"
+      >
+        + каскад
+      </UiButton>
+    </div>
+
+    <!-- ряд пресетов (легаси presetSel/presetIface/presetApply/presetSrc) -->
+    <div class="crow psetrow">
+      <UiSelect
+        v-model="presetSel"
+        :options="presetOptions"
+        label="шаблон"
+        class="psel"
+      />
+      <UiSelect
+        v-model="presetIface"
+        :options="createIfaceOptions"
+        label="интерфейс шаблона"
+      />
+      <UiButton
+        :busy="applying"
+        @click="applyPreset"
+      >
+        шаблон на интерфейс
+      </UiButton>
+    </div>
+    <div
+      v-if="state.presets.sourceUrl"
+      class="muted psetsrc"
+    >
+      Списки: <a
+        :href="state.presets.sourceUrl"
+        target="_blank"
+        rel="noopener"
+      >github.com/itdoginfo/allow-domains</a>{{ state.presets.sourceNote ? ' (' + state.presets.sourceNote + ')' : '' }}. Более точные и свежие списки - в репозитории источника.
     </div>
 
     <!-- гистерезис политик (легаси polFailCycles/polRestoreCycles) -->
@@ -890,6 +978,8 @@ function editGroup(g: GroupView): void {
       v-model:open="editOpen"
       :group="editing"
     />
+
+    <CascadeDialog v-model:open="cascadeOpen" />
   </UiCard>
 </template>
 
@@ -899,6 +989,17 @@ function editGroup(g: GroupView): void {
   align-items: flex-end;
   gap: 10px;
   flex-wrap: wrap;
+}
+.psetrow {
+  margin-top: 8px;
+}
+.psel {
+  flex: 1;
+  min-width: 240px;
+}
+.psetsrc {
+  font-size: 11px;
+  margin-top: 4px;
 }
 .cname {
   width: 180px;

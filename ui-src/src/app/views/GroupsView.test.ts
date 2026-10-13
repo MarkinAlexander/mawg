@@ -5,8 +5,9 @@ import GroupsView from './GroupsView.vue'
 import { ConfirmHost, UiSwitch } from '../../components/ui'
 import { useConfirm } from '../../stores/confirm'
 import { useGroups } from '../../stores/groups'
+import { useStatus } from '../../stores/status'
 import { useToast } from '../../stores/toast'
-import type { GroupView } from '../../api/types'
+import type { GroupView, Status } from '../../api/types'
 
 function groupsFixture(): GroupView[] {
   return [
@@ -46,6 +47,27 @@ async function makeView(dups: Rec = {}) {
     if (u.endsWith('/mt/policy-cycles')) {
       if (m === 'PUT') data.cycles = body;
       return ok(data.cycles);
+    }
+    if (u.endsWith('/mt/presets') && m === 'GET') {
+      return ok({
+        presets: [{
+          id: 'p1', title: 'Telegram', source: 'https://github.com/itdoginfo/allow-domains',
+          rules: [{ type: 'domain' }, { type: 'domain' }, { type: 'namespace' }, { type: 'subnet' }, { type: 'subnet' }],
+        }],
+        sourceUrl: 'https://github.com/itdoginfo/allow-domains',
+        sourceNote: 'обновляется ежедневно',
+      });
+    }
+    if (/\/mt\/presets\/[^/]+\/apply$/.test(u)) {
+      data.groups.push({ id: 'g9', name: 'Telegram', interface: body.interface, enable: true, rules: [] });
+      return ok({ ok: true, groupId: 'g9', rules: 5 });
+    }
+    if (u.endsWith('/cascades') && m === 'POST') {
+      data.groups.push({
+        id: 'g7', name: 'Служебная: ' + body.source + ' через ' + body.via, interface: body.via.replace(/^\w+:/, ''), enable: true,
+        cascade: { group: 'g7', source: body.source, via: body.via }, rules: [],
+      });
+      return ok({ ok: true });
     }
     // мутации меняют state-мок, следующий refresh это увидит
     if (m === 'POST' && /\/mt\/groups\/g1\/rules\/r1\/enable$/.test(u)) {
@@ -97,10 +119,13 @@ beforeEach(() => {
   state.duplicates = {};
   state.ifaces = [];
   state.cycles = null;
+  state.presets = { list: [], sourceUrl: '', sourceNote: '', loaded: false };
   state.available = true;
   state.loaded = false;
   useConfirm().cancel();
   useToast().toasts.list.splice(0);
+  useStatus().stop();
+  useStatus().state.data = null;
 });
 
 describe('GroupsView - список групп', () => {
@@ -352,6 +377,78 @@ describe('GroupsView - импорт текстом и дубликаты', () =>
     expect(dups.text()).toContain('t.me');
     expect(dups.text()).toContain('дубликат: 2 группы');
     expect(dups.text()).toContain('группы: ai, backup');
+    w.unmount();
+  });
+});
+
+describe('GroupsView - пресеты и каскады (Ф3.7б)', () => {
+  it('ряд пресетов: предвыбор первого, подпись источника, применение с confirm-сводкой', async () => {
+    const { w, f } = await makeView();
+    await vi.waitFor(() => expect(useGroups().state.presets.loaded).toBe(true));
+    await nextTick();
+    const card = w.find('.card');
+    expect(card.text()).toContain('обновляется ежедневно');
+    expect(card.text()).toContain('github.com/itdoginfo/allow-domains');
+    // шаблон предвыбран первым (легаси), интерфейс - первым из списка
+    const btns = card.find('.psetrow').findAll('.psel-btn');
+    expect(btns[0].text()).toBe('Telegram');
+    expect(btns[1].text()).toBe('nwg0 - пул proton');
+    await btnIn(card, 'шаблон на интерфейс')[0].trigger('click');
+    await nextTick();
+    expect(useConfirm().state.title).toBe('Применение шаблона');
+    const text = useConfirm().state.text;
+    expect(text).toContain('Telegram - правил: 5 (');
+    expect(text).toContain('подсети IPv4: 2');
+    expect(text).toContain('Интерфейс: nwg0 - пул proton');
+    expect(text).toContain('Источник: github.com/itdoginfo/allow-domains');
+    expect(text.endsWith('Создать группу?')).toBe(true);
+    useConfirm().ok();
+    await vi.waitFor(() => {
+      const post = f.mock.calls.find((c) => /\/mt\/presets\/p1\/apply$/.test(c[0] as string));
+      expect(post).toBeTruthy();
+      expect(JSON.parse(post![1]!.body as string)).toEqual({ interface: 'nwg0' });
+    });
+    await vi.waitFor(() =>
+      expect(useToast().toasts.list.map((t) => t.text)).toContain('Группа создана, правил: 5'));
+    await vi.waitFor(() => expect(block(w, 'g9').exists()).toBe(true));
+    w.unmount();
+  });
+
+  it('каскад: опции пулы+интерфейсы с взаимным дизейблом, hosts при iface-источнике, POST', async () => {
+    useStatus().state.data = {
+      version: '', platform: '', backendName: '', authEnabled: false, nativeAWG3: false, mtSources: true,
+      pools: [{ name: 'proton', platform: 'keenetic', device: 'nwg0', mode: 'up', activeFile: '', activeEndpoint: '', lastResult: '', lastError: '', rotations: 0, disabled: false, consecFails: 0, settings: {}, configs: [], premium: { imported: false, countries: [] }, protos: [] }],
+    } as unknown as Status;
+    const { w, f } = await makeView();
+    await btnIn(w, '+ каскад')[0].trigger('click');
+    await nextTick();
+    const dlg = w.findAll('dialog').find((d) => d.find('h3').text() === 'Каскад')!;
+    expect(dlg.text()).toContain('Создается служебная группа');
+    const btns = dlg.findAll('.psel-btn');
+    expect(btns[0].text()).toBe('пул proton'); // первый вариант - источник
+    expect(btns[1].text()).toBe('интерфейс nwg0 - пул proton'); // путь - первый не занятый
+    expect(dlg.find('textarea').exists()).toBe(false); // pool-источник - без hosts
+
+    // источник -> iface:nwg7: hosts-поле появляется, путь остаётся на nwg0
+    await btns[0].trigger('click');
+    await nextTick();
+    await dlg.findAll('.psel-item').filter((o) => o.text() === 'интерфейс nwg7')[0].trigger('click');
+    await nextTick();
+    expect(dlg.find('textarea').exists()).toBe(true);
+    await dlg.find('textarea').setValue('8.39.125.1\nengage.example.com');
+    await btnIn(dlg, 'Создать каскад')[0].trigger('click');
+    await vi.waitFor(() => {
+      const post = f.mock.calls.find((c) => (c[0] as string).endsWith('/cascades'));
+      expect(post).toBeTruthy();
+      expect(JSON.parse(post![1]!.body as string)).toEqual({ source: 'iface:nwg7', via: 'iface:nwg0', hosts: ['8.39.125.1', 'engage.example.com'] });
+    });
+    await vi.waitFor(() =>
+      expect(useToast().toasts.list.map((t) => t.text)).toContain('Каскад создан и включен'));
+    await vi.waitFor(() => {
+      const g7 = block(w, 'g7');
+      expect(g7.exists()).toBe(true);
+      expect(g7.text()).toContain('каскад');
+    });
     w.unmount();
   });
 });
