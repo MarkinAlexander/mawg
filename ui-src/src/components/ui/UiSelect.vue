@@ -57,43 +57,52 @@ function pick(o: UiSelectOption) {
     :tooltip="props.tooltip"
   >
     <template #default>
-      <div
-        ref="root"
-        class="psel"
-      >
-        <button
-          type="button"
-          class="psel-btn"
-          :disabled="props.disabled || props.busy"
-          :title="selected?.label ?? props.tooltip"
-          @click="open = !open"
-        >
-          {{ selected?.label ?? '—' }}
-        </button>
+      <div class="inline">
         <div
-          v-if="open"
-          class="psel-list"
+          ref="root"
+          class="psel"
         >
           <button
-            v-for="o in props.options"
-            :key="o.value"
             type="button"
-            class="psel-item"
-            :title="o.hint ? `${o.label}: ${o.hint}` : o.label"
-            @click="pick(o)"
+            class="psel-btn"
+            :disabled="props.disabled || props.busy"
+            :title="selected?.label ?? props.tooltip"
+            @click="open = !open"
           >
-            <span class="row">
-              <span class="lbl">{{ o.label }}</span>
-              <span
-                v-if="o.count !== undefined"
-                class="cnt"
-              >{{ o.count }}</span>
-            </span>
-            <span
-              v-if="o.hint"
-              class="hint"
-            >{{ o.hint }}</span>
+            {{ selected?.label ?? '—' }}
           </button>
+          <div
+            v-if="open"
+            class="psel-list"
+          >
+            <button
+              v-for="o in props.options"
+              :key="o.value"
+              type="button"
+              class="psel-item"
+              :title="o.hint ? `${o.label}: ${o.hint}` : o.label"
+              @click="pick(o)"
+            >
+              <span class="row">
+                <span class="lbl">{{ o.label }}</span>
+                <span
+                  v-if="o.count !== undefined"
+                  class="cnt"
+                >{{ o.count }}</span>
+              </span>
+              <span
+                v-if="o.hint"
+                class="hint"
+              >{{ o.hint }}</span>
+            </button>
+          </div>
+        </div>
+        <!-- парная кнопка: одной высоты с селектом, на его линии -->
+        <div
+          v-if="$slots.action"
+          class="act"
+        >
+          <slot name="action" />
         </div>
       </div>
     </template>
@@ -101,6 +110,28 @@ function pick(o: UiSelectOption) {
 </template>
 
 <style scoped>
+.inline {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  margin-top: 3px;
+}
+.inline .psel {
+  flex: 1;
+  min-width: 0;
+  margin-top: 0;
+}
+.act {
+  flex: none;
+  display: flex;
+}
+/* кнопка пары - высотой с селект, на его базовой линии */
+.act :deep(.uibtn) {
+  height: auto;
+  align-self: stretch;
+  padding-top: 0;
+  padding-bottom: 0;
+}
 .psel {
   position: relative;
   margin-top: 3px;

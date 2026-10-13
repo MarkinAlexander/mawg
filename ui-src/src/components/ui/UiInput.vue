@@ -53,31 +53,62 @@ function onInput(e: Event) {
     :error="error ?? undefined"
   >
     <template #default="{ id }">
-      <span class="pwrap">
-        <input
-          :id="id"
-          :type="effType"
-          :value="props.modelValue"
-          :placeholder="props.placeholder"
-          :disabled="props.disabled"
-          :class="{ mono: props.mono }"
-          @input="onInput"
+      <div class="inline">
+        <span class="pwrap">
+          <input
+            :id="id"
+            :type="effType"
+            :value="props.modelValue"
+            :placeholder="props.placeholder"
+            :disabled="props.disabled"
+            :class="{ mono: props.mono }"
+            @input="onInput"
+          >
+          <button
+            v-if="props.type === 'password'"
+            class="peye"
+            type="button"
+            :title="showPassword ? 'скрыть пароль' : 'показать пароль'"
+            @click="showPassword = !showPassword"
+          >
+            <UiIcon :name="showPassword ? 'eye-off' : 'eye'" />
+          </button>
+        </span>
+        <!-- парная кнопка: одной высоты с инпутом, на его линии -->
+        <div
+          v-if="$slots.action"
+          class="act"
         >
-        <button
-          v-if="props.type === 'password'"
-          class="peye"
-          type="button"
-          :title="showPassword ? 'скрыть пароль' : 'показать пароль'"
-          @click="showPassword = !showPassword"
-        >
-          <UiIcon :name="showPassword ? 'eye-off' : 'eye'" />
-        </button>
-      </span>
+          <slot name="action" />
+        </div>
+      </div>
     </template>
   </UiField>
 </template>
 
 <style scoped>
+.inline {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  margin-top: 3px;
+}
+.inline .pwrap {
+  flex: 1;
+  min-width: 0;
+  margin-top: 0;
+}
+.act {
+  flex: none;
+  display: flex;
+}
+/* кнопка пары - высотой с инпут (31px = 5+19+5+2), на его базовой линии */
+.act :deep(.uibtn) {
+  height: auto;
+  align-self: stretch;
+  padding-top: 0;
+  padding-bottom: 0;
+}
 .pwrap {
   position: relative;
   display: block;

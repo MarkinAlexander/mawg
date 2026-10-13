@@ -56,7 +56,7 @@ function toggle() {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 14px 16px;
+  padding: 14px 20px;
   margin-bottom: 16px;
 }
 .card h2 {
