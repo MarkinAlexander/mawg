@@ -2506,22 +2506,42 @@ function showNoAuthBadge() {
 
 // --- настройки панели ---
 let SSRV = null, ALLOW = [];
+// список разрешённых сохраняется СРАЗУ при каждом изменении (раньше чипы
+// жили до кнопки «Сохранить» и терялись при перезагрузке страницы -
+// кейс владельца с 192.168.0.0/24). Адрес/порт/авторизация не трогаются:
+// пустые listenAddr/port бэкенд заменяет текущими.
+async function allowPersist() {
+  try {
+    await api('PUT', '/settings/server', { allowedIps: ALLOW.map(e => ({ v: e.v, on: e.on })) });
+    return true;
+  } catch (err) { toast(err.message, true); return false; }
+}
+function lanSubnet24() {
+  const mine = SSRV && SSRV.clientIp;
+  return mine ? subnet24(mine) + '.0/24' : '';
+}
 function renderAllowChips() {
   const box = document.getElementById('ssChips');
   if (!ALLOW.length) {
     box.innerHTML = '<span class="muted" style="font-size:12px">список пуст - доступ с любого адреса</span>';
-    return;
+  } else {
+    box.innerHTML = '';
+    for (const e of ALLOW) {
+      const chip = document.createElement('span');
+      chip.style.cssText = 'display:inline-flex;align-items:center;gap:6px;border:1px solid ' + (e.on ? 'var(--ok)' : 'var(--border)') + ';border-radius:14px;padding:2px 6px 2px 10px;font-size:12px' + (e.on ? '' : ';opacity:.5');
+      chip.innerHTML = esc(e.v) +
+        '<label class="switch" style="margin:0" title="' + (e.on ? 'выключить запись' : 'включить запись') + '"><input type="checkbox"' + (e.on ? ' checked' : '') + '><span class="knob"></span></label>' +
+        '<button type="button" class="iconbtn" title="удалить запись" style="padding:0 3px">' + X_SVG + '</button>';
+      chip.querySelector('input').onchange = async ev => { e.on = ev.target.checked; renderAllowChips(); await allowPersist(); };
+      chip.querySelector('button').onclick = async () => { ALLOW = ALLOW.filter(x => x !== e); renderAllowChips(); await allowPersist(); };
+      box.appendChild(chip);
+    }
   }
-  box.innerHTML = '';
-  for (const e of ALLOW) {
-    const chip = document.createElement('span');
-    chip.style.cssText = 'display:inline-flex;align-items:center;gap:6px;border:1px solid ' + (e.on ? 'var(--ok)' : 'var(--border)') + ';border-radius:14px;padding:2px 6px 2px 10px;font-size:12px' + (e.on ? '' : ';opacity:.5');
-    chip.innerHTML = esc(e.v) +
-      '<label class="switch" style="margin:0" title="' + (e.on ? 'выключить запись (не применялась бы после сохранения)' : 'включить запись') + '"><input type="checkbox"' + (e.on ? ' checked' : '') + '><span class="knob"></span></label>' +
-      '<button type="button" class="iconbtn" title="удалить запись" style="padding:0 3px">' + X_SVG + '</button>';
-    chip.querySelector('input').onchange = ev => { e.on = ev.target.checked; renderAllowChips(); };
-    chip.querySelector('button').onclick = () => { ALLOW = ALLOW.filter(x => x !== e); renderAllowChips(); };
-    box.appendChild(chip);
+  const cb = document.getElementById('ssLanSubnet');
+  if (cb) {
+    const lan = lanSubnet24();
+    document.getElementById('ssLanSubnetLabel').textContent = lan ? 'вся моя подсеть (' + lan + ')' : 'вся моя подсеть';
+    cb.checked = !!lan && ALLOW.some(x => x.v === lan && x.on);
   }
 }
 function ipValid(v) {
@@ -2553,6 +2573,7 @@ async function allowAdd(value) {
   }
   ALLOW.push({ v, on: true });
   renderAllowChips();
+  await allowPersist();
 }
 async function loadServerSettings() {
   try {
@@ -2600,6 +2621,17 @@ document.getElementById('ssDevices').onchange = e => {
 document.getElementById('ssAddMine').onclick = () => {
   if (SSRV && SSRV.clientIp) allowAdd(SSRV.clientIp);
   else toast('Адрес не определён', true);
+};
+document.getElementById('ssLanSubnet').onchange = async e => {
+  const lan = lanSubnet24();
+  if (!lan) return toast('Адрес не определён - подсеть не вычислить', true);
+  if (e.target.checked) {
+    await allowAdd(lan);
+  } else {
+    ALLOW = ALLOW.filter(x => x.v !== lan);
+    renderAllowChips();
+    await allowPersist();
+  }
 };
 document.getElementById('ssAuthOn').onchange = () => {
   if (!document.getElementById('ssAuthOn').checked) return updateAuthHint();
