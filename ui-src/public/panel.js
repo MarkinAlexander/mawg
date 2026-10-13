@@ -2534,7 +2534,13 @@ function ssSaveEnabled() {
 // пустые listenAddr/port бэкенд заменяет текущими.
 async function allowPersist() {
   try {
-    await api('PUT', '/settings/server', { allowedIps: ALLOW.map(e => ({ v: e.v, on: e.on })) });
+    const r = await api('PUT', '/settings/server', { allowedIps: ALLOW.map(e => ({ v: e.v, on: e.on })) });
+    // бэкенд мог дописать наш адрес (если нового списка не покрывал) -
+    // показываем эффективный список как есть
+    if (r && r.allowedIps) {
+      ALLOW = r.allowedIps.map(e => ({ v: e.v, on: e.on !== false }));
+      renderAllowChips();
+    }
     return true;
   } catch (err) { toast(err.message, true); return false; }
 }
