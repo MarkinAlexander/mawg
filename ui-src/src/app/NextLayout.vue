@@ -259,13 +259,15 @@ main {
     z-index: 80;
     width: 52px;
     height: 52px;
-    border-radius: 50%;
+    /* квадрат со скруглением - в стиле кнопок карточек; зелёный как
+       активный пункт меню (слово владельца) */
+    border-radius: 8px;
     flex-direction: column;
     justify-content: center;
     align-items: center;
     gap: 5px;
     padding: 0;
-    background: var(--accent);
+    background: var(--ok);
     border: none;
     box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
   }
@@ -275,6 +277,12 @@ main {
     height: 2px;
     border-radius: 1px;
     background: #fff;
+  }
+  /* кнопка меню fixed внизу справа: пока она видна, странице нужен
+     нижний паддинг (52px кнопка + 16px отступ + 12px запас), чтобы она
+     не перекрывала контент при прокрутке */
+  .nextapp {
+    padding-bottom: calc(80px + env(safe-area-inset-bottom));
   }
 }
 .menu-wrap {
