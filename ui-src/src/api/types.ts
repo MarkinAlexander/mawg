@@ -215,24 +215,30 @@ export interface MagitrickleRes {
 
 // --- интерфейсы/слоты/wan-probe ---
 
+// проба здоровья (store.ProbeConfig): цель - публичный IPv4 или http(s) URL;
+// PUT с target:'' = убрать проверку (бэкенд превращает в nil)
+export interface ProbeConfig {
+  type: string // http | icmp
+  target: string
+  maxRttMs?: number
+}
+
 export interface IfaceInfo {
   device: string
   slot?: string
   description?: string
-  mode: string
+  mode: string // managed | external | hidden
   pool?: string
   linkUp: boolean
   connected: boolean
   handshakeAgo: number
-  probe?: Record<string, unknown>
+  probe?: ProbeConfig | null
   probeStatus?: string
 }
 
 export interface WanProbeInfo {
   enabled: boolean
-  probe?: { type: string; host?: string; maxRttMs?: number } | null
-  // остальное - последние результаты проб, читается карточкой WAN как текст
-  [key: string]: unknown
+  probe?: ProbeConfig | null
 }
 
 // --- события/система ---
