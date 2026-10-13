@@ -65,6 +65,7 @@ function pick(o: UiSelectOption) {
           <button
             type="button"
             class="psel-btn"
+            :class="{ on: open }"
             :disabled="props.disabled || props.busy"
             :title="selected?.label ?? props.tooltip"
             @click="open = !open"
@@ -137,15 +138,30 @@ function pick(o: UiSelectOption) {
   margin-top: 3px;
 }
 .psel-btn {
+  position: relative;
   width: 100%;
   text-align: left;
   font-size: 13px;
-  padding: 5px 8px;
+  padding: 5px 26px 5px 8px; /* справа место под стрелку-индикатор */
   background: var(--bg);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 6px;
   cursor: pointer;
+}
+/* стрелка-индикатор списка; при открытии разворачивается */
+.psel-btn::after {
+  content: '';
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  margin-top: -3px;
+  border: 4px solid transparent;
+  border-top-color: var(--dim);
+  transition: transform 0.15s;
+}
+.psel-btn.on::after {
+  transform: rotate(180deg);
 }
 .psel-btn:disabled {
   opacity: 0.55;
