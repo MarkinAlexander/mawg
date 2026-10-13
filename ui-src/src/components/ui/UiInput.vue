@@ -31,6 +31,17 @@ const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
 
 const showPassword = ref(false)
 const error = ref<string | null>(null)
+const inputEl = ref<HTMLInputElement | null>(null)
+
+// крестик очистки (легаси wireClearInputs): только для текстовых полей
+// с непустым значением; у password - глаз, у number - штатный спиннер
+const canClear = computed(() => props.type === 'text' && !!props.modelValue && !props.disabled)
+
+function clear(): void {
+  emit('update:modelValue', '')
+  error.value = props.validator ? props.validator('') : null
+  inputEl.value?.focus()
+}
 
 const effType = computed(() => {
   if (props.type !== 'password') return props.type
@@ -57,6 +68,7 @@ function onInput(e: Event) {
         <span class="pwrap">
           <input
             :id="id"
+            ref="inputEl"
             :type="effType"
             :value="props.modelValue"
             :placeholder="props.placeholder"
@@ -64,6 +76,15 @@ function onInput(e: Event) {
             :class="{ mono: props.mono }"
             @input="onInput"
           >
+          <button
+            v-if="canClear"
+            class="pclr"
+            type="button"
+            title="очистить"
+            @click="clear"
+          >
+            <UiIcon name="x" />
+          </button>
           <button
             v-if="props.type === 'password'"
             class="peye"
@@ -143,6 +164,22 @@ input.mono {
   cursor: pointer;
 }
 .peye:hover {
+  color: var(--text);
+  border-color: transparent;
+}
+.pclr {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  padding: 2px;
+  color: var(--dim);
+  line-height: 0;
+  cursor: pointer;
+}
+.pclr:hover {
   color: var(--text);
   border-color: transparent;
 }
