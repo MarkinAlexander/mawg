@@ -1,10 +1,11 @@
 // Мутации пулов (легаси actPool 367/upload 352/toggleCfg 377/moveCfg 388/
-// delCfg 393/delPool 398/importPremium/premium-country). Данные карточек -
-// из useStatus() (GET /status каждые 5с); после мутаций - отложенное
-// перечитывание (легаси setTimeout(refresh, 700)), кроме быстрых конфиг-хвостов
-// - там перечитывание сразу.
-import { api, apiForm } from '../api/client'
+// delCfg 393/delPool 398/importPremium/premium-country, создание 670-805,
+// настройки openSettings/spSave 935-1043). Данные карточек - из useStatus()
+// (GET /status каждые 5с); после мутаций - отложенное перечитывание
+// (легаси setTimeout(refresh, 700)), кроме быстрых конфиг-хвостов - там сразу.
+import { api, apiForm, apiText } from '../api/client'
 import { useStatus } from './status'
+import type { LinkInspect, PoolMember, SlotInfo } from '../api/types'
 
 export type PoolAct = 'enable' | 'disable' | 'rotate' | 'check';
 
@@ -14,6 +15,14 @@ export interface UploadRes {
   duplicates?: string[]
   errors?: string[]
   warnings?: string[]
+}
+
+// тело создания пула из конфигов (легаси pCreate, режим cfg)
+export interface CreatePoolBody {
+  name: string
+  fallback: string
+  keeneticSlot?: string
+  openwrtProto?: string
 }
 
 export function usePoolActions() {
@@ -70,5 +79,78 @@ export function usePoolActions() {
     void refresh();
   }
 
-  return { act, del, upload, toggleCfg, moveCfg, delCfg, importPremium, switchPremiumCountry };
+  // --- Ф3.5б: создание/настройки ---
+
+  async function create(body: CreatePoolBody): Promise<void> {
+    await api('POST', '/pools', body);
+    void refresh();
+  }
+
+  async function createFromSource(body: CreatePoolBody & { source: string; exchange?: boolean; via?: string; country?: string }): Promise<SourcePlanRes> {
+    const r = await api<SourcePlanRes>('POST', '/pools/from-source', body);
+    void refresh();
+    return r;
+  }
+
+  // Amnezia Free: повтор с решением капчи - тем же телом + captchaId/Solution
+  async function requestFree(fields: { name: string; fallback: string; keeneticSlot?: string }, answer?: { id: string; solution: string }): Promise<SourcePlanRes> {
+    const body = answer ? { ...fields, captchaId: answer.id, captchaSolution: answer.solution } : fields;
+    const r = await api<SourcePlanRes>('POST', answer ? '/pools/amnezia-free/captcha' : '/pools/amnezia-free', body);
+    void refresh();
+    return r;
+  }
+
+  async function inspect(source: string): Promise<LinkInspect> {
+    return api<LinkInspect>('POST', '/links/inspect', { source });
+  }
+
+  async function slots(): Promise<SlotInfo[]> {
+    const r = await api<{ slots: SlotInfo[] }>('GET', '/slots');
+    return r.slots || [];
+  }
+
+  async function createSlot(): Promise<string> {
+    const r = await api<{ slot: string }>('POST', '/slots/create', {});
+    return r.slot || '';
+  }
+
+  async function refreshSource(name: string, body: { source: string; country?: string }): Promise<SourcePlanRes> {
+    const r = await api<SourcePlanRes>('POST', `/pools/${encodeURIComponent(name)}/refresh-source`, body);
+    void refresh();
+    return r;
+  }
+
+  async function update(name: string, body: Record<string, unknown>): Promise<void> {
+    await api('PUT', `/pools/${encodeURIComponent(name)}`, body);
+    void refresh();
+  }
+
+  async function rename(name: string, newName: string): Promise<void> {
+    await api('POST', `/pools/${encodeURIComponent(name)}/rename`, { name: newName });
+    later();
+  }
+
+  async function reissueFree(name: string, answer?: { id: string; solution: string }): Promise<SourcePlanRes> {
+    const r = await api<SourcePlanRes>('POST', `/pools/${encodeURIComponent(name)}/free/reissue`, answer ? { captchaId: answer.id, captchaSolution: answer.solution } : {});
+    void refresh();
+    return r;
+  }
+
+  async function members(name: string): Promise<PoolMember[]> {
+    const r = await api<{ members: PoolMember[] }>('GET', `/pools/${encodeURIComponent(name)}/members`);
+    return r.members || [];
+  }
+
+  async function configText(name: string, file: string): Promise<string> {
+    return apiText(`/pools/${encodeURIComponent(name)}/configs/${encodeURIComponent(file)}`);
+  }
+
+  return {
+    act, del, upload, toggleCfg, moveCfg, delCfg, importPremium, switchPremiumCountry,
+    create, createFromSource, requestFree, inspect, slots, createSlot,
+    refreshSource, update, rename, reissueFree, members, configText,
+  };
 }
+
+// SourcePlan из api/types (план создания/обновления из источника)
+type SourcePlanRes = import('../api/types').SourcePlan;

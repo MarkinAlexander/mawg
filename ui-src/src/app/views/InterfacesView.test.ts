@@ -165,8 +165,7 @@ describe('InterfacesView - диалог пробы интерфейса', () => 
     expect((target.element as HTMLInputElement).value).toBe('1.1.1.1');
 
     await target.setValue('9.9.9.9');
-    const saves = w.findAll('dialog button').filter((b) => b.text() === 'Сохранить');
-    await saves[0].trigger('click');
+    await dlg.findAll('button').filter((b) => b.text() === 'Сохранить')[0].trigger('click');
     await vi.waitFor(() => {
       const put = f.mock.calls.find((c) => (c[0] as string).endsWith('/ifaces/nwg7/probe'));
       expect(put).toBeTruthy();
@@ -185,7 +184,7 @@ describe('InterfacesView - диалог пробы интерфейса', () => 
     await target.setValue('  ');
 
     const puts = () => f.mock.calls.filter((c) => (c[0] as string).endsWith('/probe') && c[1]?.method === 'PUT');
-    await w.findAll('dialog button').filter((b) => b.text() === 'Сохранить')[0].trigger('click');
+    await dlg.findAll('button').filter((b) => b.text() === 'Сохранить')[0].trigger('click');
     await nextTick();
     expect(useToast().toasts.list.map((t) => t.text)).toContain('Укажите цель пробы');
     expect(puts()).toHaveLength(0);
