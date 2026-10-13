@@ -15,6 +15,13 @@ export default tseslint.config(
     languageOptions: { parserOptions: { parser: tseslint.parser } },
   },
   {
+    // UiIcon вставляет статические SVG-константы (icons.ts, без
+    // пользовательского ввода); html-комментарии в шаблоне там нельзя -
+    // превращают компонент во фрагмент и рвут fallthrough-атрибуты.
+    files: ['src/components/ui/UiIcon.vue'],
+    rules: { 'vue/no-v-html': 'off' },
+  },
+  {
     files: ['scripts/**/*.mjs', '*.config.js'],
     languageOptions: { globals: { ...globals.node } },
   },
