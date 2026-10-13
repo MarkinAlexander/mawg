@@ -233,8 +233,11 @@ nav a {
   color: var(--text);
 }
 nav a.router-link-active {
-  background: var(--panel);
+  /* активная вкладка - сразу видно (слово владельца): зелёная заливка,
+     тёмный текст; #3fb96a = --ok, тёмный - литерал владельца */
+  background: var(--ok);
   font-weight: 600;
+  color: #120b0b;
 }
 main {
   padding: 12px 0;
@@ -310,9 +313,10 @@ main {
   font-size: 15px;
 }
 .sheet a.router-link-active {
-  background: var(--panel2);
+  /* единая композиция с десктопом: зелёная заливка, тёмный текст */
+  background: var(--ok);
   font-weight: 600;
-  color: var(--accent);
+  color: #120b0b;
 }
 .sheet a.sheet-legacy {
   border-top: 1px solid var(--border);
