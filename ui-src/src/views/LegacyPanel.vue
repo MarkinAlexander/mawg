@@ -148,11 +148,15 @@ onMounted(() => {
         <input id="ssAllowed" placeholder="192.168.0.82 или 192.168.0.0/24" style="flex:1;min-width:170px">
         <button id="ssAdd">добавить</button>
       </div>
+      <div class="btnrow" style="align-items:center;margin-top:6px">
+        <label class="switch" style="margin:0" title="добавить /24 подсети, из которой вы открыли панель (например 192.168.0.0/24); снимите галку - запись уберётся"><input type="checkbox" id="ssLanSubnet"><span class="knob"></span></label>
+        <span id="ssLanSubnetLabel" style="font-size:12px">вся моя подсеть</span>
+      </div>
       <div class="btnrow" style="align-items:center;margin-top:4px">
         <select id="ssDevices" style="flex:1;min-width:170px"><option value="">устройства сети...</option></select>
         <button id="ssAddMine" title="добавить адрес, с которого вы открыли панель">мой адрес</button>
       </div>
-      <div class="muted" style="font-size:11px;margin-top:2px">IP или подсеть, с которых открыт доступ к панели. Пусто - доступ всем. Роутер всегда может открыть панель сам. За реверс-прокси фильтруется адрес прокси, учитывайте.</div>
+      <div class="muted" style="font-size:11px;margin-top:2px">IP или подсеть, с которых открыт доступ к панели. Пусто - доступ всем. Изменения списка (добавление, тумблер, удаление) применяются и сохраняются сразу, кнопка «Сохранить» для них не нужна. Роутер всегда может открыть панель сам. За реверс-прокси фильтруется адрес прокси, учитывайте.</div>
       <div class="btnrow" style="margin-top:8px;justify-content:flex-end">
         <button id="ssSave">сохранить</button>
       </div>
