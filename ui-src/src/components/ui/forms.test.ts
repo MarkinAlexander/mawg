@@ -48,6 +48,16 @@ describe('UiSwitch', () => {
     expect(w.find('input').attributes('disabled')).toBeDefined()
     expect(w.find('.uiswitch').classes()).toContain('off')
   })
+
+  it('bare-режим: без label - только тумблер, aria-label из tooltip', () => {
+    const w = mount(UiSwitch, { props: { modelValue: true, tooltip: 'выключить запись' } })
+    expect(w.find('.uiswitch').classes()).toContain('bare')
+    expect(w.find('.text').exists()).toBe(false)
+    expect(w.find('.knob').exists()).toBe(true)
+    expect(w.find('input').attributes('aria-label')).toBe('выключить запись')
+    // семантика включено: отмеченный тумблер
+    expect(w.find('input').element.checked).toBe(true)
+  })
 })
 
 describe('UiInput', () => {

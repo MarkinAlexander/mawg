@@ -4,14 +4,21 @@ import UiHint from './UiHint.vue'
 // Тумблер с рядом полей (просьба владельца: «каждый свитч с рядом полей»):
 // подпись + hint слева, свитч 32x18 справа - разметка идентична legacy
 // (.switch/.knob). tooltip - в title всей строки. busy гасит клики.
-const props = defineProps<{
-  modelValue: boolean
-  label: string
-  hint?: string
-  tooltip?: string
-  disabled?: boolean
-  busy?: boolean
-}>()
+// Без label - «голый» тумблер (для строк таблиц/чипов, как bare-режим
+// UiCheckbox); семантика включено/выключено (--ok), не «выбрано».
+const props = withDefaults(
+  defineProps<{
+    modelValue: boolean
+    label?: string
+    hint?: string
+    tooltip?: string
+    disabled?: boolean
+    busy?: boolean
+    // tight: свитч вплотную к подписи, а не у правого края строки
+    tight?: boolean
+  }>(),
+  { label: undefined, hint: undefined, tooltip: undefined, tight: false },
+)
 
 const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>()
 
@@ -23,10 +30,13 @@ function onChange(e: Event) {
 <template>
   <div
     class="uiswitch"
-    :class="{ off: props.disabled || props.busy }"
+    :class="{ off: props.disabled || props.busy, bare: !props.label, tight: props.tight }"
     :title="props.tooltip"
   >
-    <span class="text">
+    <span
+      v-if="props.label"
+      class="text"
+    >
       <span class="lbl">{{ props.label }}</span>
       <UiHint
         v-if="props.hint"
@@ -39,7 +49,7 @@ function onChange(e: Event) {
         type="checkbox"
         :checked="props.modelValue"
         :disabled="props.disabled || props.busy"
-        :aria-label="props.label"
+        :aria-label="props.label || props.tooltip || 'переключатель'"
         @change="onChange"
       >
       <span class="knob" />
@@ -67,6 +77,19 @@ function onChange(e: Event) {
 }
 .uiswitch.off .switch {
   pointer-events: none;
+}
+/* голый режим: только тумблер, для чипов/строк таблиц */
+.uiswitch.bare {
+  display: inline-flex;
+  margin: 0;
+}
+/* свитч вплотную к подписи (по умолчанию - у правого края строки) */
+.uiswitch.tight {
+  justify-content: flex-start;
+  gap: 8px;
+}
+.uiswitch.tight .text {
+  flex: none;
 }
 /* Точная копия legacy .switch/.knob (panel.css) */
 .switch {
