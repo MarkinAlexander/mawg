@@ -132,4 +132,39 @@ describe('NextLayout', () => {
     expect(b.text()).toBe('обновиться до v0.6.11')
     w.unmount()
   })
+
+  it('«mawg next» - ссылка на главную новой панели (/next/)', async () => {
+    const router = await makeRouter()
+    const w = mount(NextLayout, { global: { plugins: [router] } })
+    const brand = w.find('h1 a.brand')
+    expect(brand.exists()).toBe(true)
+    expect(brand.attributes('href')).toBe('#/next/')
+    expect(brand.text()).toContain('mawg')
+    expect(brand.text()).toContain('next')
+    w.unmount()
+  })
+
+  it('бургер: клик открывает/закрывает меню (aria-expanded, класс open), клик по вкладке закрывает', async () => {
+    const router = await makeRouter()
+    const w = mount(NextLayout, { global: { plugins: [router] } })
+    const burger = w.find('.burger')
+    const nav = w.find('nav')
+    expect(burger.exists()).toBe(true)
+    expect(burger.attributes('aria-label')).toBe('меню')
+    expect(burger.attributes('aria-expanded')).toBe('false')
+    expect(nav.classes()).not.toContain('open')
+
+    await burger.trigger('click')
+    expect(nav.classes()).toContain('open')
+    expect(burger.attributes('aria-expanded')).toBe('true')
+
+    await nav.findAll('a')[0].trigger('click') // клик по вкладке закрывает меню
+    expect(nav.classes()).not.toContain('open')
+    expect(burger.attributes('aria-expanded')).toBe('false')
+
+    await burger.trigger('click') // повторное открытие
+    await burger.trigger('click') // и закрытие самим бургером
+    expect(nav.classes()).not.toContain('open')
+    w.unmount()
+  })
 })
