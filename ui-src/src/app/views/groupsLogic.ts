@@ -223,3 +223,86 @@ export function cyclesValid(fail: string, restore: string): boolean {
   const okR = /^[1-9][0-9]?$/.test(restore) && +restore <= 20;
   return okF && okR;
 }
+
+// --- источники группы (легаси SRC_MODE_HINTS 1411, заполнение 1379-1389) ---
+
+export const SRC_MODE_HINTS: Record<string, string> = {
+  all: 'Любое устройство локальной сети: группа ловит весь трафик к своим доменам. Роутер в группу не ходит.',
+  'all+router': 'Как «вся локалка», плюс собственный трафик роутера уходит в группу (проверка IP с роутера покажет адрес туннеля).',
+  list: 'В группу ходят только перечисленные адреса (роутер - по галке). Остальная локалка - напрямую.',
+};
+
+export const SRC_MODE_OPTIONS: { value: string; label: string }[] = [
+  { value: 'all', label: 'вся локальная сеть' },
+  { value: 'all+router', label: 'локальная сеть + роутер' },
+  { value: 'list', label: 'только выбранные IP' },
+];
+
+// режим при открытии: из политики, для чужих групп - вывод из фактических
+// sources; у каскадов - all (легаси 1381)
+export function srcModeInitial(g: GroupView): '' | 'all' | 'all+router' | 'list' {
+  const pol = g.policy || {};
+  return pol.sourcesMode || (g.cascade ? 'all' : ((g.sources || []).length ? 'list' : 'all'));
+}
+
+// список при открытии: политика или фактические sources через запятую (1382)
+export function srcListInitial(g: GroupView): string {
+  const pol = g.policy || {};
+  return (pol.sources && pol.sources.length ? pol.sources : (g.sources || [])).join(', ');
+}
+
+// split по запятым/переводам строк (легаси egSave 2133)
+export function parseSources(text: string): string[] {
+  return text.split(/[,\n]+/).map((s) => s.trim()).filter(Boolean);
+}
+
+// --- пресеты (легаси presetApply 2240-2259) ---
+
+export const PRESET_TYPE_LABELS: Record<string, string> = {
+  namespace: 'домен+поддомены',
+  subnet: 'подсети IPv4',
+  subnet6: 'подсети IPv6',
+};
+
+// сводка для confirm: «{title} - правил: N (домен+поддомены: X, подсети IPv4: Y)»
+export function presetRulesLine(p: { title: string; rules: { type: string }[] } | null, presetId: string): string {
+  if (!p) return `Шаблон: ${presetId}`;
+  const cnt: Record<string, number> = {};
+  for (const rl of p.rules || []) cnt[rl.type] = (cnt[rl.type] || 0) + 1;
+  const parts = Object.entries(cnt).map(([t, n]) => `${PRESET_TYPE_LABELS[t] || t}: ${n}`);
+  return `${p.title} - правил: ${(p.rules || []).length}${parts.length ? ' (' + parts.join(', ') + ')' : ''}`;
+}
+
+// --- каскады (легаси cascadeOptions 2050, fillCascadeSel 2057) ---
+
+export interface CascadeOpt {
+  ref: string
+  label: string
+  disabled?: boolean
+}
+
+// варианты: пулы + интерфейсы (без blackhole)
+export function cascadeOptions(
+  pools: { name: string }[],
+  ifaces: { device: string; title?: string }[],
+): CascadeOpt[] {
+  const out = pools.map((p) => ({ ref: 'pool:' + p.name, label: 'пул ' + p.name }));
+  for (const i of ifaces) {
+    if (i.device === 'blackhole') continue;
+    out.push({ ref: 'iface:' + i.device, label: 'интерфейс ' + (i.title && i.title !== i.device ? i.device + ' - ' + i.title : i.device) });
+  }
+  return out;
+}
+
+// соседний список дизейблит выбранный у соседа: источник ≠ путь; если
+// текущее значение попало в дизейбл - первый разрешённый (легаси 2059-2062)
+export function wireCascadeSel(opts: CascadeOpt[], otherValue: string, current: string): { opts: CascadeOpt[]; value: string } {
+  const list = opts.map((o) => ({ ...o, disabled: o.ref === otherValue }));
+  let value = current;
+  const cur = list.find((o) => o.ref === value && !o.disabled);
+  if (!cur) {
+    const first = list.find((o) => !o.disabled);
+    value = first ? first.ref : '';
+  }
+  return { opts: list, value };
+}

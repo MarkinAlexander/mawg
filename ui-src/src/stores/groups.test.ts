@@ -16,6 +16,7 @@ beforeEach(() => {
   state.duplicates = {};
   state.ifaces = [];
   state.cycles = null;
+  state.presets = { list: [], sourceUrl: '', sourceNote: '', loaded: false };
   state.available = true;
   state.loaded = false;
 });
@@ -123,5 +124,36 @@ describe('groups store', () => {
     expect(fetchMock.mock.calls[1][0]).toBe('/api/v1/mt/groups/g1/rules/import');
     expect(JSON.parse(fetchMock.mock.calls[1][1]!.body as string)).toEqual({ text: 'a.com', type: 'auto', toSecond: true, enable: false });
     expect(r).toEqual({ added: 2, skipped: 1, bad: ['мусор'] });
+  });
+
+  it('пресеты: загрузка списка+источника, применение с перечитыванием', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        presets: [{ id: 'p1', title: 'T', rules: [{ type: 'domain', rule: 'a.com' }] }],
+        sourceUrl: 'https://github.com/x', sourceNote: 'note',
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, groupId: 'g5', rules: 1 }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ available: true, groups: [] }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { state, loadPresets, applyPreset } = useGroups();
+    await loadPresets();
+    expect(state.presets.list).toHaveLength(1);
+    expect(state.presets.sourceUrl).toBe('https://github.com/x');
+    const n = await applyPreset('p1', 'nwg0');
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/v1/mt/presets/p1/apply');
+    expect(n).toBe(1);
+    expect(state.groups).toEqual([]); // перечитан
+  });
+
+  it('createCascade: POST /cascades с перечитыванием групп', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ available: true, groups: [{ id: 'g5', name: 'Служебная', interface: 'i', enable: true, rules: [] }] }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { state, createCascade } = useGroups();
+    await createCascade({ source: 'pool:warp', via: 'iface:nwg7', hosts: ['8.8.8.8'] });
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/v1/cascades');
+    expect(JSON.parse(fetchMock.mock.calls[0][1]!.body as string)).toEqual({ source: 'pool:warp', via: 'iface:nwg7', hosts: ['8.8.8.8'] });
+    expect(state.groups).toHaveLength(1);
   });
 });

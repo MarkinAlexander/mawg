@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { GroupView } from '../../api/types'
 import {
-  cyclesValid, degradedText, dupsEntries, groupHasDup, groupMatchCount,
-  groupMatches, hlSegs, normRuleValue, showAllRules, srcBadge, warnTitle,
+  cascadeOptions, cyclesValid, degradedText, dupsEntries, groupHasDup,
+  groupMatchCount, groupMatches, hlSegs, normRuleValue, parseSources,
+  presetRulesLine, showAllRules, srcBadge, srcListInitial, srcModeInitial,
+  warnTitle, wireCascadeSel,
 } from './groupsLogic'
 
 function g(over: Partial<GroupView>): GroupView {
@@ -109,5 +111,55 @@ describe('cyclesValid', () => {
     expect(cyclesValid('21', '2')).toBe(false);
     expect(cyclesValid('2a', '2')).toBe(false);
     expect(cyclesValid('', '2')).toBe(false);
+  });
+});
+
+describe('источники (Ф3.7б)', () => {
+  it('srcModeInitial: политика, фолбэк на фактические sources, каскад - all', () => {
+    expect(srcModeInitial(g({ policy: { sourcesMode: 'list' } }))).toBe('list');
+    expect(srcModeInitial(g({ sources: ['1.1.1.1'] }))).toBe('list');
+    expect(srcModeInitial(g({}))).toBe('all');
+    expect(srcModeInitial(g({ cascade: { group: 'g', source: 'a', via: 'b' } }))).toBe('all');
+  });
+  it('srcListInitial/parseSources: политика или фактические, split по запятым и строкам', () => {
+    expect(srcListInitial(g({ policy: { sources: ['1.1.1.1'] }, sources: ['2.2.2.2'] }))).toBe('1.1.1.1');
+    expect(srcListInitial(g({ sources: ['2.2.2.2'] }))).toBe('2.2.2.2');
+    expect(parseSources(' 1.1.1.1, 2.2.2.0/24' + String.fromCharCode(10) + '3.3.3.3 ,')).toEqual(['1.1.1.1', '2.2.2.0/24', '3.3.3.3']);
+  });
+});
+
+describe('пресеты (Ф3.7б)', () => {
+  it('presetRulesLine: сводка с метками типов', () => {
+    const p = { title: 'Telegram', rules: [{ type: 'domain' }, { type: 'namespace' }, { type: 'subnet' }, { type: 'subnet' }, { type: 'regex' }] };
+    const line = presetRulesLine(p, 'x');
+    expect(line).toContain('Telegram - правил: 5');
+    expect(line).toContain('домен+поддомены: 1');
+    expect(line).toContain('подсети IPv4: 2');
+    expect(line).toContain('regex: 1');
+    expect(presetRulesLine(null, 'p9')).toBe('Шаблон: p9');
+  });
+});
+
+describe('каскады (Ф3.7б)', () => {
+  it('cascadeOptions: пулы + интерфейсы без blackhole, лейбл с титулом', () => {
+    const opts = cascadeOptions([{ name: 'proton' }], [{ device: 'nwg0', title: 'пул proton' }, { device: 'blackhole' }]);
+    expect(opts).toEqual([
+      { ref: 'pool:proton', label: 'пул proton' },
+      { ref: 'iface:nwg0', label: 'интерфейс nwg0 - пул proton' },
+    ]);
+  });
+  it('wireCascadeSel: дизейблит выбор соседа, уезжает с занятого на первый разрешённый', () => {
+    const opts = [
+      { ref: 'pool:a', label: 'A' },
+      { ref: 'pool:b', label: 'B' },
+      { ref: 'iface:x', label: 'X' },
+    ];
+    const r1 = wireCascadeSel(opts, 'pool:a', '');
+    expect(r1.value).toBe('pool:b'); // первый не занятый
+    expect(r1.opts.find((o) => o.ref === 'pool:a')!.disabled).toBe(true);
+    const r2 = wireCascadeSel(opts, 'iface:x', 'iface:x');
+    expect(r2.value).toBe('pool:a'); // текущее занято соседом - уехали
+    const r3 = wireCascadeSel(opts, '', 'pool:b');
+    expect(r3.value).toBe('pool:b'); // разрешённое текущее остаётся
   });
 });

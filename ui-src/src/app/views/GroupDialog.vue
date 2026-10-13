@@ -1,16 +1,20 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { UiButton, UiDialog, UiHint, UiInput, UiSelect, type UiSelectOption } from '../../components/ui'
+import { UiButton, UiDialog, UiHint, UiInput, UiSelect, type UiSelectOption, UiSwitch } from '../../components/ui'
 import { useGroups } from '../../stores/groups'
 import { useToast } from '../../stores/toast'
 import type { GroupPolicy, GroupView } from '../../api/types'
-import { POLICY_HINTS, POLICY_OPTIONS } from './groupsLogic'
+import {
+  parseSources, POLICY_HINTS, POLICY_OPTIONS, srcListInitial, SRC_MODE_HINTS,
+  SRC_MODE_OPTIONS, srcModeInitial,
+} from './groupsLogic'
 
-// Диалог группы (легаси editGroupDlg 1364 + egSave 2127). Ф3.7а - база
-// (имя/цвет/интерфейс, у каскадной залочен) + политика отвала (у
-// blackhole скрыта, шлётся onDead:''). mtSetPolicy заменяет политику
-// ЦЕЛИКОМ (server.go) - sources-поля пересылаем как есть, их редактор
-// появится в Ф3.7б.
+// Диалог группы (легаси editGroupDlg 1364 + egSave 2127): база (имя/цвет/
+// интерфейс, у каскадной залочен), источники (режимы all/all+router/list -
+// Ф3.7б; у каскадов задаются при создании, старый MT без sources - блок
+// скрыт и режим принудительно all) и политика отвала (у blackhole скрыта,
+// шлётся onDead:''). mtSetPolicy заменяет политику ЦЕЛИКОМ (server.go) -
+// шлются все пять полей.
 const props = defineProps<{ group: GroupView | null }>();
 const open = defineModel<boolean>('open', { default: false });
 
@@ -22,10 +26,16 @@ const color = ref('#4a9eff');
 const iface = ref('');
 const onDead = ref<'' | 'direct' | 'iface'>('');
 const policyIface = ref('');
+const srcMode = ref<'' | 'all' | 'all+router' | 'list'>('all');
+const srcList = ref('');
+const srcRouter = ref(false);
 const busy = ref(false);
 
 const isCascade = computed(() => !!props.group?.cascade);
 const isBlock = computed(() => iface.value === 'blackhole');
+const srcSupported = computed(() => state.sourcesCapable);
+const srcVisible = computed(() => !isCascade.value && srcSupported.value);
+const srcListVisible = computed(() => srcMode.value === 'list');
 
 // интерфейсы группы (легаси 1370-1376): устройства + blackhole + текущий
 const ifaceOptions = computed<UiSelectOption[]>(() => {
@@ -62,25 +72,37 @@ watch(open, (v) => {
   const pol: GroupPolicy = g.policy || {};
   onDead.value = pol.onDead || '';
   policyIface.value = pol.iface || '';
+  // кто ходит в группу (легаси 1379-1389)
+  srcMode.value = srcModeInitial(g);
+  srcList.value = srcListInitial(g);
+  srcRouter.value = !!pol.sourcesRouter;
+  if (!srcSupported.value && !isCascade.value) srcMode.value = 'all';
 });
 
 async function save(): Promise<void> {
   const g = props.group;
   const nm = name.value.trim();
   if (!g || !nm) return;
+  // источники: у каскадов задаются при создании - глушим (легаси 2141-2142);
+  // старый MT без sources - режим принудительно all (легаси 1386-1389)
+  const mode: GroupPolicy['sourcesMode'] = isCascade.value ? '' : (srcSupported.value ? srcMode.value : 'all');
+  const sources = isCascade.value || !srcSupported.value ? [] : parseSources(srcList.value);
+  const router = mode === 'list' && srcRouter.value;
+  if (!isCascade.value && srcSupported.value && srcMode.value === 'list' && !sources.length && !srcRouter.value) {
+    push('Пустой список: добавьте IP или включите роутер', true);
+    return;
+  }
   busy.value = true;
   try {
-    // mtSetPolicy затирает отсутствующие поля - sources пересылаем как есть
-    const pol = g.policy || {};
-    const sources: GroupPolicy = {
+    const policy: GroupPolicy = {
       onDead: isBlock.value ? '' : onDead.value,
       iface: isBlock.value ? '' : policyIface.value,
-      sourcesMode: pol.sourcesMode || '',
-      sources: pol.sources || [],
-      sourcesRouter: !!pol.sourcesRouter,
+      sourcesMode: mode,
+      sources,
+      sourcesRouter: router,
     };
     await updateGroup(g.id, { name: nm, color: color.value, interface: iface.value });
-    await setPolicy(g.id, sources);
+    await setPolicy(g.id, policy);
     open.value = false;
   } catch (e) {
     push(e instanceof Error ? e.message : String(e), true);
@@ -116,6 +138,34 @@ async function save(): Promise<void> {
       :disabled="isCascade"
       :tooltip="isCascade ? 'интерфейс каскадной группы задается при создании каскада' : ''"
     />
+
+    <!-- кто ходит в группу (легаси egSrcMode/egSources/egSrcRouter) -->
+    <template v-if="srcVisible">
+      <UiSelect
+        v-model="srcMode"
+        :options="SRC_MODE_OPTIONS"
+        label="Кто ходит в группу"
+        :hint="SRC_MODE_HINTS[srcMode] || ''"
+      />
+      <template v-if="srcListVisible">
+        <UiInput
+          v-model="srcList"
+          label="IP или CIDR, через запятую"
+          placeholder="192.168.1.50, 192.168.2.0/24"
+          mono
+        />
+        <UiSwitch
+          v-model="srcRouter"
+          label="Включая роутер"
+          hint="его адреса добавятся в источники сами"
+        />
+      </template>
+    </template>
+    <UiHint
+      v-else-if="!isCascade && !srcSupported"
+      text="Подключённый MagiTrickle не поддерживает источники (нужен форк 0.8.2-rev3+). Обновите его - режимы появятся здесь."
+    />
+
     <template v-if="!isBlock">
       <UiSelect
         v-model="onDead"
