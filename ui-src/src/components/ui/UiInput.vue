@@ -13,6 +13,8 @@ const props = withDefaults(
     tooltip?: string
     placeholder?: string
     type?: 'text' | 'password' | 'number'
+    // шаг степпера для number (стрелки в стиле панели)
+    step?: number
     mono?: boolean
     disabled?: boolean
     required?: boolean
@@ -20,6 +22,7 @@ const props = withDefaults(
   }>(),
   {
     type: 'text',
+    step: 1,
     hint: undefined,
     tooltip: undefined,
     placeholder: undefined,
@@ -36,6 +39,16 @@ const inputEl = ref<HTMLInputElement | null>(null)
 // крестик очистки (легаси wireClearInputs): только для текстовых полей
 // с непустым значением; у password - глаз, у number - штатный спиннер
 const canClear = computed(() => props.type === 'text' && !!props.modelValue && !props.disabled)
+
+// степпер number: свои стрелки в стиле панели (нативный спиннер спрятан)
+function stepValue(dir: number): void {
+  const cur = Number.parseFloat(props.modelValue);
+  const next = (Number.isFinite(cur) ? cur : 0) + dir * props.step;
+  const v = String(next);
+  emit('update:modelValue', v);
+  error.value = props.validator ? props.validator(v) : null;
+  inputEl.value?.focus();
+}
 
 function clear(): void {
   emit('update:modelValue', '')
@@ -76,6 +89,27 @@ function onInput(e: Event) {
             :class="{ mono: props.mono }"
             @input="onInput"
           >
+          <span
+            v-if="props.type === 'number' && !props.disabled"
+            class="pnum"
+          >
+            <button
+              type="button"
+              class="pnum-btn"
+              title="больше"
+              @click="stepValue(1)"
+            >
+              <UiIcon name="chevron-up" />
+            </button>
+            <button
+              type="button"
+              class="pnum-btn"
+              title="меньше"
+              @click="stepValue(-1)"
+            >
+              <UiIcon name="chevron-down" />
+            </button>
+          </span>
           <button
             v-if="canClear"
             class="pclr"
@@ -166,6 +200,37 @@ input.mono {
 .peye:hover {
   color: var(--text);
   border-color: transparent;
+}
+/* number: нативный спиннер спрятан, свои стрелки в стиле панели
+   (серые, при наведении зелёные - слово владельца) */
+input[type='number']::-webkit-inner-spin-button,
+input[type='number']::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+.pnum {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.pnum-btn {
+  background: none;
+  border: none;
+  padding: 0 2px;
+  color: var(--dim);
+  line-height: 0;
+  cursor: pointer;
+}
+.pnum-btn:hover {
+  color: var(--ok);
 }
 .pclr {
   position: absolute;
