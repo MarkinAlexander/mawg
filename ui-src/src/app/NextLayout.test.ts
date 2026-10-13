@@ -1,10 +1,14 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createRouter, createWebHashHistory } from 'vue-router'
 import NextLayout from './NextLayout.vue'
 import { TABS } from './tabs'
 
 describe('NextLayout', () => {
+  afterEach(() => {
+    document.body.classList.remove('unlocked')
+  })
+
   it('рендерит все вкладки как ссылки и ведёт в legacy', async () => {
     const router = createRouter({
       history: createWebHashHistory(),
@@ -23,5 +27,20 @@ describe('NextLayout', () => {
     for (const t of TABS) {
       expect(links.map((l) => l.text())).toContain(t.label)
     }
+  })
+
+  it('снимает легаси-замок: body.unlocked при монтировании, обратно при размонтировании', async () => {
+    const router = createRouter({
+      history: createWebHashHistory(),
+      routes: [{ path: '/next/overview', component: { template: '<div />' } }],
+    })
+    router.push('/next/overview')
+    await router.isReady()
+    // до монтирования panel.js ещё не ставил замок... а мог бы - снимаем
+    document.body.classList.remove('unlocked')
+    const w = mount(NextLayout, { global: { plugins: [router] } })
+    expect(document.body.classList.contains('unlocked')).toBe(true)
+    w.unmount()
+    expect(document.body.classList.contains('unlocked')).toBe(false)
   })
 })
