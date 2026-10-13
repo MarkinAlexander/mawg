@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ConfirmHost, ToastHost, UiBanner } from '../components/ui'
 import { inflight } from '../api/client'
 import { useStatus, type MtState } from '../stores/status'
@@ -18,6 +19,17 @@ onBeforeUnmount(() => document.body.classList.remove('unlocked'))
 const { state: status, start, stop } = useStatus();
 onMounted(start);
 onBeforeUnmount(stop);
+
+// Мобильное меню (бургер): на узких экранах nav прячется за кнопкой.
+// Закрытие - по любому клику внутри меню и по смене маршрута.
+const route = useRoute();
+const menuOpen = ref(false);
+watch(
+  () => route.path,
+  () => {
+    menuOpen.value = false;
+  },
+);
 
 const MT_LABEL: Record<MtState, string> = {
   checking: 'проверяю...',
@@ -41,14 +53,33 @@ const meta = computed(() => {
     />
     <header>
       <h1>
-        mawg <span
-          class="badge"
-          title="новая версия интерфейса, живёт за /next до конца Фазы 3"
-        >next</span>
+        <RouterLink
+          to="/next/"
+          class="brand"
+          title="главная новой панели"
+        >
+          mawg <span
+            class="badge"
+            title="новая версия интерфейса, живёт за /next до конца Фазы 3"
+          >next</span>
+        </RouterLink>
       </h1>
       <span class="meta">{{ meta }}</span>
       <UpdateBadge />
-      <nav>
+      <button
+        type="button"
+        class="burger"
+        :aria-expanded="menuOpen"
+        aria-label="меню"
+        title="вкладки"
+        @click="menuOpen = !menuOpen"
+      >
+        <span /><span /><span />
+      </button>
+      <nav
+        :class="{ open: menuOpen }"
+        @click="menuOpen = false"
+      >
         <RouterLink
           v-for="t in TABS"
           :key="t.id"
@@ -93,12 +124,16 @@ header {
   flex-wrap: wrap;
   align-items: baseline;
   gap: 12px;
-  padding: 10px 0;
+  padding: 10px;
   border-bottom: 1px solid var(--border);
 }
 header h1 {
   margin: 0;
   font-size: 20px;
+}
+.brand {
+  color: inherit;
+  text-decoration: none;
 }
 .meta {
   color: var(--dim);
@@ -121,6 +156,44 @@ nav a.router-link-active {
 }
 main {
   padding: 12px 0;
+}
+/* бургер: скрыт на широких экранах, nav прячется за ним на узких */
+.burger {
+  display: none;
+}
+@media (max-width: 820px) {
+  .burger {
+    display: inline-flex;
+    flex-direction: column;
+    justify-content: center;
+    align-self: center;
+    gap: 4px;
+    width: 38px;
+    height: 32px;
+    padding: 0 9px;
+    margin-left: auto;
+  }
+  .burger span {
+    display: block;
+    width: 100%;
+    height: 2px;
+    border-radius: 1px;
+    background: var(--text);
+  }
+  nav {
+    display: none;
+    flex-basis: 100%;
+    flex-direction: column;
+    gap: 2px;
+    border-top: 1px solid var(--border);
+    padding-top: 6px;
+  }
+  nav.open {
+    display: flex;
+  }
+  nav a {
+    padding: 9px 10px;
+  }
 }
 /* легаси #topbar: имена topbar/nslide не пересекаются с глобальным panel.css */
 .topbar {
