@@ -81,3 +81,46 @@ export async function api<T = unknown>(
     inflight.n--;
   }
 }
+
+// upload файла(-ов) multipart/form-data (легаси api(..., isForm)): та же
+// семантика, но тело - FormData без JSON-заголовка
+export async function apiForm<T = unknown>(
+  method: string,
+  path: string,
+  form: FormData,
+  opts: ApiOptions = {},
+): Promise<T> {
+  inflight.n++;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs ?? 90_000);
+  try {
+    let resp: Response;
+    try {
+      resp = await fetch('/api/v1' + path, { method, body: form, signal: ctrl.signal });
+    } catch (e) {
+      const abort = e instanceof DOMException && e.name === 'AbortError';
+      throw new ApiError(abort ? 'таймаут запроса' : 'панель недоступна', 0);
+    } finally {
+      clearTimeout(timer);
+    }
+    if (resp.status === 401 && !path.startsWith('/auth/')) {
+      window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT, { detail: path }));
+      await new Promise<never>(() => {});
+    }
+    if (!resp.ok) {
+      let msg = 'HTTP ' + resp.status;
+      try {
+        const data = (await resp.json()) as { error?: unknown };
+        if (data && typeof data.error === 'string' && data.error) msg = data.error;
+      } catch {
+        // тело не JSON - оставляем HTTP-код
+      }
+      throw new ApiError(msg, resp.status);
+    }
+    const text = await resp.text();
+    if (!text) return undefined as T;
+    return JSON.parse(text) as T;
+  } finally {
+    inflight.n--;
+  }
+}

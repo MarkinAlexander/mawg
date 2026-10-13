@@ -268,6 +268,15 @@ export interface SystemItem {
 }
 
 // STATUS.engine: движок sing-box (зеркало internal/web/server.go)
+export interface TunInfo {
+  pool?: string
+  name?: string
+  nodes?: number
+  disabled?: boolean
+  probePort?: number
+  [key: string]: unknown
+}
+
 export interface EngineInfo {
   available?: boolean
   running?: boolean
@@ -275,7 +284,7 @@ export interface EngineInfo {
   mode?: string
   fragment?: string
   cacheFile?: string
-  tuns?: unknown[]
+  tuns?: TunInfo[]
   [key: string]: unknown
 }
 
