@@ -291,22 +291,33 @@ func (s *Server) putServerSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// не даю вырезать собственный адрес из allowlist - иначе кнопка
-	// "сохранить" станет последней, что владелец нажал
+	// "сохранить" станет последней, что владелец нажал. Если в новом
+	// списке нет адреса клиента - дописываем его сами (виден чипом в
+	// панели), доступ не теряется.
 	var enabledIPs []string
 	for _, e := range req.AllowedIPs {
 		if e.On {
 			enabledIPs = append(enabledIPs, e.Value)
 		}
 	}
-	if gate := auth.NewIPGate(enabledIPs); !gate.Empty() {
+	gate := auth.NewIPGate(enabledIPs)
+	if !gate.Empty() {
 		host, _, err := net.SplitHostPort(r.RemoteAddr)
 		if err != nil {
 			host = r.RemoteAddr
 		}
 		ip := net.ParseIP(host)
-		if ip == nil || (!ip.IsLoopback() && !gate.Allowed(ip) && !gate.OwnAddress(ip)) {
-			writeErr(w, fmt.Errorf("в новом списке нет вашего адреса %s - сохранение заблокировано, чтобы не потерять доступ к панели", host))
+		if ip == nil {
+			writeErr(w, fmt.Errorf("не удалось разобрать ваш адрес %q - сохранение отклонено", host))
 			return
+		}
+		if !ip.IsLoopback() && !gate.Allowed(ip) && !gate.OwnAddress(ip) {
+			// адрес клиента не покрыт новым списком - дописываем его,
+			// не отказываем: доступ к панели не теряется
+			req.AllowedIPs = append(req.AllowedIPs, store.IPAllow{Value: ip.String(), On: true})
+			enabledIPs = append(enabledIPs, ip.String())
+			gate.Set(enabledIPs)
+			s.store.LogEvent("settings", "server", "в разрешённые дописан адрес клиента "+ip.String()+" (в новом списке его не было - защита от потери доступа)")
 		}
 	}
 	if err := s.store.SetServerSettings(req.ListenAddr, req.Port, req.AllowedIPs, authOff); err != nil {
@@ -326,7 +337,7 @@ func (s *Server) putServerSettings(w http.ResponseWriter, r *http.Request) {
 	if authOff != curAuthOff {
 		s.store.LogEvent("settings", "server", map[bool]string{true: "авторизация ВЫКЛЮЧЕНА", false: "авторизация включена"}[authOff])
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "needRestart": addrChanged})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "needRestart": addrChanged, "allowedIps": req.AllowedIPs})
 }
 
 func (s *Server) updateCheck(w http.ResponseWriter, r *http.Request) {
