@@ -49,6 +49,23 @@ describe('UiSwitch', () => {
     expect(w.find('.uiswitch').classes()).toContain('off')
   })
 
+  it('number: свои стрелки вместо нативного спиннера, клики шагают значение', async () => {
+    const w = mount(UiInput, { props: { modelValue: '8090', label: 'порт', type: 'number' } })
+    expect(w.findAll('.pnum-btn')).toHaveLength(2)
+    await w.findAll('.pnum-btn')[0].trigger('click') // больше
+    expect(w.emitted('update:modelValue')!.at(-1)).toEqual(['8091'])
+    await w.setProps({ modelValue: '8091' })
+    await w.findAll('.pnum-btn')[1].trigger('click') // меньше
+    expect(w.emitted('update:modelValue')!.at(-1)).toEqual(['8090'])
+    // step
+    const w2 = mount(UiInput, { props: { modelValue: '10', label: 'мс', type: 'number', step: 5 } })
+    await w2.findAll('.pnum-btn')[0].trigger('click')
+    expect(w2.emitted('update:modelValue')!.at(-1)).toEqual(['15'])
+    // у текстового поля степпера нет
+    const t = mount(UiInput, { props: { modelValue: 'x', label: 'адрес' } })
+    expect(t.find('.pnum').exists()).toBe(false)
+  })
+
   it('крестик очистки: пусто - нет, с текстом - клик очищает; number/password без крестика', async () => {
     const w = mount(UiInput, { props: { modelValue: '', label: 'адрес', placeholder: '0.0.0.0' } })
     expect(w.find('.pclr').exists()).toBe(false)
