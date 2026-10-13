@@ -2506,6 +2506,28 @@ function showNoAuthBadge() {
 
 // --- настройки панели ---
 let SSRV = null, ALLOW = [];
+// «Сохранить» активна только при реальных изменениях (адрес/порт/галка
+// авторизации); список разрешённых живёт своей жизнью - автосохранение.
+// allowlist поэтому в «грязь» не входит, но при сохранении уходит целиком
+// (бэкенд заменил бы его пустотой, если не прислать).
+let SS_PRISTINE = null;
+function ssSnapshot() {
+  return {
+    listenAddr: document.getElementById('ssAddr').value.trim() || '0.0.0.0',
+    port: +document.getElementById('ssPort').value,
+    authOn: document.getElementById('ssAuthOn').checked,
+  };
+}
+function ssDirty() {
+  if (!SS_PRISTINE) return false;
+  const cur = ssSnapshot();
+  return cur.listenAddr !== SS_PRISTINE.listenAddr ||
+    cur.port !== SS_PRISTINE.port ||
+    cur.authOn !== SS_PRISTINE.authOn;
+}
+function ssSaveEnabled() {
+  document.getElementById('ssSave').disabled = !ssDirty();
+}
 // список разрешённых сохраняется СРАЗУ при каждом изменении (раньше чипы
 // жили до кнопки «Сохранить» и терялись при перезагрузке страницы -
 // кейс владельца с 192.168.0.0/24). Адрес/порт/авторизация не трогаются:
@@ -2516,9 +2538,15 @@ async function allowPersist() {
     return true;
   } catch (err) { toast(err.message, true); return false; }
 }
+// /24 адреса, с которого открыт панель; IPv6 и прочее не IPv4-квадом - ''
+// (subnet24 ниже жадный и режет два октета - для сравнения префиксов ок,
+// для сборки подсети нужен честный разбор)
 function lanSubnet24() {
   const mine = SSRV && SSRV.clientIp;
-  return mine ? subnet24(mine) + '.0/24' : '';
+  if (!mine) return '';
+  const p = String(mine).split('.');
+  if (p.length !== 4 || p.some(x => !/^\d{1,3}$/.test(x) || +x > 255)) return '';
+  return p.slice(0, 3).join('.') + '.0/24';
 }
 function renderAllowChips() {
   const box = document.getElementById('ssChips');
@@ -2586,6 +2614,8 @@ async function loadServerSettings() {
     document.getElementById('ssPort').value = SSRV.port || 8090;
     ALLOW = (SSRV.allowedIps || []).map(e => ({ v: e.v, on: e.on !== false }));
     renderAllowChips();
+    SS_PRISTINE = ssSnapshot();
+    ssSaveEnabled();
     // рассинхрон: конфиг уже на другом порту/адресе, а демон работает
     // на старом - сразу предлагаем перезапуск
     if ((SSRV.runningPort && +SSRV.port !== +SSRV.runningPort) ||
@@ -2642,20 +2672,25 @@ document.getElementById('ssAuthOn').onchange = () => {
   }
   updateAuthHint();
 };
+['ssAddr', 'ssPort'].forEach(id => document.getElementById(id).addEventListener('input', ssSaveEnabled));
+document.getElementById('ssAuthOn').addEventListener('change', ssSaveEnabled);
 document.getElementById('ssSave').onclick = e => withBusy(e.currentTarget, async () => {
-  const off = !document.getElementById('ssAuthOn').checked;
-  if (off && !(await askModal('Отключение авторизации',
+  const authOn = document.getElementById('ssAuthOn').checked;
+  // предупреждение - только когда выключаем РАНЕЕ ВКЛЮЧЁННУЮ авторизацию;
+  // отмена возвращает галку в предыдущее состояние
+  if (SS_PRISTINE.authOn && !authOn && !(await askModal('Отключение авторизации',
     'Панель и API будут открыты ЛЮБОМУ, кто достучится до порта. Если порт доступен из интернета или большой сети - это небезопасно. Продолжить?',
     'Отключить'))) {
     document.getElementById('ssAuthOn').checked = true;
     updateAuthHint();
+    ssSaveEnabled();
     return;
   }
   const body = {
     listenAddr: document.getElementById('ssAddr').value.trim() || '0.0.0.0',
     port: +document.getElementById('ssPort').value,
     allowedIps: ALLOW.map(e => ({ v: e.v, on: e.on })),
-    authDisabled: off
+    authDisabled: !authOn
   };
   try {
     const r = await api('PUT', '/settings/server', body);
