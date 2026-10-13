@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ConfirmHost, ToastHost } from '../components/ui'
 import { TABS } from './tabs'
 </script>
 
@@ -30,6 +31,8 @@ import { TABS } from './tabs'
     <main>
       <RouterView />
     </main>
+    <ToastHost />
+    <ConfirmHost />
   </div>
 </template>
 
@@ -60,7 +63,7 @@ nav a {
   padding: 4px 10px;
   border-radius: 8px;
   text-decoration: none;
-  color: var(--fg, inherit);
+  color: var(--text);
 }
 nav a.router-link-active {
   background: var(--panel);
