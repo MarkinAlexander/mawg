@@ -21,6 +21,8 @@ export const router = createRouter({
         { path: 'dns', component: () => import('./app/views/DnsView.vue') },
         { path: 'system', component: () => import('./app/views/SystemView.vue') },
         { path: 'settings', component: () => import('./app/views/SettingsView.vue') },
+        // Демо UI-кита: в TABS не входит, доступен только по прямому URL
+        { path: 'kit', component: () => import('./app/views/KitView.vue') },
       ],
     },
     { path: '/:pathMatch(.*)*', component: LegacyPanel },
