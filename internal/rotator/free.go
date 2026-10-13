@@ -167,5 +167,9 @@ func (e *Engine) ReissueFreePool(ctx context.Context, name string, answer *premi
 		return store.Pool{}, fmt.Errorf("не удалил старый пул: %w", err)
 	}
 	// кэш уже со свежим конфигом - CreateFreePool в gateway не пойдёт
-	return e.CreateFreePool(ctx, name, settings)
+	created, err := e.CreateFreePool(ctx, name, settings)
+	if err == nil && len(created.Configs) > 0 {
+		e.store.LogEvent("free", "config", "Amnezia Free перевыпущен: новая идентичность, endpoint "+created.Configs[0].Endpoint+" (сравните со старым - если у сервиса сервер один, он не сменится)")
+	}
+	return created, err
 }

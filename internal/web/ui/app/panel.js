@@ -605,7 +605,7 @@ async function reissueFree(name, answer) {
 }
 function reissueDone(plan) {
   document.getElementById('dlgSettings').close();
-  toast('Amnezia Free перевыпущен - пул пересоздан, включите его кнопкой', !!(plan.warnings || []).length);
+  toast((plan.warnings || [])[0] || 'Amnezia Free перевыпущен - пул пересоздан, включите его кнопкой', true);
   refresh();
 }
 function freePlanDone(plan) {
@@ -922,7 +922,7 @@ $('#spFreeReissue').onclick = async e => {
   const p = settingsPool;
   if (!p || !p.free) return;
   const ok = await askModal('Перевыпустить Amnezia Free?',
-    'Конфиг привязан к устройству и выдаётся один на идентичность. Перевыпуск сбросит идентичность и запросит новый конфиг - он может быть от другого сервера. Пул будет пересоздан с теми же настройками и останется выключенным.');
+    'Конфиг привязан к устройству и выдаётся один на идентичность. Перевыпуск сбросит идентичность и запросит новый конфиг (капча - если gateway её запросит). Пул будет пересоздан с теми же настройками и останется выключенным. Если у сервиса один сервер - конфиг вернётся тот же, в сообщении будет видно.');
   if (!ok) return;
   await withBusy(e.currentTarget, async () => {
     try {

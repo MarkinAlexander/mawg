@@ -162,11 +162,29 @@ func (s *Server) reissueFreePool(w http.ResponseWriter, r *http.Request) {
 	if req.CaptchaID != "" {
 		answer = &premium.CaptchaAnswer{ID: req.CaptchaID, Solution: req.CaptchaSolution}
 	}
+	// старый endpoint запоминаем до перевыпуска - юзеру важно видеть,
+	// сменился ли сервер (если у сервиса он один, вернётся тот же)
+	oldEndpoint := ""
+	if p, ok := s.store.Pool(name); ok && len(p.Configs) > 0 {
+		oldEndpoint = p.Configs[0].Endpoint
+	}
 	pool, err := s.engine.ReissueFreePool(r.Context(), name, answer)
 	if err != nil {
 		s.writeFreeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, sourcePlan{Pool: pool.Name, Added: len(pool.Configs),
-		Warnings: []string{"Amnezia Free перевыпущен: новая идентичность устройства, конфиг может быть от другого сервера. Пул не активирован - включите обычной кнопкой."}})
+	newEndpoint := ""
+	if len(pool.Configs) > 0 {
+		newEndpoint = pool.Configs[0].Endpoint
+	}
+	warn := "Amnezia Free перевыпущен: новая идентичность устройства. Пул не активирован - включите обычной кнопкой."
+	switch {
+	case oldEndpoint != "" && newEndpoint != "" && oldEndpoint == newEndpoint:
+		warn += " Сервер не сменился (" + newEndpoint + ") - у сервиса, похоже, он один."
+	case oldEndpoint != "" && newEndpoint != "":
+		warn += " Endpoint сменился: " + oldEndpoint + " -> " + newEndpoint + "."
+	case newEndpoint != "":
+		warn += " Endpoint: " + newEndpoint + "."
+	}
+	writeJSON(w, http.StatusOK, sourcePlan{Pool: pool.Name, Added: len(pool.Configs), Warnings: []string{warn}})
 }

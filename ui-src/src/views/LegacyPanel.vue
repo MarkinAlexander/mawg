@@ -321,7 +321,7 @@ onMounted(() => {
       <div class="btnrow" style="margin-top:4px;justify-content:flex-end"><button type="button" id="spFreeConfCopy">Скопировать</button></div>
     </div>
     <div class="f" id="spFreeReissueRow" style="display:none">
-      <div class="muted" style="font-size:11px;margin-bottom:4px">Amnezia Free: один конфиг на устройство - выдача привязана к идентичности (UUID+ключ), второго конфига для ротации в этом пуле быть не может. «Перевыпустить» = сброс идентичности и новый запрос конфига: сервер может быть другим; пул пересоздаётся с теми же настройками и остаётся выключенным. Если у сервиса сервер один - вернётся тот же.</div>
+      <div class="muted" style="font-size:11px;margin-bottom:4px">Amnezia Free: один конфиг на устройство - выдача привязана к идентичности (UUID+ключ), второго конфига для ротации в этом пуле быть не может. «Перевыпустить» = сброс идентичности и новый запрос конфига (капча - если gateway запросит); пул пересоздаётся с теми же настройками и остаётся выключенным. Если у сервиса сервер один - вернётся тот же: endpoint будет виден в сообщении после перевыпуска и в событиях.</div>
       <div class="btnrow" style="justify-content:flex-end"><button type="button" id="spFreeReissue" title="сбросить идентичность устройства и запросить новый конфиг у gateway">Перевыпустить конфиг</button></div>
     </div>
         <div class="f" id="spPremRow" style="display:none">
