@@ -279,14 +279,14 @@ function dlgSave() {
 
     <UiCard
       title="Таблица с DnD"
-      subtitle="грип взводит перетаскивание; половина высоты = до/после"
+      subtitle="грип взводит перетаскивание; снятая галка гасит строку, но остаётся кликабельной (статус без изменения - это disabled)"
     >
       <UiTable
         :columns="cols"
         :rows="rows"
         :row-key="(r: Row) => r.id"
         dnd
-        :row-class="(r: Row) => (r.enable ? '' : 'rowoff')"
+        :row-class="(r: Row) => (r.enable ? '' : 'dim')"
         @reorder="onReorder"
       >
         <template #cell-enable="{ row }">
@@ -362,7 +362,9 @@ function dlgSave() {
   align-items: center;
   margin: 8px 0;
 }
-.rowoff {
+/* dim, а не легаси .rowoff: у rowoff в panel.css pointer-events:none -
+   строка становилась клик-мёртвой и галку нельзя было вернуть */
+.dim {
   opacity: 0.45;
 }
 </style>
