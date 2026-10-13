@@ -61,6 +61,11 @@ func newer(current, latest string) bool {
 	if c == "" || c == "dev" || l == "" || c == l {
 		return false
 	}
+	// дев-сборки (v0.6.10-devN) сами на релизы не обновляются: суффикс
+	// существует ровно для того, чтобы релиз случайно не затёр дев-фичи
+	if strings.Contains(c, "-") {
+		return false
+	}
 	var cc, ll [3]int
 	for i, part := range strings.SplitN(c, ".", 3) {
 		if i < 3 {
