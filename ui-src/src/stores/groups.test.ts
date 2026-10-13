@@ -13,6 +13,11 @@ beforeEach(() => {
   state.pending = false;
   state.lastJSON = '';
   state.groups = [];
+  state.duplicates = {};
+  state.ifaces = [];
+  state.cycles = null;
+  state.available = true;
+  state.loaded = false;
 });
 
 describe('groups store', () => {
@@ -80,5 +85,43 @@ describe('groups store', () => {
     await toggleGroup('g1', false);
     expect(fetchMock.mock.calls[1][0]).toBe('/api/v1/mt/groups/g1/enable');
     expect(state.groups[0].enable).toBe(false);
+  });
+
+  it('loadIfaces: селекты интерфейсов из GET /mt/interfaces', async () => {
+    const fetchMock = vi.fn(async (_url: string) => new Response(JSON.stringify({ interfaces: [{ device: 'nwg0', title: 'пул proton' }] }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { state, loadIfaces } = useGroups();
+    await loadIfaces();
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/v1/mt/interfaces');
+    expect(state.ifaces).toEqual([{ device: 'nwg0', title: 'пул proton' }]);
+  });
+
+  it('cycles: загрузка гистерезиса и сохранение с обновлением состояния', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ failCycles: 2, restoreCycles: 2 }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ failCycles: 3, restoreCycles: 2 }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { state, loadCycles, saveCycles } = useGroups();
+    await loadCycles();
+    expect(state.cycles).toEqual({ failCycles: 2, restoreCycles: 2 });
+    const r = await saveCycles(3, 2);
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/v1/mt/policy-cycles');
+    expect(JSON.parse(fetchMock.mock.calls[1][1]!.body as string)).toEqual({ failCycles: 3, restoreCycles: 2 });
+    expect(r).toEqual({ failCycles: 3, restoreCycles: 2 });
+    expect(state.cycles).toEqual({ failCycles: 3, restoreCycles: 2 });
+  });
+
+  it('importRules шлёт text+type+toSecond+enable и возвращает вердикт', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ available: true, groups: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ added: 2, skipped: 1, bad: ['мусор'] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ available: true, groups: [] }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { refresh, importRules } = useGroups();
+    await refresh(true);
+    const r = await importRules('g1', { text: 'a.com', type: 'auto', toSecond: true, enable: false });
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/v1/mt/groups/g1/rules/import');
+    expect(JSON.parse(fetchMock.mock.calls[1][1]!.body as string)).toEqual({ text: 'a.com', type: 'auto', toSecond: true, enable: false });
+    expect(r).toEqual({ added: 2, skipped: 1, bad: ['мусор'] });
   });
 });
