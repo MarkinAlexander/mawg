@@ -1,6 +1,14 @@
 <script setup lang="ts">
+import { onBeforeUnmount, onMounted } from 'vue'
 import { ConfirmHost, ToastHost } from '../components/ui'
 import { TABS } from './tabs'
+
+// Легаси-замок: panel.css прячет header/main до авторизации
+// (body.unlocked ставит/снимает panel.js при проверке входа). На /next/
+// panel.js не запускается - новое UI объявляет себя разблокированным
+// само; настоящая авторизация для нового UI - Фаза 5.
+onMounted(() => document.body.classList.add('unlocked'))
+onBeforeUnmount(() => document.body.classList.remove('unlocked'))
 </script>
 
 <template>
