@@ -1,5 +1,5 @@
-// События (events.json): GET /events, опрос 10с. Сервер отдаёт список
-// целиком; legacy показывает хвост.
+// События (events.json): GET /events каждые 15с (легаси refreshLog).
+// Сервер отдаёт список целиком (до 500); вьюха показывает хвост 80.
 import { reactive } from 'vue'
 import { api } from '../api/client'
 import type { AppEvent } from '../api/types'
@@ -17,7 +17,7 @@ export function useEvents() {
       // сеть - держим предыдущее
     }
   }
-  function start(intervalMs = 10000) {
+  function start(intervalMs = 15000) {
     void refresh();
     if (timer) return;
     timer = setInterval(() => void refresh(), intervalMs);
