@@ -4,12 +4,14 @@ import {
   UiBadge, UiButton, UiCard, UiDialog, UiHint, UiIcon, UiInput,
   UiSelect, type UiSelectOption, UiSwitch,
 } from '../../components/ui'
+import { useBundles } from '../../stores/bundles'
 import { useConfirm } from '../../stores/confirm'
 import { useIfaces } from '../../stores/ifaces'
 import { usePools } from '../../stores/status'
 import { useToast } from '../../stores/toast'
-import type { IfaceInfo, ProbeConfig } from '../../api/types'
+import type { BundleView, IfaceInfo, ProbeConfig } from '../../api/types'
 import { PROBE_DEFAULTS, probeBadgeOf, probeTypeOf, targetOnTypeChange } from './ifacesLogic'
+import BundleDialog from './BundleDialog.vue'
 import CaptchaHost from './CaptchaHost.vue'
 import PoolCard from './PoolCard.vue'
 import PoolCreateDialog from './PoolCreateDialog.vue'
@@ -27,12 +29,33 @@ const { confirm } = useConfirm();
 
 const createOpen = ref(false);
 const settingsFor = ref('');
+const bundles = useBundles();
+const bundleDlgOpen = ref(false);
+const bundleEditing = ref<BundleView | null>(null);
 
 onMounted(() => {
   ifaces.start(30000);
+  bundles.start(30000); // легаси: setInterval(refreshBundles, 30000)
   void ifaces.refreshWan();
 });
-onBeforeUnmount(() => ifaces.stop());
+onBeforeUnmount(() => {
+  ifaces.stop();
+  bundles.stop();
+});
+
+async function delBundle(b: BundleView): Promise<void> {
+  const ok = await confirm({
+    title: 'Удаление набора',
+    text: `Удалить набор ${b.name}? Группы останутся на текущем интерфейсе.`,
+    okLabel: 'Удалить',
+  });
+  if (!ok) return;
+  try {
+    await bundles.del(b.name);
+  } catch (e) {
+    push(e instanceof Error ? e.message : String(e), true);
+  }
+}
 
 // --- список интерфейсов (легаси renderIfaces 1060) ---
 const showHidden = ref(false);
@@ -317,6 +340,70 @@ async function saveWan(): Promise<void> {
     </div>
   </UiCard>
 
+  <!-- легаси #bundcard; IA §6: Интерфейсы - интерфейсы, наборы, WAN -->
+  <UiCard
+    title="Наборы интерфейсов"
+    subtitle="Группы MagiTrickle привязываются к набору: mawg держит их на первом здоровом участнике (приоритет по порядку), при отказе переключает на следующий, при восстановлении возвращает. Участники: пулы mawg и внешние интерфейсы."
+  >
+    <template #actions>
+      <UiButton
+        variant="primary"
+        @click="bundleEditing = null; bundleDlgOpen = true"
+      >
+        + набор
+      </UiButton>
+    </template>
+    <UiHint
+      v-if="bundles.state.loaded && !bundles.state.list.length"
+      text="Наборов нет. Создайте набор, добавьте участников (пулы, внешние интерфейсы) и привяжите группы."
+    />
+    <div
+      v-for="b in bundles.state.list"
+      :key="b.name"
+      class="bundrow"
+    >
+      <b class="bundname">{{ b.name }}</b>
+      <span class="bundchips">
+        <template
+          v-for="(m, i) in b.members || []"
+          :key="m"
+        >
+          <span
+            v-if="i"
+            class="bundsep"
+          >&gt;</span>
+          <UiBadge
+            :text="(b.memberDevices || {})[m] || m"
+            :variant="(b.memberDevices || {})[m] === b.currentMember ? 'ok' : 'muted'"
+            :tooltip="m"
+          />
+        </template>
+      </span>
+      <span class="bundcnt">групп: {{ (b.groups || []).length }}</span>
+      <span class="sp" />
+      <span class="bundcur">{{ b.currentMember ? 'сейчас: ' + b.currentMember : 'не активирован' }}</span>
+      <UiButton
+        variant="icon"
+        tooltip="изменить набор"
+        @click="bundleEditing = b; bundleDlgOpen = true"
+      >
+        <UiIcon name="pencil" />
+      </UiButton>
+      <UiButton
+        variant="icon"
+        tooltip="удалить набор"
+        @click="delBundle(b)"
+      >
+        <UiIcon name="trash" />
+      </UiButton>
+    </div>
+  </UiCard>
+
+  <BundleDialog
+    v-model:open="bundleDlgOpen"
+    :editing="bundleEditing"
+  />
+
   <!-- легаси: блок в карточке Системы; IA (44-дока §6) - вкладка Интерфейсы -->
   <UiCard
     title="Проверка канала провайдера"
@@ -418,6 +505,40 @@ async function saveWan(): Promise<void> {
 </template>
 
 <style scoped>
+.bundrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.bundrow:last-of-type {
+  border-bottom: 0;
+}
+.bundname {
+  min-width: 60px;
+}
+.bundchips {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.bundsep {
+  color: var(--dim);
+}
+.bundcnt {
+  color: var(--dim);
+  font-size: 12px;
+}
+.sp {
+  flex: 1;
+}
+.bundcur {
+  color: var(--dim);
+  font-size: 11px;
+}
 .toolbar {
   display: flex;
   justify-content: flex-end;

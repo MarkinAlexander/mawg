@@ -59,6 +59,10 @@ export function useGroups() {
       }
       state.groups = r.groups || [];
       state.loaded = true;
+    } catch {
+      // сеть - как легаси: группы недоступны, держим прошлый список;
+      // refresh зовут и fire-and-forget (диалог наборов) - не бросаем наверх
+      state.available = false;
     } finally {
       inflight = false;
     }
