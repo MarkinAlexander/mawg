@@ -144,27 +144,82 @@ describe('NextLayout', () => {
     w.unmount()
   })
 
-  it('бургер: клик открывает/закрывает меню (aria-expanded, класс open), клик по вкладке закрывает', async () => {
+  it('мобильное меню: FAB открывает шторку со вкладками, клик по вкладке/фону/Esc закрывают', async () => {
     const router = await makeRouter()
     const w = mount(NextLayout, { global: { plugins: [router] } })
-    const burger = w.find('.burger')
-    const nav = w.find('nav')
-    expect(burger.exists()).toBe(true)
-    expect(burger.attributes('aria-label')).toBe('меню')
-    expect(burger.attributes('aria-expanded')).toBe('false')
-    expect(nav.classes()).not.toContain('open')
+    const fab = w.find('.menu-fab')
+    expect(fab.exists()).toBe(true)
+    expect(fab.attributes('aria-label')).toBe('меню')
+    expect(fab.attributes('aria-expanded')).toBe('false')
+    // шторка закрыта (v-if)
+    expect(w.find('.sheet').exists()).toBe(false)
 
-    await burger.trigger('click')
-    expect(nav.classes()).toContain('open')
-    expect(burger.attributes('aria-expanded')).toBe('true')
+    await fab.trigger('click')
+    expect(fab.attributes('aria-expanded')).toBe('true')
+    const sheet = w.find('.sheet')
+    expect(sheet.exists()).toBe(true)
+    // все вкладки + «старая версия»
+    expect(sheet.findAll('a')).toHaveLength(TABS.length + 1)
 
-    await nav.findAll('a')[0].trigger('click') // клик по вкладке закрывает меню
-    expect(nav.classes()).not.toContain('open')
-    expect(burger.attributes('aria-expanded')).toBe('false')
+    // клик по вкладке закрывает
+    await sheet.findAll('a')[0].trigger('click')
+    expect(w.find('.sheet').exists()).toBe(false)
+    expect(fab.attributes('aria-expanded')).toBe('false')
 
-    await burger.trigger('click') // повторное открытие
-    await burger.trigger('click') // и закрытие самим бургером
-    expect(nav.classes()).not.toContain('open')
+    // фон и Esc тоже закрывают
+    await fab.trigger('click')
+    await w.find('.sheet-backdrop').trigger('click')
+    expect(w.find('.sheet').exists()).toBe(false)
+    await fab.trigger('click')
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await nextTick()
+    expect(w.find('.sheet').exists()).toBe(false)
+    w.unmount()
+  })
+
+  it('жест от правого края влево открывает меню (только на мобильной ширине, срыв по вертикали)', async () => {
+    const router = await makeRouter()
+    // jsdom: PointerEvent нет (GOTCHAS - MouseEvent с тем же типом),
+    // matchMedia всегда false - замыкаем на innerWidth
+    window.matchMedia = ((q: string) =>
+      ({ matches: /max-width:\s*820px/.test(q) && window.innerWidth <= 820 })) as typeof window.matchMedia
+    const w = mount(NextLayout, { global: { plugins: [router] } })
+    const pe = (type: string, x: number, y: number) =>
+      new MouseEvent(type, { clientX: x, clientY: y, bubbles: true })
+    const innerWidth = window.innerWidth
+    const setW = (v: number) => Object.defineProperty(window, 'innerWidth', { value: v, configurable: true })
+
+    // десктопная ширина: жест игнорируется
+    setW(1280)
+    document.dispatchEvent(pe('pointerdown', innerWidth - 5, 300))
+    document.dispatchEvent(pe('pointermove', innerWidth - 90, 300))
+    expect(w.find('.sheet').exists()).toBe(false)
+
+    // мобильная ширина: тянем от правого края влево - открывается
+    // (DOM патчится асинхронно - nextTick после открывающего свайпа)
+    setW(390)
+    document.dispatchEvent(pe('pointerdown', 385, 300))
+    document.dispatchEvent(pe('pointermove', 360, 300))
+    expect(w.find('.sheet').exists()).toBe(false) // 25px < порога 40
+    document.dispatchEvent(pe('pointermove', 320, 300))
+    await nextTick()
+    expect(w.find('.sheet').exists()).toBe(true)
+    document.dispatchEvent(pe('pointerup', 320, 300))
+    await w.find('.sheet-backdrop').trigger('click')
+
+    // срыв по вертикали (скролл) не открывает
+    document.dispatchEvent(pe('pointerdown', 385, 300))
+    document.dispatchEvent(pe('pointermove', 340, 380))
+    document.dispatchEvent(pe('pointermove', 300, 420))
+    expect(w.find('.sheet').exists()).toBe(false)
+    document.dispatchEvent(pe('pointerup', 300, 420))
+
+    // старт не от края - не открывает
+    document.dispatchEvent(pe('pointerdown', 200, 300))
+    document.dispatchEvent(pe('pointermove', 120, 300))
+    expect(w.find('.sheet').exists()).toBe(false)
+    document.dispatchEvent(pe('pointerup', 120, 300))
+    setW(innerWidth)
     w.unmount()
   })
 })
