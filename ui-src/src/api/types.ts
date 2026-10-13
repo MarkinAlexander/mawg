@@ -205,6 +205,14 @@ export interface Status {
   engine?: Record<string, unknown>
 }
 
+// GET /magitrickle: шапке нужен только available (легаси MTState);
+// groups читает карточка групп, здесь зеркалим как неизвестное
+export interface MagitrickleRes {
+  available: boolean
+  error?: string
+  groups?: unknown[]
+}
+
 // --- интерфейсы/слоты/wan-probe ---
 
 export interface IfaceInfo {

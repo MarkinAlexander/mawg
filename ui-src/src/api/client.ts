@@ -2,6 +2,12 @@
 // JSON-тело и ответ, ошибки как {error} -> ApiError, 401 -> событие
 // UNAUTHORIZED_EVENT и заморозка вызова (страницу перезагрузит оверлей
 // логина, как в legacy), таймаут через AbortController.
+import { reactive } from 'vue'
+
+// Индикатор занятости для шапки (legacy #topbar): счётчик активных
+// api()-вызовов. Замороженный на 401 вызов счётчик не отпускает - как
+// в legacy, где topbarEnd после заморозки не вызывался.
+export const inflight = reactive({ n: 0 })
 
 export class ApiError extends Error {
   constructor(
@@ -19,7 +25,7 @@ export interface ApiOptions {
   timeoutMs?: number
 }
 
-export async function api<T = unknown>(
+async function apiCall<T = unknown>(
   method: string,
   path: string,
   body?: unknown,
@@ -60,4 +66,18 @@ export async function api<T = unknown>(
   const text = await resp.text();
   if (!text) return undefined as T;
   return JSON.parse(text) as T;
+}
+
+export async function api<T = unknown>(
+  method: string,
+  path: string,
+  body?: unknown,
+  opts: ApiOptions = {},
+): Promise<T> {
+  inflight.n++;
+  try {
+    return await apiCall<T>(method, path, body, opts);
+  } finally {
+    inflight.n--;
+  }
 }

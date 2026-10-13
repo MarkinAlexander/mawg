@@ -10,8 +10,11 @@ const props = withDefaults(
     title: string
     busy?: boolean
     width?: string
+    // locked запрещает закрытие по Esc/клику на backdrop (легаси
+    // dlgUpdate/dlgAuth: dialog 'cancel' -> preventDefault)
+    locked?: boolean
   }>(),
-  { busy: false, width: undefined },
+  { busy: false, width: undefined, locked: false },
 )
 
 const emit = defineEmits<{ 'update:open': [value: boolean] }>()
@@ -45,6 +48,10 @@ function onClose() {
   emit('update:open', false)
 }
 
+function onCancel(e: Event) {
+  if (props.locked) e.preventDefault()
+}
+
 onBeforeUnmount(closeNative)
 </script>
 
@@ -55,6 +62,7 @@ onBeforeUnmount(closeNative)
     class="uidialog"
     :style="props.width ? { maxWidth: props.width } : undefined"
     @close="onClose"
+    @cancel="onCancel"
   >
     <div
       class="dcontent"
