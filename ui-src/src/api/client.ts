@@ -82,6 +82,33 @@ export async function api<T = unknown>(
   }
 }
 
+// сырой текст (легаси apiText: конфиг Free и т.п.) - без JSON-парсинга,
+// с теми же 401-заморозкой и topbar-счётчиком
+export async function apiText(path: string): Promise<string> {
+  inflight.n++;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 90_000);
+  try {
+    let resp: Response;
+    try {
+      resp = await fetch('/api/v1' + path, { signal: ctrl.signal });
+    } catch (e) {
+      const abort = e instanceof DOMException && e.name === 'AbortError';
+      throw new ApiError(abort ? 'таймаут запроса' : 'панель недоступна', 0);
+    } finally {
+      clearTimeout(timer);
+    }
+    if (resp.status === 401 && !path.startsWith('/auth/')) {
+      window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT, { detail: path }));
+      await new Promise<never>(() => {});
+    }
+    if (!resp.ok) throw new ApiError('HTTP ' + resp.status, resp.status);
+    return await resp.text();
+  } finally {
+    inflight.n--;
+  }
+}
+
 // upload файла(-ов) multipart/form-data (легаси api(..., isForm)): та же
 // семантика, но тело - FormData без JSON-заголовка
 export async function apiForm<T = unknown>(

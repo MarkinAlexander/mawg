@@ -142,6 +142,12 @@ export interface PoolSettings {
   magitrickleGroupID?: string
   engineDetour?: string
   updateInt?: number
+  updateIntervalH?: number
+  // источник Amnezia: доступные локации у gateway (легаси updateSpAmneziaCountry)
+  amnezia?: {
+    country?: string
+    countries?: { code: string; name?: string; protocols?: string[] }[]
+  }
 }
 
 export interface ConfigView {
@@ -335,6 +341,18 @@ export interface SourcePlan {
   warnings?: string[]
   captchaRequired?: boolean
   captcha?: Captcha
+  // узлы, идущие в движок sing-box (легаси renderSourcePlan)
+  engine?: { tag: string; type: string }[]
+  // выданный конфиг Amnezia (обмен ключа / Free)
+  amnezia?: {
+    protocol?: string
+    serverCountry?: string
+    serverCountryName?: string
+    maxDevices?: number
+    activeDevices?: number
+    issuedConfigs?: number
+    availableCountries?: { code: string; name?: string }[]
+  }
 }
 
 // --- наборы интерфейсов (ротация) ---
@@ -345,4 +363,43 @@ export interface BundleView {
   groups: string[]
   currentMember?: string
   memberDevices: Record<string, string>
+}
+
+// --- пулы: слоты/разбор ссылок/состав (Ф3.5б) ---
+
+// GET /slots (platform.SlotInfo)
+export interface SlotInfo {
+  id: string
+  device: string
+  description: string
+  linkUp: boolean
+  connected: boolean
+  managed: boolean
+  address?: string
+}
+
+// POST /links/inspect (web/linksapi.go)
+export interface LinkInspect {
+  error?: string
+  native: number
+  engine: number
+  types?: string[]
+  tags?: string[]
+  userinfo?: string
+  intervalHours?: number
+  warnings?: string[]
+  amnezia?: {
+    serviceType: string
+    serviceProtocol: string
+  }
+}
+
+// GET /pools/{name}/members (web/members.go)
+export interface PoolMember {
+  name: string
+  proto: string
+  detail?: string
+  endpoint?: string
+  active?: boolean
+  enabled: boolean
 }

@@ -6,17 +6,27 @@ import {
 } from '../../components/ui'
 import { useConfirm } from '../../stores/confirm'
 import { useIfaces } from '../../stores/ifaces'
+import { usePools } from '../../stores/status'
 import { useToast } from '../../stores/toast'
 import type { IfaceInfo, ProbeConfig } from '../../api/types'
 import { PROBE_DEFAULTS, probeBadgeOf, probeTypeOf, targetOnTypeChange } from './ifacesLogic'
+import CaptchaHost from './CaptchaHost.vue'
+import PoolCard from './PoolCard.vue'
+import PoolCreateDialog from './PoolCreateDialog.vue'
+import PoolSettingsDialog from './PoolSettingsDialog.vue'
 
-// Фаза 3.4 «Интерфейсы + WAN-probe» (44-дока §5.4). WAN-блок в легаси
-// живёт в карточке Системы - по финальной IA (44-дока §6) перевезён сюда.
+// Фаза 3.4 «Интерфейсы + WAN-probe» + Фаза 3.5 «Пулы» (44-дока §5.4-5.5).
+// WAN-блок в легаси живёт в карточке Системы, пулы - в шапке; по слову
+// владельца (2026-10-14) всё собрано на этой вкладке, Обзор - под выжимку.
 // Опрос 30с таб-локальный (легаси startPanel), WAN поллинга не имеет.
 
 const ifaces = useIfaces();
+const { pools } = usePools();
 const { push } = useToast();
 const { confirm } = useConfirm();
+
+const createOpen = ref(false);
+const settingsFor = ref('');
 
 onMounted(() => {
   ifaces.start(30000);
@@ -197,6 +207,28 @@ async function saveWan(): Promise<void> {
 </script>
 
 <template>
+  <div class="toolbar">
+    <UiButton
+      variant="primary"
+      @click="createOpen = true"
+    >
+      + интерфейс
+    </UiButton>
+  </div>
+  <PoolCard
+    v-for="p in pools"
+    :key="p.name"
+    :pool="p"
+    @settings="settingsFor = p.name"
+  />
+  <PoolCreateDialog v-model:open="createOpen" />
+  <PoolSettingsDialog
+    :open="settingsFor !== ''"
+    :pool-name="settingsFor"
+    @update:open="(v: boolean) => { if (!v) settingsFor = '' }"
+  />
+  <CaptchaHost />
+
   <UiCard
     title="Интерфейсы роутера"
     subtitle="WireGuard-интерфейсы системы. Пулы управляются mawg, внешние только показываются (статус, привязка групп), скрытые не видны нигде."
@@ -386,6 +418,11 @@ async function saveWan(): Promise<void> {
 </template>
 
 <style scoped>
+.toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 10px;
+}
 .cnt {
   color: var(--dim);
   font-size: 12px;

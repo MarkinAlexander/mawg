@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { UiBadge, UiButton, UiCard, UiHint, UiInput, UiSelect, type UiSelectOption, UiSwitch } from '../../components/ui'
+import { UiBadge, UiButton, UiCard, UiHint, UiIcon, UiInput, UiSelect, type UiSelectOption, UiSwitch } from '../../components/ui'
 import { useConfirm } from '../../stores/confirm'
 import { useStatus } from '../../stores/status'
 import { usePoolActions, type PoolAct } from '../../stores/pools'
@@ -11,6 +11,7 @@ import type { ConfigView, PoolView } from '../../api/types'
 // /status (5с) - карточка чисто отображает + мутации. Шестерёнка настроек и
 // «+ интерфейс» - Ф3.5б (диалоги).
 const props = defineProps<{ pool: PoolView }>();
+defineEmits<{ settings: [] }>();
 
 const { state: status } = useStatus();
 const { confirm } = useConfirm();
@@ -182,7 +183,13 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
         :text="modeBadge.text"
         :variant="modeBadge.variant"
       />
-      <!-- шестерёнка настроек пула - Ф3.5б -->
+      <UiButton
+        variant="icon"
+        tooltip="настройки пула"
+        @click="$emit('settings')"
+      >
+        <UiIcon name="gear" />
+      </UiButton>
     </template>
 
     <div class="kv">
