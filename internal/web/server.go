@@ -1430,12 +1430,19 @@ func (s *Server) getMagitrickle(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) systemCheck() provision.Result {
+	var res provision.Result
 	if s.backend.Name() == store.PlatformKeenetic {
 		if kb, ok := s.backend.(*keenetic.Backend); ok {
-			return provision.CheckKeenetic(kb.Ndmc)
+			res = provision.CheckKeenetic(kb.Ndmc)
 		}
 	}
-	return provision.CheckOpenwrt()
+	if res.Items == nil {
+		res = provision.CheckOpenwrt()
+	}
+	// MagiTrickle: opkg-версия пакета != ревизии нашего бинаря (форк
+	// ставится поверх пакета) - показываем реальную
+	s.enrichMagitrickleVersion(res.Items)
+	return res
 }
 
 func (s *Server) getSystemCheck(w http.ResponseWriter, r *http.Request) {

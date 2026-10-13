@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 
+	"mawg/internal/magitrickle"
+	"mawg/internal/provision"
 	"mawg/internal/store"
 )
 
@@ -75,5 +77,35 @@ func TestPutServerSettingsCoveredListUntouched(t *testing.T) {
 	_, _, allowed, _ := st.ServerSettings()
 	if len(allowed) != 1 || allowed[0].Value != "192.168.10.0/24" {
 		t.Fatalf("лишние записи: %+v", allowed)
+	}
+}
+
+// системная проверка: у MagiTrickle показывается ревизия РАБОТАЮЩЕГО
+// бинаря, а не opkg-пакета (наш форк ставится поверх пакета 0.8.2-1)
+func TestMagitrickleVersionEnriched(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{store: st}
+	mtSrv, mtState := restoreMTServer(t) // mtVersion 0.8.2-rev4-mawgfix2
+	defer mtSrv.Close()
+	s.mt = magitrickle.New(mtSrv.URL)
+
+	items := []provision.Item{{ID: "magitrickle", Title: "MagiTrickle (Entware)", Installed: true, Version: "0.8.2-1"}}
+	s.enrichMagitrickleVersion(items)
+	if items[0].Version != "0.8.2-rev4-mawgfix2 (пакет 0.8.2-1)" {
+		t.Fatalf("версия не обогащена: %q", items[0].Version)
+	}
+
+	// ревизию определить не удалось (старый бинарь без /version, конфига
+	// в синтетике нет) - честная пометка, версия пакета не врёт
+	mtState.mu.Lock()
+	mtState.mtVersion = ""
+	mtState.mu.Unlock()
+	items = []provision.Item{{ID: "magitrickle", Installed: true, Version: "0.8.2-1"}}
+	s.enrichMagitrickleVersion(items)
+	if items[0].Version != "0.8.2-1" || items[0].Note == "" {
+		t.Fatalf("ожидали пакет+пометку: %+v", items[0])
 	}
 }
