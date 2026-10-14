@@ -405,6 +405,13 @@ export function exportStamp(d: Date): string {
 
 // бейдж и текст confirm восстановления по имени файла (легаси 1803, 1813-1816)
 export function backupKind(name: string): { label: string; restoreAsk: string } {
+  if (name.startsWith('mawg-full-')) {
+    return {
+      label: 'полный',
+      restoreAsk:
+        'ПОЛНОЕ восстановление панели: настройки (порт, доступ, RCI), пулы, каскады, наборы, правила, конфиг MagiTrickle. Панель перезапустится - если порт или адрес в бэкапе другие, открывайте её по адресу из бэкапа',
+    };
+  }
   if (name.startsWith('mt-config-')) {
     return {
       label: 'MT-конфиг',

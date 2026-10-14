@@ -138,7 +138,14 @@ func TestMTBackupAndRestoreShadow(t *testing.T) {
 	}
 	json.NewDecoder(resp.Body).Decode(&list)
 	resp.Body.Close()
-	if len(list.Backups) != 1 || list.Backups[0].Kind != "shadow" {
+	// ручная кнопка теперь кладёт и полный архив - shadow-запись ищем по kind
+	var shadowKind string
+	for _, b := range list.Backups {
+		if strings.HasPrefix(b.Name, "mt-shadow-") {
+			shadowKind = b.Kind
+		}
+	}
+	if shadowKind != "shadow" {
 		t.Fatalf("список бэкапов: %+v", list.Backups)
 	}
 	resp, err = http.Get(ts.URL + "/api/v1/mt/backups/" + name)
@@ -207,5 +214,129 @@ func TestMTRestoreRejectsForeignFile(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != 400 {
 		t.Fatalf("traversal в скачивании прошёл: status %d", resp.StatusCode)
+	}
+}
+
+func TestMTBackupFullAndRestore(t *testing.T) {
+	magitrickle.SetShadowStorage(nil, nil)
+	// рестарт панели: подменяем init-скрипт на пустой файл в temp
+	script := filepath.Join(t.TempDir(), "init-mawg")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	origScript := mawgServiceScript
+	mawgServiceScript = func(bool) string { return script }
+	t.Cleanup(func() { mawgServiceScript = origScript })
+
+	mtSrv, _ := restoreMTServer(t)
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// config.json "прошлой жизни" с другим портом + пул с файлом
+	oldConfig := map[string]any{"settings": map[string]any{"webPort": 9999, "listenAddr": "127.0.0.1"}}
+	raw, _ := json.Marshal(oldConfig)
+	if err := os.WriteFile(filepath.Join(st.Base(), "config.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	poolDir := filepath.Join(st.Base(), "pools", "proton")
+	if err := os.MkdirAll(poolDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(poolDir, "proton.conf"), []byte("[Interface]"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	fb := fake.New()
+	e := rotator.New(st, fb, magitrickle.New(mtSrv.URL))
+	srv := New(st, e, fb, magitrickle.New(mtSrv.URL), "test", nil)
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	// ручной бэкап: полный архив появился, в списке kind full
+	resp, err := http.Post(ts.URL+"/api/v1/mt/backup", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("backup: status %d", resp.StatusCode)
+	}
+	entries, _ := os.ReadDir(filepath.Join(st.Base(), "backups"))
+	var full string
+	for _, en := range entries {
+		if strings.HasPrefix(en.Name(), "mawg-full-") {
+			full = en.Name()
+		}
+	}
+	if full == "" {
+		t.Fatal("mawg-full архив не появился")
+	}
+	resp, err = http.Get(ts.URL + "/api/v1/mt/backups")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var list struct {
+		Backups []struct {
+			Name string `json:"name"`
+			Kind string `json:"kind"`
+		} `json:"backups"`
+	}
+	json.NewDecoder(resp.Body).Decode(&list)
+	resp.Body.Close()
+	var fullKind string
+	for _, b := range list.Backups {
+		if b.Name == full {
+			fullKind = b.Kind
+		}
+	}
+	if fullKind != "full" {
+		t.Fatalf("kind полного бэкапа: %q", fullKind)
+	}
+
+	// config.json "испортили" (порт вернулся к дефолту) - рестор вернёт 9999
+	if err := os.WriteFile(filepath.Join(st.Base(), "config.json"),
+		[]byte(`{"settings":{"webPort":8090}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	resp, err = http.Post(ts.URL+"/api/v1/mt/restore", "application/json",
+		strings.NewReader(`{"file":"`+full+`"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || !strings.Contains(string(body), "restarting") {
+		t.Fatalf("restore: status %d, body %s", resp.StatusCode, body)
+	}
+	got, err := os.ReadFile(filepath.Join(st.Base(), "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "9999") {
+		t.Fatalf("config.json после рестора: %s", got)
+	}
+	gotPool, err := os.ReadFile(filepath.Join(st.Base(), "pools", "proton", "proton.conf"))
+	if err != nil || string(gotPool) != "[Interface]" {
+		t.Fatalf("пул после рестора: %s, err %v", gotPool, err)
+	}
+
+	// мусорный архив под видом бэкапа - отказ, состояние не тронуто
+	junk := filepath.Join(st.Base(), "backups", "mawg-full-20990101-000000.tar.gz")
+	if err := os.WriteFile(junk, []byte("not a gzip"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	resp, err = http.Post(ts.URL+"/api/v1/mt/restore", "application/json",
+		strings.NewReader(`{"file":"`+filepath.Base(junk)+`"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 400 {
+		t.Fatalf("мусорный архив прошёл: status %d", resp.StatusCode)
+	}
+	got, _ = os.ReadFile(filepath.Join(st.Base(), "config.json"))
+	if !strings.Contains(string(got), "9999") {
+		t.Fatal("мусорный архив испортил config.json")
 	}
 }

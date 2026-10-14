@@ -1,8 +1,12 @@
 package rotator
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"os/exec"
@@ -1203,13 +1207,83 @@ const mtBackupKeep = 10
 // спасательная верёвка делается кодом автоматически.
 func (e *Engine) BackupMagitrickleState() {
 	if data, err := os.ReadFile(filepath.Join(e.store.Base(), "magitrickle-shadow.json")); err == nil {
-		e.store.SaveBackupRotated("mt-shadow", string(data), mtBackupKeep)
+		e.store.SaveBackupRotated("mt-shadow", "conf", string(data), mtBackupKeep)
 	}
 	if path := e.backend.MTConfigPath(); path != "" {
 		if data, err := os.ReadFile(path); err == nil {
-			e.store.SaveBackupRotated("mt-config", string(data), mtBackupKeep)
+			e.store.SaveBackupRotated("mt-config", "conf", string(data), mtBackupKeep)
 		}
 	}
+}
+
+// BackupFull собирает полный бэкап панели одним tar.gz: config.json
+// (настройки сервера: порт/доступ/RCI, пулы, каскады, наборы), state.json,
+// premium/free, shadow-правила, журнал, папка пулов и конфиг MT.
+// Архив пишет сама Go (archive/tar + gzip) - системный tar на роутере
+// не нужен. Вызывается вручную из панели; автокопии перед записями MT
+// остаются частичными (mt-shadow/mt-config) - они про усечение рантайма.
+func (e *Engine) BackupFull() error {
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	add := func(name string, data []byte) error {
+		hdr := &tar.Header{Name: name, Mode: 0o600, Size: int64(len(data)), ModTime: time.Now()}
+		if err := tw.WriteHeader(hdr); err != nil {
+			return err
+		}
+		_, err := tw.Write(data)
+		return err
+	}
+	// файлы базы; config.json на свежей установке ещё не писался - из памяти
+	configData, err := os.ReadFile(filepath.Join(e.store.Base(), "config.json"))
+	if err != nil {
+		configData, err = e.store.ConfigJSON()
+		if err != nil {
+			return err
+		}
+	}
+	if err := add("mawg/config.json", configData); err != nil {
+		return err
+	}
+	for _, f := range []string{"state.json", "premium.json", "free.json", "magitrickle-shadow.json", "events.json"} {
+		if data, err := os.ReadFile(filepath.Join(e.store.Base(), f)); err == nil {
+			if err := add("mawg/"+f, data); err != nil {
+				return err
+			}
+		}
+	}
+	// папка пулов рекурсивно (wireguard-конфиги и метаданные)
+	root := filepath.Join(e.store.Base(), "pools")
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil // нет каталога - нечего класть
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+		return add("mawg/pools/"+filepath.ToSlash(rel), data)
+	})
+	// конфиг MT - не в базе mawg, путь знает платформа
+	if path := e.backend.MTConfigPath(); path != "" {
+		if data, err := os.ReadFile(path); err == nil {
+			if err := add("mt/"+filepath.Base(path), data); err != nil {
+				return err
+			}
+		}
+	}
+	if err := tw.Close(); err != nil {
+		return err
+	}
+	if err := gz.Close(); err != nil {
+		return err
+	}
+	_, err = e.store.SaveBackupRotated("mawg-full", "tar.gz", buf.String(), mtBackupKeep)
+	return err
 }
 
 func (e *Engine) suspendGroups(p store.Pool) {

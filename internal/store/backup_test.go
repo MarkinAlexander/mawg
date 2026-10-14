@@ -15,7 +15,7 @@ func TestSaveBackupRotatedKeepsLastN(t *testing.T) {
 	}
 	// тринадцать записей с разными метками - ротация обязана оставить 10
 	for i := 0; i < 13; i++ {
-		if _, err := st.SaveBackupRotated("mt-shadow", "payload", 10); err != nil {
+		if _, err := st.SaveBackupRotated("mt-shadow", "conf", "payload", 10); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -36,7 +36,7 @@ func TestSaveBackupRotatedKeepsLastN(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(base, "backups", "handmade.conf"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.SaveBackupRotated("mt-shadow", "payload", 10); err != nil {
+	if _, err := st.SaveBackupRotated("mt-shadow", "conf", "payload", 10); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(base, "backups", "handmade.conf")); err != nil {

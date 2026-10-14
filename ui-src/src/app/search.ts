@@ -1,8 +1,8 @@
 // Реестр «мест» для поиска по настройкам (46-док §1, первый пункт Фазы 4:
 // лупа в шапке + Ctrl+K, фильтрация по подстроке, переход + скролл к якорю).
 // Наполняется вручную по мере появления карточек; заглушки вкладок (Обзор,
-// DNS, «Резервные копии») и демо /next/kit не включаем - в выдаче пустышки
-// мешают. Якоря - id на UiCard вьюх (fallthrough на section.card).
+// DNS) и демо /next/kit не включаем - в выдаче пустышки мешают.
+// Якоря - id на UiCard вьюх (fallthrough на section.card).
 export interface SearchPlace {
   title: string
   keywords: string[]
@@ -43,10 +43,16 @@ export const SEARCH_PLACES: SearchPlace[] = [
     anchor: 'card-rules',
   },
   {
-    title: 'Резервные копии групп: бэкапы, импорт и выгрузка файлом',
-    keywords: ['бэкап', 'резерв', 'копия', 'импорт', 'экспорт', 'выгрузка', 'файл', 'восстановить', 'backup', '.mtrickle'],
-    route: '/next/groups',
-    anchor: 'card-rules',
+    title: 'Резервные копии: полный бэкап и восстановление',
+    keywords: ['бэкап', 'резерв', 'копия', 'восстановить', 'backup', 'архив', 'tar', 'настройки панели', 'порт'],
+    route: '/next/backups',
+    anchor: 'card-backups',
+  },
+  {
+    title: 'Импорт и выгрузка групп файлом',
+    keywords: ['импорт', 'экспорт', 'выгрузка', 'файл', '.mtrickle', 'перенос'],
+    route: '/next/backups',
+    anchor: 'card-transfer',
   },
   // --- Интерфейсы ---
   {
