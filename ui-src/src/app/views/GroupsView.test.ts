@@ -491,10 +491,9 @@ describe('GroupsView - массовое включение/выключение 
   it('счётчик вкл/выкл в строке группы', async () => {
     const { w } = await makeView();
     const row = block(w, 'g1');
-    expect(row.text()).toContain('вкл: 1'); // из 2 правил включено 1
-    expect(row.text()).toContain('выключено: 1');
-    const other = block(w, 'g2');
-    expect(other.text()).not.toContain('выключено:'); // все включены - бейджа нет
+    // формат владельца: всего/включено
+    expect(row.text()).toContain('правил: 2/1');
+    expect(row.text()).not.toContain('выключено'); // чипа больше нет
     w.unmount();
   });
 
