@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { GroupView } from '../../api/types'
 import {
-  cascadeOptions, cyclesValid, degradedText, dupsEntries, groupHasDup,
+  backupKind, cascadeOptions, cyclesValid, degradedText, dedupImportRules, dupsEntries, exportStamp, groupHasDup, importVerdict,
   groupMatchCount, groupMatches, hlSegs, normRuleValue, parseSources,
-  presetRulesLine, showAllRules, srcBadge, srcListInitial, srcModeInitial,
-  warnTitle, wireCascadeSel,
+  parseImportFile, presetRulesLine, showAllRules, srcBadge, srcListInitial,
+  srcModeInitial, warnTitle, wireCascadeSel,
 } from './groupsLogic'
 
 function g(over: Partial<GroupView>): GroupView {
@@ -161,5 +161,58 @@ describe('каскады (Ф3.7б)', () => {
     expect(r2.value).toBe('pool:a'); // текущее занято соседом - уехали
     const r3 = wireCascadeSel(opts, '', 'pool:b');
     expect(r3.value).toBe('pool:b'); // разрешённое текущее остаётся
+  });
+});
+
+describe('импорт/выгрузка файлом (Ф3.7в)', () => {
+  const good = JSON.stringify({ groups: [
+    { name: 'tg', color: '#112233', interface: 'nwg0', enable: true, rules: [
+      { type: 'domain', rule: 't.me', enable: true },
+      { type: 'domain', rule: 'T.ME', enable: true },
+      { type: 'subnet', rule: '1.2.3.4', enable: false, name: 'n1' },
+      { type: 'domain', rule: '  ', enable: true },
+    ] },
+    { name: 'bad', interface: '', rules: [] },
+    { interface: 'nwg0', rules: [] },
+    { name: 'empty', interface: 'x', rules: [{ type: 'domain', rule: 'a.com', enable: true }] },
+  ] });
+
+  it('parseImportFile: mt-config отвергается, мусор/без групп - ошибки', () => {
+    expect(parseImportFile('mt-config-2026.conf', '{}').error).toContain('сырой MT-конфиг');
+    expect(parseImportFile('x.json', 'не json').error).toContain('не похож на mtrickle/json');
+    expect(parseImportFile('x.json', '{}').error).toContain('нет групп');
+    expect(parseImportFile('x.json', '{"groups":[]}').error).toContain('нет групп');
+  });
+  it('parseImportFile: пригодные группы, счётчик непригодных, пустые правила выкинуты', () => {
+    const r = parseImportFile('groups.mtrickle', good);
+    expect(r.error).toBeUndefined();
+    expect(r.bad).toBe(2);
+    expect(r.groups).toHaveLength(2);
+    const tg = r.groups![0];
+    expect(tg.name).toBe('tg');
+    expect(tg.rules).toHaveLength(3); // пустой паттерн выкинут
+    expect(tg.rules[2]).toEqual({ type: 'subnet', rule: '1.2.3.4', enable: false, name: 'n1' });
+    expect(parseImportFile('x.json', '{"groups":[{"name":"a"}]}').error).toContain('нет групп с именем и интерфейсом');
+  });
+  it('dedupImportRules: ключ type+rule.toLowerCase, счётчик в отчёт', () => {
+    const src = [{ name: 'tg', color: '', interface: 'i', enable: true, rules: [
+      { type: 'domain', rule: 'a.com', enable: true },
+      { type: 'domain', rule: 'A.COM ', enable: true },
+      { type: 'domain', rule: 'b.com', enable: true },
+    ] }];
+    const { groups, dedup } = dedupImportRules(src);
+    expect(dedup).toBe(1);
+    expect(groups[0].rules.map((r) => r.rule)).toEqual(['a.com', 'b.com']);
+  });
+  it('importVerdict: add с пропущенными дублимами и replace', () => {
+    expect(importVerdict('add', { added: 2, rules: 5, skipped: ['tg'] }, 3)).toBe('Импортировано групп: 2 (правил: 5, вычищено дубликатов: 3). Пропущены дубли имени: tg');
+    expect(importVerdict('add', { added: 1, rules: 3 }, 0)).toBe('Импортировано групп: 1 (правил: 3)');
+    expect(importVerdict('replace', { added: 4, rules: 9 }, 0)).toBe('Список заменён: 4 групп (правил: 9)');
+  });
+  it('exportStamp/backupKind', () => {
+    expect(exportStamp(new Date(2026, 9, 14, 7, 5, 3))).toBe('20261014-070503');
+    expect(backupKind('mt-config-2026.conf').label).toBe('MT-конфиг');
+    expect(backupKind('mt-config-x.conf').restoreAsk).toContain('MagiTrickle перезапустится');
+    expect(backupKind('mt-shadow-x.conf').restoreAsk).toContain('ВСЕ группы будут заменены');
   });
 });
