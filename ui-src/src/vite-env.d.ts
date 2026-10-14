@@ -1,5 +1,3 @@
-declare const __PANEL_V__: string
-
 /// <reference types="vite/client" />
 
 declare module '*.vue' {
