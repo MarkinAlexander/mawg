@@ -8,7 +8,7 @@ import UiIcon from './UiIcon.vue'
 const props = withDefaults(
   defineProps<{
     modelValue: string
-    label: string
+    label?: string
     hint?: string
     tooltip?: string
     placeholder?: string
@@ -19,14 +19,18 @@ const props = withDefaults(
     disabled?: boolean
     required?: boolean
     validator?: (value: string) => string | null
+    // без UiField - «голый» контрол для инлайн-рядов (как bare у UiSwitch)
+    bare?: boolean
   }>(),
   {
+    label: undefined,
     type: 'text',
     step: 1,
     hint: undefined,
     tooltip: undefined,
     placeholder: undefined,
     validator: undefined,
+    bare: false,
   },
 )
 
@@ -69,8 +73,62 @@ function onInput(e: Event) {
 </script>
 
 <template>
+  <!-- bare: контрол без подписи/хинтов - для тулбар-рядов в одну линию -->
+  <div
+    v-if="props.bare"
+    class="inline bare"
+  >
+    <span class="pwrap">
+      <input
+        ref="inputEl"
+        :type="effType"
+        :value="props.modelValue"
+        :placeholder="props.placeholder"
+        :disabled="props.disabled"
+        :class="{ mono: props.mono }"
+        @input="onInput"
+      >
+      <span
+        v-if="props.type === 'number' && !props.disabled"
+        class="pnum"
+      >
+        <button
+          type="button"
+          class="pnum-btn"
+          title="больше"
+          @click="stepValue(1)"
+        >
+          <UiIcon name="chevron-up" />
+        </button>
+        <button
+          type="button"
+          class="pnum-btn"
+          title="меньше"
+          @click="stepValue(-1)"
+        >
+          <UiIcon name="chevron-down" />
+        </button>
+      </span>
+      <button
+        v-if="canClear"
+        class="pclr"
+        type="button"
+        title="очистить"
+        @click="clear"
+      >
+        <UiIcon name="x" />
+      </button>
+    </span>
+    <div
+      v-if="$slots.action"
+      class="act"
+    >
+      <slot name="action" />
+    </div>
+  </div>
   <UiField
-    :label="props.label"
+    v-else
+    :label="props.label ?? ''"
     :hint="props.hint"
     :tooltip="props.tooltip"
     :required="props.required"

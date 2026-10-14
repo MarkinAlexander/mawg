@@ -18,12 +18,19 @@ export const EYE_OFF_SVG =
 export const X_SVG =
   '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>'
 
+export const IMPORT_SVG =
+  '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M4 21h16"/></svg>'
+export const COPY_SVG =
+  '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>'
+
 export type IconName =
   | 'grip'
   | 'pencil'
   | 'trash'
   | 'gear'
   | 'warn'
+  | 'import'
+  | 'copy'
   | 'eye'
   | 'eye-off'
   | 'x'
@@ -36,6 +43,8 @@ export const ICONS: Record<IconName, string> = {
   trash: TRASH_SVG,
   gear: GEAR_SVG,
   warn: WARN_SVG,
+  import: IMPORT_SVG,
+  copy: COPY_SVG,
   eye: EYE_SVG,
   'eye-off': EYE_OFF_SVG,
   x: X_SVG,

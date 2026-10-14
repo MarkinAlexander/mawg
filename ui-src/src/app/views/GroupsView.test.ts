@@ -345,7 +345,7 @@ describe('GroupsView - создание/удаление/гистерезис', 
 describe('GroupsView - импорт текстом и дубликаты', () => {
   it('импорт правил: POST с опциями, тост-вердикт', async () => {
     const { w, f } = await makeView();
-    await block(w, 'g1').findAll('button').filter((b) => b.text() === 'импорт')[0].trigger('click');
+    await block(w, 'g1').find('button[title="вставить список доменов, подсетей или ссылок"]').trigger('click');
     await nextTick();
     const dlg = w.findAll('dialog').find((d) => d.find('h3').text() === 'Импорт правил в telegram')!;
     expect(dlg.text()).toContain('Усекать до второго уровня');
@@ -363,7 +363,7 @@ describe('GroupsView - импорт текстом и дубликаты', () =>
 
   it('пустой список - тост без POST; дубликаты: диалог со сводкой', async () => {
     const { w, f } = await makeView({ 't.me': [{ groupName: 'ai', ruleType: 'domain' }, { groupName: 'backup', ruleType: 'domain' }] });
-    await block(w, 'g1').findAll('button').filter((b) => b.text() === 'импорт')[0].trigger('click');
+    await block(w, 'g1').find('button[title="вставить список доменов, подсетей или ссылок"]').trigger('click');
     await nextTick();
     const dlg = w.findAll('dialog').find((d) => d.find('h3').text() === 'Импорт правил в telegram')!;
     await btnIn(dlg, 'импортировать')[0].trigger('click');
