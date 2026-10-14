@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import {
   UiBadge, UiBanner, UiButton, UiCard, UiColor, UiDialog, UiHint, UiIcon,
   UiInput, UiSelect, type UiSelectOption, UiSwitch, UiTextarea,
@@ -31,6 +31,7 @@ const groups = useGroups();
 const { state } = groups;
 const { push } = useToast();
 const { confirm } = useConfirm();
+const route = useRoute();
 
 onMounted(() => {
   groups.start(30000); // легаси: setInterval(refreshRules, 30000)
@@ -420,6 +421,21 @@ function editGroup(g: GroupView): void {
   editing.value = g;
   editOpen.value = true;
 }
+
+// deep-link (44-дока §6): /next/groups?g=<id> открывает редактор группы,
+// как только список загрузился (или сразу, если стор уже жив); запрос
+// тут же чистится, чтобы F5 не переоткрывал редактор
+function openFromLink(): void {
+  if (!state.loaded) return;
+  const gid = route.query.g;
+  if (typeof gid === 'string' && gid) {
+    const g = state.groups.find((x) => x.id === gid);
+    if (g) editGroup(g);
+    router.replace({ query: { ...route.query, g: undefined } });
+  }
+}
+watch(() => route.query.g, openFromLink);
+onMounted(openFromLink);
 </script>
 
 <template>
