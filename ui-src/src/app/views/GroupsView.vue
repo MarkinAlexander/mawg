@@ -470,6 +470,16 @@ function editGroup(g: GroupView): void {
       >
         + группа
       </UiButton>
+    </div>
+
+    <!-- каскад - отдельно, с точным описанием (слово владельца: внимательнее) -->
+    <div class="cascdesc">
+      <div class="ctext">
+        <b>Каскад</b> - направить трафик одного подключения через другое: создается
+        служебная группа (в списке - с бейджем «каскад»), трафик к эндпоинтам источника
+        идет через путь-посредник. Включается и выключается обычным тумблером группы;
+        при ротации источника адреса добавляются сами.
+      </div>
       <UiButton
         tooltip="направить трафик одного подключения через другое"
         @click="cascadeOpen = true"
@@ -1030,10 +1040,28 @@ function editGroup(g: GroupView): void {
   margin-top: 4px;
 }
 .cname {
-  width: 180px;
+  flex: 1;
+  min-width: 180px;
 }
 .ciface {
   width: 220px;
+}
+.cascdesc {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.ctext {
+  flex: 1;
+  color: var(--dim);
+  font-size: 12px;
+}
+.ctext b {
+  color: var(--text);
 }
 .cycles {
   display: flex;
