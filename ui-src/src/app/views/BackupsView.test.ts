@@ -42,6 +42,14 @@ async function makeView() {
     if (u.endsWith('/mt/groups/import')) {
       const body = JSON.parse(init!.body!);
       data.imports.push(body);
+      // бэкенд добавляет группы и назначает id сам - последующий
+      // refresh (внутри importGroups) их вернёт
+      for (const [i, g] of (body.groups || []).entries()) {
+        data.groups.push({
+          id: `g-new${data.imports.length}-${i}`, name: g.name, interface: g.interface,
+          enable: g.enable ?? true, rules: g.rules || [],
+        } as GroupView);
+      }
       return ok({ added: 1, rules: 2, skipped: ['telegram'] });
     }
     if (u.endsWith('/mt/groups')) return ok({ available: true, groups: data.groups });
@@ -207,6 +215,66 @@ describe('BackupsView - импорт из файла', () => {
       expect(useToast().toasts.list.map((t) => t.text)).toContain('Импортировано групп: 1 (правил: 2). Пропущены дубли имени: telegram'));
     // успех - секция импорта сворачивается, кнопка снова «выбрать файл...»
     await vi.waitFor(() => expect(btnIn(transfer, 'выбрать файл...').length).toBe(1));
+    w.unmount();
+  });
+
+  it('источники у импорта (Ф5§7): policy PUT на новые группы, пустой список - тост без POST, селектор сброшен', async () => {
+    const { w, f } = await makeView();
+    const transfer = card(w, 'card-transfer');
+    const content = JSON.stringify({ groups: [
+      { name: 'новая', interface: 'nwg7', enable: true, rules: [{ type: 'subnet', rule: '1.2.3.4/32', enable: true }] },
+    ] });
+    await pickFile(w, content);
+    await vi.waitFor(() => expect(transfer.text()).toContain('Источники импортированных групп'));
+
+    // «список IP» без адресов - тост, импорт не уходит
+    await transfer.findAll('.psel-btn')[0].trigger('click');
+    await transfer.findAll('.psel-item').filter((o) => o.text() === 'только выбранные IP')[0].trigger('click');
+    await btnIn(transfer, 'импортировать')[0].trigger('click');
+    await vi.waitFor(() =>
+      expect(useToast().toasts.list.some((t) => t.text.includes('Пустой список источников'))).toBe(true));
+    expect(f.mock.calls.some((c) => (c[0] as string).endsWith('/mt/groups/import'))).toBe(false);
+
+    // «вся локальная сеть» - после импорта PUT policy на новую группу
+    await transfer.findAll('.psel-btn')[0].trigger('click');
+    await transfer.findAll('.psel-item').filter((o) => o.text() === 'вся локальная сеть')[0].trigger('click');
+    await btnIn(transfer, 'импортировать')[0].trigger('click');
+    await vi.waitFor(() => {
+      const pol = f.mock.calls.find((c) => (c[0] as string).endsWith('/policy') && c[1]?.method === 'PUT');
+      expect(pol).toBeTruthy();
+      // вся политика целиком (GOTCHAS): у свежей группы onDead/iface пустые
+      expect(JSON.parse(pol![1]!.body as string)).toEqual({
+        onDead: '', iface: '', sourcesMode: 'all', sources: [], sourcesRouter: false,
+      });
+    });
+    await vi.waitFor(() =>
+      expect(useToast().toasts.list.some((t) => t.text.includes('источники заданы: 1'))).toBe(true));
+    // секция свернулась, селектор сброшен
+    await vi.waitFor(() => expect(btnIn(transfer, 'выбрать файл...').length).toBe(1));
+    expect(transfer.text()).not.toContain('Источники импортированных групп');
+    w.unmount();
+  });
+
+  it('источники у импорта: дубль имени пропущен - policy ему не уходит', async () => {
+    const { w, f } = await makeView();
+    const transfer = card(w, 'card-transfer');
+    const content = JSON.stringify({ groups: [
+      { name: 'telegram', interface: 'nwg0', enable: true, rules: [] },
+    ] });
+    await pickFile(w, content);
+    await vi.waitFor(() => expect(transfer.text()).toContain('Источники импортированных групп'));
+    // дубль снят заранее; включаем его вручную - импорт пропустит имя
+    // (локатор - строка импорта с бейджем «дубль имени», не выгрузка)
+    const box = transfer.findAll('.bkline').filter((l) => l.text().includes('дубль имени'))[0].find('input[type=checkbox]');
+    await box.setValue();
+    await transfer.findAll('.psel-btn')[0].trigger('click');
+    await transfer.findAll('.psel-item').filter((o) => o.text() === 'локальная сеть + роутер')[0].trigger('click');
+    await btnIn(transfer, 'импортировать')[0].trigger('click');
+    await vi.waitFor(() => expect(f.mock.calls.some((c) => (c[0] as string).endsWith('/mt/groups/import'))).toBe(true));
+    await vi.waitFor(() =>
+      expect(useToast().toasts.list.some((t) => t.text.includes('Пропущены дубли имени: telegram'))).toBe(true));
+    await vi.waitFor(() => expect(btnIn(transfer, 'выбрать файл...').length).toBe(1));
+    expect(f.mock.calls.some((c) => (c[0] as string).endsWith('/policy') && c[1]?.method === 'PUT')).toBe(false);
     w.unmount();
   });
 });

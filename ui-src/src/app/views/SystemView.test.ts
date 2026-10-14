@@ -90,6 +90,39 @@ describe('SystemView - журнал событий', () => {
     w.unmount();
   });
 
+  it('фильтры (Ф5§7): тип из данных + поиск по пулу/тексту, счётчик «показано N из M»', async () => {
+    vi.stubGlobal('fetch', apiStub({
+      '/events': { events: [
+        ev('2026-10-13T10:00:01Z', 'warp', 'rotate', 'старый конфиг'),
+        ev('2026-10-13T10:00:02Z', 'warp', 'applied', 'конфиг применён'),
+        ev('2026-10-13T10:00:03Z', 'subs', 'fallback', 'прямой доступ'),
+      ] },
+    }));
+    const w = mount(SystemView);
+    await vi.waitFor(() => expect(w.findAll('.log > div')).toHaveLength(3));
+    const logCard = w.findAll('.card').find((c) => c.text().includes('Журнал событий'))!;
+    // дропдаун типов собран из данных: 3 вида + «все события»
+    await logCard.find('.psel-btn').trigger('click');
+    expect(logCard.findAll('.psel-item')).toHaveLength(4);
+    await logCard.findAll('.psel-item').filter((o) => o.text() === 'applied')[0].trigger('click');
+    await nextTick();
+    expect(logCard.findAll('.log > div')).toHaveLength(1);
+    expect(logCard.find('.evcount').text()).toContain('показано 1 из 3');
+    // фильтры пересекаются: applied + «прямой» -> пусто
+    await logCard.find('.evfilters input').setValue('прямой');
+    await nextTick();
+    expect(logCard.findAll('.log > div')).toHaveLength(0);
+    expect(logCard.find('.evcount').text()).toContain('показано 0 из 3');
+    // сброс типа, поиск по пулу находит две записи warp
+    await logCard.find('.psel-btn').trigger('click');
+    await logCard.findAll('.psel-item').filter((o) => o.text() === 'все события')[0].trigger('click');
+    await logCard.find('.evfilters input').setValue('warp');
+    await nextTick();
+    expect(logCard.findAll('.log > div')).toHaveLength(2);
+    expect(logCard.find('.evcount').text()).toContain('показано 2 из 3');
+    w.unmount();
+  });
+
   it('хвост 80 записей (легаси slice(-80)), экранирование HTML из событий', async () => {
     const list = Array.from({ length: 85 }, (_, i) =>
       ev(`2026-10-13T00:00:${String(i % 60).padStart(2, '0')}Z`, 'p', 'rotate', 'msg' + i));
