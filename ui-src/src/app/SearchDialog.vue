@@ -73,11 +73,20 @@ async function go(place: SearchPlace | undefined) {
   if (!place) return
   emit('update:open', false)
   await router.push(place.route)
-  // ленивая вьюха монтируется после навигации - даём дорисоваться
-  await nextTick()
-  await new Promise((resolve) => setTimeout(resolve, 0))
-  if (place.anchor) {
-    document.getElementById(place.anchor)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  if (place.anchor) await scrollToAnchor(place.anchor)
+}
+
+// Ленивая вьюха монтируется ЗАМЕТНО позже резолва router.push (замер на
+// живой приёмке: до ~300мс) - единственный getElementById промахивается.
+// Ждём якорь с ретраями ~1с, потом сдаёмся молча (переход уже случился).
+async function scrollToAnchor(anchor: string): Promise<void> {
+  for (let i = 0; i < 20; i++) {
+    const el = document.getElementById(anchor)
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      return
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50))
   }
 }
 </script>

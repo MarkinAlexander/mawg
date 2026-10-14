@@ -108,6 +108,26 @@ describe('SearchDialog', () => {
     w.unmount()
   })
 
+  it('якорь, смонтировавшийся позже перехода, получает скролл (ретраи)', async () => {
+    const { w, router } = await makeDlg()
+    // живая приёмка: вьюха монтируется до ~300мс ПОСЛЕ резолва push -
+    // единственный getElementById промахивается, ждём с ретраями
+    setTimeout(() => {
+      const a = document.createElement('section')
+      a.id = 'card-probe'
+      document.body.appendChild(a)
+    }, 150)
+    w.find('input').setValue('wan')
+    await nextTick()
+    w.find('input').trigger('keydown', { key: 'Enter' })
+    await macrotask()
+    expect(router.currentRoute.value.path).toBe('/next/interfaces')
+    expect(scrollMock).not.toHaveBeenCalled()
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    expect(scrollMock).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' })
+    w.unmount()
+  })
+
   it('клик по строке - переход (место без скролла не дёргает якорь)', async () => {
     const { w, router } = await makeDlg()
     const anchor = document.createElement('section')
