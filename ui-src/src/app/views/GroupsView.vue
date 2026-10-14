@@ -442,11 +442,13 @@ function editGroup(g: GroupView): void {
       </UiButton>
     </template>
 
-    <!-- ряд создания (легаси rgName/rgColor/rgIface/rgCreate) -->
+    <!-- ряд создания (легаси rgName/rgColor/rgIface/rgCreate) - одна линия,
+         контролы без подписей (легаси-placeholder'ы) -->
     <div class="crow">
       <UiInput
         v-model="newName"
-        label="имя группы"
+        bare
+        placeholder="имя группы"
         class="cname"
       />
       <input
@@ -458,7 +460,8 @@ function editGroup(g: GroupView): void {
       <UiSelect
         v-model="newIface"
         :options="createIfaceOptions"
-        label="интерфейс"
+        bare
+        class="ciface"
       />
       <UiButton
         variant="primary"
@@ -480,13 +483,13 @@ function editGroup(g: GroupView): void {
       <UiSelect
         v-model="presetSel"
         :options="presetOptions"
-        label="шаблон"
+        bare
         class="psel"
       />
       <UiSelect
         v-model="presetIface"
         :options="createIfaceOptions"
-        label="интерфейс шаблона"
+        bare
       />
       <UiButton
         :busy="applying"
@@ -506,26 +509,28 @@ function editGroup(g: GroupView): void {
       >github.com/itdoginfo/allow-domains</a>{{ state.presets.sourceNote ? ' (' + state.presets.sourceNote + ')' : '' }}. Более точные и свежие списки - в репозитории источника.
     </div>
 
-    <!-- гистерезис политик (легаси polFailCycles/polRestoreCycles) -->
+    <!-- гистерезис политик (легаси polFailCycles/polRestoreCycles) -
+         предложение в одну линию, как в легаси -->
     <div class="cycles">
-      <span class="muted">Политики отвала: переключать</span>
+      <span class="muted">Политики отвала: переключать после</span>
       <UiInput
         v-model="cycFail"
         type="number"
-        label="циклов отказа"
+        bare
         class="cnum"
         placeholder="2"
         tooltip="сколько циклов проверки (30с) интерфейс должен считаться мёртвым подряд"
       />
-      <span class="muted">возвращать</span>
+      <span class="muted">циклов отказа, возвращать после</span>
       <UiInput
         v-model="cycRestore"
         type="number"
-        label="здоровых циклов"
+        bare
         class="cnum"
         placeholder="2"
         tooltip="сколько циклов подряд интерфейс должен быть живым перед возвратом"
       />
+      <span class="muted">здоровых циклов</span>
       <UiButton
         :disabled="!cycChanged"
         :busy="cycSaving"
@@ -658,6 +663,22 @@ function editGroup(g: GroupView): void {
           </span>
           <span class="muted rcount">правил: {{ (g.rules || []).length }}<template v-if="searchQ"> · <span class="okc">совпадений: {{ groupMatchCount(g, searchQ) }}</span></template></span>
           <span class="sp" />
+          <!-- импорт/копирование правил группы - иконки в шапке (слово
+               владельца 2026-10-14: из ряда правил убрать, svg даст позже) -->
+          <UiButton
+            variant="icon"
+            tooltip="вставить список доменов, подсетей или ссылок"
+            @click="openImport(g)"
+          >
+            <UiIcon name="import" />
+          </UiButton>
+          <UiButton
+            variant="icon"
+            tooltip="скопировать все правила группы списком"
+            @click="copyRules(g)"
+          >
+            <UiIcon name="copy" />
+          </UiButton>
           <UiSwitch
             :model-value="g.enable"
             :tooltip="g.enable ? 'выключить группу' : 'включить группу'"
@@ -699,13 +720,13 @@ function editGroup(g: GroupView): void {
             <UiSelect
               :model-value="nrTypeOf(g.id)"
               :options="ruleTypeOptions()"
-              label="тип"
+              bare
               class="nrtype"
               @update:model-value="(v: string) => { nrType[g.id] = v }"
             />
             <UiInput
               :model-value="nrValue[g.id] || ''"
-              label="значение"
+              bare
               class="nrval"
               :placeholder="RULE_PLACEHOLDERS[nrTypeOf(g.id)]"
               @update:model-value="(v: string) => { nrValue[g.id] = v }"
@@ -719,20 +740,6 @@ function editGroup(g: GroupView): void {
                 </UiButton>
               </template>
             </UiInput>
-            <UiButton
-              class="nrx"
-              tooltip="вставить список доменов, подсетей или ссылок"
-              @click="openImport(g)"
-            >
-              импорт
-            </UiButton>
-            <UiButton
-              class="nrx"
-              tooltip="скопировать все правила группы списком"
-              @click="copyRules(g)"
-            >
-              копировать
-            </UiButton>
           </div>
           <div class="muted nrhint">
             {{ RULE_HINTS[nrTypeOf(g.id)] }}
@@ -761,12 +768,12 @@ function editGroup(g: GroupView): void {
                       <UiSelect
                         v-model="er.type"
                         :options="ruleTypeOptions()"
-                        label="тип"
+                        bare
                         class="ertype"
                       />
                       <UiInput
                         v-model="er.value"
-                        label="значение"
+                        bare
                         class="erval"
                       >
                         <template #action>
@@ -783,8 +790,9 @@ function editGroup(g: GroupView): void {
                       </UiInput>
                       <UiInput
                         v-model="er.name"
-                        label="имя (необяз.)"
+                        bare
                         class="ername"
+                        placeholder="имя (необяз.)"
                       />
                     </div>
                     <div class="muted erhiant">
@@ -998,9 +1006,17 @@ function editGroup(g: GroupView): void {
 <style scoped>
 .crow {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+}
+/* bare-контролы кита несут margin-top: 3px под лейбл - в инлайн-рядах он
+   не нужен, вся линия по центру */
+.crow :deep(.inline),
+.cycles :deep(.inline),
+.nrrow :deep(.inline),
+.erwrap :deep(.inline) {
+  margin-top: 0;
 }
 .psetrow {
   margin-top: 8px;
@@ -1016,9 +1032,12 @@ function editGroup(g: GroupView): void {
 .cname {
   width: 180px;
 }
+.ciface {
+  width: 220px;
+}
 .ccolor {
   width: 42px;
-  height: 34px;
+  height: 31px;
   padding: 2px;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -1027,14 +1046,14 @@ function editGroup(g: GroupView): void {
 }
 .cycles {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   gap: 8px;
   flex-wrap: wrap;
   margin-top: 12px;
   font-size: 12px;
 }
 .cnum {
-  width: 76px;
+  width: 64px;
 }
 .cyshint {
   margin-top: 4px;
@@ -1130,7 +1149,7 @@ summary {
 }
 .nrrow {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   gap: 10px;
   flex-wrap: wrap;
   margin-top: 6px;
@@ -1141,9 +1160,6 @@ summary {
 .nrval {
   flex: 1;
   min-width: 180px;
-}
-.nrx {
-  margin-bottom: 1px;
 }
 .nrhint {
   font-size: 11px;
@@ -1210,7 +1226,7 @@ tr.drop-after td {
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
-  align-items: flex-end;
+  align-items: center;
 }
 .ertype {
   width: 170px;

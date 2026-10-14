@@ -15,11 +15,13 @@ export interface UiSelectOption {
 const props = defineProps<{
   modelValue: string
   options: UiSelectOption[]
-  label: string
+  label?: string
   hint?: string
   tooltip?: string
   disabled?: boolean
   busy?: boolean
+  // без UiField - «голый» дропдаун для инлайн-рядов (как bare у UiSwitch)
+  bare?: boolean
 }>()
 
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
@@ -51,8 +53,61 @@ function pick(o: UiSelectOption) {
 </script>
 
 <template>
+  <!-- bare: дропдаун без подписи/хинтов - для тулбар-рядов в одну линию -->
+  <div
+    v-if="props.bare"
+    class="inline bare"
+  >
+    <div
+      ref="root"
+      class="psel"
+    >
+      <button
+        type="button"
+        class="psel-btn"
+        :class="{ on: open }"
+        :disabled="props.disabled || props.busy"
+        :title="selected?.label ?? props.tooltip"
+        @click="open = !open"
+      >
+        {{ selected?.label ?? '—' }}
+      </button>
+      <div
+        v-if="open"
+        class="psel-list"
+      >
+        <button
+          v-for="o in props.options"
+          :key="o.value"
+          type="button"
+          class="psel-item"
+          :title="o.hint ? `${o.label}: ${o.hint}` : o.label"
+          @click="pick(o)"
+        >
+          <span class="row">
+            <span class="lbl">{{ o.label }}</span>
+            <span
+              v-if="o.count !== undefined"
+              class="cnt"
+            >{{ o.count }}</span>
+          </span>
+          <span
+            v-if="o.hint"
+            class="hint"
+          >{{ o.hint }}</span>
+        </button>
+      </div>
+    </div>
+    <div
+      v-if="$slots.action"
+      class="act"
+    >
+      <slot name="action" />
+    </div>
+  </div>
   <UiField
-    :label="props.label"
+    v-else
+    :label="props.label ?? ''"
     :hint="props.hint"
     :tooltip="props.tooltip"
   >
