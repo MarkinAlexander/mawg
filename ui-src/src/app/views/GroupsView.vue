@@ -204,19 +204,28 @@ function ruleRows(g: GroupView): Rule[] {
   return list.filter((rl) => (rl.rule || '').toLowerCase().includes(s) || (rl.name || '').toLowerCase().includes(s));
 }
 
-// --- editingLock: фокус в полях списка (легаси editingRulesPanel 1512
-// + focusout 1555): перерендер не сносит ввод ---
-const FOCUSABLE = /^(INPUT|SELECT|TEXTAREA)$/;
+// --- editingLock: фокус в ТЕКСТОВЫХ полях списка (легаси
+// editingRulesPanel 1512 + focusout 1555): перерендер не сносит ввод.
+// Живая приёмка на телефоне: тумблер группы - тоже INPUT(checkbox), тап
+// по нему ставит фокус и ДЕРЖИТ его - editingLock не отпускался,
+// refresh откладывался и строки правил при открытой группе не
+// перерисовывались. Лочим только текстовый ввод: чекбоксы/кнопки
+// перерендер не теряют.
 const listBox = ref<HTMLElement | null>(null);
+function isTextInput(el: EventTarget | null): boolean {
+  const t = el as HTMLElement | null;
+  if (!t) return false;
+  if (t.tagName === 'TEXTAREA' || t.tagName === 'SELECT') return true;
+  return t.tagName === 'INPUT' && !/^(checkbox|radio|button|submit|reset)$/i.test((t as HTMLInputElement).type || 'text');
+}
 function onFocusin(e: FocusEvent): void {
-  const t = e.target as HTMLElement | null;
-  if (t && FOCUSABLE.test(t.tagName)) groups.setEditing(1);
+  if (isTextInput(e.target)) groups.setEditing(1);
 }
 function onFocusout(): void {
   setTimeout(() => {
     const ae = document.activeElement as HTMLElement | null;
     const box = listBox.value;
-    if (!ae || !box || !box.contains(ae) || !FOCUSABLE.test(ae.tagName)) {
+    if (!ae || !box || !box.contains(ae) || !isTextInput(ae)) {
       void groups.setEditing(-1);
     }
   }, 0);
