@@ -10,6 +10,8 @@ const props = defineProps<{
   disabled?: boolean
   tooltip?: string
   type?: 'button' | 'submit'
+  // для icon-варианта: красный ховер (корзина/удаление), иначе зелёный
+  dangerIcon?: boolean
 }>()
 
 const emit = defineEmits<{ click: [event: MouseEvent] }>()
@@ -21,7 +23,7 @@ const isDisabled = computed(() => props.disabled || isBusy.value)
 <template>
   <button
     class="uibtn"
-    :class="[`v-${props.variant ?? 'ghost'}`, { busy: isBusy }]"
+    :class="[`v-${props.variant ?? 'ghost'}`, { busy: isBusy, del: props.dangerIcon === true }]"
     :type="props.type ?? 'button'"
     :disabled="isDisabled"
     :title="props.tooltip"
@@ -72,7 +74,10 @@ const isDisabled = computed(() => props.disabled || isBusy.value)
   vertical-align: middle;
 }
 .uibtn.v-icon:hover:not(:disabled) {
-  color: var(--err);
+  color: var(--ctl-hover); /* зелёный в стиль панели (слово владельца) */
+}
+.uibtn.v-icon.del:hover:not(:disabled) {
+  color: var(--err); /* корзина/удаление - исключение */
 }
 .uibtn.busy {
   pointer-events: none;

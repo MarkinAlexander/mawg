@@ -680,7 +680,7 @@ function editGroup(g: GroupView): void {
             tooltip="вставить список доменов, подсетей или ссылок"
             @click="openImport(g)"
           >
-            <UiIcon name="import" />
+            <UiIcon name="plus-circle" />
           </UiButton>
           <UiButton
             variant="icon"
@@ -703,6 +703,7 @@ function editGroup(g: GroupView): void {
           </UiButton>
           <UiButton
             variant="icon"
+            danger-icon
             tooltip="удалить группу"
             @click="delGroup(g)"
           >
@@ -869,6 +870,7 @@ function editGroup(g: GroupView): void {
                     </UiButton>
                     <UiButton
                       variant="icon"
+                      danger-icon
                       tooltip="удалить правило"
                       @click="run(() => groups.deleteRule(g.id, rl.id))"
                     >
