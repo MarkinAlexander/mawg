@@ -136,6 +136,21 @@ describe('SettingsView - карточка настроек', () => {
     w.unmount();
   });
 
+  it('авторизация выключена - «сменить пароль»/«выйти» спрятаны (паритет легаси)', async () => {
+    const off = await makeView({ srv: { hasCreds: false, authEnabled: false } });
+    expect(buttonByText(off, 'сменить пароль')).toHaveLength(0);
+    expect(buttonByText(off, 'выйти')).toHaveLength(0);
+    expect(buttonByText(off, 'проверить обновления')).toHaveLength(1);
+    off.unmount();
+  });
+
+  it('авторизация включена - «сменить пароль»/«выйти» видны', async () => {
+    const on = await makeView();
+    expect(buttonByText(on, 'сменить пароль')).toHaveLength(1);
+    expect(buttonByText(on, 'выйти')).toHaveLength(1);
+    on.unmount();
+  });
+
   it('смена пароля: валидации в диалоге, POST с полями, ошибка бэкенда показывается', async () => {
     const w = await makeView({ pwError: 'неверный старый пароль' });
     await buttonByText(w, 'сменить пароль')[0].trigger('click');

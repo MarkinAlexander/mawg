@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { ConfirmHost, ToastHost, UiBanner, UiButton, UiIcon } from '../components/ui'
+import { ConfirmHost, ToastHost, UiButton, UiIcon } from '../components/ui'
 import { inflight } from '../api/client'
 import { useStatus, type MtState } from '../stores/status'
 import { TABS } from './tabs'
 import SearchDialog from './SearchDialog.vue'
+import LoginDialog from './LoginDialog.vue'
 import UpdateBadge from './UpdateBadge.vue'
 
 // Шапка общая для всех вкладок - глобальные опросы статуса живут здесь,
@@ -139,13 +140,9 @@ const meta = computed(() => {
       </nav>
     </header>
     <main>
-      <!-- авторизация нового UI - Фаза 5; на текущих роутерах вход выключен
-           (allowlist), баннер - только диагноз при 401 -->
-      <UiBanner
-        v-if="status.authNeeded"
-        kind="err"
-        text="требуется вход: сессия не действует - вход в панель появится с авторизацией нового UI (Фаза 5)"
-      />
+      <!-- Ф5: сессии нет - залоченный логин-диалог (легаси startGate);
+           на роутерах с выключенной авторизацией не появляется вовсе -->
+      <LoginDialog :open="status.authNeeded" />
       <RouterView />
     </main>
     <ToastHost />

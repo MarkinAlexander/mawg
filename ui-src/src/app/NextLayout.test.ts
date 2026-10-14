@@ -3,6 +3,7 @@ import { mount } from '@vue/test-utils'
 import { createRouter, createWebHashHistory } from 'vue-router'
 import { nextTick } from 'vue'
 import NextLayout from './NextLayout.vue'
+import LoginDialog from './LoginDialog.vue'
 import { TABS } from './tabs'
 import { SEARCH_PLACES } from './search'
 import { dialogBackReset } from '../components/ui/dialogBack'
@@ -92,17 +93,15 @@ describe('NextLayout', () => {
     w.unmount()
   })
 
-  it('authNeeded (401) -> err-баннер без ссылки (логина в новом UI нет до Фазы 5)', async () => {
+  it('authNeeded (401) -> залоченный логин-диалог (Ф5), без баннера', async () => {
     const router = await makeRouter()
     const w = mount(NextLayout, { global: { plugins: [router] } })
-    expect(w.find('.uibanner').exists()).toBe(false)
+    expect(w.findComponent(LoginDialog).props('open')).toBe(false)
     window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT))
     await nextTick()
-    const banner = w.find('.uibanner')
-    expect(banner.exists()).toBe(true)
-    expect(banner.classes()).toContain('k-err')
-    expect(banner.text()).toContain('требуется вход')
-    expect(banner.find('a').exists()).toBe(false)
+    const dlg = w.findComponent(LoginDialog)
+    expect(dlg.props('open')).toBe(true)
+    expect(w.find('.uibanner').exists()).toBe(false)
     w.unmount()
   })
 

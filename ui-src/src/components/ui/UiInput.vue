@@ -21,6 +21,8 @@ const props = withDefaults(
     validator?: (value: string) => string | null
     // без UiField - «голый» контрол для инлайн-рядов (как bare у UiSwitch)
     bare?: boolean
+    // нативный autocomplete инпута (логин-форма: username/current-password)
+    autocomplete?: string
   }>(),
   {
     label: undefined,
@@ -31,6 +33,7 @@ const props = withDefaults(
     placeholder: undefined,
     validator: undefined,
     bare: false,
+    autocomplete: undefined,
   },
 )
 
@@ -39,6 +42,11 @@ const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
 const showPassword = ref(false)
 const error = ref<string | null>(null)
 const inputEl = ref<HTMLInputElement | null>(null)
+
+// фокус из диалогов/валидаций (логин-диалог: автофокус пароля при открытии)
+defineExpose({
+  focus: () => inputEl.value?.focus(),
+})
 
 // крестик очистки (легаси wireClearInputs): только для текстовых полей
 // с непустым значением; у password - глаз, у number - штатный спиннер
@@ -85,6 +93,7 @@ function onInput(e: Event) {
         :value="props.modelValue"
         :placeholder="props.placeholder"
         :disabled="props.disabled"
+        :autocomplete="props.autocomplete"
         :class="{ mono: props.mono }"
         @input="onInput"
       >
@@ -144,6 +153,7 @@ function onInput(e: Event) {
             :value="props.modelValue"
             :placeholder="props.placeholder"
             :disabled="props.disabled"
+            :autocomplete="props.autocomplete"
             :class="{ mono: props.mono }"
             @input="onInput"
           >
