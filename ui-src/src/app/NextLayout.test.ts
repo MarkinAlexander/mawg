@@ -5,6 +5,7 @@ import { nextTick } from 'vue'
 import NextLayout from './NextLayout.vue'
 import { TABS } from './tabs'
 import { SEARCH_PLACES } from './search'
+import { dialogBackReset } from '../components/ui/dialogBack'
 import { UNAUTHORIZED_EVENT, inflight } from '../api/client'
 import { useStatus } from '../stores/status'
 import { useSystem } from '../stores/system'
@@ -181,6 +182,37 @@ describe('NextLayout', () => {
     await nextTick()
     await nextTick()
     expect(w.find('dialog[open] .sbox').exists()).toBe(true)
+    w.unmount()
+  })
+
+  it('поиск закрывается кликом по пустому месту и «назад» (popstate)', async () => {
+    vi.spyOn(window.history, 'pushState').mockImplementation(() => {})
+    vi.spyOn(window.history, 'back').mockImplementation(() => {})
+    dialogBackReset()
+    const router = await makeRouter()
+    const w = mount(NextLayout, { global: { plugins: [router] } })
+    const btn = w.find('header .uibtn.v-icon')
+    await btn.trigger('click')
+    await nextTick()
+    await nextTick()
+    expect(w.find('dialog[open] .sbox').exists()).toBe(true)
+
+    // клик с target=dialog - пустое место (backdrop)
+    await w.find('dialog[open]').trigger('click')
+    await nextTick()
+    expect(w.find('dialog[open]').exists()).toBe(false)
+    // back() застаблен - счётчик selfPops не погасится сам, чистим
+    dialogBackReset()
+
+    // переоткрытие - «назад» закрывает
+    await btn.trigger('click')
+    await nextTick()
+    await nextTick()
+    expect(w.find('dialog[open] .sbox').exists()).toBe(true)
+    window.dispatchEvent(new PopStateEvent('popstate'))
+    await nextTick()
+    expect(w.find('dialog[open]').exists()).toBe(false)
+    dialogBackReset()
     w.unmount()
   })
 

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { dialogBackClose, dialogBackOpen } from './dialogBack'
 
 // Модальный диалог на нативном <dialog> (паритет legacy: панельный фон,
 // ::backdrop, busy гасит контент как dialog.busy > form). jsdom не всегда
@@ -34,25 +35,57 @@ function closeNative() {
   else d.removeAttribute('open')
 }
 
+function onClose() {
+  emit('update:open', false)
+}
+
+// единое закрытие «не из нативного close»: close() в jsdom-фолбэке не
+// диспатчит событие close - эмитим напрямую (в браузере выйдет двойной
+// одинаковый emit - потребители идемпотентны)
+function requestClose() {
+  closeNative()
+  onClose()
+}
+
+// клик по пустому месту (слово владельца: закрывать «как полагается»):
+// паддинг панели переехал в .dcontent, поэтому target === dialog только
+// у backdrop; locked/busy не закрываем
+function onClick(e: MouseEvent) {
+  if (props.locked || props.busy) return
+  if (e.target === dlg.value) requestClose()
+}
+
+// «Назад» браузера/Android закрывает незалоченную модалку (слово владельца)
+let closedByPop = false
+const backCloser = () => {
+  closedByPop = true
+  requestClose()
+}
+
 watch(
   () => props.open,
   async (v) => {
     await nextTick()
-    if (v) openNative()
-    else closeNative()
+    if (v) {
+      openNative()
+      if (!props.locked) dialogBackOpen(backCloser)
+    } else {
+      closeNative()
+      dialogBackClose(backCloser, closedByPop)
+      closedByPop = false
+    }
   },
   { immediate: true },
 )
-
-function onClose() {
-  emit('update:open', false)
-}
 
 function onCancel(e: Event) {
   if (props.locked) e.preventDefault()
 }
 
-onBeforeUnmount(closeNative)
+onBeforeUnmount(() => {
+  if (props.open && !props.locked) dialogBackClose(backCloser, closedByPop)
+  closeNative()
+})
 </script>
 
 <template>
@@ -63,6 +96,7 @@ onBeforeUnmount(closeNative)
     :style="props.width ? { maxWidth: props.width } : undefined"
     @close="onClose"
     @cancel="onCancel"
+    @click="onClick"
   >
     <div
       class="dcontent"
@@ -86,7 +120,9 @@ onBeforeUnmount(closeNative)
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 18px;
+  /* паддинг в .dcontent: клики по рамке-полю панели не должны закрывать
+     (target === dialog = только backdrop) */
+  padding: 0;
   min-width: 360px;
   max-width: min(92vw, 480px);
   max-height: calc(100dvh - 32px);
@@ -99,6 +135,7 @@ h3 {
   margin: 0 0 6px;
 }
 .dcontent {
+  padding: 18px;
   display: grid;
   gap: 10px;
 }
