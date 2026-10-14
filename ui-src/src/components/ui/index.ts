@@ -12,6 +12,11 @@ export { default as UiCheckbox } from './UiCheckbox.vue'
 export { default as UiInput } from './UiInput.vue'
 export { default as UiTextarea } from './UiTextarea.vue'
 export { default as UiSelect, type UiSelectOption } from './UiSelect.vue'
+export { default as UiColor } from './UiColor.vue'
+export {
+  normalizeHex, isValidHex, hexToHsv, hsvToHex, COLOR_PRESETS,
+  type Hsv,
+} from './color'
 export { default as UiCard } from './UiCard.vue'
 export { default as UiTabs, type UiTabDef } from './UiTabs.vue'
 export { default as UiTable, type UiTableColumn } from './UiTable.vue'

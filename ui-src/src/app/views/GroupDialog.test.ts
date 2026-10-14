@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, h, nextTick, ref } from 'vue'
 import { mount } from '@vue/test-utils'
 import GroupDialog from './GroupDialog.vue'
+import { UiColor } from '../../components/ui'
 import { useGroups } from '../../stores/groups'
 import { useToast } from '../../stores/toast'
 import type { GroupView } from '../../api/types'
@@ -48,7 +49,7 @@ describe('GroupDialog', () => {
     expect(dlg.find('h3').text()).toBe('Изменить группу');
     const name = dlg.find('input[type=text]');
     expect((name.element as HTMLInputElement).value).toBe('telegram');
-    expect((dlg.find('input[type=color]').element as HTMLInputElement).value.toLowerCase()).toBe('#2aabee');
+    expect(dlg.findComponent(UiColor).props('modelValue')).toBe('#2AABEE');
     const selBtns = dlg.findAll('.psel-btn');
     // интерфейс + кто ходит + политика
     expect(selBtns.length).toBe(3);
@@ -66,7 +67,7 @@ describe('GroupDialog', () => {
   it('битый цвет -> дефолт #4a9eff; у каскадной интерфейс залочен и sources скрыты', async () => {
     const { w } = await makeDlg({ ...GRP, color: 'red', cascade: { group: 'g1', source: 'pool:warp', via: 'iface:nwg7' } });
     const dlg = dlgOf(w);
-    expect((dlg.find('input[type=color]').element as HTMLInputElement).value).toBe('#4a9eff');
+    expect(dlg.findComponent(UiColor).props('modelValue')).toBe('#4a9eff');
     const ifaceBtn = dlg.findAll('.psel-btn')[0];
     expect(ifaceBtn.attributes('disabled')).toBeDefined(); // залочен у каскада
     expect(dlg.findAll('.psel-btn').length).toBe(2); // интерфейс + политика, sources скрыты

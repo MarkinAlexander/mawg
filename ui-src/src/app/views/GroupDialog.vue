@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { UiButton, UiDialog, UiHint, UiInput, UiSelect, type UiSelectOption, UiSwitch } from '../../components/ui'
+import { UiButton, UiColor, UiDialog, UiHint, UiInput, UiSelect, type UiSelectOption, UiSwitch } from '../../components/ui'
 import { useGroups } from '../../stores/groups'
 import { useToast } from '../../stores/toast'
 import type { GroupPolicy, GroupView } from '../../api/types'
@@ -122,15 +122,11 @@ async function save(): Promise<void> {
       v-model="name"
       label="Имя"
     />
-    <div class="frow">
-      <span class="flbl">Цвет</span>
-      <input
-        v-model="color"
-        type="color"
-        class="fcolor"
-        title="цвет группы"
-      >
-    </div>
+    <UiColor
+      v-model="color"
+      label="Цвет"
+      tooltip="цвет группы"
+    />
     <UiSelect
       v-model="iface"
       :options="ifaceOptions"
@@ -200,23 +196,3 @@ async function save(): Promise<void> {
   </UiDialog>
 </template>
 
-<style scoped>
-.frow {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 10px 0 2px;
-}
-.flbl {
-  font-size: 13px;
-}
-.fcolor {
-  width: 42px;
-  height: 30px;
-  padding: 2px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: transparent;
-  cursor: pointer;
-}
-</style>

@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import {
-  UiBadge, UiBanner, UiButton, UiCard, UiDialog, UiHint, UiIcon, UiInput,
-  UiSelect, type UiSelectOption, UiSwitch, UiTextarea,
+  UiBadge, UiBanner, UiButton, UiCard, UiColor, UiDialog, UiHint, UiIcon,
+  UiInput, UiSelect, type UiSelectOption, UiSwitch, UiTextarea,
 } from '../../components/ui'
 import { dropIndex, isBeforeHalf, reorder } from '../../components/ui/dnd'
 import { useConfirm } from '../../stores/confirm'
@@ -451,12 +451,12 @@ function editGroup(g: GroupView): void {
         placeholder="имя группы"
         class="cname"
       />
-      <input
+      <UiColor
         v-model="newColor"
-        type="color"
+        bare
+        tooltip="цвет группы"
         class="ccolor"
-        title="цвет группы"
-      >
+      />
       <UiSelect
         v-model="newIface"
         :options="createIfaceOptions"
@@ -1034,15 +1034,6 @@ function editGroup(g: GroupView): void {
 }
 .ciface {
   width: 220px;
-}
-.ccolor {
-  width: 42px;
-  height: 31px;
-  padding: 2px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: transparent;
-  cursor: pointer;
 }
 .cycles {
   display: flex;
