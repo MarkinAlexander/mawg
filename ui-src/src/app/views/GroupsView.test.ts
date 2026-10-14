@@ -519,4 +519,22 @@ describe('GroupsView - массовое включение/выключение 
     await vi.waitFor(() => expect(offBtn!.attributes('disabled')).toBeUndefined());
     w.unmount();
   });
+
+  it('editingLock: тумблер-чекбокс не держит перерендер, текстовое поле - держит', async () => {
+    // живой баг на телефоне: тап по тумблеру группы ставит фокус на
+    // чекбокс - editingLock не отпускался, refresh откладывался, строки
+    // правил при открытой группе не тускнели
+    const { w } = await makeView();
+    const box = w.find('.mtlist');
+    box.find('input[type=checkbox]').trigger('focusin');
+    await nextTick();
+    expect(useGroups().state.editing).toBe(0);
+    box.find('input[type=text]').trigger('focusin');
+    await nextTick();
+    expect(useGroups().state.editing).toBe(1);
+    useGroups().setEditing(-1);
+    await nextTick();
+    expect(useGroups().state.editing).toBe(0);
+    w.unmount();
+  });
 });
