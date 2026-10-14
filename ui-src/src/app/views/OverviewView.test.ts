@@ -73,14 +73,16 @@ describe('OverviewView', () => {
 
     const tiles = w.findAll('.tile');
     expect(tiles).toHaveLength(4);
-    expect(tiles[0].attributes('href')).toBe('#/next/groups');
-    expect(tiles[0].text()).toContain('Группы правил');
-    expect(tiles[0].text()).toContain('3'); // группы
-    expect(tiles[0].text()).toContain('2 правила');
-    expect(tiles[0].text()).toContain('1 каскад');
-        expect(tiles[1].attributes('href')).toBe('#/next/interfaces');
-    expect(tiles[2].text()).toContain('Интерфейсы');
-    expect(tiles[2].text()).toContain('2'); // интерфейсы
+    // слово владельца: интерфейсы раньше групп - сначала подключения
+    expect(tiles[0].attributes('href')).toBe('#/next/interfaces');
+    expect(tiles[0].text()).toContain('Интерфейсы');
+    expect(tiles[0].text()).toContain('2'); // интерфейсы
+    expect(tiles[1].text()).toContain('Пулы');
+    expect(tiles[2].attributes('href')).toBe('#/next/groups');
+    expect(tiles[2].text()).toContain('Группы правил');
+    expect(tiles[2].text()).toContain('3'); // группы
+    expect(tiles[2].text()).toContain('2 правила');
+    expect(tiles[2].text()).toContain('1 каскад');
     expect(tiles[3].attributes('href')).toBe('#/next/backups');
     expect(tiles[3].text()).toContain('1'); // бэкапы
     w.unmount();

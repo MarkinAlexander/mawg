@@ -11,6 +11,30 @@ export interface SearchPlace {
 }
 
 export const SEARCH_PLACES: SearchPlace[] = [
+  // --- Интерфейсы ---
+  {
+    title: 'Интерфейсы роутера (AWG/WireGuard)',
+    keywords: ['интерфейсы', 'awg', 'amnezia', 'амнезия', 'wireguard', 'туннели', 'подключения'],
+    route: '/next/interfaces',
+    anchor: 'card-ifaces',
+  },
+  {
+    title: 'Пулы конфигов: загрузка, premium, слоты',
+    keywords: ['пулы', 'конфиги', 'слоты', 'premium', 'премиум', 'pool'],
+    route: '/next/interfaces',
+  },
+  {
+    title: 'Наборы интерфейсов (ротация)',
+    keywords: ['наборы', 'бандлы', 'ротация', 'bundles', 'порядок интерфейсов'],
+    route: '/next/interfaces',
+    anchor: 'card-bundles',
+  },
+  {
+    title: 'Проверка канала провайдера (WAN-probe)',
+    keywords: ['wan', 'probe', 'проба', 'канал', 'провайдер', 'интернет', 'живость'],
+    route: '/next/interfaces',
+    anchor: 'card-probe',
+  },
   // --- Группы правил ---
   {
     title: 'Правила маршрутизации (группы MagiTrickle)',
@@ -53,30 +77,6 @@ export const SEARCH_PLACES: SearchPlace[] = [
     keywords: ['импорт', 'экспорт', 'выгрузка', 'файл', '.mtrickle', 'перенос'],
     route: '/next/backups',
     anchor: 'card-transfer',
-  },
-  // --- Интерфейсы ---
-  {
-    title: 'Интерфейсы роутера (AWG/WireGuard)',
-    keywords: ['интерфейсы', 'awg', 'amnezia', 'амнезия', 'wireguard', 'туннели', 'подключения'],
-    route: '/next/interfaces',
-    anchor: 'card-ifaces',
-  },
-  {
-    title: 'Пулы конфигов: загрузка, premium, слоты',
-    keywords: ['пулы', 'конфиги', 'слоты', 'premium', 'премиум', 'pool'],
-    route: '/next/interfaces',
-  },
-  {
-    title: 'Наборы интерфейсов (ротация)',
-    keywords: ['наборы', 'бандлы', 'ротация', 'bundles', 'порядок интерфейсов'],
-    route: '/next/interfaces',
-    anchor: 'card-bundles',
-  },
-  {
-    title: 'Проверка канала провайдера (WAN-probe)',
-    keywords: ['wan', 'probe', 'проба', 'канал', 'провайдер', 'интернет', 'живость'],
-    route: '/next/interfaces',
-    anchor: 'card-probe',
   },
   // --- Система ---
   {

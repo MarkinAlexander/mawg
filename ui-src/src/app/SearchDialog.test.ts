@@ -48,7 +48,7 @@ describe('SearchDialog', () => {
     const rows = w.findAll('.srow')
     expect(rows).toHaveLength(SEARCH_PLACES.length)
     expect(rows[0].text()).toContain(SEARCH_PLACES[0].title)
-    expect(rows[0].text()).toContain('Группы правил')
+    expect(rows[0].text()).toContain('Интерфейсы') // первый - по авторскому порядку реестра
     expect(w.find('.sfoot').text()).toBe(`совпадений: ${SEARCH_PLACES.length}`)
     w.unmount()
   })
