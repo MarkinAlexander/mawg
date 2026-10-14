@@ -59,6 +59,13 @@ function toggle() {
   padding: 14px 20px;
   margin-bottom: 16px;
 }
+@media (max-width: 820px) {
+  /* слово владельца: на телефоне карточка плотнее - вертикаль 7,
+     горизонталь 0 (общий горизонтальный отступ даёт .nextapp) */
+  .card {
+    padding: 7px 0;
+  }
+}
 .card h2 {
   margin: 0 0 4px;
   font-size: 15px;

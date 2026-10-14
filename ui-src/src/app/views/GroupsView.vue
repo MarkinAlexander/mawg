@@ -1341,6 +1341,84 @@ tr.drop-after td {
   font-size: 11px;
   margin-top: 2px;
 }
+@media (max-width: 820px) {
+  /* слово владельца: таблица правил на телефоне ломалась в «змейку».
+     DOM прежний (DnD/inline-редактор/editingLock не тронуты) - меняется
+     только раскладка: строка-карточка, значение на всю ширину */
+  .rules {
+    display: block;
+    border-collapse: separate;
+    border-spacing: 0;
+  }
+  .rules thead {
+    display: none;
+  }
+  .rules tbody {
+    display: block;
+  }
+  .rules tr {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 2px 6px;
+    background: var(--panel2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px;
+    margin: 0 0 6px;
+  }
+  .rules td {
+    display: inline-flex;
+    align-items: center;
+    padding: 0;
+    border-bottom: none;
+  }
+  .rules td.gripcol {
+    width: auto;
+    order: 1;
+  }
+  .rules td:nth-child(2) {
+    order: 2;
+  }
+  .rules td.ract {
+    order: 3;
+    margin-left: auto;
+  }
+  .rules td.rval {
+    order: 4;
+    flex: 1 1 100%;
+  }
+  /* inline-редактор на мобиле - блоком, поля в столбик на всю ширину */
+  .rules tr.erow {
+    display: block;
+  }
+  .rules tr.erow > td {
+    display: block;
+  }
+  .erwrap {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .ertype,
+  .ername {
+    width: 100%;
+  }
+  /* границы drop-индикации - на саму карточку (td-границы на flex не видны) */
+  tr.drop-before td,
+  tr.drop-after td {
+    border: none;
+  }
+  tr.drop-before {
+    box-shadow: inset 0 2px 0 var(--accent);
+  }
+  tr.drop-after {
+    box-shadow: inset 0 -2px 0 var(--accent);
+  }
+  /* «правил нет» - блоком */
+  .rules tr td[colspan] {
+    display: block;
+  }
+}
 .cptext {
   width: 100%;
   box-sizing: border-box;
