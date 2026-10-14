@@ -218,7 +218,9 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
 </script>
 
 <template>
+  <!-- id - якоря для поиска по настройкам (SearchDialog, search.ts) -->
   <UiCard
+    id="card-system"
     title="Система"
     subtitle="Проверка зависимостей: пакеты WireGuard/AmneziaWG, MagiTrickle, ядро sing-box-lx, компоненты прошивки. Установка только по вашему подтверждению."
   >
@@ -402,6 +404,7 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
   </UiDialog>
 
   <UiCard
+    id="card-events"
     v-model:collapsed="collapsed"
     title="Журнал событий"
     subtitle="последние 80 записей, новые сверху"
