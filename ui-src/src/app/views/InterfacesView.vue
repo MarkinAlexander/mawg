@@ -391,6 +391,7 @@ async function saveWan(): Promise<void> {
       </UiButton>
       <UiButton
         variant="icon"
+        danger-icon
         tooltip="удалить набор"
         @click="delBundle(b)"
       >
