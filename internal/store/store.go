@@ -982,6 +982,14 @@ func (s *Store) Events() []Event {
 	return out
 }
 
+// ConfigJSON - текущий config.json (настройки сервера: порт/доступ/RCI,
+// пулы, каскады, наборы) одним JSON - для бэкапа настроек панели.
+func (s *Store) ConfigJSON() ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return json.MarshalIndent(s.root, "", "  ")
+}
+
 func (s *Store) SaveBackup(name, content string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -989,11 +997,15 @@ func (s *Store) SaveBackup(name, content string) (string, error) {
 }
 
 func (s *Store) saveBackupLocked(name, content string) (string, error) {
+	return s.saveBackupLockedExt(name, "conf", content)
+}
+
+func (s *Store) saveBackupLockedExt(name, ext, content string) (string, error) {
 	if err := os.MkdirAll(s.backupDir(), 0o700); err != nil {
 		return "", err
 	}
 	base := fmt.Sprintf("%s-%s", name, time.Now().Format("20060102-150405"))
-	path := filepath.Join(s.backupDir(), base+".conf")
+	path := filepath.Join(s.backupDir(), base+"."+ext)
 	// две записи в одну секунду: не перетираем первую копию - суффикс
 	if _, err := os.Stat(path); err == nil {
 		for i := 1; ; i++ {
@@ -1008,13 +1020,13 @@ func (s *Store) saveBackupLocked(name, content string) (string, error) {
 }
 
 // SaveBackupRotated пишет бэкап и подчищает старые копии того же имени,
-// оставляя keep самых свежих (формат имени name-YYYYMMDD-HHMMSS.conf).
+// оставляя keep самых свежих (формат имени name-YYYYMMDD-HHMMSS.ext).
 // Авто-бэкапы перед массовыми записями могут сыпаться часто - без ротации
 // каталог распухает на флеше роутера.
-func (s *Store) SaveBackupRotated(name, content string, keep int) (string, error) {
+func (s *Store) SaveBackupRotated(name, ext, content string, keep int) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	path, err := s.saveBackupLocked(name, content)
+	path, err := s.saveBackupLockedExt(name, ext, content)
 	if err != nil {
 		return "", err
 	}
@@ -1026,7 +1038,7 @@ func (s *Store) SaveBackupRotated(name, content string, keep int) (string, error
 	var files []string
 	for _, e := range entries {
 		n := e.Name()
-		if strings.HasPrefix(n, prefix) && strings.HasSuffix(n, ".conf") {
+		if strings.HasPrefix(n, prefix) && strings.HasSuffix(n, "."+ext) {
 			files = append(files, n)
 		}
 	}

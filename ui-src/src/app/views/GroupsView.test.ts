@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, h, nextTick } from 'vue'
 import { mount } from '@vue/test-utils'
+import { createRouter, createWebHashHistory } from 'vue-router'
 import GroupsView from './GroupsView.vue'
 import { ConfirmHost, UiSwitch } from '../../components/ui'
 import { useConfirm } from '../../stores/confirm'
@@ -96,10 +97,15 @@ async function makeView(dups: Rec = {}) {
     return ok();
   });
   vi.stubGlobal('fetch', f);
-  const w = mount(defineComponent(() => () => [h(GroupsView), h(ConfirmHost)]));
+  // GroupsView ведёт кнопку «Резервные копии» на /next/backups (useRouter)
+  const router = createRouter({
+    history: createWebHashHistory(),
+    routes: [{ path: '/next/:id', component: { template: '<div />' } }],
+  })
+  const w = mount(defineComponent(() => () => [h(GroupsView), h(ConfirmHost)]), { global: { plugins: [router] } });
   await vi.waitFor(() => expect(useGroups().state.loaded).toBe(true));
   await nextTick();
-  return { w, f, data };
+  return { w, f, data, router };
 }
 
 const block = (w: ReturnType<typeof mount>, id: string) => w.find(`[data-gid="${id}"]`);

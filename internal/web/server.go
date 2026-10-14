@@ -363,18 +363,14 @@ func (s *Server) updateRun(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "started", "to": info.Latest})
 }
 
-// postSystemRestart перезапускает сервис: ответ уходит раньше, чем
-// демон снимется.
-func (s *Server) postSystemRestart(w http.ResponseWriter, r *http.Request) {
-	script := "/etc/init.d/mawg"
-	if s.backend.Name() == store.PlatformKeenetic {
-		script = "/opt/etc/init.d/S99mawg"
-	}
+// restartPanel перезапускает сервис панели в отложенной горутине (ответ
+// вызывающий шлёт сам). Ошибка - только отсутствующий init-скрипт: тогда
+// вызывающий не трогает состояние.
+func restartPanel(s *Server) error {
+	script := mawgServiceScript(s.backend.Name() == store.PlatformKeenetic)
 	if _, err := os.Stat(script); err != nil {
-		writeErr(w, fmt.Errorf("init-скрипт не найден: %s", script))
-		return
+		return fmt.Errorf("init-скрипт не найден: %s", script)
 	}
-	s.store.LogEvent("settings", "server", "перезапуск панели из веб-интерфейса")
 	go func() {
 		time.Sleep(700 * time.Millisecond)
 		cmd := exec.Command(script, "restart")
@@ -382,6 +378,17 @@ func (s *Server) postSystemRestart(w http.ResponseWriter, r *http.Request) {
 		cmd.Stderr = nil
 		cmd.Run()
 	}()
+	return nil
+}
+
+// postSystemRestart перезапускает сервис: ответ уходит раньше, чем
+// демон снимется.
+func (s *Server) postSystemRestart(w http.ResponseWriter, r *http.Request) {
+	if err := restartPanel(s); err != nil {
+		writeErr(w, err)
+		return
+	}
+	s.store.LogEvent("settings", "server", "перезапуск панели из веб-интерфейса")
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "restarting"})
 }
 

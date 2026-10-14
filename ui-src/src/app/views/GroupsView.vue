@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import {
   UiBadge, UiBanner, UiButton, UiCard, UiColor, UiDialog, UiHint, UiIcon,
   UiInput, UiSelect, type UiSelectOption, UiSwitch, UiTextarea,
@@ -17,7 +18,6 @@ import {
 } from './groupsLogic'
 import CascadeDialog from './CascadeDialog.vue'
 import GroupDialog from './GroupDialog.vue'
-import MtBackupsDialog from './MtBackupsDialog.vue'
 
 // Фаза 3.7 «Группы правил» (легаси #rulescard, renderRules 1591).
 // 3.7а: список+поиск+правила+редактор базы; DnD групп и правил - порт
@@ -410,8 +410,8 @@ async function copyRules(g: GroupView): Promise<void> {
 const dupsOpen = ref(false);
 const dupsList = computed(() => dupsEntries(state.groups, state.duplicates, searchQ.value));
 
-// --- резервные копии (легаси mtBackupsBtn 1750 -> dlgMTBackups) ---
-const backupsOpen = ref(false);
+// --- резервные копии: кнопка ведёт на общую страницу (52/53-доки) ---
+const router = useRouter();
 
 // --- диалог группы ---
 const editOpen = ref(false);
@@ -436,9 +436,11 @@ function editGroup(g: GroupView): void {
       >
         показать совпадения в группах
       </UiButton>
+      <!-- слово владельца: кнопка ведёт на общую страницу резервных копий
+           (там раскрыто - полный бэкап, восстановление, импорт/выгрузка) -->
       <UiButton
-        tooltip="бэкап сейчас, список бэкапов (скачать/восстановить), импорт и выгрузка групп файлом"
-        @click="backupsOpen = true"
+        tooltip="страница резервных копий: полный бэкап панели, восстановление, импорт и выгрузка файлом"
+        @click="router.push('/next/backups')"
       >
         Резервные копии
       </UiButton>
@@ -1012,8 +1014,6 @@ function editGroup(g: GroupView): void {
     />
 
     <CascadeDialog v-model:open="cascadeOpen" />
-
-    <MtBackupsDialog v-model:open="backupsOpen" />
   </UiCard>
 </template>
 
