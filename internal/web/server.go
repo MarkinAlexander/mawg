@@ -125,6 +125,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/v1/mt/groups/{id}", s.mtDeleteGroup)
 	mux.HandleFunc("POST /api/v1/mt/groups/{id}/rules", s.mtCreateRule)
 	mux.HandleFunc("POST /api/v1/mt/groups/{id}/rules/import", s.mtImportRules)
+	mux.HandleFunc("POST /api/v1/mt/groups/{id}/rules/enable", s.mtRulesEnableAll)
 	mux.HandleFunc("PUT /api/v1/mt/groups/{id}/rules/{rid}", s.mtUpdateRule)
 	mux.HandleFunc("POST /api/v1/mt/groups/{id}/rules/{rid}/enable", s.mtToggleRule)
 	mux.HandleFunc("DELETE /api/v1/mt/groups/{id}/rules/{rid}", s.mtDeleteRule)
@@ -2384,6 +2385,55 @@ func (s *Server) mtToggleRule(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	http.NotFound(w, r)
+}
+
+// mtRulesEnableAll включает/выключает ВСЕ правила группы одним PUT группы
+// целиком (частичный PUT затирает поля - шлём группу как есть, меняя только
+// Enable правил). Слово владельца: 465 правил по одному не нащёлкаешь.
+func (s *Server) mtRulesEnableAll(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Enable bool `json:"enable"`
+	}
+	json.NewDecoder(r.Body).Decode(&req)
+	client := s.mtClient()
+	if err := client.EnsureHealthy(r.Context()); err != nil {
+		writeErr(w, err)
+		return
+	}
+	groups, err := client.GroupsWithRules(r.Context())
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	groupID := r.PathValue("id")
+	for i := range groups {
+		g := &groups[i]
+		if g.ID != groupID {
+			continue
+		}
+		changed := 0
+		for j := range g.Rules {
+			if g.Rules[j].Enable != req.Enable {
+				g.Rules[j].Enable = req.Enable
+				changed++
+			}
+		}
+		if changed == 0 {
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "total": len(g.Rules), "changed": 0})
+			return
+		}
+		if err := client.UpdateGroup(r.Context(), *g, true); err != nil {
+			writeErr(w, err)
+			return
+		}
+		client.RefreshShadow(r.Context())
+		action := map[bool]string{true: "включены", false: "выключены"}[req.Enable]
+		s.store.LogEvent("rules", "magitrickle",
+			fmt.Sprintf("в группе %s %s все правила (%d из %d)", g.Name, action, changed, len(g.Rules)))
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "total": len(g.Rules), "changed": changed})
+		return
+	}
+	writeErr(w, fmt.Errorf("группа не найдена"))
 }
 
 func (s *Server) mtDeleteRule(w http.ResponseWriter, r *http.Request) {
