@@ -506,7 +506,12 @@ async function rciSave(): Promise<void> {
     </template>
 
     <div class="row sep">
-      <UiButton @click="openPwDialog">
+      <!-- паритет легаси showNoAuthBadge: при выключенной авторизации
+           смена пароля/выход бессмысленны и прячутся -->
+      <UiButton
+        v-if="srv.state.data?.authEnabled"
+        @click="openPwDialog"
+      >
         сменить пароль
       </UiButton>
       <UiButton
@@ -515,7 +520,10 @@ async function rciSave(): Promise<void> {
       >
         проверить обновления
       </UiButton>
-      <UiButton @click="logout">
+      <UiButton
+        v-if="srv.state.data?.authEnabled"
+        @click="logout"
+      >
         выйти
       </UiButton>
     </div>
