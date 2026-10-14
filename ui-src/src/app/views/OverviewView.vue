@@ -60,16 +60,16 @@ const tiles = computed(() => {
   const groupSub = `${plural(rules, 'правило', 'правила', 'правил')}${casc ? `, ${plural(casc, 'каскад', 'каскада', 'каскадов')}` : ''}`;
   return [
     {
-      to: '/next/groups', label: 'Группы правил', count: groups.state.groups.length,
-      sub: groupSub,
+      to: '/next/interfaces', label: 'Интерфейсы', count: ifaces.state.list.length,
+      sub: 'подключения роутера и наборы',
     },
     {
       to: '/next/interfaces', label: 'Пулы', count: pools.value.length,
       sub: 'конфиги AWG, слоты, ротация',
     },
     {
-      to: '/next/interfaces', label: 'Интерфейсы', count: ifaces.state.list.length,
-      sub: 'подключения роутера и наборы',
+      to: '/next/groups', label: 'Группы правил', count: groups.state.groups.length,
+      sub: groupSub,
     },
     {
       to: '/next/backups', label: 'Резервные копии', count: groups.state.backups.list.length,

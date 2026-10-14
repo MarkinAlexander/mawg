@@ -8,8 +8,10 @@ export interface TabDef {
 
 export const TABS: TabDef[] = [
   { id: 'overview', label: 'Обзор' },
-  { id: 'groups', label: 'Группы правил' },
+  // слово владельца: интерфейсы раньше групп - сначала подключения,
+  // потом правила к ним
   { id: 'interfaces', label: 'Интерфейсы' },
+  { id: 'groups', label: 'Группы правил' },
   { id: 'backups', label: 'Резервные копии' },
   { id: 'dns', label: 'DNS' },
   { id: 'system', label: 'Система' },
