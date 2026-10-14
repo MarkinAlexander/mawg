@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { UiDialog, UiHint, UiInput } from '../components/ui'
 import { TABS } from './tabs'
@@ -33,17 +33,55 @@ function tabLabel(place: SearchPlace): string {
 const box = ref<HTMLDivElement | null>(null)
 const listEl = ref<HTMLDivElement | null>(null)
 
-// при открытии - чистый запрос и фокус в инпут
+// Слово владельца: панель «от иконки» - прижата к верху под кнопкой-лупой
+// (что на ПК, что на телефоне) и НЕ бегает при наборе: позиция и ширина
+// фиксируются на открытии, список растёт/сжимается вниз. Замер кнопки
+// шапки - здесь же, панель знает только её (.searchbtn в NextLayout).
+const anchorStyle = ref<Record<string, string>>({})
+function place() {
+  const btn = document.querySelector('header .searchbtn')
+  if (!btn) {
+    anchorStyle.value = {}
+    return
+  }
+  const r = btn.getBoundingClientRect()
+  const vw = window.innerWidth
+  const panelW = Math.min(560, vw - 16)
+  const left = Math.max(8, Math.min(r.left, vw - panelW - 8))
+  anchorStyle.value = {
+    position: 'fixed',
+    top: `${Math.round(r.bottom + 6)}px`,
+    left: `${Math.round(left)}px`,
+    width: `${panelW}px`,
+    // у .uidialog свои max-width 480 / max-height (100dvh-32) - панель
+    // «от иконки» шире и может упираться в низ экрана на телефоне
+    maxWidth: 'none',
+    maxHeight: `calc(100dvh - ${Math.round(r.bottom + 14)}px)`,
+    margin: '0',
+  }
+}
+function onResize() {
+  place()
+}
+
+// при открытии - позиция, чистый запрос и фокус в инпут
 watch(
   () => props.open,
   async (v) => {
-    if (!v) return
+    if (!v) {
+      window.removeEventListener('resize', onResize)
+      return
+    }
+    place()
+    window.addEventListener('resize', onResize)
     q.value = ''
     sel.value = 0
     await nextTick()
     box.value?.querySelector('input')?.focus()
   },
 )
+
+onBeforeUnmount(() => window.removeEventListener('resize', onResize))
 
 // запрос меняется - выбор к первой строке
 watch(q, () => {
@@ -107,7 +145,7 @@ async function scrollToAnchor(anchor: string): Promise<void> {
   <UiDialog
     :open="props.open"
     title="Поиск по настройкам"
-    width="560px"
+    :style="anchorStyle"
     @update:open="emit('update:open', $event)"
   >
     <div
