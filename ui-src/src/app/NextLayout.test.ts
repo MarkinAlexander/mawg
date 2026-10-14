@@ -4,6 +4,7 @@ import { createRouter, createWebHashHistory } from 'vue-router'
 import { nextTick } from 'vue'
 import NextLayout from './NextLayout.vue'
 import { TABS } from './tabs'
+import { SEARCH_PLACES } from './search'
 import { UNAUTHORIZED_EVENT, inflight } from '../api/client'
 import { useStatus } from '../stores/status'
 import { useSystem } from '../stores/system'
@@ -141,6 +142,45 @@ describe('NextLayout', () => {
     expect(brand.attributes('href')).toBe('#/next/')
     expect(brand.text()).toContain('mawg')
     expect(brand.text()).toContain('next')
+    w.unmount()
+  })
+
+  it('кнопка-лупа в шапке открывает поиск, результат ведёт на вкладку', async () => {
+    const router = await makeRouter()
+    const w = mount(NextLayout, { global: { plugins: [router] } })
+    // грабля забытого импорта: кнопка и диалог - resolved-компоненты
+    const btn = w.find('header .uibtn.v-icon')
+    expect(btn.exists()).toBe(true)
+    expect(btn.attributes('title')).toBe('поиск по настройкам (Ctrl+K)')
+    expect(btn.find('.uiicon').exists()).toBe(true)
+    expect(w.html()).not.toContain('<usearchdialog')
+    expect(w.find('dialog[open]').exists()).toBe(false)
+
+    await btn.trigger('click')
+    await nextTick()
+    await nextTick()
+    const openDlg = w.find('dialog[open] .sbox')
+    expect(openDlg.exists()).toBe(true)
+    expect(w.findAll('.srow')).toHaveLength(SEARCH_PLACES.length)
+
+    // клик по результату: диалог закрыт, маршрут сменился
+    await w.findAll('.srow')[0].trigger('click')
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(router.currentRoute.value.path).toBe(SEARCH_PLACES[0].route)
+    expect(w.find('dialog[open]').exists()).toBe(false)
+    w.unmount()
+  })
+
+  it('Ctrl+K открывает поиск, без модификатора - нет', async () => {
+    const router = await makeRouter()
+    const w = mount(NextLayout, { global: { plugins: [router] } })
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k' }))
+    await nextTick()
+    expect(w.find('dialog[open]').exists()).toBe(false)
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true }))
+    await nextTick()
+    await nextTick()
+    expect(w.find('dialog[open] .sbox').exists()).toBe(true)
     w.unmount()
   })
 
