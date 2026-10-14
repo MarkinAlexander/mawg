@@ -423,7 +423,9 @@ function editGroup(g: GroupView): void {
 </script>
 
 <template>
+  <!-- id - якорь для поиска по настройкам (SearchDialog, search.ts) -->
   <UiCard
+    id="card-rules"
     title="Правила маршрутизации"
     subtitle="через MagiTrickle. Группы правил привязываются к интерфейсам пулов. Типы: домен, поддомены, подсеть, маска, регулярное выражение."
   >

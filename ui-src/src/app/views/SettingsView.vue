@@ -355,7 +355,11 @@ async function rciSave(): Promise<void> {
 </script>
 
 <template>
-  <UiCard title="Настройки панели">
+  <!-- id - якорь для поиска по настройкам (SearchDialog, search.ts) -->
+  <UiCard
+    id="card-settings"
+    title="Настройки панели"
+  >
     <div class="sect">
       Авторизация
     </div>
