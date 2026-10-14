@@ -234,6 +234,14 @@ export function useGroups() {
     await api('POST', `/mt/groups/${encodeURIComponent(groupId)}/rules/${encodeURIComponent(ruleId)}/enable`, { enable });
     await refresh(true);
   }
+  // массовое включение/выключение всех правил группы (один PUT группы на
+  // бэкенде); возвращает {total, changed} - для тоста
+  async function enableAllRules(groupId: string, enable: boolean): Promise<{ total: number; changed: number }> {
+    const r = await api<{ ok: boolean; total: number; changed: number }>(
+      'POST', `/mt/groups/${encodeURIComponent(groupId)}/rules/enable`, { enable });
+    await refresh(true);
+    return { total: r.total, changed: r.changed };
+  }
   async function deleteRule(groupId: string, ruleId: string): Promise<void> {
     await api('DELETE', `/mt/groups/${encodeURIComponent(groupId)}/rules/${encodeURIComponent(ruleId)}`);
     await refresh(true);
@@ -270,6 +278,7 @@ export function useGroups() {
     importRules,
     updateRule,
     toggleRule,
+    enableAllRules,
     deleteRule,
     reorderRules,
   };

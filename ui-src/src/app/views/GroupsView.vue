@@ -39,6 +39,13 @@ onMounted(() => {
 });
 onBeforeUnmount(() => groups.stop());
 
+function enabledRulesCount(g: GroupView): number {
+  return (g.rules || []).filter((r) => r.enable).length;
+}
+function disabledRulesCount(g: GroupView): number {
+  return (g.rules || []).length - enabledRulesCount(g);
+}
+
 async function run(fn: () => Promise<unknown>): Promise<void> {
   try {
     await fn();
@@ -422,6 +429,27 @@ function editGroup(g: GroupView): void {
   editOpen.value = true;
 }
 
+// --- массовое включение/выключение правил группы (слово владельца) ---
+const bulkBusy = ref('');
+async function bulkRules(g: GroupView, enable: boolean): Promise<void> {
+  const total = (g.rules || []).length;
+  if (!total) return;
+  const ok = await confirm({
+    title: enable ? 'Включить все правила' : 'Выключить все правила',
+    text: `Все правила группы «${g.name}» (${total} шт.) будут ${enable ? 'включены' : 'выключены'}.`,
+    okLabel: enable ? 'Включить все' : 'Выключить все',
+  });
+  if (!ok) return;
+  bulkBusy.value = g.id + (enable ? ':on' : ':off');
+  try {
+    const r = await groups.enableAllRules(g.id, enable);
+    push(`Группа «${g.name}»: ${enable ? 'включено' : 'выключено'} правил ${r.changed} из ${r.total}`);
+  } catch (e) {
+    push(e instanceof Error ? e.message : String(e), true);
+  }
+  bulkBusy.value = '';
+}
+
 // deep-link (44-дока §6): /next/groups?g=<id> открывает редактор группы,
 // как только список загрузился (или сразу, если стор уже жив); запрос
 // тут же чистится, чтобы F5 не переоткрывал редактор
@@ -691,7 +719,14 @@ onMounted(openFromLink);
               class="iftitle"
             >{{ g.interfaceTitle }}</span>
           </span>
-          <span class="muted rcount">правил: {{ (g.rules || []).length }}<template v-if="searchQ"> · <span class="okc">совпадений: {{ groupMatchCount(g, searchQ) }}</span></template></span>
+          <!-- слово владельца: видно сколько включено/выключено (465/2) -->
+          <span class="muted rcount">правил: {{ (g.rules || []).length }} · вкл: {{ enabledRulesCount(g) }}<template v-if="searchQ"> · <span class="okc">совпадений: {{ groupMatchCount(g, searchQ) }}</span></template></span>
+          <UiBadge
+            v-if="disabledRulesCount(g) > 0"
+            :text="'выключено: ' + disabledRulesCount(g)"
+            variant="warn"
+            tooltip="часть правил выключена - «включить все» в секции правил группы"
+          />
           <span class="sp" />
           <!-- импорт/копирование правил группы - иконки в шапке (слово
                владельца 2026-10-14: из ряда правил убрать, svg даст позже) -->
@@ -746,6 +781,26 @@ onMounted(openFromLink);
             class="muted offnote"
           >
             группа выключена - правила сейчас не работают; тумблеры показывают их собственное состояние
+          </div>
+          <!-- слово владельца: массовое включение/выключение правил (465
+               штук по одному не нащёлкаешь); один PUT группы на бэкенде -->
+          <div class="bulkrow">
+            <UiButton
+              :busy="bulkBusy === g.id + ':on'"
+              :disabled="disabledRulesCount(g) === 0 && (g.rules || []).length > 0"
+              tooltip="включить все правила группы одним действием"
+              @click="bulkRules(g, true)"
+            >
+              включить все ({{ enabledRulesCount(g) }}/{{ (g.rules || []).length }})
+            </UiButton>
+            <UiButton
+              :busy="bulkBusy === g.id + ':off'"
+              :disabled="enabledRulesCount(g) === 0"
+              tooltip="выключить все правила группы одним действием"
+              @click="bulkRules(g, false)"
+            >
+              выключить все
+            </UiButton>
           </div>
           <div class="nrrow">
             <UiSelect
@@ -1034,6 +1089,13 @@ onMounted(openFromLink);
 </template>
 
 <style scoped>
+.bulkrow {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  margin: 6px 0 2px;
+}
 .crow {
   display: flex;
   align-items: center;

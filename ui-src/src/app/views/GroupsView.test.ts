@@ -75,6 +75,13 @@ async function makeView(dups: Rec = {}) {
       (data.groups[0].rules![0] as unknown as Rec).enable = body.enable;
     } else if (m === 'POST' && /\/mt\/groups\/g1\/rules\/import$/.test(u)) {
       return ok({ added: 2, skipped: 1, bad: ['мусор'] });
+    } else if (m === 'POST' && /\/mt\/groups\/g1\/rules\/enable$/.test(u)) {
+      const rules = data.groups[0].rules! as unknown as Rec[];
+      const wasOn = rules.filter((r) => r.enable).length;
+      const total = rules.length;
+      for (const r of rules) r.enable = body.enable;
+      const changed = body.enable ? total - wasOn : wasOn;
+      return ok({ ok: true, total, changed });
     } else if (m === 'POST' && /\/mt\/groups\/g1\/rules$/.test(u)) {
       data.groups[0].rules!.push({ id: 'r9', type: body.type, rule: body.rule, enable: true });
       return ok({ id: 'r9', type: body.type, rule: body.rule, enable: true });
@@ -476,6 +483,41 @@ describe('GroupsView - deep-link ?g=<id> (44-дока §6)', () => {
     // диалог предыдущего открытия закрыт прошлым состоянием? нет - он открыт;
     // неизвестный id не открывает второй/не ломает
     expect(w.findAll('dialog[open]').length).toBeLessThanOrEqual(1);
+    w.unmount();
+  });
+});
+
+describe('GroupsView - массовое включение/выключение правил (слово владельца)', () => {
+  it('счётчик вкл/выкл в строке группы', async () => {
+    const { w } = await makeView();
+    const row = block(w, 'g1');
+    expect(row.text()).toContain('вкл: 1'); // из 2 правил включено 1
+    expect(row.text()).toContain('выключено: 1');
+    const other = block(w, 'g2');
+    expect(other.text()).not.toContain('выключено:'); // все включены - бейджа нет
+    w.unmount();
+  });
+
+  it('«включить все»: confirm, POST rules/enable, тост; «выключить все» disabled когда всё выключено', async () => {
+    const { w, f } = await makeView();
+    const row = block(w, 'g1');
+    const onBtn = row.findAll('button').find((b) => b.text().includes('включить все'));
+    expect(onBtn).toBeTruthy();
+    await onBtn!.trigger('click');
+    await nextTick();
+    expect(useConfirm().state.text).toContain('«telegram» (2 шт.) будут включены');
+    useConfirm().ok();
+    await vi.waitFor(() => {
+      const post = f.mock.calls.find((c) => (c[0] as string).endsWith('/rules/enable'));
+      expect(post).toBeTruthy();
+      expect(JSON.parse(post![1]!.body as string)).toEqual({ enable: true });
+    });
+    await vi.waitFor(() =>
+      expect(useToast().toasts.list.map((t) => t.text)).toContain('Группа «telegram»: включено правил 1 из 2'));
+
+    // все правила выключены -> «включить все» активна, «выключить все» disabled
+    const offBtn = row.findAll('button').find((b) => b.text().includes('выключить все'));
+    await vi.waitFor(() => expect(offBtn!.attributes('disabled')).toBeUndefined());
     w.unmount();
   });
 });
