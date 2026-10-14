@@ -242,11 +242,6 @@ header h1 {
   color: var(--dim);
   font-size: 12px;
 }
-/* шапка на baseline: у икон-кнопки текста нет - центрируем по вертикали,
-   иначе встаёт по нижнему краю строки */
-.searchbtn {
-  align-self: center;
-}
 nav {
   display: flex;
   flex-wrap: wrap;
