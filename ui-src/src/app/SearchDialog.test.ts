@@ -104,7 +104,7 @@ describe('SearchDialog', () => {
     await macrotask()
     expect(w.emitted('update:open')).toEqual([[false]])
     expect(router.currentRoute.value.path).toBe('/next/interfaces')
-    expect(scrollMock).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' })
+    expect(scrollMock).toHaveBeenCalledWith({ behavior: 'auto', block: 'start' })
     w.unmount()
   })
 
@@ -124,7 +124,7 @@ describe('SearchDialog', () => {
     expect(router.currentRoute.value.path).toBe('/next/interfaces')
     expect(scrollMock).not.toHaveBeenCalled()
     await new Promise((resolve) => setTimeout(resolve, 400))
-    expect(scrollMock).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' })
+    expect(scrollMock).toHaveBeenCalledWith({ behavior: 'auto', block: 'start' })
     w.unmount()
   })
 

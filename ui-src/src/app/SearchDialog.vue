@@ -76,17 +76,29 @@ async function go(place: SearchPlace | undefined) {
   if (place.anchor) await scrollToAnchor(place.anchor)
 }
 
-// Ленивая вьюха монтируется ЗАМЕТНО позже резолва router.push (замер на
-// живой приёмке: до ~300мс) - единственный getElementById промахивается.
-// Ждём якорь с ретраями ~1с, потом сдаёмся молча (переход уже случился).
+// Живая приёмка (IAB): ленивая вьюха монтируется до ~300мс ПОСЛЕ резолва
+// router.push, элемент появляется в DOM раньше, чем у него есть бокс, а
+// smooth-скролл в ряде окружений вообще ноопит (замер: instant работает,
+// smooth и window.scrollTo({smooth}) - нет). Поэтому скроллим INSTANT и
+// повторяем, пока якорь реально не придёт к верху вьюпорта (в jsdom
+// getBoundingClientRect нулевой - top<120 сходится с первого вызова),
+// максимум ~1.2с, потом тихо сдаться (переход уже случился).
 async function scrollToAnchor(anchor: string): Promise<void> {
-  for (let i = 0; i < 20; i++) {
+  const deadline = Date.now() + 1200
+  for (;;) {
     const el = document.getElementById(anchor)
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      return
+    if (!el) {
+      if (Date.now() >= deadline) return
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      continue
     }
-    await new Promise((resolve) => setTimeout(resolve, 50))
+    el.scrollIntoView({ behavior: 'auto', block: 'start' })
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    // топ<120 - якорь у краю; страница у нижнего предела - ближе физически
+    // нельзя (последняя карточка короче вьюпорта)
+    const maxScroll = document.documentElement.scrollHeight - window.innerHeight
+    if (el.getBoundingClientRect().top < 120 || window.scrollY >= maxScroll - 2) return
+    if (Date.now() >= deadline) return
   }
 }
 </script>
