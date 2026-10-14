@@ -719,14 +719,12 @@ onMounted(openFromLink);
               class="iftitle"
             >{{ g.interfaceTitle }}</span>
           </span>
-          <!-- слово владельца: видно сколько включено/выключено (465/2) -->
-          <span class="muted rcount">правил: {{ (g.rules || []).length }} · вкл: {{ enabledRulesCount(g) }}<template v-if="searchQ"> · <span class="okc">совпадений: {{ groupMatchCount(g, searchQ) }}</span></template></span>
-          <UiBadge
-            v-if="disabledRulesCount(g) > 0"
-            :text="'выключено: ' + disabledRulesCount(g)"
-            variant="warn"
-            tooltip="часть правил выключена - «включить все» в секции правил группы"
-          />
+          <!-- слово владельца: формат «всего/включено», без чипа - чипы
+               только для важных вещей -->
+          <span
+            class="muted rcount"
+            title="правил всего/включено"
+          >правил: {{ (g.rules || []).length }}/{{ enabledRulesCount(g) }}<template v-if="searchQ"> · <span class="okc">совпадений: {{ groupMatchCount(g, searchQ) }}</span></template></span>
           <span class="sp" />
           <!-- импорт/копирование правил группы - иконки в шапке (слово
                владельца 2026-10-14: из ряда правил убрать, svg даст позже) -->
