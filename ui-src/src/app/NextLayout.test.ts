@@ -165,10 +165,12 @@ describe('NextLayout', () => {
     expect(w.findAll('.srow')).toHaveLength(SEARCH_PLACES.length)
 
     // клик по результату: диалог закрыт, маршрут сменился
+    // (история реальная: закрытие диалога делает back() - ждём waitFor'ом)
     await w.findAll('.srow')[0].trigger('click')
-    await new Promise((resolve) => setTimeout(resolve, 10))
-    expect(router.currentRoute.value.path).toBe(SEARCH_PLACES[0].route)
-    expect(w.find('dialog[open]').exists()).toBe(false)
+    await vi.waitFor(() => {
+      expect(w.find('dialog[open]').exists()).toBe(false)
+      expect(router.currentRoute.value.path).toBe(SEARCH_PLACES[0].route)
+    })
     w.unmount()
   })
 
@@ -204,6 +206,8 @@ describe('NextLayout', () => {
     // back() застаблен - счётчик selfPops не погасится сам, чистим
     dialogBackReset()
 
+    // мусорный тег истории от ранних тестов снимаем - тег ставится стабом
+    window.history.replaceState(null, '')
     // переоткрытие - «назад» закрывает
     await btn.trigger('click')
     await nextTick()
@@ -212,6 +216,8 @@ describe('NextLayout', () => {
     window.dispatchEvent(new PopStateEvent('popstate'))
     await nextTick()
     expect(w.find('dialog[open]').exists()).toBe(false)
+    // история чиста: back-записи диалога не остаются
+    expect((window.history.state as { mawgDlg?: number } | null)?.mawgDlg).toBeUndefined()
     dialogBackReset()
     w.unmount()
   })

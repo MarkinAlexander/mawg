@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { UiDialog, UiHint, UiInput } from '../components/ui'
+import { dialogBackWaitClean } from '../components/ui/dialogBack'
 import { TABS } from './tabs'
 import { filterPlaces, type SearchPlace } from './search'
 import { hlSegs } from './views/groupsLogic'
@@ -110,6 +111,10 @@ function onKeydown(e: KeyboardEvent) {
 async function go(place: SearchPlace | undefined) {
   if (!place) return
   emit('update:open', false)
+  // закрывающийся диалог снимает свою запись истории (history.back);
+  // router.push поверх этой записи откатывался бы его back() - ждём
+  // очистки тега, потом навигируемся (живая приёмка на VM)
+  await dialogBackWaitClean()
   await router.push(place.route)
   if (place.anchor) await scrollToAnchor(place.anchor)
 }
