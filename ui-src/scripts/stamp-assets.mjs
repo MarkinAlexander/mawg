@@ -18,7 +18,7 @@ const stamp = (html, file) => {
 }
 
 let html = readFileSync(path.join(appDir, 'index.html'), 'utf8').replace(/\r\n/g, '\n')
-for (const file of ['app.js', 'styles.css', 'panel.css']) {
+for (const file of ['app.js', 'styles.css']) {
   const r = stamp(html, file)
   html = r.html
   if (r.v) console.log(`${file}?v=${r.v}`)

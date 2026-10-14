@@ -8,13 +8,6 @@ import { TABS } from './tabs'
 import SearchDialog from './SearchDialog.vue'
 import UpdateBadge from './UpdateBadge.vue'
 
-// Легаси-замок: panel.css прячет header/main до авторизации
-// (body.unlocked ставит/снимает panel.js при проверке входа). На /next/
-// panel.js не запускается - новое UI объявляет себя разблокированным
-// само; настоящая авторизация для нового UI - Фаза 5.
-onMounted(() => document.body.classList.add('unlocked'))
-onBeforeUnmount(() => document.body.classList.remove('unlocked'))
-
 // Шапка общая для всех вкладок - глобальные опросы статуса живут здесь,
 // как легаси startPanel: GET /status каждые 5с + GET /magitrickle 30с.
 const { state: status, start, stop } = useStatus();
@@ -121,7 +114,7 @@ const meta = computed(() => {
         >
           mawg <span
             class="badge"
-            title="новая версия интерфейса, живёт за /next до конца Фазы 3"
+            title="новая версия интерфейса"
           >next</span>
         </RouterLink>
       </h1>
@@ -143,25 +136,16 @@ const meta = computed(() => {
         >
           {{ t.label }}
         </RouterLink>
-        <RouterLink
-          to="/"
-          title="legacy-панель остаётся рабочей до конца Фазы 3"
-        >
-          старая версия
-        </RouterLink>
       </nav>
     </header>
     <main>
-      <!-- мост до Фазы 5: реальный оверлей логина умеет только legacy -->
+      <!-- авторизация нового UI - Фаза 5; на текущих роутерах вход выключен
+           (allowlist), баннер - только диагноз при 401 -->
       <UiBanner
         v-if="status.authNeeded"
         kind="err"
-        text="требуется вход: сессия не действует - войдите через старую версию, затем вернитесь"
-      >
-        <RouterLink to="/">
-          открыть старую версию
-        </RouterLink>
-      </UiBanner>
+        text="требуется вход: сессия не действует - вход в панель появится с авторизацией нового UI (Фаза 5)"
+      />
       <RouterView />
     </main>
     <ToastHost />
@@ -202,13 +186,6 @@ const meta = computed(() => {
             :to="`/next/${t.id}`"
           >
             {{ t.label }}
-          </RouterLink>
-          <RouterLink
-            to="/"
-            class="sheet-legacy"
-            title="legacy-панель остаётся рабочей до конца Фазы 3"
-          >
-            старая версия
           </RouterLink>
         </nav>
       </div>
@@ -348,11 +325,6 @@ main {
   font-weight: 600;
   color: #120b0b;
 }
-.sheet a.sheet-legacy {
-  border-top: 1px solid var(--border);
-  margin-top: 6px;
-  color: var(--dim);
-}
 /* анимация шторки: фон гаснет, панель выезжает снизу */
 .sheet-enter-active,
 .sheet-leave-active {
@@ -370,7 +342,8 @@ main {
 .sheet-leave-to .sheet {
   transform: translateY(100%);
 }
-/* легаси #topbar: имена topbar/nslide не пересекаются с глобальным panel.css */
+/* in-flight-индикатор: имена topbar/nslide исторически разведены с легаси,
+   теперь и с глобальной base.css не пересекаются */
 .topbar {
   position: fixed;
   top: 0;

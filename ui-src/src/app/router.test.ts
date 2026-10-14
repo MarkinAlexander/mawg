@@ -13,9 +13,17 @@ describe('роутер /next/', () => {
       await flushPromises()
       expect(w.text()).toContain(t.label)
     }
-    // корень /next/ уводит на Обзор, прочее - legacy (ловится catch-all)
+    // корень /next/ уводит на Обзор
     await router.push('/next/')
     await flushPromises()
     expect(router.currentRoute.value.path).toBe('/next/overview')
+  })
+
+  it('легаси удалён: корень и любой посторонний путь редиректят на /next/overview', async () => {
+    for (const from of ['/', '/whatever', '/some/old/path']) {
+      await router.push(from)
+      await flushPromises()
+      expect(router.currentRoute.value.path).toBe('/next/overview')
+    }
   })
 })

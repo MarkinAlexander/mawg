@@ -1,6 +1,5 @@
 // Вкладки нового UI. Информационная архитектура - Фаза 4 в
-// local-docs/44-ui-rewrite-plan.md; до паритетного переноса карточек
-// (Фаза 3) вкладки - заглушки, рабочая панель - legacy на /.
+// local-docs/44-ui-rewrite-plan.md; с Ф3.9 новое UI - единственная панель.
 export interface TabDef {
   id: string
   label: string

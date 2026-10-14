@@ -1,11 +1,10 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
-import LegacyPanel from './views/LegacyPanel.vue'
 
-// hash-history: серверного fallback не нужно. Legacy-панель остаётся
-// дефолтом до конца Фазы 3; новое UI живёт за /next/ (Фаза 0 в
-// local-docs/44-ui-rewrite-plan.md). Маршруты вкладок ленивые; текущая
+// hash-history: серверного fallback не нужно. С удалением легаси (Ф3.9,
+// local-docs/44-ui-rewrite-plan.md §5.9) новое UI - единственная панель:
+// всё, кроме /next/*, редиректит на обзор. Маршруты вкладок ленивые;
 // сборка инлайнит чанки (single-file IIFE) - сетевая ленивость появится
-// в Фазе 4 вместе с разбиением бандла.
+// в Фазе 4/5 вместе с разбиением бандла.
 export const router = createRouter({
   history: createWebHashHistory(),
   routes: [
@@ -25,6 +24,6 @@ export const router = createRouter({
         { path: 'kit', component: () => import('./app/views/KitView.vue') },
       ],
     },
-    { path: '/:pathMatch(.*)*', component: LegacyPanel },
+    { path: '/:pathMatch(.*)*', redirect: '/next/' },
   ],
 })

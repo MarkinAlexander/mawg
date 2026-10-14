@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createRouter, createWebHashHistory } from 'vue-router'
 import { nextTick } from 'vue'
@@ -33,10 +33,6 @@ beforeEach(() => {
   inflight.n = 0;
 });
 
-afterEach(() => {
-  document.body.classList.remove('unlocked');
-});
-
 function makeRouter() {
   const router = createRouter({
     history: createWebHashHistory(),
@@ -50,25 +46,24 @@ function makeRouter() {
 }
 
 describe('NextLayout', () => {
-  it('рендерит все вкладки как ссылки и ведёт в legacy', async () => {
+  it('рендерит все вкладки как ссылки, без ссылки на legacy', async () => {
     const router = await makeRouter()
     const w = mount(NextLayout, { global: { plugins: [router] } })
     const links = w.findAll('nav a')
-    expect(links.length).toBe(TABS.length + 1) // вкладки + «старая версия»
+    expect(links.length).toBe(TABS.length)
     expect(w.text()).toContain('Обзор')
-    expect(links[links.length - 1].attributes('href')).toBe('#/')
+    expect(w.text()).not.toContain('старая версия')
     for (const t of TABS) {
       expect(links.map((l) => l.text())).toContain(t.label)
     }
     w.unmount()
   })
 
-  it('снимает легаси-замок: body.unlocked при монтировании, обратно при размонтировании', async () => {
-    const router = await makeRouter()
-    // до монтирования panel.js ещё не ставил замок... а мог бы - снимаем
+  it('не трогает класс body.unlocked (легаси-замок удалён вместе с panel.css)', async () => {
     document.body.classList.remove('unlocked')
+    const router = await makeRouter()
     const w = mount(NextLayout, { global: { plugins: [router] } })
-    expect(document.body.classList.contains('unlocked')).toBe(true)
+    expect(document.body.classList.contains('unlocked')).toBe(false)
     w.unmount()
     expect(document.body.classList.contains('unlocked')).toBe(false)
   })
@@ -97,7 +92,7 @@ describe('NextLayout', () => {
     w.unmount()
   })
 
-  it('authNeeded (401) -> err-баннер со ссылкой в legacy', async () => {
+  it('authNeeded (401) -> err-баннер без ссылки (логина в новом UI нет до Фазы 5)', async () => {
     const router = await makeRouter()
     const w = mount(NextLayout, { global: { plugins: [router] } })
     expect(w.find('.uibanner').exists()).toBe(false)
@@ -107,7 +102,7 @@ describe('NextLayout', () => {
     expect(banner.exists()).toBe(true)
     expect(banner.classes()).toContain('k-err')
     expect(banner.text()).toContain('требуется вход')
-    expect(banner.find('a').attributes('href')).toBe('#/')
+    expect(banner.find('a').exists()).toBe(false)
     w.unmount()
   })
 
@@ -236,8 +231,8 @@ describe('NextLayout', () => {
     expect(fab.attributes('aria-expanded')).toBe('true')
     const sheet = w.find('.sheet')
     expect(sheet.exists()).toBe(true)
-    // все вкладки + «старая версия»
-    expect(sheet.findAll('a')).toHaveLength(TABS.length + 1)
+    // все вкладки, ссылки на legacy больше нет
+    expect(sheet.findAll('a')).toHaveLength(TABS.length)
 
     // клик по вкладке закрывает
     await sheet.findAll('a')[0].trigger('click')
