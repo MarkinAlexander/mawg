@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { ConfirmHost, ToastHost, UiBanner } from '../components/ui'
+import { ConfirmHost, ToastHost, UiBanner, UiButton, UiIcon } from '../components/ui'
 import { inflight } from '../api/client'
 import { useStatus, type MtState } from '../stores/status'
 import { TABS } from './tabs'
+import SearchDialog from './SearchDialog.vue'
 import UpdateBadge from './UpdateBadge.vue'
 
 // Легаси-замок: panel.css прячет header/main до авторизации
@@ -40,6 +41,15 @@ watch(menuOpen, (open) => {
   else document.removeEventListener('keydown', onKeydown);
 });
 
+// Поиск по настройкам (46-док §1): лупа в шапке + Ctrl+K / Cmd+K
+const searchOpen = ref(false);
+function onSearchKeydown(e: KeyboardEvent) {
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    searchOpen.value = true;
+  }
+}
+
 // жест от правого края: pointerdown в 24px от правого края на мобильной
 // ширине, тянем влево >40px (и горизонталь сильнее вертикали) - открываем.
 // Pointer Events покрывают и палец, и мышь; на десктопе меню скрыто,
@@ -67,12 +77,14 @@ function onPointerUp() {
   swipeStart = null;
 }
 onMounted(() => {
+  document.addEventListener('keydown', onSearchKeydown);
   document.addEventListener('pointerdown', onPointerDown);
   document.addEventListener('pointermove', onPointerMove);
   document.addEventListener('pointerup', onPointerUp);
   document.addEventListener('pointercancel', onPointerUp);
 });
 onBeforeUnmount(() => {
+  document.removeEventListener('keydown', onSearchKeydown);
   document.removeEventListener('keydown', onKeydown);
   document.removeEventListener('pointerdown', onPointerDown);
   document.removeEventListener('pointermove', onPointerMove);
@@ -115,6 +127,14 @@ const meta = computed(() => {
       </h1>
       <span class="meta">{{ meta }}</span>
       <UpdateBadge />
+      <UiButton
+        variant="icon"
+        class="searchbtn"
+        tooltip="поиск по настройкам (Ctrl+K)"
+        @click="searchOpen = true"
+      >
+        <UiIcon name="search" />
+      </UiButton>
       <nav>
         <RouterLink
           v-for="t in TABS"
@@ -146,6 +166,7 @@ const meta = computed(() => {
     </main>
     <ToastHost />
     <ConfirmHost />
+    <SearchDialog v-model:open="searchOpen" />
 
     <!-- мобильное меню: кнопка внизу справа + шторка снизу (в шапке места
          не занимает и вёрстку не двигает); на десктопе скрыты media-query -->
@@ -220,6 +241,11 @@ header h1 {
 .meta {
   color: var(--dim);
   font-size: 12px;
+}
+/* шапка на baseline: у икон-кнопки текста нет - центрируем по вертикали,
+   иначе встаёт по нижнему краю строки */
+.searchbtn {
+  align-self: center;
 }
 nav {
   display: flex;
