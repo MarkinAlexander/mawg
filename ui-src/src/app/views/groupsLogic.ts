@@ -306,3 +306,110 @@ export function wireCascadeSel(opts: CascadeOpt[], otherValue: string, current: 
   }
   return { opts: list, value };
 }
+
+// --- бэкапы / импорт / выгрузка файлом (легаси 1786-2010) ---
+
+export interface ImportGroupSrc {
+  name: string
+  color: string
+  interface: string
+  enable: boolean
+  rules: { type: string; rule: string; enable: boolean; name?: string }[]
+}
+
+export interface ImportFileRes {
+  error?: string
+  name?: string
+  groups?: ImportGroupSrc[]
+  bad?: number
+}
+
+// разбор файла импорта (легаси mtImportPick 1841-1877): mt-config-*
+// отвергается с подсказкой про «восстановить», JSON с groups, пригодность =
+// имя+интерфейс, правила с пустым паттерном выкидываются в счётчик bad
+export function parseImportFile(fileName: string, text: string): ImportFileRes {
+  if (/^mt-config-/.test(fileName)) {
+    return { error: 'Это сырой MT-конфиг (config.yaml), группы из него не импортируются - восстановите его кнопкой «восстановить» в списке бэкапов' };
+  }
+  let obj: { groups?: unknown };
+  try {
+    obj = JSON.parse(text);
+  } catch (err) {
+    return { error: 'Файл не похож на mtrickle/json: ' + (err instanceof Error ? err.message : String(err)) };
+  }
+  const groups = Array.isArray(obj && obj.groups) ? (obj.groups as Record<string, unknown>[]) : null;
+  if (!groups || !groups.length) return { error: 'В файле нет групп - импортировать нечего' };
+  const ok: ImportGroupSrc[] = [];
+  let bad = 0;
+  for (const g of groups) {
+    if (!g || typeof g.name !== 'string' || !g.name.trim() || typeof g.interface !== 'string' || !g.interface.trim()) {
+      bad++;
+      continue;
+    }
+    const rules = (Array.isArray(g.rules) ? (g.rules as Record<string, unknown>[]) : [])
+      .filter((rl) => !!rl && typeof rl.rule === 'string' && !!rl.rule.trim() && typeof rl.type === 'string' && !!rl.type.trim())
+      .map((rl) => ({
+        type: String(rl.type),
+        rule: String(rl.rule),
+        enable: !!rl.enable,
+        name: typeof rl.name === 'string' ? rl.name : '',
+      }));
+    ok.push({ name: g.name.trim(), color: typeof g.color === 'string' ? g.color : '', interface: g.interface, enable: !!g.enable, rules });
+  }
+  if (!ok.length) return { error: 'В файле нет групп с именем и интерфейсом' };
+  return { name: fileName, groups: ok, bad };
+}
+
+// дубликаты правил внутри группы вычищаем сразу, счётчик - в отчёт
+// (легаси 1929-1940)
+export function dedupImportRules(groups: ImportGroupSrc[]): { groups: ImportGroupSrc[]; dedup: number } {
+  let dedup = 0;
+  const out = groups.map((g) => {
+    const seen = new Set<string>();
+    const rules: ImportGroupSrc['rules'] = [];
+    for (const rl of g.rules) {
+      const key = rl.type + ' ' + rl.rule.trim().toLowerCase();
+      if (seen.has(key)) {
+        dedup++;
+        continue;
+      }
+      seen.add(key);
+      rules.push({ type: rl.type, rule: rl.rule.trim(), enable: !!rl.enable, name: rl.name || '' });
+    }
+    return { ...g, rules };
+  });
+  return { groups: out, dedup };
+}
+
+// вердикт импорта (легаси 1948-1953)
+export function importVerdict(
+  mode: string,
+  res: { added: number; rules: number; skipped?: string[] },
+  dedup: number,
+): string {
+  const skipped = res.skipped || [];
+  const clean = dedup ? `, вычищено дубликатов: ${dedup}` : '';
+  if (mode === 'add') {
+    let msg = `Импортировано групп: ${res.added} (правил: ${res.rules}${clean})`;
+    if (skipped.length) msg += `. Пропущены дубли имени: ${skipped.join(', ')}`;
+    return msg;
+  }
+  return `Список заменён: ${res.added} групп (правил: ${res.rules}${clean})`;
+}
+
+// mtrickle-groups-YYYYMMDD-HHMMSS.mtrickle (легаси 1998-1999)
+export function exportStamp(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, '0');
+  return String(d.getFullYear()) + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds());
+}
+
+// бейдж и текст confirm восстановления по имени файла (легаси 1803, 1813-1816)
+export function backupKind(name: string): { label: string; restoreAsk: string } {
+  if (name.startsWith('mt-config-')) {
+    return {
+      label: 'MT-конфиг',
+      restoreAsk: 'сырой MT-конфиг: файл вернётся на место, демон MagiTrickle перезапустится',
+    };
+  }
+  return { label: 'shadow', restoreAsk: 'правила из shadow: ВСЕ группы будут заменены на сохранённые' };
+}

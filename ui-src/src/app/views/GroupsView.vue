@@ -17,6 +17,7 @@ import {
 } from './groupsLogic'
 import CascadeDialog from './CascadeDialog.vue'
 import GroupDialog from './GroupDialog.vue'
+import MtBackupsDialog from './MtBackupsDialog.vue'
 
 // Фаза 3.7 «Группы правил» (легаси #rulescard, renderRules 1591).
 // 3.7а: список+поиск+правила+редактор базы; DnD групп и правил - порт
@@ -409,6 +410,9 @@ async function copyRules(g: GroupView): Promise<void> {
 const dupsOpen = ref(false);
 const dupsList = computed(() => dupsEntries(state.groups, state.duplicates, searchQ.value));
 
+// --- резервные копии (легаси mtBackupsBtn 1750 -> dlgMTBackups) ---
+const backupsOpen = ref(false);
+
 // --- диалог группы ---
 const editOpen = ref(false);
 const editing = ref<GroupView | null>(null);
@@ -429,6 +433,12 @@ function editGroup(g: GroupView): void {
         @click="dupsOpen = true"
       >
         показать совпадения в группах
+      </UiButton>
+      <UiButton
+        tooltip="бэкап сейчас, список бэкапов (скачать/восстановить), импорт и выгрузка групп файлом"
+        @click="backupsOpen = true"
+      >
+        Резервные копии
       </UiButton>
     </template>
 
@@ -589,7 +599,7 @@ function editGroup(g: GroupView): void {
         :key="g.id"
         :data-gid="g.id"
         class="mtgroup"
-        :class="{ block: g.interface === 'blackhole', dragging: dragCtx?.scope === 'groups' && dragCtx.id === g.id, 'drop-before': dropMark?.id === g.id && dropMark.before, 'drop-after': dropMark?.id === g.id && !dropMark.before }"
+        :class="{ block: g.interface === 'blackhole', dragging: dragCtx?.scope === 'groups' && dragCtx?.id === g.id, 'drop-before': dropMark?.id === g.id && dropMark?.before === true, 'drop-after': dropMark?.id === g.id && dropMark?.before === false }"
         :style="{ '--gcol': g.color || '#4a9eff' }"
         :draggable="isDragRow('groups', g.id)"
         @dragstart="onDragStart($event, 'groups', g.id)"
@@ -784,7 +794,7 @@ function editGroup(g: GroupView): void {
                 </tr>
                 <tr
                   v-else
-                  :class="{ dimmed: !rl.enable || !g.enable, dragging: dragCtx?.scope === 'rules:' + g.id && dragCtx.id === rl.id, 'drop-before': dropMark?.id === rl.id && dropMark.before, 'drop-after': dropMark?.id === rl.id && !dropMark.before }"
+                  :class="{ dimmed: !rl.enable || !g.enable, dragging: dragCtx?.scope === 'rules:' + g.id && dragCtx?.id === rl.id, 'drop-before': dropMark?.id === rl.id && dropMark?.before === true, 'drop-after': dropMark?.id === rl.id && dropMark?.before === false }"
                   :draggable="isDragRow('rules:' + g.id, rl.id)"
                   @dragstart="onDragStart($event, 'rules:' + g.id, rl.id)"
                   @dragover="onDragOver($event, 'rules:' + g.id, rl.id)"
@@ -980,6 +990,8 @@ function editGroup(g: GroupView): void {
     />
 
     <CascadeDialog v-model:open="cascadeOpen" />
+
+    <MtBackupsDialog v-model:open="backupsOpen" />
   </UiCard>
 </template>
 

@@ -4,7 +4,7 @@
 // Мутации - тонкие обёртки: вызов API + force-refresh.
 import { reactive } from 'vue'
 import { api } from '../api/client'
-import type { DupInfo, DuplicatesRes, GroupPolicy, GroupView, ImportRulesRes, MtGroupsRes, MtIface, PolicyCycles, PresetsRes } from '../api/types'
+import type { BackupInfo, DupInfo, DuplicatesRes, GroupPolicy, GroupView, ImportRulesRes, MtGroupsRes, MtIface, PolicyCycles, PresetsRes } from '../api/types'
 
 interface GroupsState {
   loaded: boolean
@@ -17,6 +17,7 @@ interface GroupsState {
   ifaces: MtIface[] // селекты интерфейсов (легаси MT_IFACES, опрос 60с)
   cycles: PolicyCycles | null // гистерезис политик (легаси loadPolicyCycles)
   presets: { list: PresetsRes['presets']; sourceUrl: string; sourceNote: string; loaded: boolean }
+  backups: { list: BackupInfo[]; loaded: boolean }
   editing: number // глубина editingLock
   pending: boolean // есть неотрисованные изменения (правка открыта)
   lastJSON: string
@@ -33,6 +34,7 @@ const state = reactive<GroupsState>({
   ifaces: [],
   cycles: null,
   presets: { list: [], sourceUrl: '', sourceNote: '', loaded: false },
+  backups: { list: [], loaded: false },
   editing: 0,
   pending: false,
   lastJSON: '',
@@ -143,6 +145,31 @@ export function useGroups() {
     await refresh(true);
   }
 
+  // --- бэкапы и импорт/выгрузка групп файлом (легаси 1786-2010) ---
+  async function loadBackups(): Promise<void> {
+    try {
+      const r = await api<{ backups: BackupInfo[] }>('GET', '/mt/backups');
+      state.backups.list = r.backups || [];
+      state.backups.loaded = true;
+    } catch {
+      state.backups.list = [];
+      state.backups.loaded = true;
+    }
+  }
+  async function createBackup(): Promise<void> {
+    await api('POST', '/mt/backup');
+    await loadBackups();
+  }
+  async function restoreBackup(file: string): Promise<void> {
+    await api('POST', '/mt/restore', { file });
+    await refresh(true);
+  }
+  async function importGroups(mode: 'add' | 'replace', groups: unknown): Promise<{ added: number; rules: number; skipped?: string[] }> {
+    const r = await api<{ added: number; rules: number; skipped?: string[] }>('POST', '/mt/groups/import', { mode, groups });
+    await refresh(true);
+    return r;
+  }
+
   function start(intervalMs = 30000) {
     void refresh(true);
     void refreshDuplicates();
@@ -229,6 +256,10 @@ export function useGroups() {
     loadPresets,
     applyPreset,
     createCascade,
+    loadBackups,
+    createBackup,
+    restoreBackup,
+    importGroups,
     createGroup,
     updateGroup,
     deleteGroup,
