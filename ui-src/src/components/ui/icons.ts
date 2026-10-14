@@ -22,6 +22,8 @@ export const PLUS_CIRCLE_SVG =
   '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 12h8"/><path d="M12 8v8"/></svg>'
 export const COPY_SVG =
   '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>'
+export const SEARCH_SVG =
+  '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>'
 
 export type IconName =
   | 'grip'
@@ -31,6 +33,7 @@ export type IconName =
   | 'warn'
   | 'plus-circle'
   | 'copy'
+  | 'search'
   | 'eye'
   | 'eye-off'
   | 'x'
@@ -45,6 +48,7 @@ export const ICONS: Record<IconName, string> = {
   warn: WARN_SVG,
   'plus-circle': PLUS_CIRCLE_SVG,
   copy: COPY_SVG,
+  search: SEARCH_SVG,
   eye: EYE_SVG,
   'eye-off': EYE_OFF_SVG,
   x: X_SVG,
