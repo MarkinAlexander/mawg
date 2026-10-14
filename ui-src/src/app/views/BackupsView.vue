@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { UiBadge, UiButton, UiCheckbox, UiCard, UiHint } from '../../components/ui'
+import { UiBadge, UiButton, UiCheckbox, UiCard, UiHint, UiSelect, type UiSelectOption, UiSwitch, UiTextarea } from '../../components/ui'
 import { useGroups } from '../../stores/groups'
 import { useConfirm } from '../../stores/confirm'
 import { useToast } from '../../stores/toast'
 import type { BackupInfo, GroupView } from '../../api/types'
 import {
-  backupKind, dedupImportRules, exportStamp, importVerdict, parseImportFile,
+  backupKind, dedupImportRules, exportStamp, importVerdict, parseImportFile, parseSources,
+  SRC_MODE_OPTIONS,
   type ImportGroupSrc,
 } from './groupsLogic'
 
@@ -16,7 +17,7 @@ import {
 // и авто-верёвки MT (shadow/mt-config) перед массовыми записями. Ниже -
 // перенос групп файлом: выгрузка на ПК и импорт с выбором, без модалок.
 
-const { state, loadBackups, createBackup, restoreBackup, importGroups, start, stop } = useGroups();
+const { state, loadBackups, createBackup, restoreBackup, importGroups, setPolicy, start, stop } = useGroups();
 const { push } = useToast();
 const { confirm } = useConfirm();
 
@@ -112,6 +113,17 @@ const impMode = ref<'add' | 'replace'>('add');
 const impChecked = ref<boolean[]>([]);
 const impBusy = ref(false);
 
+// Ф5 §7 «редактор sources у импорта»: режим задаётся ВСЕМ импортированным
+// группам (policy PUT после записи; в файле .mtrickle источников нет).
+// '' = не задавать; старый MT без sources - селектор скрыт (sourcesCapable).
+const impSources = ref<'' | 'all' | 'all+router' | 'list'>('');
+const impSrcList = ref('');
+const impSrcRouter = ref(false);
+const impSrcOptions: UiSelectOption[] = [
+  { value: '', label: 'не задавать - как в файле' },
+  ...SRC_MODE_OPTIONS,
+];
+
 const impDup = computed(() => {
   if (!impParsed.value || impMode.value === 'replace') return new Set<number>();
   const names = new Set(state.groups.map((g) => g.name));
@@ -150,13 +162,52 @@ function impAll(v: boolean): void {
 
 async function impGo(): Promise<void> {
   if (!impParsed.value || !impCanGo.value || impBusy.value) return;
+  const srcMode = state.sourcesCapable ? impSources.value : '';
+  const srcList = srcMode === 'list' ? parseSources(impSrcList.value) : [];
+  // паритет GroupDialog: пустой список без роутера - не «вся локалка»
+  const srcRouter = srcMode === 'list' && impSrcRouter.value;
+  if (srcMode === 'list' && !srcList.length && !srcRouter) {
+    push('Пустой список источников: добавьте IP или включите роутер', true);
+    return;
+  }
   const chosen = impParsed.value.groups.filter((_, i) => impChecked.value[i]);
   const { groups, dedup } = dedupImportRules(chosen);
   impBusy.value = true;
   try {
+    // имена ДО импорта: при add новые - только те, чего не было (дубли
+    // имён бэкенд пропускает); при replace новыми будут все выбранные
+    const preNames = new Set(state.groups.map((g) => g.name));
     const r = await importGroups(impMode.value, groups);
-    push(importVerdict(impMode.value, r, dedup));
+    let srcNote = '';
+    if (srcMode) {
+      const skipped = new Set(r.skipped || []);
+      const chosenNames = new Set(groups.map((g) => g.name));
+      const targets = state.groups.filter(
+        (g) =>
+          chosenNames.has(g.name) &&
+          !skipped.has(g.name) &&
+          (impMode.value === 'replace' || !preNames.has(g.name)),
+      );
+      const failed: string[] = [];
+      let okN = 0;
+      for (const g of targets) {
+        try {
+          // mtSetPolicy заменяет политику ЦЕЛИКОМ (GOTCHAS) - шлются все
+          // пять полей; у свежей группы onDead/iface пустые
+          await setPolicy(g.id, { onDead: '', iface: '', sourcesMode: srcMode, sources: srcList, sourcesRouter: srcRouter });
+          okN++;
+        } catch (e) {
+          failed.push(`${g.name} (${e instanceof Error ? e.message : String(e)})`);
+        }
+      }
+      if (okN) srcNote += `; источники заданы: ${okN}`;
+      if (failed.length) srcNote += `; НЕ заданы: ${failed.join(', ')}`;
+    }
+    push(importVerdict(impMode.value, r, dedup) + srcNote);
     impParsed.value = null; // секция импорта сворачивается до выбора файла
+    impSources.value = '';
+    impSrcList.value = '';
+    impSrcRouter.value = false;
   } catch (e) {
     push(e instanceof Error ? e.message : String(e), true);
   }
@@ -329,6 +380,28 @@ async function impGo(): Promise<void> {
           text="Текущие группы будут удалены и заменены выбранными из файла. Каскады перестроятся."
         />
       </div>
+      <!-- Ф5 §7: режим «кто ходит в группу» для всех импортированных -
+           у старого MT селектора нет (sourcesCapable) -->
+      <template v-if="state.sourcesCapable">
+        <UiSelect
+          v-model="impSources"
+          :options="impSrcOptions"
+          label="Источники импортированных групп"
+        />
+        <template v-if="impSources === 'list'">
+          <UiTextarea
+            v-model="impSrcList"
+            label="IP или CIDR через запятую"
+            :rows="3"
+            mono
+          />
+          <UiSwitch
+            v-model="impSrcRouter"
+            label="Включая роутер"
+            hint="его адреса добавятся в источники сами"
+          />
+        </template>
+      </template>
       <div class="bkrow">
         <UiButton
           variant="primary"

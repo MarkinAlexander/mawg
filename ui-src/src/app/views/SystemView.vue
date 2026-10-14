@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { UiBadge, UiBanner, UiButton, UiCard, UiDialog, UiHint, UiSelect, type UiSelectOption, UiSwitch, UiTable, type UiTableColumn } from '../../components/ui'
+import { UiBadge, UiBanner, UiButton, UiCard, UiDialog, UiHint, UiInput, UiSelect, type UiSelectOption, UiSwitch, UiTable, type UiTableColumn } from '../../components/ui'
 import { useEvents } from '../../stores/events'
 import { useStatus } from '../../stores/status'
 import { useSystem } from '../../stores/system'
@@ -27,7 +27,27 @@ onBeforeUnmount(() => {
 // UiCard - контролируемый: без v-model свёртывание не работает
 const collapsed = ref(false);
 
-const tail = computed<AppEvent[]>(() => state.list.slice(-80).reverse());
+// Ф5 §7 «страница событий с фильтрами»: тип события (из данных, не
+// захардкожен) + поиск по пулу/тексту. Фильтр применяется ко всему
+// списку, хвост 80 - уже отфильтрованного.
+const evKind = ref('');
+const evQuery = ref('');
+const evKindOptions = computed<UiSelectOption[]>(() => [
+  { value: '', label: 'все события' },
+  ...[...new Set(state.list.map((e) => e.kind))].sort().map((k) => ({ value: k, label: k })),
+]);
+const evFiltered = computed<AppEvent[]>(() => {
+  const q = evQuery.value.trim().toLowerCase();
+  return state.list
+    .filter(
+      (e) =>
+        (!evKind.value || e.kind === evKind.value) &&
+        (!q || e.message.toLowerCase().includes(q) || (e.pool || '').toLowerCase().includes(q)),
+    )
+    .slice(-80)
+    .reverse();
+});
+const evFiltering = computed(() => !!evKind.value || !!evQuery.value.trim());
 
 // легаси fmtTime: toLocaleTimeString('ru-RU')
 function fmtTime(iso: string): string {
@@ -410,9 +430,27 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
     subtitle="последние 80 записей, новые сверху"
     collapsible
   >
+    <div class="evfilters">
+      <UiSelect
+        v-model="evKind"
+        :options="evKindOptions"
+        label="Тип события"
+      />
+      <UiInput
+        v-model="evQuery"
+        label="Поиск"
+        placeholder="по пулу или тексту"
+      />
+    </div>
+    <div
+      v-if="evFiltering"
+      class="evcount"
+    >
+      показано {{ evFiltered.length }} из {{ state.list.length }}
+    </div>
     <div class="log">
       <div
-        v-for="(ev, i) in tail"
+        v-for="(ev, i) in evFiltered"
         :key="i"
       >
         [{{ fmtTime(ev.time) }}] {{ ev.pool }}:
@@ -424,6 +462,23 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
 </template>
 
 <style scoped>
+.evfilters {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  margin-bottom: 8px;
+}
+.evfilters > :first-child {
+  flex: 0 1 240px;
+}
+.evfilters > :last-child {
+  flex: 1;
+}
+.evcount {
+  color: var(--dim);
+  font-size: 12px;
+  margin-bottom: 6px;
+}
 .sect {
   font-weight: 600;
   font-size: 13px;
