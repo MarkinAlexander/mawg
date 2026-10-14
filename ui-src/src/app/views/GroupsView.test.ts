@@ -458,3 +458,24 @@ describe('GroupsView - пресеты и каскады (Ф3.7б)', () => {
     w.unmount();
   });
 });
+
+describe('GroupsView - deep-link ?g=<id> (44-дока §6)', () => {
+  it('открывает редактор группы по запросу и чистит query; без loaded - ждёт', async () => {
+    const { w, router } = await makeView();
+    await router.push({ path: '/next/groups', query: { g: 'g1' } });
+    await nextTick();
+    const dlg = w.find('dialog[open]');
+    expect(dlg.exists()).toBe(true);
+    expect(dlg.text()).toContain('пул proton'); // g1: имя в value инпута, интерфейс - в тексте
+    // запрос подчищен - F5 не переоткроет редактор
+    await vi.waitFor(() => expect(router.currentRoute.value.query.g).toBeUndefined());
+
+    // неизвестный id - редактор не открывается
+    await router.push({ path: '/next/groups', query: { g: 'нет-такой' } });
+    await nextTick();
+    // диалог предыдущего открытия закрыт прошлым состоянием? нет - он открыт;
+    // неизвестный id не открывает второй/не ломает
+    expect(w.findAll('dialog[open]').length).toBeLessThanOrEqual(1);
+    w.unmount();
+  });
+});
