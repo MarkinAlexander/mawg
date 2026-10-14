@@ -95,6 +95,11 @@ describe('UiDialog', () => {
   })
 
   it('закрытие иными путями подчищает историю (history.back)', async () => {
+    // новая логика: back() только если запись диалога верхняя - имитируем
+    // реальный pushState (стаб выше его не ставит)
+    vi.mocked(window.history.pushState).mockImplementation((data: unknown) => {
+      Object.defineProperty(window.history, 'state', { value: data, configurable: true })
+    })
     const w = mount(UiDialog, { props: { open: false, title: 'x' } })
     await w.setProps({ open: true })
     await nextTick()
@@ -103,6 +108,7 @@ describe('UiDialog', () => {
     await w.setProps({ open: false })
     await nextTick()
     expect(back).toHaveBeenCalled()
+    delete (window.history as { state?: unknown }).state // мусорный state не утекает
   })
 
   it('стек: назад закрывает диалоги по одному, сверху вниз', async () => {

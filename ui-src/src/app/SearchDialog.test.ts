@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createRouter, createWebHashHistory } from 'vue-router'
-import { nextTick } from 'vue'
+import { defineComponent, h, nextTick, ref } from 'vue'
 import SearchDialog from './SearchDialog.vue'
+import { dialogBackReset } from '../components/ui/dialogBack'
 import { TABS } from './tabs'
 import { SEARCH_PLACES } from './search'
 
@@ -10,6 +11,11 @@ import { SEARCH_PLACES } from './search'
 const scrollMock = vi.fn()
 
 beforeEach(() => {
+  // история стабится целиком: реальный back() в jsdom асинхронный и
+  // гоняет waitFor'ы; state без тегов - dialogBackWaitClean мгновенный
+  vi.spyOn(window.history, 'pushState').mockImplementation(() => {})
+  vi.spyOn(window.history, 'back').mockImplementation(() => {})
+  dialogBackReset()
   Element.prototype.scrollIntoView = scrollMock
   scrollMock.mockClear()
 })
@@ -17,6 +23,7 @@ beforeEach(() => {
 afterEach(() => {
   delete (Element.prototype as unknown as Record<string, unknown>).scrollIntoView
   document.body.innerHTML = '' // подложенные якоря и attachTo-обёртки
+  dialogBackReset()
 })
 
 function makeRouter() {
@@ -33,7 +40,18 @@ function makeRouter() {
 
 async function makeDlg(open = true) {
   const router = await makeRouter()
-  const w = mount(SearchDialog, { props: { open }, global: { plugins: [router] } })
+  // обёртка со связкой v-model: обновление пропа запускает путь закрытия
+  // UiDialog (closeNative + dialogBackClose с реальным back() в jsdom)
+  const Host = defineComponent({
+    setup() {
+      const isOpen = ref(open)
+      return () => [h(SearchDialog, {
+        open: isOpen.value,
+        'onUpdate:open': (v: boolean) => { isOpen.value = v },
+      })]
+    },
+  })
+  const w = mount(Host, { global: { plugins: [router] } })
   return { w, router }
 }
 
@@ -102,8 +120,8 @@ describe('SearchDialog', () => {
     expect(w.findAll('.srow')).toHaveLength(1)
     w.find('input').trigger('keydown', { key: 'Enter' })
     await macrotask()
-    expect(w.emitted('update:open')).toEqual([[false]])
-    expect(router.currentRoute.value.path).toBe('/next/interfaces')
+    expect(w.findComponent(SearchDialog).emitted('update:open')).toEqual([[false]])
+    await vi.waitFor(() => expect(router.currentRoute.value.path).toBe('/next/interfaces'))
     expect(scrollMock).toHaveBeenCalledWith({ behavior: 'auto', block: 'start' })
     w.unmount()
   })
@@ -120,8 +138,7 @@ describe('SearchDialog', () => {
     w.find('input').setValue('wan')
     await nextTick()
     w.find('input').trigger('keydown', { key: 'Enter' })
-    await macrotask()
-    expect(router.currentRoute.value.path).toBe('/next/interfaces')
+    await vi.waitFor(() => expect(router.currentRoute.value.path).toBe('/next/interfaces'))
     expect(scrollMock).not.toHaveBeenCalled()
     await new Promise((resolve) => setTimeout(resolve, 400))
     expect(scrollMock).toHaveBeenCalledWith({ behavior: 'auto', block: 'start' })
@@ -136,8 +153,7 @@ describe('SearchDialog', () => {
     w.find('input').setValue('rci')
     await nextTick()
     await w.findAll('.srow')[0].trigger('click')
-    await macrotask()
-    expect(router.currentRoute.value.path).toBe('/next/settings')
+    await vi.waitFor(() => expect(router.currentRoute.value.path).toBe('/next/settings'))
     expect(scrollMock).toHaveBeenCalledTimes(1) // только якорь card-settings
     w.unmount()
   })
@@ -165,7 +181,7 @@ describe('SearchDialog', () => {
     const { w } = await makeDlg()
     w.find('dialog').trigger('close')
     await nextTick()
-    expect(w.emitted('update:open')).toEqual([[false]])
+    expect(w.findComponent(SearchDialog).emitted('update:open')).toEqual([[false]])
     w.unmount()
   })
 })
