@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { UiBadge, UiCard, UiHint } from '../../components/ui'
 
-// Ф5 §6 (44-дока): вкладка DNS - новый раздел, легаси-аналога не было.
+// Ф5 §6 (44-дока): вкладка DNS - новый раздел.
 // Задано на будущее: статус ремапа DNS роутера (MT_DNSOR), сторонние
 // upstream'ы (DoH/DoT, multi-upstream с фолбэком - спека форка 43-док §5),
 // DoH-гайд. Пока - только бейдж «в разработке» (слово владельца).
@@ -19,7 +19,7 @@ import { UiBadge, UiCard, UiHint } from '../../components/ui'
       />
     </template>
     <p class="dnslead">
-      Раздел в разработке - легаси-аналога у него не было. Планируется:
+      Раздел в разработке. Планируется:
     </p>
     <ul class="dnslist">
       <li>статус ремапа DNS роутера (MT_DNSOR);</li>
