@@ -1,6 +1,8 @@
 package platform
 
 import (
+	"time"
+
 	"mawg/internal/store"
 	"mawg/internal/wgconf"
 )
@@ -50,4 +52,11 @@ type Backend interface {
 // хотя Кинетик отдаёт их в RCI/ndmc).
 type Endpointer interface {
 	IfaceEndpoints(device string) ([]string, error)
+}
+
+// ShellRunner - опциональная возможность платформы: ограниченный шелл.
+// Нужен DNS-менеджеру: состояние dnsmasq/remap53 и uci-мутации
+// (46-док §3, срез OpenWrt 64-док).
+type ShellRunner interface {
+	RunShell(script string, timeout time.Duration) (string, error)
 }

@@ -259,6 +259,22 @@ export interface DnsProbeRow {
   detail?: string
 }
 
+// GET /dns/state: состояние DNS-стека роутера (46-док §3, срез OpenWrt 64-док)
+export interface DnsState {
+  dnsmasq: {
+    servers: string[]
+    inMT: boolean
+    noresolv: boolean
+    cacheSize?: number
+    strict: boolean
+  }
+  mt: {
+    upstream: string
+    upstreams?: string[]
+    remap53: boolean
+  }
+}
+
 // --- интерфейсы/слоты/wan-probe ---
 
 // проба здоровья (store.ProbeConfig): цель - публичный IPv4 или http(s) URL;

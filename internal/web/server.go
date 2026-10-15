@@ -24,6 +24,7 @@ import (
 	"mawg/internal/platform"
 	"mawg/internal/platform/keenetic"
 	"mawg/internal/platform/openwrt"
+	"mawg/internal/dnsmgr"
 	"mawg/internal/provision"
 	"mawg/internal/rotator"
 	"mawg/internal/selfupdate"
@@ -75,6 +76,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/v1/ifaces/{device}/probe", s.setIfaceProbe)
 	mux.HandleFunc("GET /api/v1/wanprobe", s.getWANProbe)
 	mux.HandleFunc("GET /api/v1/dns/probe", s.dnsProbe)
+	mux.HandleFunc("GET /api/v1/dns/state", s.dnsState)
+	mux.HandleFunc("POST /api/v1/dns/dnsmasq", s.dnsDnsmasq)
 	mux.HandleFunc("PUT /api/v1/wanprobe", s.putWANProbe)
 	mux.HandleFunc("GET /api/v1/rcitoken", s.getRCIToken)
 	mux.HandleFunc("PUT /api/v1/rcitoken", s.putRCIToken)
@@ -879,6 +882,63 @@ func (s *Server) dnsProbe(w http.ResponseWriter, r *http.Request) {
 		levels = []dnsprobe.Level{{Level: server, Kind: kind, Server: server, SNI: r.URL.Query().Get("sni")}}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"results": dnsprobe.Run(levels, 3*time.Second)})
+}
+
+// dnsRunner - ShellRunner платформы для DNS-менеджера (openwrt).
+func (s *Server) dnsRunner() (dnsmgr.Runner, bool) {
+	if sr, ok := s.backend.(platform.ShellRunner); ok {
+		return sr.RunShell, true
+	}
+	return nil, false
+}
+
+// dnsState - состояние DNS-стека роутера (46-док §3, срез OpenWrt):
+// куда форвардит dnsmasq, живучесть профиля, remap53, апстримы MT
+// (из дискового config.yaml, включая список rev6).
+func (s *Server) dnsState(w http.ResponseWriter, r *http.Request) {
+	run, ok := s.dnsRunner()
+	if !ok {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "платформа пока без DNS-менеджера (срез OpenWrt)"})
+		return
+	}
+	st, err := dnsmgr.Collect(run, s.backend.MTConfigPath())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, st)
+}
+
+// dnsDnsmasq - переключение dnsmasq: {"mode":"mt"} - в MT:3553 («живучий»
+// профиль, 63-док: noresolv/cachesize/resolvfile не трогаются, прядевой
+// список прячется в uci), {"mode":"direct"} - рестор обратно.
+func (s *Server) dnsDnsmasq(w http.ResponseWriter, r *http.Request) {
+	run, ok := s.dnsRunner()
+	if !ok {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "платформа пока без DNS-менеджера (срез OpenWrt)"})
+		return
+	}
+	var req struct {
+		Mode string `json:"mode"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
+		writeErr(w, fmt.Errorf("кривой запрос"))
+		return
+	}
+	if req.Mode != "mt" && req.Mode != "direct" {
+		writeErr(w, fmt.Errorf("mode: mt|direct"))
+		return
+	}
+	if err := dnsmgr.SetDnsmasqTarget(run, req.Mode); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	st, err := dnsmgr.Collect(run, s.backend.MTConfigPath())
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "state": st})
 }
 
 func (s *Server) renamePool(w http.ResponseWriter, r *http.Request) {
