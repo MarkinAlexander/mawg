@@ -204,6 +204,31 @@ func cmdSettings(dir string) int {
 	return 0
 }
 
+// portTaken - занят ли addr:port прямо сейчас (пробное прослушивание):
+// самый частый ответ на «после смены порта панель не открывается».
+func portTaken(addr string, port int) bool {
+	if addr == "" || addr == "[::]" {
+		addr = ""
+	}
+	ln, err := net.Listen("tcp", net.JoinHostPort(addr, strconv.Itoa(port)))
+	if err != nil {
+		return true
+	}
+	_ = ln.Close()
+	return false
+}
+
+// confirmYN - да/нет со stdin; при EOF (неинтерактивный запуск, скрипт)
+// ответ «нет» - чтобы автоматика не согласилась на заведомо мёртвый порт.
+func confirmYN() bool {
+	var s string
+	if _, err := fmt.Scanln(&s); err != nil {
+		return false
+	}
+	s = strings.ToLower(strings.TrimSpace(s))
+	return s == "y" || s == "yes" || s == "д" || s == "да"
+}
+
 func cmdSetPort(dir, arg string) int {
 	n, err := strconv.Atoi(strings.TrimSpace(arg))
 	if err != nil || n < 1 || n > 65535 {
@@ -216,6 +241,14 @@ func cmdSetPort(dir, arg string) int {
 		return 1
 	}
 	addr, _, allowed, authOff := st.ServerSettings()
+	if portTaken(addr, n) {
+		fmt.Printf("порт %d на %s уже занят прямо сейчас - после рестарта панель не поднимется.\n", n, addr)
+		fmt.Print("Всё равно назначить? (y/N) ")
+		if !confirmYN() {
+			fmt.Println("отменено; освободите порт или выберите другой (слушатели: netstat -tlnp)")
+			return 3
+		}
+	}
 	if err := st.SetServerSettings(addr, n, allowed, authOff); err != nil {
 		fmt.Println(err)
 		return 1
