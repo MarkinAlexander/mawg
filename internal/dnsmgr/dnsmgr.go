@@ -120,28 +120,28 @@ func ParseMTUpstreams(data string) (legacy string, list []string) {
 		switch {
 		case indent == 2 && body == "dnsProxy:":
 			inProxy = true
+		// элементы списка yaml.v2 висят на отступе ключа (`upstreams:\n
+		//    - address: ...`), рукописный стиль - глубже; покрываем оба
+		case inProxy && sub == "upstreams" && strings.HasPrefix(body, "- "):
+			if h, ok := cutKey(strings.TrimPrefix(body, "- "), "address:"); ok {
+				list = append(list, h)
+			}
+		case inProxy && sub == "upstreams" && indent > 4:
+			if p, ok := cutKey(body, "port:"); ok && len(list) > 0 {
+				list[len(list)-1] += ":" + p
+			}
 		case inProxy && indent == 4 && body == "upstream:":
 			sub, cur = "upstream", ""
 		case inProxy && indent == 4 && body == "upstreams:":
-			sub, cur = "upstreams", ""
+			sub = "upstreams"
 		case inProxy && indent == 4 && sub != "":
 			sub = "" // другой ключ dnsProxy
-		case inProxy && sub == "upstream" && indent >= 6:
+		case inProxy && sub == "upstream" && indent > 4:
 			if h, ok := cutKey(body, "address:"); ok {
 				cur = h
 			}
 			if p, ok := cutKey(body, "port:"); ok && cur != "" {
 				legacy = cur + ":" + p
-			}
-		case inProxy && sub == "upstreams" && indent >= 6:
-			if strings.HasPrefix(body, "- ") {
-				if h, ok := cutKey(strings.TrimPrefix(body, "- "), "address:"); ok {
-					cur = h
-					list = append(list, h)
-				}
-			} else if p, ok := cutKey(body, "port:"); ok && len(list) > 0 {
-				list[len(list)-1] = list[len(list)-1] + ":" + p
-				_ = p
 			}
 		}
 	}
