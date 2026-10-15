@@ -63,6 +63,9 @@ async function makeView(dups: Rec = {}) {
       data.groups.push({ id: 'g9', name: 'Telegram', interface: body.interface, enable: true, rules: [] });
       return ok({ ok: true, groupId: 'g9', rules: 5 });
     }
+    if (u.includes('/cascades/iface-endpoints')) {
+      return ok({ hosts: ['194.76.147.234', '8.39.125.1'] });
+    }
     if (u.endsWith('/cascades') && m === 'POST') {
       data.groups.push({
         id: 'g7', name: 'Служебная: ' + body.source + ' через ' + body.via, interface: body.via.replace(/^\w+:/, ''), enable: true,
@@ -448,6 +451,11 @@ describe('GroupsView - пресеты и каскады (Ф3.7б)', () => {
     await dlg.findAll('.psel-item').filter((o) => o.text() === 'интерфейс nwg7')[0].trigger('click');
     await nextTick();
     expect(dlg.find('textarea').exists()).toBe(true);
+    // автоподстановка адресов из RCI (Ф5-полировка: GET /cascades/iface-endpoints)
+    await vi.waitFor(() =>
+      expect((dlg.find('textarea').element as HTMLTextAreaElement).value).toBe('194.76.147.234\n8.39.125.1'));
+    expect(dlg.text()).toContain('определены автоматически');
+    // ручная правка поверх автоподстановки
     await dlg.find('textarea').setValue('8.39.125.1\nengage.example.com');
     await btnIn(dlg, 'Создать каскад')[0].trigger('click');
     await vi.waitFor(() => {

@@ -140,6 +140,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/system/update/check", s.updateCheck)
 	mux.HandleFunc("POST /api/v1/system/update/run", s.updateRun)
 	mux.HandleFunc("POST /api/v1/system/restart", s.postSystemRestart)
+	mux.HandleFunc("GET /api/v1/cascades/iface-endpoints", s.ifaceEndpointsHint)
 	mux.HandleFunc("GET /api/v1/cascades", s.cascList)
 	mux.HandleFunc("POST /api/v1/cascades", s.cascCreate)
 	mux.HandleFunc("DELETE /api/v1/cascades/{group}", s.cascDelete)
@@ -2012,6 +2013,23 @@ func (s *Server) mtDeleteGroup(w http.ResponseWriter, r *http.Request) {
 	_ = s.store.SetGroupPolicy(r.PathValue("id"), nil)
 	s.store.LogEvent("rules", "magitrickle", "удалена группа "+r.PathValue("id"))
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "deleted"})
+}
+
+// ifaceEndpointsHint - авторезолв эндпоинтов роутерного WG-интерфейса
+// для префилла диалога каскадов (баг владельца: каскад с nwg7 требовал
+// адреса от руки, хотя Кинетик их отдаёт в RCI).
+func (s *Server) ifaceEndpointsHint(w http.ResponseWriter, r *http.Request) {
+	c := s.casc()
+	if c == nil {
+		writeErr(w, fmt.Errorf("magitrickle недоступен"))
+		return
+	}
+	hosts, err := c.IfaceEndpoints(r.URL.Query().Get("source"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"hosts": hosts})
 }
 
 func (s *Server) cascList(w http.ResponseWriter, r *http.Request) {

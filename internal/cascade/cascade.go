@@ -26,9 +26,16 @@ type Manager struct {
 	// с созданием каскада 2026-10-11).
 	Retry func(key string, attempt func() error) error
 
+	// EP (опционально) - авторезолв эндпоинтов роутерных WG-интерфейсов
+	// для iface-источников (platform.Endpointer; баг владельца: каскад с
+	// nwg7 на Кинетике требовал адреса от руки).
+	EP interface {
+		IfaceEndpoints(device string) ([]string, error)
+	}
+
 	mu       sync.Mutex
-	wrapper  bool     // в mangle OUTPUT видны чужие MR_*-цепочки (обёртка юзера)
-	mutating int      // глубина окна мутации: SyncHooks в нём молчит (см. beginMutate)
+	wrapper  bool                                 // в mangle OUTPUT видны чужие MR_*-цепочки (обёртка юзера)
+	mutating int                                  // глубина окна мутации: SyncHooks в нём молчит (см. beginMutate)
 	iptRun   func(args ...string) (string, error) // подменяется в тестах
 }
 
@@ -597,6 +604,22 @@ func viaDevice(m *Manager, via string) (device string, title string, err error) 
 	return p.DeviceName(), name, nil
 }
 
+// IfaceEndpoints - адреса пиров роутерного WG-интерфейса для префилла
+// диалога каскадов; source = "iface:<device>".
+func (m *Manager) IfaceEndpoints(source string) ([]string, error) {
+	kind, name, err := parseSource(source)
+	if err != nil {
+		return nil, err
+	}
+	if kind != "iface" {
+		return nil, fmt.Errorf("автоподстановка - только для интерфейса-источника")
+	}
+	if m.EP == nil {
+		return nil, fmt.Errorf("платформа не умеет определять эндпоинты интерфейсов - перечислите вручную")
+	}
+	return m.EP.IfaceEndpoints(name)
+}
+
 func (m *Manager) Create(ctx context.Context, source, via string, hosts []string) (magitrickle.Group, error) {
 	srcKind, srcName, err := parseSource(source)
 	if err != nil {
@@ -631,7 +654,20 @@ func (m *Manager) Create(ctx context.Context, source, via string, hosts []string
 		domains = poolDomains
 		ruleHosts = append(ruleHosts, poolDomains...)
 	case "iface":
-		if len(hosts) == 0 {
+		// ruleHosts уже скопирован из hosts - дополняем его же
+		if len(ruleHosts) == 0 && m.EP != nil {
+			// авторезолв эндпоинтов роутерного WG-интерфейса (Кинетик RCI/
+			// ndmc отдаёт remote-endpoint-address пиров)
+			if resolved, epErr := m.EP.IfaceEndpoints(srcName); epErr == nil && len(resolved) > 0 {
+				ruleHosts = resolved
+			}
+		}
+		if len(ruleHosts) == 0 {
+			if m.EP != nil {
+				if _, epErr := m.EP.IfaceEndpoints(srcName); epErr != nil {
+					return magitrickle.Group{}, fmt.Errorf("не удалось определить эндпоинты интерфейса %q (%v) - перечислите адреса вручную", srcName, epErr)
+				}
+			}
 			return magitrickle.Group{}, fmt.Errorf("для интерфейса-источника перечислите адреса или домены его эндпоинтов")
 		}
 		srcTitle = srcName
@@ -818,13 +854,22 @@ func (m *Manager) toggle(ctx context.Context, groupID string, enable bool) error
 
 func (m *Manager) cascadeHosts(ctx context.Context, entry store.CascadeEntry) []string {
 	var hosts []string
-	if kind, name, err := parseSource(entry.Source); err == nil && kind == "pool" {
+	kind, name, err := parseSource(entry.Source)
+	if err == nil && kind == "pool" {
 		if p, ok := m.Store.Pool(name); ok {
 			h, d := m.poolEndpoints(p)
 			hosts = append(hosts, h...)
 			for _, dom := range d {
 				hosts = append(hosts, m.resolve(ctx, dom)...)
 			}
+		}
+	}
+	// iface-источник: эндпоинты роутерного WG-интерфейса перечитываем так
+	// же, как у пулов - «адреса добавляются сами» работает и тут (админ
+	// роутера сменил endpoint пира - каскад догоняет)
+	if err == nil && kind == "iface" && m.EP != nil {
+		if resolved, epErr := m.EP.IfaceEndpoints(name); epErr == nil {
+			hosts = append(hosts, resolved...)
 		}
 	}
 	hosts = append(hosts, entry.Domains...)
@@ -837,15 +882,23 @@ func (m *Manager) SyncSourceEndpoints(ctx context.Context, source string) {
 			continue
 		}
 		kind, name, err := parseSource(source)
-		if err != nil || kind != "pool" {
+		if err != nil {
 			continue
 		}
-		p, ok := m.Store.Pool(name)
-		if !ok {
+		if kind == "pool" {
+			p, ok := m.Store.Pool(name)
+			if !ok {
+				continue
+			}
+			poolHosts, poolDomains := m.poolEndpoints(p)
+			m.syncRules(ctx, entry, poolHosts, poolDomains)
 			continue
 		}
-		poolHosts, poolDomains := m.poolEndpoints(p)
-		m.syncRules(ctx, entry, poolHosts, poolDomains)
+		if kind == "iface" && m.EP != nil {
+			if resolved, epErr := m.EP.IfaceEndpoints(name); epErr == nil && len(resolved) > 0 {
+				m.syncRules(ctx, entry, resolved, nil)
+			}
+		}
 	}
 }
 

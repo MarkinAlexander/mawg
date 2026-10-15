@@ -112,6 +112,10 @@ func New(st *store.Store, b platform.Backend, mt *magitrickle.Client) *Engine {
 	if mt != nil {
 		e.casc = cascade.New(st, mt)
 		e.casc.Retry = e.RetryMTWrite
+		// iface-источники каскадов: авторезолв эндпоинтов роутерных WG
+		if ep, ok := b.(platform.Endpointer); ok {
+			e.casc.EP = ep
+		}
 	}
 	return e
 }

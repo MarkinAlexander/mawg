@@ -3,9 +3,11 @@ package cascade
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 
 	"mawg/internal/magitrickle"
@@ -156,5 +158,92 @@ func TestCreateRejectsDuplicateCascade(t *testing.T) {
 	st.SetCascades(nil)
 	if _, err := m.Create(context.Background(), "pool:awgfree", "pool:warp", nil); err == nil {
 		t.Fatal("создание прошло при живой группе с тем же именем")
+	}
+}
+
+// фейковый авторезолв: nwg7 -> два адреса, прочие интерфейсы - ошибка
+type fakeEP struct{}
+
+func (fakeEP) IfaceEndpoints(device string) ([]string, error) {
+	if device == "nwg7" {
+		return []string{"194.76.147.234", "8.39.125.1"}, nil
+	}
+	return nil, fmt.Errorf("не знаю интерфейс %s", device)
+}
+
+func TestCreateIfaceAutoResolve(t *testing.T) {
+	magitrickle.SetShadowStorage(nil, nil)
+	var state []magitrickle.Group
+	mt := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/groups":
+			json.NewEncoder(w).Encode(map[string]any{"groups": state})
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/groups":
+			var req struct {
+				Groups []magitrickle.Group `json:"groups"`
+			}
+			json.NewDecoder(r.Body).Decode(&req)
+			for i := range req.Groups {
+				if req.Groups[i].ID == "" {
+					req.Groups[i].ID = "mock" + strconv.Itoa(i)
+				}
+			}
+			state = req.Groups
+			w.WriteHeader(200)
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	t.Cleanup(mt.Close)
+
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreatePool("warp", store.PoolSettings{}); err != nil {
+		t.Fatal(err)
+	}
+	m := New(st, magitrickle.New(mt.URL))
+	m.EP = fakeEP{}
+
+	// iface-источник БЕЗ ручных адресов: эндпоинты берутся из EP
+	g, err := m.Create(context.Background(), "iface:nwg7", "pool:warp", nil)
+	if err != nil {
+		t.Fatalf("каскад с авторезолвом не создался: %v", err)
+	}
+	found := 0
+	for _, r := range g.Rules {
+		// BuildRules: IP -> subnet-правило с /32
+		if r.Rule == "194.76.147.234/32" || r.Rule == "8.39.125.1/32" {
+			found++
+		}
+	}
+	if found != 2 {
+		t.Fatalf("правил по эндпоинтам EP: %d (rules %+v), хотим 2", found, g.Rules)
+	}
+
+	// дубль по имени службы
+	if _, err := m.Create(context.Background(), "iface:nwg7", "pool:warp", nil); err == nil {
+		t.Fatal("дубль каскада не отклонён")
+	}
+
+	// EP не знает интерфейс - внятная ошибка с подсказкой
+	if _, err := m.Create(context.Background(), "iface:nwg9", "pool:warp", nil); err == nil || !strings.Contains(err.Error(), "перечислите адреса вручную") {
+		t.Fatalf("ожидали подсказку про ручной ввод, got: %v", err)
+	}
+
+	// каскадHosts для iface-источника перечитывает EP (обновление endpoint'а)
+	hosts := m.cascadeHosts(context.Background(), store.CascadeEntry{Group: g.ID, Source: "iface:nwg7", Via: "pool:warp"})
+	if len(hosts) != 2 {
+		t.Fatalf("cascadeHosts = %v", hosts)
+	}
+
+	// IfaceEndpoints - префилл диалога
+	eps, err := m.IfaceEndpoints("iface:nwg7")
+	if err != nil || len(eps) != 2 {
+		t.Fatalf("IfaceEndpoints prefill = %v, %v", eps, err)
+	}
+	if _, err := m.IfaceEndpoints("pool:warp"); err == nil {
+		t.Fatal("prefill для пула должен отклоняться")
 	}
 }
