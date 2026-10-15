@@ -289,6 +289,9 @@ func main() {
 		cfgPort = *port
 	}
 	authenticator.SetEnabled(!authDisabled && !*noAuth)
+	if reason := reservedPortReason(cfgPort); reason != "" {
+		log.Fatalf("порт %d занять нельзя: %s", cfgPort, reason)
+	}
 
 	srv := web.New(st, engine, backend, mt, version, authenticator)
 	srv.IPGate = auth.NewIPGate(st.AllowedIPList())
