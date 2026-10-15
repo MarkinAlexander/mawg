@@ -132,6 +132,8 @@ const tiles = computed(() => {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 10px;
+  /* слово владельца: отступ от строки статуса над плитками */
+  margin-top: 10px;
 }
 .tile {
   display: flex;
