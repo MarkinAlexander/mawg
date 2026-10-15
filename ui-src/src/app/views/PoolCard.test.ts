@@ -331,3 +331,36 @@ describe('PoolCard - premium', () => {
     w.unmount();
   });
 });
+
+describe('PoolCard - приватный режим по адресам конфигов (62-док + слово владельца)', () => {
+  it('пул есть в /status: активный эндпоинт и cfgend получают .secret, «проверка» и счётчик - нет', () => {
+    const w = makeCard(nativePool, { pools: [nativePool] });
+    const kvSpans = w.findAll('.kv span');
+    const cfgSpan = kvSpans.find((s) => s.text() === '1.2.3.4:51820')!;
+    expect(cfgSpan.classes()).toContain('secret');
+    const probe = kvSpans.find((s) => s.text().includes('проба: ok'))!;
+    expect(probe.classes()).not.toContain('secret');
+    const rot = kvSpans.find((s) => s.text() === '7')!;
+    expect(rot.classes()).not.toContain('secret');
+    const ends = w.findAll('.cfgend');
+    expect(ends.map((e) => e.classes().includes('secret'))).toEqual([true, true, false]);
+    w.unmount();
+  });
+
+  it('статус-стор пуст (пулов в /status нет): разметка без .secret - скрывать нечего', () => {
+    const w = makeCard(nativePool);
+    expect(w.findAll('.kv .secret').length).toBe(0);
+    expect(w.findAll('.cfgend.secret').length).toBe(0);
+    w.unmount();
+  });
+
+  it('lastError с адресом из конфигов скрывается, прочий текст - виден', () => {
+    const errPool = { ...nativePool, lastError: 'dial tcp 1.2.3.4:51820: timeout' };
+    const w = makeCard(errPool, { pools: [errPool] });
+    expect(w.find('.kv .err.secret').exists()).toBe(true);
+    const w2 = makeCard({ ...nativePool, lastError: 'handshake не прошёл' }, { pools: [nativePool] });
+    expect(w2.find('.kv .err.secret').exists()).toBe(false);
+    w.unmount();
+    w2.unmount();
+  });
+});

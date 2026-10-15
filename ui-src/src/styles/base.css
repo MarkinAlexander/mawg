@@ -99,3 +99,10 @@ dialog.busy > form { opacity: .55; pointer-events: none; transition: opacity .2s
 
 /* подсветка найденного в поиске по правилам */
 mark { background: rgba(217, 160, 50, .35); color: inherit; padding: 0 2px; border-radius: 3px; }
+
+/* приватный режим (62-док): чувствительные узлы помечены классом .secret;
+   privacy-on на body ставит NextLayout (стор stores/privacy.ts), клик по
+   полю проявляет его (secret-open ставит делегат NextLayout). Скрытие
+   визуальное - данные остаются в DOM (копирование/инспектор их видят) */
+.privacy-on .secret { transition: filter .15s; }
+.privacy-on .secret:not(.secret-open) { filter: blur(6px); cursor: pointer; user-select: none; }

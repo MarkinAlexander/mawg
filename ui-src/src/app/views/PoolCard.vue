@@ -5,6 +5,7 @@ import { useConfirm } from '../../stores/confirm'
 import { useStatus } from '../../stores/status'
 import { usePoolActions, type PoolAct } from '../../stores/pools'
 import { useToast } from '../../stores/toast'
+import { useSecrets } from '../secrets'
 import { probeHuman } from './groupsLogic'
 import type { ConfigView, PoolView } from '../../api/types'
 
@@ -21,6 +22,8 @@ const { state: status, refresh: refreshStatus } = useStatus();
 const { confirm } = useConfirm();
 const { push } = useToast();
 const a = usePoolActions();
+// приватный режим: скрываем адреса из конфигов, а не все места подряд
+const secrets = useSecrets();
 
 const busy = ref(''); // «name:act» - одна busy-кнопка за раз (легаси withBusy)
 const premiumBusy = ref(false);
@@ -238,13 +241,18 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
     </template>
 
     <div class="kv">
-      <b>конфиг</b><span>{{ pool.activeEndpoint || '-' }}</span>
+      <!-- secret динамически: только адрес из конфигов; «проверка» и
+           счётчики видны всегда (слово владельца 2026-10-15) -->
+      <b>конфиг</b><span :class="{ secret: secrets.endpoint(pool.activeEndpoint) }">{{ pool.activeEndpoint || '-' }}</span>
       <b>проверка</b><span
         :title="probeHelp"
         style="cursor: help"
       >{{ result }}</span>
       <template v-if="pool.lastError">
-        <b class="err">ошибка</b><span class="err">{{ pool.lastError }}</span>
+        <b class="err">ошибка</b><span
+          class="err"
+          :class="{ secret: secrets.line(pool.lastError) }"
+        >{{ pool.lastError }}</span>
       </template>
       <b>ротаций</b><span>{{ pool.rotations }}</span>
     </div>
@@ -370,7 +378,10 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
               variant="warn"
               :tooltip="`${c.conflict}: исключен из ротации, тумблер не включит`"
             />
-            <span class="cfgend">{{ c.endpoint }}</span>
+            <span
+              class="cfgend"
+              :class="{ secret: secrets.endpoint(c.endpoint) }"
+            >{{ c.endpoint }}</span>
           </span>
           <span class="cfgctl">
             <!-- явный выбор активного конфига (слово владельца): бэкенд-эндпоинт

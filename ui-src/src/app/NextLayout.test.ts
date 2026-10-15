@@ -10,6 +10,7 @@ import { dialogBackReset } from '../components/ui/dialogBack'
 import { UNAUTHORIZED_EVENT, inflight } from '../api/client'
 import { useStatus } from '../stores/status'
 import { useSystem } from '../stores/system'
+import { PRIVACY_LS_KEY, usePrivacy } from '../stores/privacy'
 
 // лейаут на mount стартует опросы статуса (5с/30с) и проверку обновления -
 // fetch стабим по пути; немедленные ответы по умолчанию
@@ -32,6 +33,10 @@ beforeEach(() => {
   s.data = null;
   useSystem().upd.info = null;
   inflight.n = 0;
+  // приватный режим: стор глобальный - сбрасываем и мусор за собой
+  usePrivacy().set(false);
+  localStorage.removeItem(PRIVACY_LS_KEY);
+  document.body.classList.remove('privacy-on');
 });
 
 function makeRouter() {
@@ -292,6 +297,102 @@ describe('NextLayout', () => {
     expect(w.find('.sheet').exists()).toBe(false)
     document.dispatchEvent(pe('pointerup', 120, 300))
     setW(innerWidth)
+    w.unmount()
+  })
+
+  it('кнопка приватного режима: тумблит стор+localStorage+класс body, tooltip/иконка по состоянию', async () => {
+    const router = await makeRouter()
+    const w = mount(NextLayout, { global: { plugins: [router] } })
+    const btn = w.find('header .privacybtn')
+    expect(btn.exists()).toBe(true)
+    const p = usePrivacy()
+    expect(p.state.on).toBe(false)
+    expect(document.body.classList.contains('privacy-on')).toBe(false)
+    expect(btn.attributes('title')).toContain('скрыть адреса туннелей')
+    // eye-off (перечёркнутый) - только во включённом состоянии
+    expect(btn.html()).not.toContain('x2="23"')
+
+    await btn.trigger('click')
+    await nextTick()
+    expect(p.state.on).toBe(true)
+    expect(localStorage.getItem(PRIVACY_LS_KEY)).toBe('1')
+    expect(document.body.classList.contains('privacy-on')).toBe(true)
+    expect(btn.classes()).toContain('on')
+    expect(btn.attributes('title')).toContain('показать (данные размыты)')
+    expect(btn.html()).toContain('x2="23"')
+
+    await btn.trigger('click')
+    await nextTick()
+    expect(p.state.on).toBe(false)
+    expect(localStorage.getItem(PRIVACY_LS_KEY)).toBe('0')
+    expect(document.body.classList.contains('privacy-on')).toBe(false)
+    expect(btn.classes()).not.toContain('on')
+    w.unmount()
+  })
+
+  it('монтирование выставляет класс body по текущему стору (watch immediate)', async () => {
+    usePrivacy().set(true)
+    const router = await makeRouter()
+    const w = mount(NextLayout, { global: { plugins: [router] } })
+    expect(document.body.classList.contains('privacy-on')).toBe(true)
+    w.unmount()
+    // глобальное состояние сессии: класс на body не снимается unmount'ом
+    expect(document.body.classList.contains('privacy-on')).toBe(true)
+  })
+
+  it('клик по .secret проявляет поле, клик мимо/повторный/Escape - размывают', async () => {
+    const router = await makeRouter()
+    const w = mount(NextLayout, { global: { plugins: [router] } })
+    usePrivacy().set(true)
+    await nextTick()
+    // .secret живут во вьюхах - для делегата достаточно узлов в body
+    const s1 = document.createElement('span')
+    s1.className = 'secret'
+    const s2 = document.createElement('span')
+    s2.className = 'secret'
+    document.body.append(s1, s2)
+
+    s1.click()
+    expect(s1.classList.contains('secret-open')).toBe(true)
+    expect(s2.classList.contains('secret-open')).toBe(false)
+
+    s2.click()
+    expect(s1.classList.contains('secret-open')).toBe(false)
+    expect(s2.classList.contains('secret-open')).toBe(true)
+
+    s2.click()
+    expect(s2.classList.contains('secret-open')).toBe(false)
+
+    s1.click()
+    expect(s1.classList.contains('secret-open')).toBe(true)
+    document.body.click()
+    expect(s1.classList.contains('secret-open')).toBe(false)
+
+    s1.click()
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    expect(s1.classList.contains('secret-open')).toBe(false)
+
+    s1.remove()
+    s2.remove()
+    w.unmount()
+  })
+
+  it('выключение приватного режима снимает все проявления', async () => {
+    const router = await makeRouter()
+    const w = mount(NextLayout, { global: { plugins: [router] } })
+    usePrivacy().set(true)
+    await nextTick()
+    const s1 = document.createElement('span')
+    s1.className = 'secret'
+    document.body.appendChild(s1)
+    s1.click()
+    expect(s1.classList.contains('secret-open')).toBe(true)
+
+    usePrivacy().set(false)
+    await nextTick()
+    expect(s1.classList.contains('secret-open')).toBe(false)
+    expect(document.body.classList.contains('privacy-on')).toBe(false)
+    s1.remove()
     w.unmount()
   })
 })

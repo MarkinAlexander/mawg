@@ -149,6 +149,7 @@ async function save(): Promise<void> {
           label="IP или CIDR, через запятую"
           placeholder="192.168.1.50, 192.168.2.0/24"
           mono
+          class="secret"
         />
         <UiSwitch
           v-model="srcRouter"

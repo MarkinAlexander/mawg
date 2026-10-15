@@ -125,6 +125,7 @@ async function save(): Promise<void> {
       label="Адреса или домены его эндпоинтов (по одному в строке)"
       :rows="3"
       placeholder="8.39.125.1"
+      class="secret"
     />
     <UiSelect
       :model-value="via"

@@ -18,6 +18,7 @@ import {
 } from './groupsLogic'
 import CascadeDialog from './CascadeDialog.vue'
 import GroupDialog from './GroupDialog.vue'
+import { useSecrets } from '../secrets'
 
 // Фаза 3.7 «Группы правил» (легаси #rulescard, renderRules 1591).
 // 3.7а: список+поиск+правила+редактор базы; DnD групп и правил - порт
@@ -32,6 +33,9 @@ const { state } = groups;
 const { push } = useToast();
 const { confirm } = useConfirm();
 const route = useRoute();
+// приватный режим: в правилах скрываются только адреса из конфигов
+// (hosts каскадов), домены и чужие подсети видны (слово владельца)
+const secrets = useSecrets();
 
 onMounted(() => {
   groups.start(30000); // легаси: setInterval(refreshRules, 30000)
@@ -917,7 +921,12 @@ onMounted(openFromLink);
                       variant="muted"
                     />
                   </td>
-                  <td class="rval">
+                  <!-- secret по значению: адрес/подсеть из конфигов (hosts
+                       каскадов); домены и 1.1.1.1 видны (слово владельца) -->
+                  <td
+                    class="rval"
+                    :class="{ secret: secrets.rule(rl.rule) }"
+                  >
                     <template
                       v-for="(s, i) in hlSegs(rl.rule, searchQ)"
                       :key="i"
