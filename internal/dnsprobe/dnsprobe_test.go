@@ -131,6 +131,7 @@ func TestDefaultsContainsMTAndUpstream(t *testing.T) {
 	fixed := map[string]bool{
 		"dnsmasq": true, "dns-proxy MT": true,
 		"DoH Cloudflare": true, "DoH Google": true, "DoT Google": true,
+		"интернет TCP 1.1.1.1:443": true, "интернет TCP 77.88.8.8:443": true,
 	}
 	seen := 0
 	for _, l := range levels {
@@ -145,6 +146,31 @@ func TestDefaultsContainsMTAndUpstream(t *testing.T) {
 	}
 	if seen != len(fixed) {
 		t.Fatalf("Defaults: %d из %d обязательных уровней (%+v)", seen, len(fixed), levels)
+	}
+}
+
+func TestCheckTCPAlive(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_ = c.Close()
+		}
+	}()
+	res := Check(Level{Level: "t", Kind: "tcp", Server: ln.Addr().String()}, time.Second)
+	if res.Verdict != VerdictClean {
+		t.Fatalf("tcp жив: %+v", res)
+	}
+	res = Check(Level{Level: "t", Kind: "tcp", Server: "127.0.0.1:1"}, 300*time.Millisecond)
+	if res.Verdict != VerdictError || res.Detail == "" {
+		t.Fatalf("tcp мёртв: %+v", res)
 	}
 }
 

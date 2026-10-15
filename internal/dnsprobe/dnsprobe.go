@@ -80,6 +80,11 @@ func Defaults() []Level {
 		Level{Level: "DoH Cloudflare", Kind: "doh", Server: "https://1.1.1.1/dns-query"},
 		Level{Level: "DoH Google", Kind: "doh", Server: "https://dns.google/dns-query"},
 		Level{Level: "DoT Google", Kind: "dot", Server: "8.8.8.8:853", SNI: "dns.google"},
+		// «интернет жив?» (46-док §3): TCP мимо DNS на стабильные IP -
+		// один иностранный, один внутренний; если оба мертвы - сеть вниз,
+		// эскалацию DNS не трогаем
+		Level{Level: "интернет TCP 1.1.1.1:443", Kind: "tcp", Server: "1.1.1.1:443"},
+		Level{Level: "интернет TCP 77.88.8.8:443", Kind: "tcp", Server: "77.88.8.8:443"},
 	)
 }
 
@@ -130,12 +135,29 @@ func Run(levels []Level, timeout time.Duration) []Result {
 }
 
 // Check - проба одного уровня: запрос канарейки, вердикт по канонике.
+// Kind "tcp" - особый: не DNS, а «интернет жив?» (46-док §3) - чистый
+// TCP-connect на стабильный IP:port мимо DNS; clean = соединение прошло.
 func Check(l Level, timeout time.Duration) Result {
 	res := Result{Level: l.Level, Kind: l.Kind, Server: l.Server}
 	start := time.Now()
 	var ips []string
 	var err error
 	switch l.Kind {
+	case "tcp":
+		conn, derr := net.DialTimeout("tcp", l.Server, timeout)
+		if derr != nil {
+			err = fmt.Errorf("dial tcp %s: %w", l.Server, derr)
+		} else {
+			_ = conn.Close()
+		}
+		res.MS = time.Since(start).Milliseconds()
+		if err != nil {
+			res.Verdict = VerdictError
+			res.Detail = err.Error()
+			return res
+		}
+		res.Verdict = VerdictClean
+		return res
 	case "udp":
 		ips, err = exchangeUDP(l.Server, CanaryDomain, timeout)
 	case "dot":
