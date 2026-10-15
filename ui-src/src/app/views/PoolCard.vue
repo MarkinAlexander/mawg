@@ -5,15 +5,19 @@ import { useConfirm } from '../../stores/confirm'
 import { useStatus } from '../../stores/status'
 import { usePoolActions, type PoolAct } from '../../stores/pools'
 import { useToast } from '../../stores/toast'
+import { probeHuman } from './groupsLogic'
 import type { ConfigView, PoolView } from '../../api/types'
 
 // Карточка пула (легаси ensureCard/updateCard 67-265). Данные приходят из
 // /status (5с) - карточка чисто отображает + мутации. Шестерёнка настроек и
-// «+ интерфейс» - Ф3.5б (диалоги).
+// «+ интерфейс» - Ф3.5б (диалоги). Вкл/выкл - свитчем в шапке (слово
+// владельца: красная кнопка «Выключить» пугала; чекер в едином стиле рядом
+// с состоянием). «Сделать активным» конфига - POST /activate (эндпоинт
+// был в бэкенде, UI его не выставлял).
 const props = defineProps<{ pool: PoolView }>();
 defineEmits<{ settings: [] }>();
 
-const { state: status } = useStatus();
+const { state: status, refresh: refreshStatus } = useStatus();
 const { confirm } = useConfirm();
 const { push } = useToast();
 const a = usePoolActions();
@@ -35,6 +39,38 @@ async function run(key: string, fn: () => Promise<void>): Promise<void> {
 function act(kind: PoolAct): void {
   void run(`${props.pool.name}:${kind}`, () => a.act(props.pool.name, kind));
 }
+
+// вкл/выкл пула свитчем в шапке (вместо красной кнопки)
+const enabled = computed(() => !props.pool.disabled);
+function toggleEnabled(v: boolean): void {
+  void run(`${props.pool.name}:${v ? 'enable' : 'disable'}`, () => a.act(props.pool.name, v ? 'enable' : 'disable'));
+}
+
+// «Проверить» с обратной связью (слово владельца: «нажимаю и не понимаю
+// что происходит»): триггерим пробу и держим кнопку busy, пока /status не
+// принесёт новый lastResult (максимум ~15с), вердикт - тостом по-человечески
+const probeHelp = 'handshake - сколько секунд назад рукопожатие туннеля; icmp/tcp - пинг эндпоинта; lossy - пинг выше порога (канал жив, но медленный, порог - в настройках пула); «выше порога» - отказ засчитан; link down - интерфейс опущен; settling - конфиг применён, идёт стабилизация';
+async function checkNow(): Promise<void> {
+  if (probing.value || busy.value) return;
+  probing.value = true;
+  busy.value = `${props.pool.name}:check`;
+  const before = props.pool.lastResult;
+  push('Проверка запущена: рукопожатие + пинг эндпоинта…');
+  try {
+    await a.act(props.pool.name, 'check');
+    for (let i = 0; i < 10; i++) {
+      await new Promise((r) => setTimeout(r, 1500));
+      await refreshStatus();
+      if (props.pool.lastResult && props.pool.lastResult !== before) break;
+    }
+    push('Проверка: ' + probeHuman(props.pool.lastResult));
+  } catch (e) {
+    push(e instanceof Error ? e.message : String(e), true);
+  }
+  probing.value = false;
+  busy.value = '';
+}
+const probing = ref(false);
 
 async function delPool(): Promise<void> {
   const ok = await confirm({
@@ -183,6 +219,15 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
         :text="modeBadge.text"
         :variant="modeBadge.variant"
       />
+      <!-- вкл/выкл свитчем (слово владельца: единый стиль чекеров, подпись
+           состояния рядом; красная кнопка «Выключить» пугала) -->
+      <span class="enstate">{{ enabled ? 'включено' : 'отключено' }}</span>
+      <UiSwitch
+        :model-value="enabled"
+        tooltip="включить/выключить пул"
+        :disabled="!!busy"
+        @update:model-value="toggleEnabled"
+      />
       <UiButton
         variant="icon"
         tooltip="настройки пула"
@@ -194,7 +239,10 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
 
     <div class="kv">
       <b>конфиг</b><span>{{ pool.activeEndpoint || '-' }}</span>
-      <b>проверка</b><span>{{ result }}</span>
+      <b>проверка</b><span
+        :title="probeHelp"
+        style="cursor: help"
+      >{{ result }}</span>
       <template v-if="pool.lastError">
         <b class="err">ошибка</b><span class="err">{{ pool.lastError }}</span>
       </template>
@@ -214,15 +262,7 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
     </div>
 
     <div class="btnrow">
-      <UiButton
-        v-if="pool.disabled"
-        variant="primary"
-        :busy="busy === `${pool.name}:enable`"
-        @click="act('enable')"
-      >
-        Включить
-      </UiButton>
-      <template v-else>
+      <template v-if="enabled">
         <UiButton
           v-if="!isEng && !premium.imported"
           :busy="busy === `${pool.name}:rotate`"
@@ -233,16 +273,9 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
         <UiButton
           v-if="!isEng"
           :busy="busy === `${pool.name}:check`"
-          @click="act('check')"
+          @click="checkNow"
         >
           Проверить
-        </UiButton>
-        <UiButton
-          variant="danger"
-          :busy="busy === `${pool.name}:disable`"
-          @click="act('disable')"
-        >
-          Выключить
         </UiButton>
       </template>
       <UiButton
@@ -340,6 +373,20 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
             <span class="cfgend">{{ c.endpoint }}</span>
           </span>
           <span class="cfgctl">
+            <!-- явный выбор активного конфига (слово владельца): бэкенд-эндпоинт
+                 /activate был, UI не выставлял; конфликт адресов валидирует сервер -->
+            <UiButton
+              variant="icon"
+              tooltip="сделать активным: переключить интерфейс на этот конфиг"
+              :disabled="c.file === pool.activeFile"
+              :busy="busy === `${c.file}:activate`"
+              @click="cfgAct(`${c.file}:activate`, async () => {
+                await a.activateCfg(pool.name, c.file);
+                push(`Конфиг активирован: ${c.original}`);
+              })"
+            >
+              ⚡
+            </UiButton>
             <UiButton
               variant="icon"
               tooltip="выше в ротации"
@@ -399,6 +446,11 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
 </template>
 
 <style scoped>
+.actions .enstate {
+  color: var(--dim);
+  font-size: 11px;
+  user-select: none;
+}
 .kv {
   display: grid;
   grid-template-columns: auto 1fr;

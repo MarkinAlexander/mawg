@@ -78,23 +78,100 @@ describe('PoolCard - отображение', () => {
     expect(w.text()).toContain('7');
     expect(w.find('.cfg').exists()).toBe(true);
     expect(w.find('.cfg summary').text()).toContain('Конфиги (3)');
-    // включён: Включить нет, остальное есть
+    // вкл/выкл - свитчем в шапке (красной кнопки «Выключить» больше нет,
+    // слово владельца); рядом подпись состояния и бейдж «работает»
+    expect(btn(w, 'Выключить')).toHaveLength(0);
     expect(btn(w, 'Включить')).toHaveLength(0);
+    const actions = w.find('.actions');
+    expect(actions.findComponent(UiSwitch).exists()).toBe(true);
+    expect(actions.text()).toContain('включено');
     expect(btn(w, 'Сменить конфиг')).toHaveLength(1);
     expect(btn(w, 'Проверить')).toHaveLength(1);
-    expect(btn(w, 'Выключить')).toHaveLength(1);
     expect(btn(w, 'удалить пул')).toHaveLength(1);
     w.unmount();
   });
 
-  it('выключенный: «Включить» primary, ротации спрятаны, подзаголовок «ротация остановлена»', () => {
+  it('выключенный: свитч снят с подписью «отключено», ротации спрятаны, «ротация остановлена»', () => {
     const w = makeCard({ ...nativePool, disabled: true });
     expect(w.find('.uibadge.v-muted').text()).toBe('выключен');
     expect(w.text()).toContain('ротация остановлена');
-    expect(btn(w, 'Включить')).toHaveLength(1);
+    const actions = w.find('.actions');
+    expect(actions.text()).toContain('отключено');
+    const sw = actions.findComponent(UiSwitch);
+    expect((sw.find('input[type=checkbox]').element as HTMLInputElement).checked).toBe(false);
+    expect(btn(w, 'Включить')).toHaveLength(0);
     expect(btn(w, 'Сменить конфиг')).toHaveLength(0);
     expect(btn(w, 'Выключить')).toHaveLength(0);
+    expect(btn(w, 'удалить пул')).toHaveLength(1);
     w.unmount();
+  });
+
+  it('свитч в шапке: вкл -> POST enable, выкл -> POST disable', async () => {
+    const f = stub();
+    vi.stubGlobal('fetch', f);
+    const w = makeCard(nativePool);
+    const sw = w.find('.actions').findComponent(UiSwitch);
+    await sw.find('input[type=checkbox]').setValue(false);
+    await vi.waitFor(() => {
+      const post = f.mock.calls.find((c) => (c[0] as string).endsWith('/pools/proton/disable'));
+      expect(post).toBeTruthy();
+      expect(JSON.parse(post![1]!.body as string)).toEqual({});
+    });
+    // включение обратно: ждём, пока busy-гвард отпустит свитч (вживую он
+    // на это время disabled - гонки нет)
+    await vi.waitFor(() =>
+      expect(sw.find('input[type=checkbox]').attributes('disabled')).toBeUndefined());
+    await sw.find('input[type=checkbox]').setValue(true);
+    await vi.waitFor(() =>
+      expect(f.mock.calls.some((c) => (c[0] as string).endsWith('/pools/proton/enable'))).toBe(true));
+    w.unmount();
+  });
+
+  it('сделать активным: POST /activate с file, тост; на активной строке disabled', async () => {
+    const f = stub();
+    vi.stubGlobal('fetch', f);
+    const w = makeCard(nativePool);
+    const rows = w.findAll('.cfgrow');
+    // активная строка (a.conf) - кнопка ⚡ disabled
+    expect(rows[0].findAll('button').find((b) => b.text() === '⚡')!.attributes('disabled')).toBeDefined();
+    await rows[1].findAll('button').find((b) => b.text() === '⚡')!.trigger('click');
+    await vi.waitFor(() => {
+      const post = f.mock.calls.find((c) => (c[0] as string).endsWith('/pools/proton/activate'));
+      expect(post).toBeTruthy();
+      expect(JSON.parse(post![1]!.body as string)).toEqual({ file: 'b.conf' });
+    });
+    await vi.waitFor(() =>
+      expect(useToast().toasts.list.some((t) => t.text.includes('Конфиг активирован: b.conf'))).toBe(true));
+    w.unmount();
+  });
+
+  it('Проверить: тост «запущена», POST check, ожидание нового lastResult, вердикт probeHuman', { timeout: 15000 }, async () => {
+    let calls = 0;
+    const f = vi.fn(async (url: string, init?: { method?: string; body?: unknown }) => {
+      if ((url as string).endsWith('/status')) {
+        calls++;
+        // вживую родитель пересоздаёт pool из свежего /status; в тесте
+        // prop статичен - мутируем объект (и восстанавливаем после)
+        if (calls >= 3) nativePool.lastResult = 'ok (handshake 5s ago, icmp 20ms)';
+        return new Response(JSON.stringify(statusFor()), { status: 200 });
+      }
+      if (typeof init?.body === 'string') return new Response(init.body, { status: 200 });
+      return new Response('{"ok":true}', { status: 200 });
+    });
+    vi.stubGlobal('fetch', f);
+    const w = makeCard(nativePool);
+    await btn(w, 'Проверить')[0].trigger('click');
+    await vi.waitFor(() =>
+      expect(useToast().toasts.list.some((t) => t.text.includes('Проверка запущена'))).toBe(true));
+    await vi.waitFor(() => {
+      expect(f.mock.calls.some((c) => (c[0] as string).endsWith('/pools/proton/check'))).toBe(true);
+    });
+    await vi.waitFor(() =>
+      expect(useToast().toasts.list.some((t) => t.text.startsWith('Проверка: туннель работает'))).toBe(true), { timeout: 8000 });
+    // busy-ключ держался до результата: кнопка снова активна
+    expect(btn(w, 'Проверить')[0].attributes('disabled')).toBeUndefined();
+    w.unmount();
+    nativePool.lastResult = 'проба: ok (30ms)'; // восстановить фикстуру
   });
 
   it('фоллбек: красный бейдж; ошибка пула - красной строкой; отказы подряд в проверке', () => {

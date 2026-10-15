@@ -232,6 +232,20 @@ export const SRC_MODE_HINTS: Record<string, string> = {
   list: 'В группу ходят только перечисленные адреса (роутер - по галке). Остальная локалка - напрямую.',
 };
 
+// человеческий вердикт пробы для тостов (словарь строк rotator.go 601-641;
+// жалоба владельца: «icmp lossy» непонятно). Сырая строка сохраняется.
+export function probeHuman(s: string | undefined): string {
+  if (!s || s === '-') return 'результ ещё нет';
+  if (s.includes('lossy')) return 'канал жив, но пинг выше порога (lossy): ' + s;
+  if (s.startsWith('ok') || s.includes(': ok')) return 'туннель работает: ' + s;
+  if (s.includes('выше порога')) return 'отказ: пинг выше порога: ' + s;
+  if (s.includes('link down')) return 'интерфейс опущен: ' + s;
+  if (s.includes('settling')) return 'конфиг применён, идёт стабилизация: ' + s;
+  if (s.includes('all configs failed')) return 'все конфиги не прошли проверку: ' + s;
+  if (s.includes('failed') || s.includes('error')) return 'ошибка проверки: ' + s;
+  return 'результат: ' + s;
+}
+
 export const SRC_MODE_OPTIONS: { value: string; label: string }[] = [
   { value: 'all', label: 'вся локальная сеть' },
   { value: 'all+router', label: 'локальная сеть + роутер' },

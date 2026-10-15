@@ -69,6 +69,13 @@ export function usePoolActions() {
     void refresh();
   }
 
+  // явное переключение интерфейса на конкретный конфиг (POST /activate,
+  // сервер проверяет конфликт живых адресов)
+  async function activateCfg(name: string, file: string): Promise<void> {
+    await api('POST', `/pools/${encodeURIComponent(name)}/activate`, { file });
+    void refresh();
+  }
+
   async function importPremium(name: string, key: string): Promise<void> {
     await api('POST', `/pools/${encodeURIComponent(name)}/premium`, { key });
     void refresh();
@@ -146,7 +153,7 @@ export function usePoolActions() {
   }
 
   return {
-    act, del, upload, toggleCfg, moveCfg, delCfg, importPremium, switchPremiumCountry,
+    act, del, upload, toggleCfg, moveCfg, delCfg, activateCfg, importPremium, switchPremiumCountry,
     create, createFromSource, requestFree, inspect, slots, createSlot,
     refreshSource, update, rename, reissueFree, members, configText,
   };

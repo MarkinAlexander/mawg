@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { SlotInfo } from '../../api/types'
 import { fallbackHint, inspectLine, planView, slotGate, slotOptions } from './poolsLogic'
+import { probeHuman } from './groupsLogic'
 
 const slot = (over: Partial<SlotInfo>): SlotInfo => ({
   id: 'nwg0', device: 'nwg0', description: '', linkUp: false, connected: false, managed: false, ...over,
@@ -95,5 +96,19 @@ describe('poolsLogic - подсказка фоллбека', () => {
     expect(fallbackHint('iface:wg11', ifaces, lbl)).toContain('нет проверки здоровья');
     expect(fallbackHint('direct', ifaces, lbl)).toBe('');
     expect(fallbackHint('pool:warp', ifaces, lbl)).toBe('');
+  });
+});
+
+describe('probeHuman (словарь проб rotator.go)', () => {
+  it('ok/lossy/выше порога/link down/settling/ошибка; сырая строка сохраняется', () => {
+    expect(probeHuman(undefined)).toContain('ещё нет');
+    expect(probeHuman('ok (handshake 67s ago, icmp 13ms)')).toContain('туннель работает');
+    expect(probeHuman('проба: ok (30ms)')).toContain('туннель работает');
+    expect(probeHuman('ok (handshake 67s ago, icmp lossy)')).toContain('пинг выше порога (lossy)');
+    expect(probeHuman('icmp 900ms выше порога 400ms')).toContain('отказ: пинг выше порога');
+    expect(probeHuman('link down')).toContain('интерфейс опущен');
+    expect(probeHuman('applied, settling')).toContain('стабилизация');
+    expect(probeHuman('probe 1.2.3.4 failed')).toContain('ошибка проверки');
+    expect(probeHuman('ok (handshake 1s ago, icmp lossy)')).toContain('ok (handshake 1s ago, icmp lossy)');
   });
 });
