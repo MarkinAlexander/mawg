@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import { ConfirmHost, ToastHost, UiButton, UiIcon } from '../components/ui'
 import { inflight } from '../api/client'
 import { useStatus, type MtState } from '../stores/status'
+import { usePrivacy } from '../stores/privacy'
 import { TABS } from './tabs'
 import SearchDialog from './SearchDialog.vue'
 import LoginDialog from './LoginDialog.vue'
@@ -44,6 +45,44 @@ function onSearchKeydown(e: KeyboardEvent) {
   }
 }
 
+// Приватный режим (62-док): eye/eye-off рядом с лупой, состояние - в стор
+// (localStorage mawg-privacy). Класс privacy-on на body навешивается здесь
+// (шейка видна на всех вкладках); при выключении снимаем и проявления полей.
+const privacy = usePrivacy();
+watch(
+  () => privacy.state.on,
+  (on) => {
+    document.body.classList.toggle('privacy-on', on);
+    if (!on) {
+      document.querySelectorAll('.secret-open').forEach((n) => n.classList.remove('secret-open'));
+    }
+  },
+  { immediate: true },
+);
+
+// Проявление по клику (3x-ui-стиль): capture-клик по документу, клик по
+// .secret добавляет узлу secret-open (blur снят), клик мимо или повторный
+// клик по тому же полю - размывает снова. Глобальный режим не переключается -
+// проявляется только конкретное поле.
+function onSecretClick(e: MouseEvent) {
+  const el = (e.target as HTMLElement | null)?.closest?.('.secret') as HTMLElement | null;
+  const opened = document.querySelectorAll('.secret-open');
+  if (!el) {
+    opened.forEach((n) => n.classList.remove('secret-open'));
+    return;
+  }
+  const wasOpen = el.classList.contains('secret-open');
+  opened.forEach((n) => n.classList.remove('secret-open'));
+  if (!wasOpen) el.classList.add('secret-open');
+}
+
+// Escape - снять все проявления (как клик мимо)
+function onSecretKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape') {
+    document.querySelectorAll('.secret-open').forEach((n) => n.classList.remove('secret-open'));
+  }
+}
+
 // жест от правого края: pointerdown в 24px от правого края на мобильной
 // ширине, тянем влево >40px (и горизонталь сильнее вертикали) - открываем.
 // Pointer Events покрывают и палец, и мышь; на десктопе меню скрыто,
@@ -72,6 +111,8 @@ function onPointerUp() {
 }
 onMounted(() => {
   document.addEventListener('keydown', onSearchKeydown);
+  document.addEventListener('click', onSecretClick, true);
+  document.addEventListener('keydown', onSecretKeydown);
   document.addEventListener('pointerdown', onPointerDown);
   document.addEventListener('pointermove', onPointerMove);
   document.addEventListener('pointerup', onPointerUp);
@@ -80,6 +121,8 @@ onMounted(() => {
 onBeforeUnmount(() => {
   document.removeEventListener('keydown', onSearchKeydown);
   document.removeEventListener('keydown', onKeydown);
+  document.removeEventListener('click', onSecretClick, true);
+  document.removeEventListener('keydown', onSecretKeydown);
   document.removeEventListener('pointerdown', onPointerDown);
   document.removeEventListener('pointermove', onPointerMove);
   document.removeEventListener('pointerup', onPointerUp);
@@ -128,6 +171,20 @@ const meta = computed(() => {
         @click="searchOpen = true"
       >
         <UiIcon name="search" />
+      </UiButton>
+      <!-- приватный режим (62-док): глобальный тумблер размытия; иконка -
+           текущее состояние, tooltip - что сделает клик + честная оговорка,
+           что скрытие визуальное -->
+      <UiButton
+        variant="icon"
+        class="privacybtn"
+        :class="{ on: privacy.state.on }"
+        :tooltip="privacy.state.on
+          ? 'показать (данные размыты) - скрываются адреса из конфигов и секреты; визуальное скрытие для скриншотов и демонстрации'
+          : 'скрыть адреса туннелей (из конфигов) и секреты - визуальное скрытие для скриншотов и демонстрации'"
+        @click="privacy.toggle()"
+      >
+        <UiIcon :name="privacy.state.on ? 'eye-off' : 'eye'" />
       </UiButton>
       <nav>
         <RouterLink
@@ -233,6 +290,10 @@ nav a.router-link-active {
   background: var(--ok);
   font-weight: 600;
   color: #120b0b;
+}
+/* приватный режим включён - кнопка подсвечена (62-док) */
+.privacybtn.on {
+  color: var(--warn);
 }
 main {
   padding: 12px 0;

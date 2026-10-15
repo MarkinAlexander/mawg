@@ -271,6 +271,7 @@ async function save(): Promise<void> {
           label="Источник"
           :rows="3"
           mono
+          class="secret"
         />
         <div class="inrow">
           <UiSelect

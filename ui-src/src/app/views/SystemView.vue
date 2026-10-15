@@ -7,11 +7,14 @@ import { useSystem } from '../../stores/system'
 import { useConfirm } from '../../stores/confirm'
 import { useToast } from '../../stores/toast'
 import type { AppEvent, SystemItem } from '../../api/types'
+import { useSecrets } from '../secrets'
 
 // Журнал событий (легаси refreshLog): хвост 80, НОВЫЕ СВЕРХУ, k-цвета
 // пяти видов. Место - вкладка «Система» (44-дока §6). Опрос таб-локальный:
 // start/stop на монтировании вьюхи, интервал 15с как легаси.
 const { state, start, stop } = useEvents();
+// приватный режим: строка журнала размыта, только если в ней адрес из конфигов
+const secrets = useSecrets();
 
 // системная проверка опрашивается на этой же вкладке раз в 60с (легаси
 // startPanel: setInterval(refreshSystem, 60000)), форс - по кнопке
@@ -449,9 +452,12 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
       показано {{ evFiltered.length }} из {{ state.list.length }}
     </div>
     <div class="log">
+      <!-- secret по содержимому: строки с адресами из конфигов; прочие
+           события видны (слово владельца 2026-10-15) -->
       <div
         v-for="(ev, i) in evFiltered"
         :key="i"
+        :class="{ secret: secrets.line(ev.message) }"
       >
         [{{ fmtTime(ev.time) }}] {{ ev.pool }}:
         <span :class="'k-' + ev.kind">{{ ev.kind }}</span>

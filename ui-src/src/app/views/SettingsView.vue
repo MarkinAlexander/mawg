@@ -375,16 +375,19 @@ async function rciSave(): Promise<void> {
       Сеть
     </div>
     <div class="netrow">
+      <!-- secret: адрес/порт панели - приватный режим (62-док) -->
       <UiInput
         v-model="addr"
         label="адрес"
         placeholder="0.0.0.0"
         tooltip="адрес прослушивания"
+        class="secret"
       />
       <UiInput
         v-model="port"
         label="порт"
         type="number"
+        class="secret"
       />
     </div>
     <UiHint text="0.0.0.0 - все интерфейсы, 127.0.0.1 - только локально (для nginx-прокси), конкретный IP - один интерфейс. Авторизация и разрешённые адреса применяются сразу, адрес и порт - после перезапуска демона (кнопка появится здесь же)." />
@@ -429,7 +432,8 @@ async function rciSave(): Promise<void> {
         class="chip"
         :class="{ off: !e.on }"
       >
-        {{ e.v }}
+        <!-- secret: только адрес, тумблер/крестик - кликабельны и без проявления -->
+        <span class="secret">{{ e.v }}</span>
         <UiSwitch
           :model-value="e.on"
           :tooltip="e.on ? 'выключить запись' : 'включить запись'"
@@ -493,6 +497,7 @@ async function rciSave(): Promise<void> {
         label="RCI-токен"
         :placeholder="rciPlaceholder"
         mono
+        class="secret"
       >
         <template #action>
           <UiButton
