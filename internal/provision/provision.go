@@ -423,7 +423,7 @@ func lxCoreItem(run Runner, platform string) Item {
 			item.ActionLabel = "заменить своей сборкой"
 		}
 	default:
-		item.StatusText = "чужое upstream"
+		item.StatusText = "чужое"
 		item.Action = "singbox-lx-replace"
 		item.ActionLabel = "заменить на lx"
 		item.Note = fmt.Sprintf("Сейчас стоит чужое ядро (upstream %s): mawg его не трогает, замена - только по этой кнопке. Сохранять ли старое перед заменой - выбор в диалоге (зависит от свободного места).", ver)
