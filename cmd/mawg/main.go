@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -305,6 +306,14 @@ func main() {
 		httpServer.Close()
 	}()
 	if err := httpServer.ListenAndServe(); err != http.ErrServerClosed {
+		// занятый порт - самый частый «mawg не запускается»: объясняем
+		// и даём путь решения вместо сырого стека (кейс: у пользователя
+		// 8090 уже занят другой панелью)
+		if errors.Is(err, syscall.EADDRINUSE) || strings.Contains(err.Error(), "address already in use") {
+			log.Fatalf("порт %d на %s занят другим процессом - панель не поднялась.\n"+
+				"Смените порт: mawg port <1-65535> && mawg restart, или разово: mawg -port <n>,\n"+
+				"или при установке: install.sh --port <n>.", cfgPort, listenAddr)
+		}
 		log.Fatal(err)
 	}
 	engine.Stop()
