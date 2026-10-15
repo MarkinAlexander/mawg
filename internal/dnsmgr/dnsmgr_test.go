@@ -7,24 +7,38 @@ import (
 	"time"
 )
 
+// реальный формат MT (yaml.v2: элементы списка на отступе ключа) -
+// снят со стенда 0.42 (dist/stand42-config-20261016.yaml)
 const sampleConfig = `configVersion: 0.8.2-rev6-mawgfix1
 app:
   httpWeb:
     enabled: true
+    auth:
+      enabled: false
+    host:
+      address: '[::]'
+      port: 8080
+    skin: default
   dnsProxy:
     host:
       address: '[::]'
       port: 3553
-    upstreams:
-      - address: 8.8.8.8
-        port: 53
-      - address: 77.88.8.8
-        port: 53
     upstream:
       address: 8.8.8.8
       port: 53
+    upstreams:
+    - address: 8.8.8.8
+      port: 53
+    - address: 77.88.8.8
+      port: 53
+    health:
+      enabled: true
+      interval: 10s
+      timeout: 2s
+      failCycles: 3
+      restoreCycles: 2
+      restoreGap: 5m0s
     disableRemap53: false
-    timeout: 5000ms
   netfilter:
     iptables:
       chainPrefix: MT_
@@ -41,8 +55,14 @@ func TestParseMTUpstreams(t *testing.T) {
 	if !reflect.DeepEqual(list, []string{"8.8.8.8:53", "77.88.8.8:53"}) {
 		t.Fatalf("list = %v", list)
 	}
-	if legacy2, list2 := ParseMTUpstreams("app:\n  dnsProxy:\n    upstream:\n      address: 127.0.0.1\n      port: 53\n"); legacy2 != "127.0.0.1:53" || len(list2) != 0 {
-		t.Fatalf("legacy-only: %q %v", legacy2, list2)
+	// рукописный стиль: элементы глубже ключа
+	hand := "app:\n  dnsProxy:\n    upstreams:\n      - address: 8.8.8.8\n        port: 53\n      - address: 77.88.8.8\n        port: 53\n    upstream:\n      address: 127.0.0.1\n      port: 53\n"
+	legacy2, list2 := ParseMTUpstreams(hand)
+	if legacy2 != "127.0.0.1:53" || !reflect.DeepEqual(list2, []string{"8.8.8.8:53", "77.88.8.8:53"}) {
+		t.Fatalf("рукописный стиль: %q %v", legacy2, list2)
+	}
+	if legacy3, list3 := ParseMTUpstreams("app:\n  dnsProxy:\n    upstream:\n      address: 127.0.0.1\n      port: 53\n"); legacy3 != "127.0.0.1:53" || len(list3) != 0 {
+		t.Fatalf("legacy-only: %q %v", legacy3, list3)
 	}
 }
 
