@@ -218,6 +218,19 @@ func portTaken(addr string, port int) bool {
 	return false
 }
 
+// reservedPortReason - порт, который нельзя отдавать панели, даже если он
+// прямо сейчас свободен: перебьём сервисы, с которыми mawg живёт в паре
+// (слово владельца: 8080 - веб/API MagiTrickle). Пусто = порт обычный.
+func reservedPortReason(n int) string {
+	switch n {
+	case 8080:
+		return "8080 - веб-интерфейс/API MagiTrickle"
+	case 3553:
+		return "3553 - dns-proxy MagiTrickle"
+	}
+	return ""
+}
+
 // confirmYN - да/нет со stdin; при EOF (неинтерактивный запуск, скрипт)
 // ответ «нет» - чтобы автоматика не согласилась на заведомо мёртвый порт.
 func confirmYN() bool {
@@ -239,6 +252,10 @@ func cmdSetPort(dir, arg string) int {
 	if err != nil {
 		fmt.Println("store:", err)
 		return 1
+	}
+	if reason := reservedPortReason(n); reason != "" {
+		fmt.Printf("%s - выберите другой порт\n", reason)
+		return 3
 	}
 	addr, _, allowed, authOff := st.ServerSettings()
 	if portTaken(addr, n) {

@@ -66,6 +66,9 @@ if [ -n "${PORT_ARG:-}" ]; then
         ''|*[!0-9]*) die "порт должен быть числом 1-65535";;
     esac
     [ "$PORT_ARG" -ge 1 ] && [ "$PORT_ARG" -le 65535 ] || die "порт 1-65535, получено $PORT_ARG"
+    # сервисные порты MagiTrickle - панели их отдавать нельзя (слово владельца)
+    [ "$PORT_ARG" = "8080" ] && die "8080 - веб-интерфейс/API MagiTrickle, выберите другой порт"
+    [ "$PORT_ARG" = "3553" ] && die "3553 - dns-proxy MagiTrickle, выберите другой порт"
 fi
 
 detect_pkg_manager() {
