@@ -43,3 +43,11 @@ type Backend interface {
 	MTConfigPath() string
 	SaveConfig() error
 }
+
+// Endpointer - опциональная возможность платформы: адреса (без портов)
+// удалённых пиров роутерного WG-интерфейса. Нужно каскадам с
+// iface-источником (баг владельца: панель требовала адреса от руки,
+// хотя Кинетик отдаёт их в RCI/ndmc).
+type Endpointer interface {
+	IfaceEndpoints(device string) ([]string, error)
+}
