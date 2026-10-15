@@ -39,6 +39,7 @@ watch(menuOpen, (open) => {
 // Поиск по настройкам (46-док §1): лупа в шапке + Ctrl+K / Cmd+K
 const searchOpen = ref(false);
 function onSearchKeydown(e: KeyboardEvent) {
+  if (!appVisible.value) return;
   if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'k') {
     e.preventDefault();
     searchOpen.value = true;
@@ -140,6 +141,14 @@ const meta = computed(() => {
   if (!status.data) return 'загрузка...';
   return `${status.data.platform} | mawg ${status.data.version} | magitrickle: ${MT_LABEL[status.mt]}`;
 });
+
+// Гейт входа (слово владельца 2026-10-15): при включённой авторизации за
+// диалогом входа страница не рендерится - ни шапка, ни вкладки. Контент
+// скрыт, пока требуется вход (authNeeded) и пока статус не известен
+// (!loaded без ошибки - иначе была бы вспышка страницы до первого /status,
+// как легаси-замок body:not(.unlocked)). Ошибка сети - показываем каркас:
+// сервер недоступен, вход ни при чём.
+const appVisible = computed(() => !status.authNeeded && (status.loaded || !!status.error));
 </script>
 
 <template>
@@ -149,7 +158,7 @@ const meta = computed(() => {
       class="topbar"
       :class="{ on: inflight.n > 0 }"
     />
-    <header>
+    <header v-if="appVisible">
       <h1>
         <RouterLink
           to="/next/"
@@ -196,19 +205,24 @@ const meta = computed(() => {
         </RouterLink>
       </nav>
     </header>
-    <main>
-      <!-- Ф5: сессии нет - залоченный логин-диалог (легаси startGate);
-           на роутерах с выключенной авторизацией не появляется вовсе -->
-      <LoginDialog :open="status.authNeeded" />
+    <!-- гейт входа: при включённой авторизации за диалогом страница не
+         рендерится (слово владельца) - LoginDialog вне main, контент
+         размонтируется, а не прячется под оверлеем -->
+    <LoginDialog :open="status.authNeeded" />
+    <main v-if="appVisible">
       <RouterView />
     </main>
     <ToastHost />
     <ConfirmHost />
-    <SearchDialog v-model:open="searchOpen" />
+    <SearchDialog
+      v-if="appVisible"
+      v-model:open="searchOpen"
+    />
 
     <!-- мобильное меню: кнопка внизу справа + шторка снизу (в шапке места
          не занимает и вёрстку не двигает); на десктопе скрыты media-query -->
     <button
+      v-if="appVisible"
       type="button"
       class="menu-fab"
       :aria-expanded="menuOpen"
@@ -220,7 +234,7 @@ const meta = computed(() => {
     </button>
     <Transition name="sheet">
       <div
-        v-if="menuOpen"
+        v-if="appVisible && menuOpen"
         class="menu-wrap"
       >
         <div
