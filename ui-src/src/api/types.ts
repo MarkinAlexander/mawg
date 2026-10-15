@@ -244,6 +244,19 @@ export interface MagitrickleRes {
   groups?: unknown[]
 }
 
+// GET /dns/probe: проба одного DNS-уровня канарейкой (63-док).
+// verdict: clean | spoof | noanswer | error
+export interface DnsProbeRow {
+  level: string
+  kind: 'udp' | 'dot' | 'doh' | string
+  server: string
+  verdict: 'clean' | 'spoof' | 'noanswer' | 'error' | string
+  canonical: number
+  total: number
+  ms: number
+  detail?: string
+}
+
 // --- интерфейсы/слоты/wan-probe ---
 
 // проба здоровья (store.ProbeConfig): цель - публичный IPv4 или http(s) URL;

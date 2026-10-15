@@ -116,3 +116,39 @@ describe('OverviewView', () => {
     w.unmount();
   });
 });
+
+describe('OverviewView - Проверка DNS (63-док)', () => {
+  it('кнопка дергает /dns/probe, вердикты строками, сводка - первый чистый уровень', async () => {
+    const stub = apiStub();
+    const base = stub.getMockImplementation()!;
+    stub.mockImplementation(async (url: string) => {
+      if (url.endsWith('/dns/probe')) {
+        return new Response(JSON.stringify({ results: [
+          { level: 'dnsmasq', kind: 'udp', server: '127.0.0.1:53', verdict: 'clean', canonical: 5, total: 5, ms: 3 },
+          { level: 'dns-proxy MT', kind: 'udp', server: '127.0.0.1:3553', verdict: 'clean', canonical: 5, total: 5, ms: 7 },
+          { level: 'upstream ISP', kind: 'udp', server: '192.168.0.1:53', verdict: 'noanswer', canonical: 0, total: 0, ms: 2001 },
+          { level: 'DoH Cloudflare', kind: 'doh', server: 'https://1.1.1.1/dns-query', verdict: 'error', canonical: 0, total: 0, ms: 3000, detail: 'dial timeout' },
+        ] }), { status: 200 });
+      }
+      return base(url);
+    });
+    vi.stubGlobal('fetch', stub);
+    const router = createRouter({
+      history: createWebHashHistory(),
+      routes: [{ path: '/next/:id', component: { template: '<div />' } }],
+    })
+    const w = mount(OverviewView, { global: { plugins: [router] } });
+    await nextTick();
+    expect(w.find('#card-dnsprobe').exists()).toBe(true);
+
+    await w.find('#card-dnsprobe .uibtn').trigger('click');
+    await vi.waitFor(() => expect(w.findAll('#card-dnsprobe .uibadge').length).toBe(4));
+
+    const badges = w.findAll('#card-dnsprobe .uibadge');
+    expect(badges[0].text()).toContain('чисто (5/5)');
+    expect(badges[2].text()).toContain('нет ответа');
+    expect(badges[3].classes().join(' ')).toContain('v-muted');
+    expect(w.find('.probesum').text()).toContain('рабочий уровень: dnsmasq');
+    w.unmount();
+  });
+});
