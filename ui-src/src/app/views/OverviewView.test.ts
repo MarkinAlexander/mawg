@@ -128,6 +128,7 @@ describe('OverviewView - Проверка DNS (63-док)', () => {
           { level: 'dns-proxy MT', kind: 'udp', server: '127.0.0.1:3553', verdict: 'clean', canonical: 5, total: 5, ms: 7 },
           { level: 'upstream ISP', kind: 'udp', server: '192.168.0.1:53', verdict: 'noanswer', canonical: 0, total: 0, ms: 2001 },
           { level: 'DoH Cloudflare', kind: 'doh', server: 'https://1.1.1.1/dns-query', verdict: 'error', canonical: 0, total: 0, ms: 3000, detail: 'dial timeout' },
+          { level: 'DoH Google', kind: 'doh', server: 'https://dns.google/dns-query', verdict: 'clean', canonical: 5, total: 5, ms: 22, ip: '8.8.4.4' },
         ] }), { status: 200 });
       }
       return base(url);
@@ -142,12 +143,14 @@ describe('OverviewView - Проверка DNS (63-док)', () => {
     expect(w.find('#card-dnsprobe').exists()).toBe(true);
 
     await w.find('#card-dnsprobe .uibtn').trigger('click');
-    await vi.waitFor(() => expect(w.findAll('#card-dnsprobe .uibadge').length).toBe(4));
+    await vi.waitFor(() => expect(w.findAll('#card-dnsprobe .uibadge').length).toBe(5));
 
     const badges = w.findAll('#card-dnsprobe .uibadge');
     expect(badges[0].text()).toContain('чисто (5/5)');
     expect(badges[2].text()).toContain('нет ответа');
     expect(badges[3].classes().join(' ')).toContain('v-muted');
+    // нога сервиса (Фаза E) видна в строке и попадает в сводку
+    expect(w.find('#card-dnsprobe').text()).toContain('8.8.4.4');
     expect(w.find('.probesum').text()).toContain('рабочий уровень: dnsmasq');
     w.unmount();
   });

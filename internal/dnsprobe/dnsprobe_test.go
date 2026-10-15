@@ -1,10 +1,20 @@
 package dnsprobe
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/binary"
+	"io"
+	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -183,5 +193,127 @@ func TestRunKeepsOrder(t *testing.T) {
 	}
 	if res[0].Verdict != VerdictClean || res[1].Verdict != VerdictSpoof {
 		t.Fatalf("Run вердикты: %+v", res)
+	}
+}
+
+// перебор ног (Фаза E): чистая нога находится за мёртвой/отравленной,
+// нечистые дают лучший вердикт со своей ногой, все мертвы - error со списком
+func TestCheckLegsAggregation(t *testing.T) {
+	spoof := fakeUDPDNS(t, "6.6.6.6")
+	clean := fakeUDPDNS(t, "204.8.99.144")
+	dead := "127.0.0.1:1"
+	res := Check(Level{Level: "t", Kind: "udp", Server: dead, IPs: []string{spoof, clean}}, 2*time.Second)
+	if res.Verdict != VerdictClean || res.IP != clean {
+		t.Fatalf("spoof->clean: %+v", res)
+	}
+	res = Check(Level{Level: "t", Kind: "udp", Server: dead, IPs: []string{spoof, dead}}, 2*time.Second)
+	if res.Verdict != VerdictSpoof || res.IP != spoof {
+		t.Fatalf("spoof+мёртвая: %+v", res)
+	}
+	res = Check(Level{Level: "t", Kind: "udp", Server: dead, IPs: []string{dead, "127.0.0.1:2"}}, time.Second)
+	if res.Verdict != VerdictError || !strings.Contains(res.Detail, "127.0.0.1:1") || !strings.Contains(res.Detail, "127.0.0.1:2") {
+		t.Fatalf("все мертвы: %+v", res)
+	}
+}
+
+// двуногий DoH: мёртвая нога не роняет уровень - перебор доходит до живой
+func TestCheckLegsDoH(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		buf := make([]byte, 4096)
+		n, _ := r.Body.Read(buf)
+		_, _ = w.Write(cannedResponse(buf[:n], "204.8.99.146"))
+	}))
+	defer srv.Close()
+	live := strings.TrimPrefix(srv.URL, "http://") // 127.0.0.1:порт
+	res := Check(Level{Level: "t", Kind: "doh", Server: srv.URL, IPs: []string{"127.0.0.2:9", live}}, 2*time.Second)
+	if res.Verdict != VerdictClean || res.IP != live {
+		t.Fatalf("doh ноги: %+v", res)
+	}
+}
+
+// фейковый DoT-сервер: самоподписанный сертификат с IP-SAN 127.0.0.1,
+// framed-протокол RFC 7858; возвращает адрес и сертификат (для пула зонда)
+func fakeDoT(t *testing.T, ips ...string) (string, *x509.Certificate) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "dns.google"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
+		DNSNames:     []string{"dns.google"},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaf, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert := tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
+	ln, err := tls.Listen("tcp", "127.0.0.1:0", &tls.Config{Certificates: []tls.Certificate{cert}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				var lenBuf [2]byte
+				if _, err := io.ReadFull(c, lenBuf[:]); err != nil {
+					return
+				}
+				msg := make([]byte, binary.BigEndian.Uint16(lenBuf[:]))
+				if _, err := io.ReadFull(c, msg); err != nil {
+					return
+				}
+				resp := cannedResponse(msg, ips...)
+				out := make([]byte, 2+len(resp))
+				binary.BigEndian.PutUint16(out, uint16(len(resp)))
+				copy(out[2:], resp)
+				_, _ = c.Write(out)
+			}(c)
+		}
+	}()
+	return ln.Addr().String(), leaf
+}
+
+// двуногий DoT: то же, что DoH - живая нога находится за мёртвой
+func TestCheckLegsDoT(t *testing.T) {
+	live, leaf := fakeDoT(t, "204.8.99.144")
+	pool := x509.NewCertPool()
+	pool.AddCert(leaf)
+	testDotRoots = func() *x509.CertPool { return pool }
+	t.Cleanup(func() { testDotRoots = nil })
+	res := Check(Level{Level: "t", Kind: "dot", Server: "127.0.0.1:1", IPs: []string{"127.0.0.2:9", live}}, 3*time.Second)
+	if res.Verdict != VerdictClean || res.IP != live {
+		t.Fatalf("dot ноги: %+v", res)
+	}
+}
+
+func TestDefaultsLegs(t *testing.T) {
+	want := map[string][]string{
+		"DoH Cloudflare": {"1.1.1.1", "1.0.0.1"},
+		"DoH Google":     {"8.8.8.8", "8.8.4.4"},
+		"DoT Google":     {"8.8.8.8", "8.8.4.4"},
+	}
+	got := map[string][]string{}
+	for _, l := range Defaults() {
+		if len(l.IPs) > 0 {
+			got[l.Level] = l.IPs
+		}
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ноги в Defaults = %v, want %v", got, want)
 	}
 }

@@ -5,6 +5,10 @@
 // непустом ответе = подмена/блок (например NXDOMAIN-перехват даёт «нет
 // ответа»). DNS-проводка собрана на stdlib: UDP и RFC 8484 DoH (POST
 // application/dns-message), DoT (RFC 7858, 2-байтовое обрамление в TLS).
+// Уровень может нести ноги сервиса (Level.IPs, эмпирика Фазы E): при
+// смерти одной ноги сервиса пробовать ЕГО ЖЕ оставшиеся IP - иначе зонд
+// флипает по порядку A-записей (кейс dns.google: 8.8.8.8 мёртв, 8.8.4.4
+// жив; диал мёртвой ноги съедал весь таймаут, до живой не доходил).
 package dnsprobe
 
 import (
@@ -12,11 +16,13 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -46,10 +52,14 @@ const (
 
 // Level - один зондимый уровень.
 type Level struct {
-	Level  string `json:"level"`           // подпись для панели
-	Kind   string `json:"kind"`            // udp | dot | doh
-	Server string `json:"server"`          // host:port | URL (для doh)
-	SNI    string `json:"sni,omitempty"`   // ServerName для DoT (если адрес - IP)
+	Level  string `json:"level"`         // подпись для панели
+	Kind   string `json:"kind"`          // udp | dot | doh | tcp
+	Server string `json:"server"`        // host:port | URL (для doh)
+	SNI    string `json:"sni,omitempty"` // ServerName для DoT (если адрес - IP)
+	// IPs - ноги сервиса (63-док, эмпирика Фазы E): при смерти одной ноги
+	// сервиса пробовать ЕГО ЖЕ оставшиеся IP; нога = IP или ip:port (порт
+	// по умолчанию берётся из Server). Пусто = одна нога как в Server.
+	IPs []string `json:"ips,omitempty"`
 }
 
 // Result - исход пробы одного уровня.
@@ -61,6 +71,7 @@ type Result struct {
 	Canonical int    `json:"canonical"` // сколько из канонического набора
 	Total     int    `json:"total"`     // всего A-записей в ответе
 	MS        int64  `json:"ms"`
+	IP        string `json:"ip,omitempty"`     // нога сервиса, которая ответила
 	Detail    string `json:"detail,omitempty"` // текст ошибки сети, если была
 }
 
@@ -77,9 +88,15 @@ func Defaults() []Level {
 		levels = append(levels, Level{Level: "upstream ISP", Kind: "udp", Server: up})
 	}
 	return append(levels,
-		Level{Level: "DoH Cloudflare", Kind: "doh", Server: "https://1.1.1.1/dns-query"},
-		Level{Level: "DoH Google", Kind: "doh", Server: "https://dns.google/dns-query"},
-		Level{Level: "DoT Google", Kind: "dot", Server: "8.8.8.8:853", SNI: "dns.google"},
+		// Ноги сервисов - из списка блокировки 63-док (Фаза E: Google выжил
+		// на 8.8.4.4 при мёртвом 8.8.8.8; перебор ног делает вердикт уровня
+		// независимым от порядка A-записей)
+		Level{Level: "DoH Cloudflare", Kind: "doh", Server: "https://1.1.1.1/dns-query",
+			IPs: []string{"1.1.1.1", "1.0.0.1"}},
+		Level{Level: "DoH Google", Kind: "doh", Server: "https://dns.google/dns-query",
+			IPs: []string{"8.8.8.8", "8.8.4.4"}},
+		Level{Level: "DoT Google", Kind: "dot", Server: "8.8.8.8:853", SNI: "dns.google",
+			IPs: []string{"8.8.8.8", "8.8.4.4"}},
 		// «интернет жив?» (46-док §3): TCP мимо DNS на стабильные IP -
 		// один иностранный, один внутренний; если оба мертвы - сеть вниз,
 		// эскалацию DNS не трогаем
@@ -137,44 +154,130 @@ func Run(levels []Level, timeout time.Duration) []Result {
 // Check - проба одного уровня: запрос канарейки, вердикт по канонике.
 // Kind "tcp" - особый: не DNS, а «интернет жив?» (46-док §3) - чистый
 // TCP-connect на стабильный IP:port мимо DNS; clean = соединение прошло.
-func Check(l Level, timeout time.Duration) Result {
-	res := Result{Level: l.Level, Kind: l.Kind, Server: l.Server}
+// udp/dot/doh перебирают ноги сервиса (Level.IPs, Фаза E).
+func Check(l Level, timeout time.Duration) (res Result) {
+	res = Result{Level: l.Level, Kind: l.Kind, Server: l.Server}
 	start := time.Now()
-	var ips []string
-	var err error
+	defer func() { res.MS = time.Since(start).Milliseconds() }()
 	switch l.Kind {
 	case "tcp":
 		conn, derr := net.DialTimeout("tcp", l.Server, timeout)
 		if derr != nil {
-			err = fmt.Errorf("dial tcp %s: %w", l.Server, derr)
-		} else {
-			_ = conn.Close()
-		}
-		res.MS = time.Since(start).Milliseconds()
-		if err != nil {
 			res.Verdict = VerdictError
-			res.Detail = err.Error()
+			res.Detail = fmt.Errorf("dial tcp %s: %w", l.Server, derr).Error()
 			return res
 		}
+		_ = conn.Close()
 		res.Verdict = VerdictClean
 		return res
-	case "udp":
-		ips, err = exchangeUDP(l.Server, CanaryDomain, timeout)
-	case "dot":
-		ips, err = exchangeDoT(l.Server, l.SNI, CanaryDomain, timeout)
-	case "doh":
-		ips, err = exchangeDoH(l.Server, CanaryDomain, timeout)
+	case "udp", "dot", "doh":
+		res.IP, res.Verdict, res.Canonical, res.Total, res.Detail = probeLegs(l, timeout)
+		return res
 	default:
-		err = fmt.Errorf("неизвестный транспорт %q", l.Kind)
-	}
-	res.MS = time.Since(start).Milliseconds()
-	if err != nil {
 		res.Verdict = VerdictError
-		res.Detail = err.Error()
+		res.Detail = fmt.Sprintf("неизвестный транспорт %q", l.Kind)
 		return res
 	}
-	res.Verdict, res.Canonical, res.Total = verdictOf(ips)
-	return res
+}
+
+// probeLegs - перебор ног сервиса (эмпирика Фазы E: сервер «жив», но на
+// отравленной сети отдаёт яд, а диал мёртвой ноги не должен ронять уровень).
+// Бюджет на ногу = timeout/len(ног) (одинокой ноге - весь timeout, прочим
+// минимум 800мс). Первый чистый ответ останавливает перебор; из нечистых
+// сохраняется лучший (spoof/noanswer - транспорт ответил - ценнее error)
+// с ногой, которая его дала; все ноги в ошибке - error со списком.
+func probeLegs(l Level, timeout time.Duration) (leg, verdict string, canonical, total int, detail string) {
+	legs := l.IPs
+	if len(legs) == 0 {
+		legs = []string{""} // пустая нога = адрес как задано в Server
+	}
+	budget := timeout / time.Duration(len(legs))
+	switch {
+	case len(legs) == 1:
+		budget = timeout
+	case budget < 800*time.Millisecond:
+		budget = 800 * time.Millisecond
+	}
+	var errs []string
+	bestRank := 0
+	for _, ip := range legs {
+		ips, err := probeLeg(l, ip, budget)
+		if err == nil {
+			v, c, t := verdictOf(ips)
+			if v == VerdictClean {
+				return ip, v, c, t, ""
+			}
+			if r := legRank(v); r > bestRank {
+				leg, verdict, canonical, total, bestRank = ip, v, c, t, r
+			}
+			continue
+		}
+		errs = append(errs, fmt.Sprintf("%s: %v", legLabel(l, ip), err))
+	}
+	if bestRank > 0 {
+		return leg, verdict, canonical, total, ""
+	}
+	if len(errs) > 0 {
+		detail = strings.Join(errs, "; ")
+	} else {
+		detail = "нет живых ног сервиса"
+	}
+	return "", VerdictError, 0, 0, detail
+}
+
+// legRank - «лучше» среди нечистых ответов: транспорт ответил
+// (spoof/noanswer) ценнее ошибки транспорта.
+func legRank(v string) int {
+	if v == VerdictSpoof || v == VerdictNoAnswer {
+		return 1
+	}
+	return 0
+}
+
+func legLabel(l Level, ip string) string {
+	if ip == "" {
+		return l.Server
+	}
+	return ip
+}
+
+// probeLeg - одна проба одной ноги: обмен канарейкой выбранным транспортом.
+func probeLeg(l Level, ip string, budget time.Duration) ([]string, error) {
+	switch l.Kind {
+	case "udp":
+		return exchangeUDP(legAddr(l.Server, ip, "53"), CanaryDomain, budget)
+	case "dot":
+		host, port := hostPort(l.Server, "853")
+		sni := l.SNI
+		if sni == "" {
+			sni = host
+		}
+		return exchangeDoT(legAddr(l.Server, ip, port), sni, CanaryDomain, budget)
+	case "doh":
+		return exchangeDoH(l.Server, ip, CanaryDomain, budget)
+	}
+	return nil, fmt.Errorf("неизвестный транспорт %q", l.Kind)
+}
+
+// legAddr - адрес ноги: ip:port из ноги (если в ней указан свой порт),
+// иначе ip + порт из Server (или defPort); пустая нога = Server как есть.
+func legAddr(server, ip, defPort string) string {
+	if ip == "" {
+		return server
+	}
+	if _, _, err := net.SplitHostPort(ip); err == nil {
+		return ip // нога с собственным портом
+	}
+	_, port := hostPort(server, defPort)
+	return net.JoinHostPort(ip, port)
+}
+
+// hostPort - host:port из адреса уровня; без порта подставляется defPort.
+func hostPort(server, defPort string) (host, port string) {
+	if h, p, err := net.SplitHostPort(server); err == nil && p != "" {
+		return h, p
+	}
+	return server, defPort
 }
 
 func verdictOf(ips []string) (verdict string, canonical, total int) {
@@ -273,6 +376,12 @@ func randomID() uint16 {
 	return binary.BigEndian.Uint16(b[:])
 }
 
+// testDotRoots - шов для тестов: фейковый DoT-сервер с самоподписанным
+// сертификатом. В бою nil - системный пул корневых (проверка сертификата
+// DoT строгая и намеренная: «доступность DoT проверять реальным
+// TLS-хендшейком», 63-док).
+var testDotRoots func() *x509.CertPool
+
 func exchangeUDP(server, domain string, timeout time.Duration) ([]string, error) {
 	id := randomID()
 	q := buildQuery(domain, id)
@@ -305,6 +414,9 @@ func exchangeDoT(server, sni, domain string, timeout time.Duration) ([]string, e
 	q := framed(buildQuery(domain, id))
 	dialer := net.Dialer{Timeout: timeout}
 	conf := &tls.Config{ServerName: sni} // #nosec G402 - зонд публичных DoT, ServerName задаёт уровень
+	if testDotRoots != nil {
+		conf.RootCAs = testDotRoots()
+	}
 	conn, err := tls.DialWithDialer(&dialer, "tcp", server, conf)
 	if err != nil {
 		return nil, fmt.Errorf("dial dot %s: %w", server, err)
@@ -323,9 +435,35 @@ func exchangeDoT(server, sni, domain string, timeout time.Duration) ([]string, e
 
 // exchangeDoH - RFC 8484: POST application/dns-message (универсально для
 // всех DoH-серверов, в отличие от JSON-эндпоинтов конкретных вендоров).
-func exchangeDoH(urlStr, domain string, timeout time.Duration) ([]string, error) {
+// Нога пуста - диал как обычно (по имени из URL); ip задан - диал пинится
+// к ноге сервиса, а TLS-имя/сертификат проверяются по хосту URL, поэтому
+// bootstrap-резолв не нужен и подмене не подвержен (Фаза E).
+func exchangeDoH(urlStr, ip, domain string, timeout time.Duration) ([]string, error) {
 	id := randomID()
 	q := buildQuery(domain, id)
+	tr := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		// #nosec G402 - зонд публичных DoH, имя хоста задаёт уровень
+		TLSClientConfig:  &tls.Config{ServerName: urlHost(urlStr)},
+		ForceAttemptHTTP2: true,
+	}
+	if ip != "" {
+		u, err := url.Parse(urlStr)
+		if err != nil {
+			return nil, fmt.Errorf("doh %s: %w", urlStr, err)
+		}
+		port := u.Port()
+		if port == "" {
+			port = "443"
+		}
+		dialAddr := legAddr(u.Host, ip, port)
+		tr.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+			var d net.Dialer
+			return d.DialContext(ctx, network, dialAddr)
+		}
+	}
+	cl := &http.Client{Transport: tr}
+	defer cl.CloseIdleConnections()
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, urlStr, bytes.NewReader(q))
@@ -333,7 +471,7 @@ func exchangeDoH(urlStr, domain string, timeout time.Duration) ([]string, error)
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/dns-message")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := cl.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("doh %s: %w", urlStr, err)
 	}
@@ -346,6 +484,14 @@ func exchangeDoH(urlStr, domain string, timeout time.Duration) ([]string, error)
 		return nil, fmt.Errorf("doh %s: %w", urlStr, err)
 	}
 	return parseA(body), nil
+}
+
+// urlHost - имя хоста из URL без порта (для TLS ServerName).
+func urlHost(urlStr string) string {
+	if u, err := url.Parse(urlStr); err == nil {
+		return u.Hostname()
+	}
+	return ""
 }
 
 func framed(msg []byte) []byte {
