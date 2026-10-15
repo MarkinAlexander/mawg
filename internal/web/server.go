@@ -19,6 +19,7 @@ import (
 
 	"mawg/internal/auth"
 	"mawg/internal/cascade"
+	"mawg/internal/dnsprobe"
 	"mawg/internal/magitrickle"
 	"mawg/internal/platform"
 	"mawg/internal/platform/keenetic"
@@ -73,6 +74,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/ifaces/{device}/mode", s.setIfaceMode)
 	mux.HandleFunc("PUT /api/v1/ifaces/{device}/probe", s.setIfaceProbe)
 	mux.HandleFunc("GET /api/v1/wanprobe", s.getWANProbe)
+	mux.HandleFunc("GET /api/v1/dns/probe", s.dnsProbe)
 	mux.HandleFunc("PUT /api/v1/wanprobe", s.putWANProbe)
 	mux.HandleFunc("GET /api/v1/rcitoken", s.getRCIToken)
 	mux.HandleFunc("PUT /api/v1/rcitoken", s.putRCIToken)
@@ -864,6 +866,19 @@ func (s *Server) putWANProbe(w http.ResponseWriter, r *http.Request) {
 	}
 	s.store.LogEvent("system", "wanprobe", "проверка канала провайдера "+map[bool]string{true: "включена", false: "выключена"}[probe != nil])
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "enabled": probe != nil})
+}
+
+// dnsProbe - зонд DNS-уровней канарейкой (63-док): A-запрос
+// deb.torproject.org через каждый уровень и сверка с каноническим набором.
+// По умолчанию - стандартный набор (dnsmasq/MT/апстрим/DoH/DoT);
+// ?kind=udp&server=host:port[&sni=...] - один уровень (отладка/тесты).
+func (s *Server) dnsProbe(w http.ResponseWriter, r *http.Request) {
+	levels := dnsprobe.Defaults()
+	kind, server := r.URL.Query().Get("kind"), r.URL.Query().Get("server")
+	if kind != "" && server != "" {
+		levels = []dnsprobe.Level{{Level: server, Kind: kind, Server: server, SNI: r.URL.Query().Get("sni")}}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"results": dnsprobe.Run(levels, 3*time.Second)})
 }
 
 func (s *Server) renamePool(w http.ResponseWriter, r *http.Request) {

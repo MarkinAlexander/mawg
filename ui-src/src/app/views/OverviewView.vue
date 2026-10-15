@@ -1,21 +1,27 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted } from 'vue'
-import { UiBadge, UiCard, UiHint } from '../../components/ui'
-import { useStatus, usePools } from '../../stores/status'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { UiBadge, UiButton, UiCard, UiHint } from '../../components/ui'
+import { api } from '../../api/client'
+import { useStatus, usePools, type MtState } from '../../stores/status'
 import { useGroups } from '../../stores/groups'
 import { useIfaces } from '../../stores/ifaces'
 import { useBundles } from '../../stores/bundles'
-import type { MtState } from '../../stores/status'
+import { useToast } from '../../stores/toast'
+import type { DnsProbeRow } from '../../api/types'
 
 // Обзор (44-дока §6) - короткая выжимка: состояние MT и плитки-счётчики
 // со ссылками на вкладки. Пулы живут на «Интерфейсах» (49-док), LAN-клиенты
 // - в Настройках, мастера настроек встанут сюда в Фазе 5 (46-дока §2).
+// «Проверка DNS» - канарейка-зонд уровней (63-док): A-запрос
+// deb.torproject.org через каждый уровень и сверка с каноническим набором;
+// это же - будущий зонд «DNS отвечает?» для каскада L1-L5 (46-дока §3).
 
 const { state: status } = useStatus();
 const { pools } = usePools();
 const groups = useGroups();
 const ifaces = useIfaces();
 const bundles = useBundles();
+const { push } = useToast();
 
 onMounted(() => {
   groups.start(30000);
@@ -53,6 +59,49 @@ function plural(n: number, one: string, few: string, many: string): string {
   if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return `${n} ${few}`;
   return `${n} ${many}`;
 }
+
+// --- Проверка DNS (канарейка-зонд, 63-док) ---
+const probeRows = ref<DnsProbeRow[]>([]);
+const probeBusy = ref(false);
+
+async function runDnsProbe(): Promise<void> {
+  if (probeBusy.value) return;
+  probeBusy.value = true;
+  try {
+    const r = await api<{ results: DnsProbeRow[] }>('GET', '/dns/probe');
+    probeRows.value = r.results || [];
+  } catch (e) {
+    push(e instanceof Error ? e.message : String(e), true);
+  }
+  probeBusy.value = false;
+}
+
+function verdictText(r: DnsProbeRow): string {
+  switch (r.verdict) {
+    case 'clean': return `чисто (${r.canonical}/${r.total})`;
+    case 'spoof': return 'ПОДМЕНА';
+    case 'noanswer': return 'нет ответа';
+    default: return 'недоступен';
+  }
+}
+
+function verdictVariant(r: DnsProbeRow): 'ok' | 'err' | 'muted' {
+  if (r.verdict === 'clean') return 'ok';
+  if (r.verdict === 'error') return 'muted';
+  return 'err';
+}
+
+// рабочий уровень - первый чистый (порядок уровней = приоритет эскалации)
+const probeSummary = computed(() => {
+  const rows = probeRows.value;
+  if (!rows.length) return '';
+  const clean = rows.find((r) => r.verdict === 'clean');
+  const poisoned = rows.filter((r) => r.verdict === 'spoof' || r.verdict === 'noanswer').length;
+  if (clean) {
+    return `рабочий уровень: ${clean.level}` + (poisoned ? ` (проблемных уровней: ${poisoned})` : '');
+  }
+  return 'рабочих уровней нет - нужна эскалация (туннель)';
+});
 
 const tiles = computed(() => {
   const rules = rulesCount.value;
@@ -113,6 +162,51 @@ const tiles = computed(() => {
       </RouterLink>
     </div>
 
+    <!-- Проверка DNS (63-док): канарейка-зонд уровней; порядок строк =
+         приоритет эскалации, первый чистый = рабочий уровень -->
+    <UiCard
+      id="card-dnsprobe"
+      class="dnscard"
+      title="Проверка DNS"
+      subtitle="канарейка deb.torproject.org: сверка ответа каждого уровня с каноническим набором адресов"
+    >
+      <div class="probebar">
+        <UiButton
+          :busy="probeBusy"
+          @click="runDnsProbe"
+        >
+          проверить
+        </UiButton>
+        <span
+          v-if="probeSummary"
+          class="probesum"
+        >{{ probeSummary }}</span>
+      </div>
+      <div
+        v-if="probeRows.length"
+        class="kv"
+      >
+        <template
+          v-for="r in probeRows"
+          :key="r.level"
+        >
+          <b>{{ r.level }}</b>
+          <span>
+            <UiBadge
+              :text="verdictText(r)"
+              :variant="verdictVariant(r)"
+              :tooltip="r.detail || (r.server + ' - ' + r.kind)"
+            />
+            <span class="muted proms">{{ r.ms }} мс</span>
+          </span>
+        </template>
+      </div>
+      <UiHint
+        v-else-if="!probeBusy"
+        text="Кнопка запускает A-запрос канарейки через каждый уровень (локальный резолвер, dns-proxy MT, апстрим провайдера, DoH/DoT) и сверяет ответ с каноническим набором. Чисто = минимум один адрес из набора; ноль при непустом ответе = подмена или блок."
+      />
+    </UiCard>
+
     <UiHint text="Журнал событий - вкладка «Система». Доступ и LAN-клиенты - «Настройки». Будущие мастера настройки появятся здесь (Фаза 5)." />
   </UiCard>
 </template>
@@ -159,5 +253,22 @@ const tiles = computed(() => {
 .tsub {
   color: var(--dim);
   font-size: 11px;
+}
+.dnscard {
+  margin-top: 12px;
+}
+.probebar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.probesum {
+  font-size: 12px;
+  color: var(--text);
+}
+.proms {
+  font-size: 11px;
+  margin-left: 6px;
 }
 </style>
