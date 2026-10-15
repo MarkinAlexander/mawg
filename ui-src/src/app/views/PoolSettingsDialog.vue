@@ -367,7 +367,10 @@ async function save(): Promise<void> {
               class="mname"
               :title="m.name"
             >{{ m.name }}</span>
-            <span class="mend">{{ m.endpoint || '' }}</span>
+            <span
+              class="mend"
+              :class="{ secret: !!m.endpoint }"
+            >{{ m.endpoint || '' }}</span>
             <UiBadge
               v-if="m.active"
               text="активен"

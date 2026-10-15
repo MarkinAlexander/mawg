@@ -106,6 +106,29 @@ describe('PoolSettingsDialog', () => {
     dlg.unmount();
   });
 
+  it('приватный режим: адреса состава пула и источник помечены secret, цель пробы видима', async () => {
+    // движковый пул может не попасть в /status - разметка состава статическая
+    const eng: PoolView = {
+      ...pool, name: 'free', device: 'tun1', slot: undefined,
+      settings: { ...pool.settings, engineMode: 'singbox', tunName: 'tun1' },
+      configs: [],
+    };
+    const { dlg } = await makeDialog({ '/members': { members: [
+      { name: 'nl-1', proto: 'awg', endpoint: '193.32.248.85:51820', enabled: true, active: true },
+      { name: 'de-1', proto: 'vless', detail: 'tls', endpoint: '95.179.130.10:443', enabled: false },
+      { name: 'jp-1', proto: 'vless', endpoint: '', enabled: true },
+    ] } }, [eng]);
+    await vi.waitFor(() => expect(dlg.text()).toContain('Состав пула'));
+    const ends = dlg.findAll('.mend');
+    expect(ends.map((e) => e.classes().includes('secret'))).toEqual([true, true, false]);
+    // источник подписки (vless://строки) - поле-обёртка с secret
+    expect(dlg.find('.secret textarea').exists()).toBe(true);
+    // цель пробы (gstatic - публичное) - инпут не внутри .secret
+    const probe = dlg.findAll('input').find((i) => (i.element as HTMLInputElement).value.includes('gstatic'))!;
+    expect((probe.element as HTMLElement).closest('.secret')).toBeNull();
+    dlg.unmount();
+  });
+
   it('обновить из источника: POST refresh-source с source и локацией', async () => {
     const { dlg, f } = await makeDialog({ '/refresh-source': { added: 4, amnezia: { serverCountry: 'de' } } }, [pool]);
     await btn(dlg, 'обновить из источника')[0].trigger('click');
