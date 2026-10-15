@@ -1,10 +1,11 @@
 #!/bin/sh
 # mawg - Multi-AWG Changer: установщик и обновлялка
 # использование: sh install.sh [-u|--update] [-r|--remove] [--purge]
-#   [--with-magitrickle] [--without-magitrickle] [--with-awg3]
+#   [--with-magitrickle] [--without-magitrickle] [--with-awg3] [--port N]
 # по умолчанию: определить платформу, проверить зависимости (спросить при
 # необходимости), скачать бинарник последнего релиза, поставить сервис.
-# MAWG_DEBUG=1 - печатать тайминги шагов (в stderr).
+# --port N - порт веб-панели (по умолчанию 8090; занятый порт установщик
+# заметит и предложит другой). MAWG_DEBUG=1 - печатать тайминги шагов.
 # Обновление (-u) не вызывает apk/opkg вовсе: скачивание существующим
 # curl или wget; пакетный менеджер нужен только если fetcher-а нет вообще.
 
@@ -40,7 +41,13 @@ mark() {
     STEP_TS=$now
 }
 
+PENDING=""
 for arg in "$@"; do
+    if [ "$PENDING" = "port" ]; then
+        PORT_ARG="$arg"
+        PENDING=""
+        continue
+    fi
     case "$arg" in
         -u|--update) MODE="update";;
         -r|--remove) MODE="remove";;
@@ -48,10 +55,18 @@ for arg in "$@"; do
         --with-magitrickle) WANT_MT="yes";;
         --without-magitrickle) WANT_MT="no";;
         --with-awg3) WANT_AWG3="yes";;
-        -h|--help) sed -n '2,9p' "$0"; exit 0;;
+        --port) PENDING="port";;
+        -h|--help) sed -n '2,10p' "$0"; exit 0;;
         *) die "неизвестный аргумент $arg (см. --help)";;
     esac
 done
+[ -n "$PENDING" ] && die "--port указан без значения"
+if [ -n "${PORT_ARG:-}" ]; then
+    case "$PORT_ARG" in
+        ''|*[!0-9]*) die "порт должен быть числом 1-65535";;
+    esac
+    [ "$PORT_ARG" -ge 1 ] && [ "$PORT_ARG" -le 65535 ] || die "порт 1-65535, получено $PORT_ARG"
+fi
 
 detect_pkg_manager() {
     if [ "$PLATFORM" = keenetic ]; then
@@ -263,6 +278,9 @@ EOF
 report() {
     ip=$(ip -4 addr show 2>/dev/null | grep -o 'inet 192\.[0-9.]*' | head -1 | awk '{print $2}')
     [ -n "$ip" ] || ip=$(ifconfig 2>/dev/null | grep -o 'addr:192\.[0-9.]*' | head -1 | cut -d: -f2)
+    # фактический порт панели: из сохранённых настроек, не из догадок
+    web_port=$(grep -o '"webPort"[,: ]*[0-9]*' "$DATA/config.json" 2>/dev/null | grep -o '[0-9]*$' | head -1)
+    [ -n "$web_port" ] || web_port=8090
     echo
     echo "==============================="
     echo " mawg установлен"
@@ -270,7 +288,7 @@ report() {
     echo " бинарник:    $BIN"
     echo " данные:      $DATA"
     echo " лог:         $LOG"
-    echo " веб:         http://${ip:-<ip-роутера>}:8090"
+    echo " веб:         http://${ip:-<ip-роутера>}:$web_port"
     echo "==============================="
     if [ -f "$DATA/first-auth.txt" ]; then
         echo
@@ -436,6 +454,34 @@ if [ "$PLATFORM" = openwrt ]; then
     write_init_openwrt
 else
     write_init_keenetic
+fi
+
+# порт панели: явный --port, иначе на свежей установке заметить занятый
+# 8090 и спросить (кейс пользователя: порт уже занят другой панелью)
+want_port=""
+if [ -n "${PORT_ARG:-}" ]; then
+    want_port="$PORT_ARG"
+elif [ "$MODE" = install ] && [ ! -f "$DATA/config.json" ]; then
+    if netstat -tln 2>/dev/null | grep -q ':8090 '; then
+        warn "порт 8090 уже занят другим процессом - панель на нём не поднимется"
+        if [ -t 0 ]; then
+            printf "порт панели (1-65535, Enter - всё равно 8090): "
+            read -r want_port
+            case "$want_port" in
+                '') want_port="";;
+                *[!0-9]*) die "порт должен быть числом 1-65535";;
+            esac
+            if [ -n "$want_port" ]; then
+                [ "$want_port" -ge 1 ] && [ "$want_port" -le 65535 ] || die "порт 1-65535"
+            fi
+        else
+            warn "терминала нет: переустановите с --port N или выполните mawg port <N> после установки"
+        fi
+    fi
+fi
+if [ -n "$want_port" ] && [ "$want_port" != "8090" ]; then
+    "$BIN" port "$want_port" >/dev/null || die "не удалось задать порт $want_port"
+    say "порт панели: $want_port"
 fi
 
 svc_start
