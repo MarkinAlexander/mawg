@@ -26,7 +26,8 @@ beforeEach(() => {
   vi.unstubAllGlobals();
   vi.stubGlobal('fetch', apiStub());
   const s = useStatus().state;
-  s.loaded = false;
+  // статус известен (гейт контента открыт) - гейт-тесты переопределяют
+  s.loaded = true;
   s.authNeeded = false;
   s.error = '';
   s.mt = 'checking';
@@ -107,6 +108,44 @@ describe('NextLayout', () => {
     const dlg = w.findComponent(LoginDialog)
     expect(dlg.props('open')).toBe(true)
     expect(w.find('.uibanner').exists()).toBe(false)
+    w.unmount()
+  })
+
+  it('гейт логина (слово владельца): authNeeded - контент скрыт целиком, диалог открыт', async () => {
+    const router = await makeRouter()
+    const w = mount(NextLayout, { global: { plugins: [router] } })
+    useStatus().state.authNeeded = true
+    await nextTick()
+    expect(w.find('header').exists()).toBe(false)
+    expect(w.find('main').exists()).toBe(false)
+    expect(w.find('.menu-fab').exists()).toBe(false)
+    expect(w.findComponent(LoginDialog).props('open')).toBe(true)
+    w.unmount()
+  })
+
+  it('гейт: до первого /status (!loaded без ошибки) контент скрыт - нет вспышки страницы', async () => {
+    const router = await makeRouter()
+    useStatus().state.loaded = false
+    const w = mount(NextLayout, { global: { plugins: [router] } })
+    await nextTick()
+    expect(w.find('header').exists()).toBe(false)
+    expect(w.find('main').exists()).toBe(false)
+    expect(w.findComponent(LoginDialog).props('open')).toBe(false)
+    // статус пришёл (сервер без авторизации) - каркас показан
+    await vi.waitFor(() => expect(w.find('header').exists()).toBe(true))
+    w.unmount()
+  })
+
+  it('гейт: ошибка сети показывает каркас с метой ошибки, без логина', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('down'); }));
+    const router = await makeRouter()
+    useStatus().state.loaded = false
+    const w = mount(NextLayout, { global: { plugins: [router] } })
+    await vi.waitFor(() => {
+      expect(w.find('header').exists()).toBe(true)
+      expect(w.findComponent(LoginDialog).props('open')).toBe(false)
+      expect(w.find('.meta').text()).toContain('ошибка')
+    })
     w.unmount()
   })
 
