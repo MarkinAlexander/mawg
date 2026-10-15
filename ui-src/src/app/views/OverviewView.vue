@@ -92,6 +92,14 @@ function verdictVariant(r: DnsProbeRow): 'ok' | 'err' | 'muted' {
   return 'err';
 }
 
+// tooltip строки: ошибка сети, иначе путь уровня с ногой сервиса
+// (перебор ног, Фаза E: «dns.google -> 8.8.4.4»)
+function probeTooltip(r: DnsProbeRow): string {
+  if (r.detail) return r.detail;
+  const via = r.ip ? `${r.server} (нога ${r.ip})` : r.server;
+  return `${via} - ${r.kind}`;
+}
+
 // рабочий уровень - первый чистый (порядок уровней = приоритет эскалации)
 const probeSummary = computed(() => {
   const rows = probeRows.value;
@@ -198,15 +206,19 @@ const tiles = computed(() => {
             <UiBadge
               :text="verdictText(r)"
               :variant="verdictVariant(r)"
-              :tooltip="r.detail || (r.server + ' - ' + r.kind)"
+              :tooltip="probeTooltip(r)"
             />
+            <span
+              v-if="r.ip"
+              class="muted proms"
+            >{{ r.ip }}</span>
             <span class="muted proms">{{ r.ms }} мс</span>
           </span>
         </template>
       </div>
       <UiHint
         v-else-if="!probeBusy"
-        text="Кнопка запускает A-запрос канарейки через каждый уровень (локальный резолвер, dns-proxy MT, апстрим провайдера, DoH/DoT) и сверяет ответ с каноническим набором. Чисто = минимум один адрес из набора; ноль при непустом ответе = подмена или блок. TCP-строки - «интернет жив?» без DNS: оба недоступны = сеть вниз, доступен только внутренний = DNS-эскалация имеет смысл."
+        text="Кнопка запускает A-запрос канарейки через каждый уровень (локальный резолвер, dns-proxy MT, апстрим провайдера, DoH/DoT) и сверяет ответ с каноническим набором. Чисто = минимум один адрес из набора; ноль при непустом ответе = подмена или блок. DoH/DoT перебирают ноги сервиса (например 8.8.8.8 и 8.8.4.4) - мёртвая нога не роняет уровень. TCP-строки - «интернет жив?» без DNS: оба недоступны = сеть вниз, доступен только внутренний = DNS-эскалация имеет смысл."
       />
     </UiCard>
 

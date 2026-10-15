@@ -246,6 +246,7 @@ export interface MagitrickleRes {
 
 // GET /dns/probe: проба одного DNS-уровня канарейкой (63-док).
 // verdict: clean | spoof | noanswer | error
+// ip - нога сервиса, которая ответила (перебор Level.IPs, Фаза E)
 export interface DnsProbeRow {
   level: string
   kind: 'udp' | 'dot' | 'doh' | string
@@ -254,6 +255,7 @@ export interface DnsProbeRow {
   canonical: number
   total: number
   ms: number
+  ip?: string
   detail?: string
 }
 
