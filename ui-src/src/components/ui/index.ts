@@ -3,6 +3,7 @@
 // hint - в title и/или под контролом, busy у всего кликабельного.
 export { default as UiIcon } from './UiIcon.vue'
 export { default as UiHint } from './UiHint.vue'
+export { default as UiHelp } from './UiHelp.vue'
 export { default as UiBadge } from './UiBadge.vue'
 export { default as UiBanner } from './UiBanner.vue'
 export { default as UiButton } from './UiButton.vue'
