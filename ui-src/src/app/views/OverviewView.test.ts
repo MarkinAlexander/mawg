@@ -124,9 +124,9 @@ describe('OverviewView - Проверка DNS (63-док)', () => {
     stub.mockImplementation(async (url: string) => {
       if (url.endsWith('/dns/probe')) {
         return new Response(JSON.stringify({ results: [
-          { level: 'dnsmasq', kind: 'udp', server: '127.0.0.1:53', verdict: 'clean', canonical: 5, total: 5, ms: 3 },
-          { level: 'dns-proxy MT', kind: 'udp', server: '127.0.0.1:3553', verdict: 'clean', canonical: 5, total: 5, ms: 7 },
-          { level: 'upstream ISP', kind: 'udp', server: '192.168.0.1:53', verdict: 'noanswer', canonical: 0, total: 0, ms: 2001 },
+          { level: 'Служба DNS роутера', kind: 'udp', server: '127.0.0.1:53', verdict: 'clean', canonical: 5, total: 5, ms: 3 },
+          { level: 'DNS через MT', kind: 'udp', server: '127.0.0.1:3553', verdict: 'clean', canonical: 5, total: 5, ms: 7 },
+          { level: 'DNS провайдера', kind: 'udp', server: '192.168.0.1:53', verdict: 'noanswer', canonical: 0, total: 0, ms: 2001 },
           { level: 'DoH Cloudflare', kind: 'doh', server: 'https://1.1.1.1/dns-query', verdict: 'error', canonical: 0, total: 0, ms: 3000, detail: 'dial timeout' },
           { level: 'DoH Google', kind: 'doh', server: 'https://dns.google/dns-query', verdict: 'clean', canonical: 5, total: 5, ms: 22, ip: '8.8.4.4' },
         ] }), { status: 200 });
@@ -146,12 +146,42 @@ describe('OverviewView - Проверка DNS (63-док)', () => {
     await vi.waitFor(() => expect(w.findAll('#card-dnsprobe .uibadge').length).toBe(5));
 
     const badges = w.findAll('#card-dnsprobe .uibadge');
-    expect(badges[0].text()).toContain('чисто (5/5)');
+    expect(badges[0].text()).toContain('работает');
     expect(badges[2].text()).toContain('нет ответа');
     expect(badges[3].classes().join(' ')).toContain('v-muted');
     // нога сервиса (Фаза E) видна в строке и попадает в сводку
     expect(w.find('#card-dnsprobe').text()).toContain('8.8.4.4');
-    expect(w.find('.probesum').text()).toContain('рабочий уровень: dnsmasq');
+    expect(w.find('.probesum').text()).toContain('рабочий уровень: Служба DNS роутера');
+    w.unmount();
+  });
+
+  it('глоссарий-проход (67-док): [?] у карточки и у каждой строки уровня, жаргон не в видимых текстах', async () => {
+    const stub = apiStub();
+    const base = stub.getMockImplementation()!;
+    stub.mockImplementation(async (url: string) => {
+      if (url.endsWith('/dns/probe')) {
+        return new Response(JSON.stringify({ results: [
+          { level: 'Служба DNS роутера', kind: 'udp', server: '127.0.0.1:53', verdict: 'clean', canonical: 5, total: 5, ms: 3 },
+          { level: 'интернет TCP 1.1.1.1:443', kind: 'tcp', server: '1.1.1.1:443', verdict: 'clean', canonical: 0, total: 0, ms: 45 },
+        ] }), { status: 200 });
+      }
+      return base(url);
+    });
+    vi.stubGlobal('fetch', stub);
+    const w = mount(OverviewView);
+    await vi.waitFor(() => expect(w.findAll('#card-dnsprobe .uihelp').length).toBeGreaterThanOrEqual(1));
+    await w.find('#card-dnsprobe .uibtn').trigger('click');
+    await vi.waitFor(() => expect(w.findAll('#card-dnsprobe .uibadge').length).toBe(2));
+    // [?] у заголовка (actions) + у каждой из двух строк уровня
+    expect(w.findAll('#card-dnsprobe .uihelp').length).toBe(3);
+    // забытый импорт UiHelp = кастом-элемент без логики (GOTCHAS)
+    expect(w.html()).not.toContain('<uihelp');
+    // «канарейка» и канонический набор - только в подсказках/комментариях,
+    // в видимом тексте карточки их нет (слово владельца)
+    const cardText = w.find('#card-dnsprobe').text();
+    expect(cardText).not.toContain('канарейк');
+    expect(cardText).toContain('работает');
+    expect(cardText).toContain('доступен');
     w.unmount();
   });
 });
