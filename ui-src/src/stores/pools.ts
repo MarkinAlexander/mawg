@@ -5,7 +5,7 @@
 // (легаси setTimeout(refresh, 700)), кроме быстрых конфиг-хвостов - там сразу.
 import { api, apiForm, apiText } from '../api/client'
 import { useStatus } from './status'
-import type { LinkInspect, PoolMember, SlotInfo } from '../api/types'
+import type { LinkInspect, PoolEngine, PoolMember, SlotInfo } from '../api/types'
 
 export type PoolAct = 'enable' | 'disable' | 'rotate' | 'check';
 
@@ -148,6 +148,21 @@ export function usePoolActions() {
     return r.members || [];
   }
 
+  async function engine(name: string): Promise<PoolEngine> {
+    return api<PoolEngine>('GET', `/pools/${encodeURIComponent(name)}/engine`);
+  }
+
+  async function engineSelect(name: string, node: string): Promise<void> {
+    await api('PUT', `/pools/${encodeURIComponent(name)}/engine/select`, { node });
+    void refresh();
+  }
+
+  async function engineRetest(name: string): Promise<Record<string, number>> {
+    const r = await api<{ ok: boolean; delays?: Record<string, number> }>('POST', `/pools/${encodeURIComponent(name)}/engine/retest`, {});
+    void refresh();
+    return r.delays || {};
+  }
+
   async function configText(name: string, file: string): Promise<string> {
     return apiText(`/pools/${encodeURIComponent(name)}/configs/${encodeURIComponent(file)}`);
   }
@@ -155,7 +170,7 @@ export function usePoolActions() {
   return {
     act, del, upload, toggleCfg, moveCfg, delCfg, activateCfg, importPremium, switchPremiumCountry,
     create, createFromSource, requestFree, inspect, slots, createSlot,
-    refreshSource, update, rename, reissueFree, members, configText,
+    refreshSource, update, rename, reissueFree, members, configText, engine, engineSelect, engineRetest,
   };
 }
 

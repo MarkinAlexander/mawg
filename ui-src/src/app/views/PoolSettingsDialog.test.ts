@@ -182,3 +182,44 @@ describe('PoolSettingsDialog', () => {
 
 const btn = (w: ReturnType<typeof mount>, text: string) =>
   w.findAll('button').filter((b) => b.text() === text);
+
+describe('PoolSettingsDialog - режим группы движка (60-док)', () => {
+  it('движковый: селект режима есть, selector уходит в PUT; не-движковый - поля нет', async () => {
+    const eng: PoolView = {
+      ...pool, name: 'free', device: 'tun1', slot: undefined,
+      settings: { ...pool.settings, engineMode: 'singbox', tunName: 'tun1', source: '' },
+    };
+    const { dlg, f } = await makeDialog({}, [eng], { platform: 'openwrt' });
+    expect(dlg.text()).toContain('Режим группы движка');
+    expect(dlg.text()).toContain('лучший пинг (авто)');
+
+    // открыть дропдаун режима группы: ищем по текущему значению
+    // («лучший пинг (авто)»), а не по порядку - первый селект залочен
+    const groupBtn = dlg.findAll('.psel-btn').find((b) => b.text().includes('лучший пинг'));
+    await groupBtn!.trigger('click');
+    await vi.waitFor(() => expect(dlg.find('.psel-list').exists()).toBe(true));
+    const opt = dlg.findAll('.psel-item').find((o) => o.text().includes('ручной выбор узла'));
+    await opt!.trigger('click');
+    await nextTick();
+
+    await btn(dlg, 'Сохранить')[0].trigger('click');
+    await vi.waitFor(() => {
+      const put = f.mock.calls.find((c) => (c[0] as string).endsWith('/pools/free') && c[1]?.method === 'PUT');
+      expect(JSON.parse(put![1]!.body as string)).toMatchObject({ groupMode: 'selector' });
+    });
+    dlg.unmount();
+  });
+
+  it('не-движковый: режима группы нет, PUT без groupMode', async () => {
+    const { dlg, f } = await makeDialog({}, [pool]);
+    await vi.waitFor(() => expect(dlg.text()).toContain('Источник'));
+    expect(dlg.text()).not.toContain('Режим группы движка');
+    await btn(dlg, 'Сохранить')[0].trigger('click');
+    await vi.waitFor(() => {
+      const put = f.mock.calls.find((c) => (c[0] as string).endsWith('/pools/proton') && c[1]?.method === 'PUT');
+      expect(put).toBeTruthy();
+      expect(JSON.parse(put![1]!.body as string)).not.toHaveProperty('groupMode');
+    });
+    dlg.unmount();
+  });
+});

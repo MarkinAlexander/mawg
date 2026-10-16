@@ -99,6 +99,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/pools/{name}/configs", s.uploadConfigs)
 	mux.HandleFunc("GET /api/v1/pools/{name}/premium", s.getPremium)
 	mux.HandleFunc("GET /api/v1/pools/{name}/members", s.getPoolMembers)
+	mux.HandleFunc("GET /api/v1/pools/{name}/engine", s.getPoolEngine)
+	mux.HandleFunc("PUT /api/v1/pools/{name}/engine/select", s.putPoolEngineSelect)
+	mux.HandleFunc("POST /api/v1/pools/{name}/engine/retest", s.postPoolEngineRetest)
 	mux.HandleFunc("GET /api/v1/pools/{name}/configs/{file}", s.getPoolConfigRaw)
 	mux.HandleFunc("POST /api/v1/pools/{name}/premium", s.importPremium)
 	mux.HandleFunc("POST /api/v1/pools/{name}/premium/country", s.switchPremium)
@@ -1304,6 +1307,13 @@ func (s *Server) updatePool(w http.ResponseWriter, r *http.Request) {
 	}
 	if patch.MagitrickleGroupID != "" {
 		merged.MagitrickleGroupID = patch.MagitrickleGroupID
+	}
+	if patch.GroupMode != "" {
+		if patch.GroupMode != "urltest" && patch.GroupMode != "selector" {
+			writeErr(w, fmt.Errorf("groupMode: urltest|selector"))
+			return
+		}
+		merged.GroupMode = patch.GroupMode
 	}
 	// Каскад движка (detour) владельцем отвергнут: всё, заведённое через
 	// ядро, умирает вместе с ядром, а на OpenWrt без sing-box юзер вообще

@@ -187,7 +187,9 @@ describe('PoolCard - отображение', () => {
     expect(w.text()).toContain('tun1 | движок sing-box 1.11.0-lx (не запущен)');
     expect(w.findAll('.protos .uibadge')).toHaveLength(2);
     expect(w.text()).toContain('awg3 ×2');
-    expect(w.find('.cfg').exists()).toBe(false);
+    // конфигов у движкового нет, но есть секция «Узлы» (60-док)
+    expect(w.text()).not.toContain('Конфиги (');
+    expect(w.text()).toContain('Узлы (');
     expect(btn(w, 'Сменить конфиг')).toHaveLength(0);
     expect(btn(w, 'Проверить')).toHaveLength(0);
     w.unmount();
@@ -362,5 +364,92 @@ describe('PoolCard - приватный режим по адресам конф�
     expect(w2.find('.kv .err.secret').exists()).toBe(false);
     w.unmount();
     w2.unmount();
+  });
+});
+
+describe('PoolCard - узлы движкового пула (60-док)', () => {
+  const enginePayload = {
+    mode: 'urltest', now: 'узел-2',
+    nodes: [{ tag: 'узел-1', delay: 250 }, { tag: 'узел-2', delay: 120 }, { tag: 'узел-3', delay: 0 }],
+  };
+
+  function engineStub(payload = enginePayload) {
+    return vi.fn(async (url: string, init?: { method?: string; body?: string }) => {
+      if ((url as string).endsWith('/engine')) {
+        if (init?.method === 'PUT') return new Response('{"ok":true,"now":"узел-1"}', { status: 200 });
+        if (init?.method === 'POST') return new Response('{"ok":true,"delays":{"узел-1":111}}', { status: 200 });
+        return new Response(JSON.stringify(payload), { status: 200 });
+      }
+      if ((url as string).endsWith('/status')) {
+        return new Response(JSON.stringify(statusFor()), { status: 200 });
+      }
+      return new Response('{"ok":true}', { status: 200 });
+    });
+  }
+
+  async function openNodes(payload = enginePayload) {
+    const f = engineStub(payload);
+    vi.stubGlobal('fetch', f);
+    const w = makeCard(enginePool);
+    const d = w.find('details').element as HTMLDetailsElement;
+    d.open = true;
+    await w.find('details').trigger('toggle');
+    await vi.waitFor(() => expect(w.text()).toContain('узел-1'));
+    return { w, f };
+  }
+
+  it('открытие грузит узлы из /engine: пинги, активный бейдж, «Перемерить пинги» в urltest', async () => {
+    const { w, f } = await openNodes();
+    expect(f.mock.calls.some((c) => (c[0] as string).endsWith('/engine'))).toBe(true);
+    expect(w.text()).toContain('250 мс');
+    expect(w.text()).toContain('120 мс');
+    expect(w.text()).toContain('—'); // не измерен
+    const rows = w.findAll('.cfgrow');
+    expect(rows[1].classes()).toContain('active'); // now = узел-2
+    expect(w.text()).toContain('Перемерить пинги');
+    expect(w.text()).not.toContain('выбрать этот узел');
+    w.unmount();
+  });
+
+  it('selector-режим: ⚡ у узлов, клик шлёт PUT /engine/select {node}', async () => {
+    const { w, f } = await openNodes({ ...enginePayload, mode: 'selector' });
+    expect(w.text()).not.toContain('Перемерить пинги');
+    const pick = w.findAll('.cfgctl button').filter((b) => b.text().includes('⚡'));
+    expect(pick.length).toBe(3);
+    expect((pick[1].element as HTMLButtonElement).disabled).toBe(true); // now = узел-2
+    await pick[0].trigger('click');
+    await vi.waitFor(() => {
+      const put = f.mock.calls.find((c) => (c[0] as string).endsWith('/engine/select'));
+      expect(JSON.parse(put![1]!.body as string)).toEqual({ node: 'узел-1' });
+    });
+    w.unmount();
+  });
+
+  it('перемер: кнопка дергает POST /engine/retest и перечитывает список', async () => {
+    const { w, f } = await openNodes();
+    await w.findAll('button').filter((b) => b.text() === 'Перемерить пинги')[0].trigger('click');
+    await vi.waitFor(() => {
+      expect(f.mock.calls.some((c) => (c[0] as string).endsWith('/engine/retest'))).toBe(true);
+    });
+    w.unmount();
+  });
+
+  it('движок не отвечает - честная ошибка в секции, узлов нет', async () => {
+    const f = vi.fn(async (url: string) => {
+      if ((url as string).endsWith('/engine')) {
+        return new Response(JSON.stringify({ error: 'движок не отвечает: connection refused' }), { status: 502 });
+      }
+      if ((url as string).endsWith('/status')) {
+        return new Response(JSON.stringify(statusFor()), { status: 200 });
+      }
+      return new Response('{"ok":true}', { status: 200 });
+    });
+    vi.stubGlobal('fetch', f);
+    const w = makeCard(enginePool);
+    const d = w.find('details').element as HTMLDetailsElement;
+    d.open = true;
+    await w.find('details').trigger('toggle');
+    await vi.waitFor(() => expect(w.text()).toContain('движок не отвечает'));
+    w.unmount();
   });
 });
