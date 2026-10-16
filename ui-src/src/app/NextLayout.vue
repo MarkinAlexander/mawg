@@ -37,9 +37,32 @@ const fabGone = ref(false);
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape') menuOpen.value = false;
 }
+// флаг барьера вместо чтения history.state: его может снести чужой
+// pushState (в т.ч. роутера) - локальный флаг надёжен и тестируем
+let historyBarrier = false;
 watch(menuOpen, (open) => {
-  if (open) document.addEventListener('keydown', onKeydown);
-  else document.removeEventListener('keydown', onKeydown);
+  if (open) {
+    document.addEventListener('keydown', onKeydown);
+    // барьер для кнопки «Назад» (67-док §3.8): Back закрывает меню, а не
+    // уходит со страницы; pushState с тем же URL - перехода нет
+    try {
+      history.pushState({ mawgMenu: true }, '');
+      historyBarrier = true;
+    } catch {
+      // нет истории - перехват Back просто не работает, не критично
+    }
+    window.addEventListener('popstate', onPopState);
+  } else {
+    document.removeEventListener('keydown', onKeydown);
+    window.removeEventListener('popstate', onPopState);
+    // закрыли сами (тап/жест/Esc/вкладка) - снять барьер, чтобы
+    // следующий Back не съел пустую запись; при Back барьер уже съел
+    // браузер (onPopState снял флаг) - второй back не нужен
+    if (historyBarrier) {
+      historyBarrier = false;
+      history.back();
+    }
+  }
 });
 
 // Поиск по настройкам (46-док §1): лупа в шапке + Ctrl+K / Cmd+K
@@ -90,25 +113,28 @@ function onSecretKeydown(e: KeyboardEvent) {
   }
 }
 
-// жесты у правого края (на мобильной ширине): вытянуть из-за края
-// (справа налево, dx < -40) - открыть меню и проявить кнопку; задвинуть
-// за край (слева направо, dx > +40) - закрыть шторку и спрятать кнопку.
-// Pointer Events покрывают и палец, и мышь; на десктопе меню скрыто,
-// поэтому guard по matchMedia.
-const EDGE_PX = 24;
-const SWIPE_PX = 40;
-let swipeStart: { x: number; y: number } | null = null;
-function onPointerDown(e: PointerEvent) {
-  if (!window.matchMedia('(max-width: 820px)').matches) return;
-  if (e.clientX < window.innerWidth - EDGE_PX) return;
-  swipeStart = { x: e.clientX, y: e.clientY };
+// краевая полоса жестов (67-док §3.8, слово владельца: Firefox - меню
+// открывалось, но кнопка не пряталась; Brave/Chromium - не работал даже
+// жест: браузеры забирают краевой свайп под скролл/навигацию и шлют
+// pointercancel). Невидимая полоса во весь правый край с
+// touch-action: none - браузеру ЗАПРЕЩЕНО перехватывать касание на ней,
+// все move доезжают (setPointerCapture держит палец на полосе). Тап без
+// свайпа пересылается содержимому под полосой (elementFromPoint), чтобы
+// правая кромка экрана не стала мёртвой.
+const SWIPE_PX = 40;  // порог срабатывания
+let edgeStart: { x: number; y: number } | null = null;
+let edgeSwiped = false;
+function onEdgeDown(e: PointerEvent): void {
+  edgeStart = { x: e.clientX, y: e.clientY };
+  edgeSwiped = false;
+  (e.currentTarget as HTMLElement)?.setPointerCapture?.(e.pointerId);
 }
-function onPointerMove(e: PointerEvent) {
-  if (!swipeStart) return;
-  const dx = e.clientX - swipeStart.x;
-  const dy = e.clientY - swipeStart.y;
+function onEdgeMove(e: PointerEvent): void {
+  if (!edgeStart || edgeSwiped) return;
+  const dx = e.clientX - edgeStart.x;
+  const dy = e.clientY - edgeStart.y;
   if (Math.abs(dx) >= SWIPE_PX && Math.abs(dx) > Math.abs(dy)) {
-    swipeStart = null;
+    edgeSwiped = true;
     if (dx < 0) {
       // вытянуть из-за края: меню + кнопка
       menuOpen.value = true;
@@ -118,32 +144,45 @@ function onPointerMove(e: PointerEvent) {
       menuOpen.value = false;
       fabGone.value = true;
     }
-    return;
   }
-  // жест отменён уходом по вертикали (скролл)
-  if (Math.abs(dy) > SWIPE_PX) swipeStart = null;
 }
-function onPointerUp() {
-  swipeStart = null;
+function onEdgeUp(): void {
+  edgeStart = null;
+}
+// тап по полосе (без свайпа) - прозрачный пропуск клика содержимому
+function onEdgeClick(e: MouseEvent): void {
+  if (edgeSwiped) return;
+  const strip = e.currentTarget as HTMLElement;
+  const x = e.clientX;
+  const y = e.clientY;
+  strip.style.pointerEvents = 'none';
+  const target = document.elementFromPoint(x, y);
+  strip.style.pointerEvents = '';
+  if (target && target !== strip) {
+    target.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: x, clientY: y }));
+  }
+}
+
+// кнопка «Назад» при открытом меню закрывает меню, а не уводит со
+// страницы (слово владельца): при открытии кладём барьер в историю
+// (pushState с тем же URL), Back съедает барьер и закрывает шторку;
+// закрыли сами (тап/жест/Esc/вкладка) - барьер снимаем history.back()
+// (URL тот же - перехода нет).
+function onPopState(): void {
+  historyBarrier = false; // барьер съел браузер (Back)
+  if (menuOpen.value) menuOpen.value = false;
 }
 onMounted(() => {
   document.addEventListener('keydown', onSearchKeydown);
   document.addEventListener('click', onSecretClick, true);
   document.addEventListener('keydown', onSecretKeydown);
-  document.addEventListener('pointerdown', onPointerDown);
-  document.addEventListener('pointermove', onPointerMove);
-  document.addEventListener('pointerup', onPointerUp);
-  document.addEventListener('pointercancel', onPointerUp);
 });
 onBeforeUnmount(() => {
   document.removeEventListener('keydown', onSearchKeydown);
   document.removeEventListener('keydown', onKeydown);
   document.removeEventListener('click', onSecretClick, true);
   document.removeEventListener('keydown', onSecretKeydown);
-  document.removeEventListener('pointerdown', onPointerDown);
-  document.removeEventListener('pointermove', onPointerMove);
-  document.removeEventListener('pointerup', onPointerUp);
-  document.removeEventListener('pointercancel', onPointerUp);
+  window.removeEventListener('popstate', onPopState);
 });
 
 const MT_LABEL: Record<MtState, string> = {
@@ -228,6 +267,18 @@ const appVisible = computed(() => !status.authNeeded && (status.loaded || !!stat
     <main v-if="appVisible">
       <RouterView />
     </main>
+    <!-- краевая полоса жестов (только мобильная ширина): свайпы меню у
+         правого края, тапы пересылаются содержимому; над шторкой, чтобы
+         жестом её же и закрывать -->
+    <div
+      v-if="appVisible"
+      class="edge-zone"
+      @pointerdown="onEdgeDown"
+      @pointermove="onEdgeMove"
+      @pointerup="onEdgeUp"
+      @pointercancel="onEdgeUp"
+      @click="onEdgeClick"
+    />
     <ToastHost />
     <ConfirmHost />
     <SearchDialog
@@ -377,6 +428,24 @@ main {
   position: fixed;
   inset: 0;
   z-index: 84;
+}
+/* краевая полоса жестов: на десктопе скрыта; touch-action none -
+   браузеру запрещено отбирать свайп под скролл/навигацию (Brave/Firefox);
+   над шторкой (84) - задвигать её жестом */
+.edge-zone {
+  display: none;
+}
+@media (max-width: 820px) {
+  .edge-zone {
+    display: block;
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 24px;
+    z-index: 86;
+    touch-action: none;
+  }
 }
 .sheet-backdrop {
   position: absolute;
