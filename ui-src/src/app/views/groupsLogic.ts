@@ -432,5 +432,5 @@ export function backupKind(name: string): { label: string; restoreAsk: string } 
       restoreAsk: 'сырой MT-конфиг: файл вернётся на место, демон MagiTrickle перезапустится',
     };
   }
-  return { label: 'shadow', restoreAsk: 'правила из shadow: ВСЕ группы будут заменены на сохранённые' };
+  return { label: 'правила (shadow)', restoreAsk: 'правила из shadow: ВСЕ группы будут заменены на сохранённые' };
 }
