@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { UiBadge, UiBanner, UiButton, UiCard, UiDialog, UiHint, UiInput, UiSelect, type UiSelectOption, UiSwitch, UiTable, type UiTableColumn } from '../../components/ui'
+import { UiBadge, UiBanner, UiButton, UiCard, UiDialog, UiHelp, UiHint, UiInput, UiSelect, type UiSelectOption, UiSwitch, UiTable, type UiTableColumn } from '../../components/ui'
 import { useEvents } from '../../stores/events'
 import { useStatus } from '../../stores/status'
 import { useSystem } from '../../stores/system'
@@ -8,6 +8,7 @@ import { useConfirm } from '../../stores/confirm'
 import { useToast } from '../../stores/toast'
 import type { AppEvent, SystemItem } from '../../api/types'
 import { useSecrets } from '../secrets'
+import { G } from '../glossary'
 
 // Журнал событий (легаси refreshLog): хвост 80, НОВЫЕ СВЕРХУ, k-цвета
 // пяти видов. Место - вкладка «Система» (44-дока §6). Опрос таб-локальный:
@@ -35,9 +36,17 @@ const collapsed = ref(false);
 // списку, хвост 80 - уже отфильтрованного.
 const evKind = ref('');
 const evQuery = ref('');
+// человеческие лейблы типов событий (ключи kind - API, не трогаем)
+const KIND_RU: Record<string, string> = {
+  rotate: 'ротация', applied: 'применено', fallback: 'фоллбек',
+  magitrickle: 'MagiTrickle', install: 'установка', policy: 'политика',
+  sources: 'источник', probe: 'проверка', subupdate: 'подписка',
+  restore: 'восстановление',
+};
+const kindRu = (k: string) => KIND_RU[k] || k;
 const evKindOptions = computed<UiSelectOption[]>(() => [
   { value: '', label: 'все события' },
-  ...[...new Set(state.list.map((e) => e.kind))].sort().map((k) => ({ value: k, label: k })),
+  ...[...new Set(state.list.map((e) => e.kind))].sort().map((k) => ({ value: k, label: kindRu(k) })),
 ]);
 const evFiltered = computed<AppEvent[]>(() => {
   const q = evQuery.value.trim().toLowerCase();
@@ -92,8 +101,8 @@ const dlg = ref<{
 } | null>(null);
 
 const flavorOptions: UiSelectOption[] = [
-  { value: 'plain', label: 'plain - обычный бинарь: быстрый старт, много места (на mips ~90 МБ)' },
-  { value: 'upx', label: 'upx - сжатый: в ~4 раза меньше на диске, старт дольше и RAM больше (opt-in)' },
+  { value: 'plain', label: 'обычный: быстрый старт, занимает больше места' },
+  { value: 'upx', label: 'сжатый (upx): в ~4 раза меньше на диске, старт дольше' },
 ];
 const mb = (b: number) => (b / 1048576).toFixed(0) + ' МБ';
 const isLxReplace = computed(() => dlg.value?.item?.action === 'singbox-lx-replace');
@@ -295,9 +304,9 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
     </UiTable>
 
     <div class="sect">
-      Режим движка sing-box
+      Режим движка (sing-box)<UiHelp text="«Свой экземпляр» - панель держит отдельный процесс движка (интерфейсы tun1+, свои порты). «Общее ядро» - пулы работают внутри вашего sing-box как фрагмент mawg-pools.json рядом с его config.json (сам config.json не меняется); обновление списка пулов - «горячее», туннели и соединения не рвутся (на оригинальном ядре - рестарт сервиса). Пробы идут через API основного ядра (clash_api)." />
     </div>
-    <UiHint text="«Свой экземпляр» - mawg держит отдельный процесс sing-box (tun1+, mixed 2282+, clash 2291). «Общее ядро» - пулы mawg живут фрагментом mawg-pools.json рядом с config.json основного sing-box (сам config.json не меняется), применение - горячее: lx-ядро перечитывает конфиг по SIGHUP, туннели и соединения не рвутся (на upstream-ядре - рестарт сервиса). Пробы идут через clash_api основного ядра." />
+    <UiHint text="«Свой экземпляр» - панель держит движок сама; «Общее ядро» - пулы живут внутри вашего sing-box, обновляются без разрыва соединений." />
     <UiSelect
       v-model="sbMode"
       :options="sbModeOptions"
@@ -343,11 +352,14 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
         <div class="lxtext">
           {{ dlg.item?.confirm }}
         </div>
-        <UiSelect
-          v-model="dlg.flavor"
-          :options="flavorOptions"
-          label="Профиль сборки"
-        />
+        <div class="hrow">
+          <UiSelect
+            v-model="dlg.flavor"
+            :options="flavorOptions"
+            label="Профиль сборки"
+          />
+          <UiHelp :text="G.checksum" />
+        </div>
         <UiSwitch
           v-if="isLxReplace && (dlg.item?.backupBytes || 0) > 0"
           :model-value="dlg.backup"
@@ -460,7 +472,10 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
         :class="{ secret: secrets.line(ev.message) }"
       >
         [{{ fmtTime(ev.time) }}] {{ ev.pool }}:
-        <span :class="'k-' + ev.kind">{{ ev.kind }}</span>
+        <span
+          :class="'k-' + ev.kind"
+          :title="ev.kind"
+        >{{ kindRu(ev.kind) }}</span>
         {{ ev.message }}
       </div>
     </div>
@@ -468,6 +483,16 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
 </template>
 
 <style scoped>
+.hrow {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  margin-top: 4px;
+}
+.hrow > :first-child {
+  flex: 1;
+  min-width: 0;
+}
 .evfilters {
   display: flex;
   gap: 10px;
@@ -529,6 +554,16 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
 </style>
 
 <style scoped>
+.hrow {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  margin-top: 4px;
+}
+.hrow > :first-child {
+  flex: 1;
+  min-width: 0;
+}
 /* легаси #log; классы k-* scoped - с легаси-глобальными не пересекаются */
 .log {
   font: 11.5px/1.5 ui-monospace, monospace;
