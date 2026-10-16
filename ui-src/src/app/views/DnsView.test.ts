@@ -437,3 +437,59 @@ describe('DnsView - keenetic: собственные серверы (71-док �
     w.unmount();
   });
 });
+
+describe('DnsView - keenetic: совет «Усилить DNS» (71-док §3.2)', () => {
+  it('с DoH/DoT - подтверждение и запасной UDP', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.endsWith('/dns/state')) {
+        return new Response(JSON.stringify({
+          platform: 'keenetic',
+          dnsmasq: { servers: [], inMT: false, noresolv: false, strict: false },
+          mt: { upstream: '8.8.8.8:53', remap53: true },
+        }), { status: 200 });
+      }
+      if (url.endsWith('/dns/keenetic/own')) {
+        return new Response(JSON.stringify({
+          doh: [{ uri: 'https://dns.google/dns-query', format: 'dnsm' }],
+          dot: [{ address: '1.1.1.1' }],
+          udp: [{ interface: 'ISP', servers: ['8.8.8.8'] }],
+        }), { status: 200 });
+      }
+      if (url.endsWith('/dns/upstreams') || url.endsWith('/dns/policy')) {
+        return new Response(JSON.stringify({ capable: false, policy: { enabled: false } }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    }));
+    const w = mount(DnsView);
+    await vi.waitFor(() => expect(w.find('#card-dns-advice').exists()).toBe(true));
+    const advice = w.find('#card-dns-advice').text();
+    expect(advice).toContain('Шифрованный DNS (DoH/DoT) уже настроен');
+    expect(advice).toContain('запасным');
+    w.unmount();
+  });
+
+  it('только простые UDP - warn «добавьте DoH или DoT»', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.endsWith('/dns/state')) {
+        return new Response(JSON.stringify({
+          platform: 'keenetic',
+          dnsmasq: { servers: [], inMT: false, noresolv: false, strict: false },
+          mt: { upstream: '8.8.8.8:53', remap53: true },
+        }), { status: 200 });
+      }
+      if (url.endsWith('/dns/keenetic/own')) {
+        return new Response(JSON.stringify({ doh: [], dot: [], udp: [{ interface: 'ISP', servers: ['8.8.8.8'] }] }), { status: 200 });
+      }
+      if (url.endsWith('/dns/upstreams') || url.endsWith('/dns/policy')) {
+        return new Response(JSON.stringify({ capable: false, policy: { enabled: false } }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    }));
+    const w = mount(DnsView);
+    await vi.waitFor(() => expect(w.find('#card-dns-advice').exists()).toBe(true));
+    const advice = w.find('#card-dns-advice').text();
+    expect(advice).toContain('Сейчас прописаны только простые UDP-серверы');
+    expect(advice).toContain('добавьте сервер DoH или DoT');
+    w.unmount();
+  });
+});

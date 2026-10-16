@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { UiBadge, UiButton, UiCard, UiHelp, UiHint, UiInput, UiSelect, type UiSelectOption, UiSwitch, UiTextarea } from '../../components/ui';
+import { UiBadge, UiBanner, UiButton, UiCard, UiHelp, UiHint, UiInput, UiSelect, type UiSelectOption, UiSwitch, UiTextarea } from '../../components/ui';
 import { api } from '../../api/client';
 import type { DnsProbeRow, DnsState, DnsPolicyRes, DnsUpstream, DnsUpstreamsRes, KeeneticOwn } from '../../api/types';
 import { useStatus } from '../../stores/status';
@@ -94,6 +94,20 @@ const ownRows = computed(() => {
     for (const srv of u.servers) rows.push({ key: `v6|${srv}`, label: srv, sub: `подключение ${u.interface} (IPv6)`, kind: 'udp', server: srv });
   }
   return rows;
+});
+
+// совет по усилению DNS на самом Keenetic (слово владельца: чтобы
+// пользователь понимал, что может сам поднять DoH/DoT или хотя бы
+// безопасные UDP)
+const ownAdvice = computed(() => {
+  const ownV = own.value;
+  if (!ownV) return null;
+  const encrypted = (ownV.doh || []).length + (ownV.dot || []).length;
+  const udpCount = (ownV.udp || []).length + (ownV.v6 || []).length;
+  const spoofSeen = Object.values(ownVerdicts.value).some(
+    (r) => r.verdict === 'spoof' && ownRows.value.find((e) => e.key && e.kind === 'udp'),
+  );
+  return { encrypted, udpCount, spoofSeen };
 });
 
 async function probeOwn(): Promise<void> {
@@ -399,6 +413,31 @@ async function probePolicy(): Promise<void> {
         v-if="state && isKeen"
         text="Собственные серверы Keenetic панель не меняет - управляемая часть одна: резервные серверы MagiTrickle ниже."
       />
+
+      <UiCard
+        v-if="ownAdvice && (ownAdvice.encrypted || ownAdvice.udpCount)"
+        id="card-dns-advice"
+        class="dnscard"
+        title="Усилить DNS на самом Keenetic"
+        subtitle="что уже настроено и что можно добавить своими руками - панель эти записи не меняет"
+      >
+        <UiBanner
+          v-if="!ownAdvice.encrypted"
+          kind="warn"
+          text="Сейчас прописаны только простые UDP-серверы: такие запросы не шифруются - ответы можно подменить или подсмотреть (проверка выше помечает это как «ПОДМЕНА»). Сам Keenetic умеет шифрованный DNS: добавьте сервер DoH или DoT в веб-интерфейсе Keenetic (раздел DNS / Интернет-безопасность - названия немного отличаются в разных прошивках)."
+        />
+        <UiBanner
+          v-else
+          kind="info"
+          text="Шифрованный DNS (DoH/DoT) уже настроен - ответы по нему подменить нельзя. Простой UDP держите хотя бы одним запасным: если шифрованный канал заблокируют, DNS останется."
+        />
+        <UiBanner
+          v-if="ownAdvice.spoofSeen"
+          kind="err"
+          text="Проверка увидела подмену ответов на простых UDP-серверах. Шифрованный DNS (DoH/DoT) решает эту проблему - при такой сети простые серверы будут отдавать неверные адреса."
+        />
+        <UiHint text="Свои записи смотрите и проверяйте в списке «Собственные серверы Keenetic» выше. Если захотите вести DNS целиком через панель - резервные серверы MagiTrickle ниже уже делают это автоматически." />
+      </UiCard>
 
       <template v-if="state && isKeen">
         <div class="subhead">
