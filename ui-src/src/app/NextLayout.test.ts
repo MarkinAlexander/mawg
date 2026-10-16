@@ -25,13 +25,6 @@ function apiStub(routes: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.unstubAllGlobals();
   vi.stubGlobal('fetch', apiStub());
-  // jsdom не знает matchMedia: edge-свайп меню гардится им на документе,
-  // pointer-события тестов всплывают туда и падают без стаба
-  vi.stubGlobal('matchMedia', vi.fn((q: string) => ({
-    matches: q.includes('max-width: 820'),
-    addListener: vi.fn(),
-    removeListener: vi.fn(),
-  })));
   const s = useStatus().state;
   // статус известен (гейт контента открыт) - гейт-тесты переопределяют
   s.loaded = true;
@@ -300,51 +293,6 @@ describe('NextLayout', () => {
     w.unmount()
   })
 
-  it('жест от правого края влево открывает меню (только на мобильной ширине, срыв по вертикали)', async () => {
-    const router = await makeRouter()
-    // jsdom: PointerEvent нет (GOTCHAS - MouseEvent с тем же типом),
-    // matchMedia всегда false - замыкаем на innerWidth
-    window.matchMedia = ((q: string) =>
-      ({ matches: /max-width:\s*820px/.test(q) && window.innerWidth <= 820 })) as typeof window.matchMedia
-    const w = mount(NextLayout, { global: { plugins: [router] } })
-    const pe = (type: string, x: number, y: number) =>
-      new MouseEvent(type, { clientX: x, clientY: y, bubbles: true })
-    const innerWidth = window.innerWidth
-    const setW = (v: number) => Object.defineProperty(window, 'innerWidth', { value: v, configurable: true })
-
-    // десктопная ширина: жест игнорируется
-    setW(1280)
-    document.dispatchEvent(pe('pointerdown', innerWidth - 5, 300))
-    document.dispatchEvent(pe('pointermove', innerWidth - 90, 300))
-    expect(w.find('.sheet').exists()).toBe(false)
-
-    // мобильная ширина: тянем от правого края влево - открывается
-    // (DOM патчится асинхронно - nextTick после открывающего свайпа)
-    setW(390)
-    document.dispatchEvent(pe('pointerdown', 385, 300))
-    document.dispatchEvent(pe('pointermove', 360, 300))
-    expect(w.find('.sheet').exists()).toBe(false) // 25px < порога 40
-    document.dispatchEvent(pe('pointermove', 320, 300))
-    await nextTick()
-    expect(w.find('.sheet').exists()).toBe(true)
-    document.dispatchEvent(pe('pointerup', 320, 300))
-    await w.find('.sheet-backdrop').trigger('click')
-
-    // срыв по вертикали (скролл) не открывает
-    document.dispatchEvent(pe('pointerdown', 385, 300))
-    document.dispatchEvent(pe('pointermove', 340, 380))
-    document.dispatchEvent(pe('pointermove', 300, 420))
-    expect(w.find('.sheet').exists()).toBe(false)
-    document.dispatchEvent(pe('pointerup', 300, 420))
-
-    // старт не от края - не открывает
-    document.dispatchEvent(pe('pointerdown', 200, 300))
-    document.dispatchEvent(pe('pointermove', 120, 300))
-    expect(w.find('.sheet').exists()).toBe(false)
-    document.dispatchEvent(pe('pointerup', 120, 300))
-    setW(innerWidth)
-    w.unmount()
-  })
 
   it('кнопка приватного режима: тумблит стор+localStorage+класс body, tooltip/иконка по состоянию', async () => {
     const router = await makeRouter()
@@ -443,7 +391,7 @@ describe('NextLayout', () => {
   })
 })
 
-describe('NextLayout - жесты у правого края: меню и кнопка (67-док §3.7)', () => {
+describe('NextLayout - краевая полоса жестов и кнопка «Назад» (67-док §3.8)', () => {
   async function makeLayout() {
     const router = await makeRouter();
     const w = mount(NextLayout, { attachTo: document.body, global: { plugins: [router] } });
@@ -451,64 +399,106 @@ describe('NextLayout - жесты у правого края: меню и кно
     return w;
   }
 
+  const strip = (w: ReturnType<typeof mount>) => w.find('.edge-zone');
   const fab = (w: ReturnType<typeof mount>) => w.find('.menu-fab');
-  // жесты ловятся на документе (правый край): jsdom не знает PointerEvent -
-  // MouseEvent с типом pointer-события (GOTCHAS)
-  const swipe = (fromX: number, toX: number) => {
-    document.dispatchEvent(new MouseEvent('pointerdown', { clientX: fromX, clientY: 300, bubbles: true }));
-    document.dispatchEvent(new MouseEvent('pointermove', { clientX: toX, clientY: 300, bubbles: true }));
-    document.dispatchEvent(new MouseEvent('pointerup', { clientX: toX, clientY: 300, bubbles: true }));
+  // свайп по полосе (jsdom не знает PointerEvent - MouseEvent с типом)
+  const swipe = async (w: ReturnType<typeof mount>, fromX: number, toX: number) => {
+    await strip(w).trigger('pointerdown', { clientX: fromX, clientY: 300 });
+    await strip(w).trigger('pointermove', { clientX: toX, clientY: 300 });
+    await strip(w).trigger('pointerup', { clientX: toX, clientY: 300 });
   };
-  const X = () => window.innerWidth; // jsdom 1024; край = 1024, зона старта >= 1000
+  const X = () => window.innerWidth; // jsdom 1024
 
-  it('вытянуть из-за края (справа налево): меню открыто, кнопка проявлена', async () => {
+  it('вытянуть из-за края: меню открыто, кнопка проявлена', async () => {
     const w = await makeLayout();
-    swipe(X(), X() - 100);
+    await swipe(w, X(), X() - 100);
     await nextTick();
     expect(w.find('.menu-wrap').exists()).toBe(true);
     expect(fab(w).exists()).toBe(true);
     w.unmount();
   });
 
-  it('задвинуть за край (слева направо): шторка закрыта, кнопка спрятана', async () => {
+  it('задвинуть за край: шторка закрыта, кнопка спрятана', async () => {
     const w = await makeLayout();
-    swipe(X(), X() - 100); // открыть
+    await swipe(w, X(), X() - 100);
     await nextTick();
     expect(w.find('.menu-wrap').exists()).toBe(true);
-    swipe(X() - 10, X() + 90); // задвинуть (старт в зоне края, толчок вправо)
+    await swipe(w, X() - 10, X() + 90);
     await nextTick();
     expect(w.find('.menu-wrap').exists()).toBe(false);
     expect(fab(w).exists()).toBe(false);
     w.unmount();
   });
 
-  it('после задвигания вытягивание возвращает и меню, и кнопку', async () => {
+  it('цикл: спрятал - вытянуть возвращает и меню, и кнопку', async () => {
     const w = await makeLayout();
-    swipe(X() - 10, X() + 90); // задвинуть (старт в зоне края)
+    await swipe(w, X() - 10, X() + 90); // задвинуть
     await nextTick();
     expect(fab(w).exists()).toBe(false);
-    swipe(X(), X() - 100); // вытянуть
+    await swipe(w, X(), X() - 100); // вытянуть
     await nextTick();
     expect(fab(w).exists()).toBe(true);
     expect(w.find('.menu-wrap').exists()).toBe(true);
     w.unmount();
   });
 
-  it('вертикальный уход - жест отменён, ничего не меняется', async () => {
+  it('вертикальный уход - жест отменён', async () => {
     const w = await makeLayout();
-    document.dispatchEvent(new MouseEvent('pointerdown', { clientX: X() - 10, clientY: 300, bubbles: true }));
-    document.dispatchEvent(new MouseEvent('pointermove', { clientX: X() - 10, clientY: 500, bubbles: true }));
-    document.dispatchEvent(new MouseEvent('pointerup', { clientX: X() - 10, clientY: 500, bubbles: true }));
+    await strip(w).trigger('pointerdown', { clientX: X() - 10, clientY: 300 });
+    await strip(w).trigger('pointermove', { clientX: X() - 10, clientY: 500 });
+    await strip(w).trigger('pointerup', { clientX: X() - 10, clientY: 500 });
     await nextTick();
     expect(w.find('.menu-wrap').exists()).toBe(false);
     expect(fab(w).exists()).toBe(true);
     w.unmount();
   });
 
-  it('тап по кнопке открывает меню как раньше', async () => {
+  it('тап по полосе пересылается содержимому под ней', async () => {
+    const under = document.createElement('button');
+    let clicked = 0;
+    under.addEventListener('click', () => clicked++);
+    document.body.appendChild(under);
+    // jsdom не знает elementFromPoint - шиммим на элемент под полосой
+    const orig = document.elementFromPoint;
+    document.elementFromPoint = () => under;
+    const w = await makeLayout();
+    await strip(w).trigger('click', { clientX: X() - 10, clientY: 300 });
+    expect(clicked).toBe(1);
+    document.elementFromPoint = orig;
+    w.unmount();
+    under.remove();
+  });
+
+  it('«Назад» при открытом меню закрывает меню: pushState-барьер ставится, popstate закрывает (jsdom-history не трогаем)', async () => {
+    const push = vi.spyOn(history, 'pushState').mockImplementation(() => {});
+    const back = vi.spyOn(history, 'back').mockImplementation(() => {});
     const w = await makeLayout();
     await fab(w).trigger('click');
     await vi.waitFor(() => expect(w.find('.menu-wrap').exists()).toBe(true));
+    expect(push).toHaveBeenCalledWith({ mawgMenu: true }, '');
+    // Back: браузер съел барьер, стреляет popstate - меню закрывается,
+    // свой history.back НЕ вызывается (барьер уже потреблён браузером)
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    await vi.waitFor(() => expect(w.find('.menu-wrap').exists()).toBe(false));
+    expect(back).not.toHaveBeenCalled();
     w.unmount();
+    push.mockRestore();
+    back.mockRestore();
+  });
+
+  it('закрыли тапом по фону - барьер снят своим history.back', async () => {
+    const push = vi.spyOn(history, 'pushState').mockImplementation(() => {});
+    const back = vi.spyOn(history, 'back').mockImplementation(() => {});
+    const w = await makeLayout();
+    await fab(w).trigger('click');
+    await vi.waitFor(() => expect(w.find('.menu-wrap').exists()).toBe(true));
+    await w.find('.sheet-backdrop').trigger('click');
+    await vi.waitFor(() => {
+      expect(w.find('.menu-wrap').exists()).toBe(false);
+      expect(back).toHaveBeenCalled();
+    });
+    w.unmount();
+    push.mockRestore();
+    back.mockRestore();
   });
 });
