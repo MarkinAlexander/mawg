@@ -2,13 +2,14 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import {
-  UiBadge, UiBanner, UiButton, UiCard, UiColor, UiDialog, UiHint, UiIcon,
+  UiBadge, UiBanner, UiButton, UiCard, UiColor, UiDialog, UiHelp, UiHint, UiIcon,
   UiInput, UiSelect, type UiSelectOption, UiSwitch, UiTextarea,
 } from '../../components/ui'
 import { dropIndex, isBeforeHalf, reorder } from '../../components/ui/dnd'
 import { useConfirm } from '../../stores/confirm'
 import { useGroups } from '../../stores/groups'
 import { useToast } from '../../stores/toast'
+import { G } from '../glossary'
 import type { GroupView, Preset, Rule } from '../../api/types'
 import {
   cyclesValid, degradedText, dupsEntries, groupHasDup, groupMatchCount,
@@ -69,7 +70,7 @@ const createIfaceOptions = computed<UiSelectOption[]>(() => {
     value: i.device,
     label: i.device + (i.title && i.title !== i.device ? ' - ' + i.title : ''),
   }));
-  out.push({ value: 'blackhole', label: 'blackhole - (блокировать трафик)' });
+  out.push({ value: 'blackhole', label: 'blackhole (блокировать трафик)' });
   return out;
 });
 watch(() => state.ifaces, (list) => {
@@ -484,11 +485,12 @@ onMounted(openFromLink);
   <UiCard
     id="card-rules"
     title="Правила маршрутизации"
-    subtitle="через MagiTrickle. Группы правил привязываются к интерфейсам пулов. Типы: домен, поддомены, подсеть, маска, регулярное выражение."
+    subtitle="какой трафик идёт через VPN, а какой - напрямую: правила по доменам, подсетям и отдельным IP."
   >
     <template #actions>
+      <UiHelp :text="G.group + ' ' + G.ruleTypes" />
       <UiButton
-        tooltip="без поиска - межгрупповые дубликаты, с поиском - все вхождения найденных паттернов"
+        tooltip="одинаковые правила в разных группах; с поиском - все группы, где встречается искомое"
         @click="dupsOpen = true"
       >
         показать совпадения в группах
@@ -536,10 +538,10 @@ onMounted(openFromLink);
     <!-- каскад - отдельно, с точным описанием (слово владельца: внимательнее) -->
     <div class="cascdesc">
       <div class="ctext">
-        <b>Каскад</b> - направить трафик одного подключения через другое: создается
-        служебная группа (в списке - с бейджем «каскад»), трафик к эндпоинтам источника
-        идет через путь-посредник. Включается и выключается обычным тумблером группы;
-        при ротации источника адреса добавляются сами.
+        <b>Каскад</b> - направить трафик одного подключения через другое: создаётся
+        служебная группа (в списке - с бейджем «каскад»). Адреса серверов источника
+        подставляются сами и обновляются при ротации. Включается и выключается
+        обычным переключателем группы.<UiHelp :text="G.cascade" />
       </div>
       <UiButton
         tooltip="направить трафик одного подключения через другое"
@@ -583,7 +585,7 @@ onMounted(openFromLink);
     <!-- гистерезис политик (легаси polFailCycles/polRestoreCycles) -
          предложение в одну линию, как в легаси -->
     <div class="cycles">
-      <span class="muted">Политики отвала: переключать после</span>
+      <span class="muted">Канал пропал: переводить группы на запасной после</span>
       <UiInput
         v-model="cycFail"
         type="number"
@@ -609,10 +611,11 @@ onMounted(openFromLink);
       >
         сохранить
       </UiButton>
+      <UiHelp :text="G.hysteresis" />
     </div>
     <UiHint
       class="cyshint"
-      text="Цикл проверки - каждые 30 секунд. Меньше 2 не рекомендуется: «переключать после 1» уводит группы на запасной интерфейс из-за одной потерянной пробы (разовый таймаут или скачок пинга - ложное срабатывание), «возвращать после 1» дёргает группы обратно при первом же удачном прогоне - флапающий канал будет переключать их каждые 30-60 секунд и рвать соединения. Значения 2/2 - разумный компромисс: реакция на отвала ~1-1.5 минуты, возврат только после устойчивого восстановления."
+      text="Цикл проверки - каждые 30 секунд. Меньше 2 не рекомендуется: одна потерянная проба будет уводить группы на запасной, а флапающий канал - переключать их каждые 30-60 секунд и рвать соединения. 2/2 - разумный компромисс: реакция ~1-1.5 минуты, возврат только после устойчивого восстановления."
     />
 
     <!-- баннеры движка MT (легаси updateMTBanners 1559) -->
@@ -708,16 +711,19 @@ onMounted(openFromLink);
             v-if="g.cascade"
             text="каскад"
             variant="muted"
+            :tooltip="G.cascade"
           />
           <UiBadge
             v-if="g.interface === 'blackhole'"
             text="блокировка"
             variant="err"
+            :tooltip="G.blackhole"
           />
           <UiBadge
             v-if="g.policy && g.policy.onDead"
-            :text="`при отвале: ${POLICY_SHORT[g.policy.onDead] || g.policy.onDead}`"
+            :text="`если канал пропал: ${POLICY_SHORT[g.policy.onDead] || g.policy.onDead}`"
             variant="warn"
+            :tooltip="G.hysteresis"
           />
           <UiBadge
             v-if="srcBadge(g)"
@@ -991,11 +997,14 @@ onMounted(openFromLink);
       :busy="imBusy"
       width="520px"
     >
-      <UiSelect
-        v-model="imType"
-        :options="IMPORT_TYPE_OPTIONS"
-        label="Тип для доменов"
-      />
+      <div class="hrow">
+        <UiSelect
+          v-model="imType"
+          :options="IMPORT_TYPE_OPTIONS"
+          label="Тип для доменов"
+        />
+        <UiHelp :text="G.cidr" />
+      </div>
       <UiHint text="Ссылки всегда очищаются до домена: https://www.ozon.ru/path -> www.ozon.ru, ftp://files.example.com/dir -> files.example.com" />
       <UiSwitch
         v-model="imSecond"
@@ -1005,7 +1014,7 @@ onMounted(openFromLink);
       <UiSwitch
         v-model="imEnable"
         label="Импортировать включёнными"
-        hint="выключенное правило можно включить позже тумблером"
+        hint="выключенное правило можно включить позже переключателем"
       />
       <UiTextarea
         v-model="imText"
@@ -1013,7 +1022,7 @@ onMounted(openFromLink);
         :rows="10"
         mono
       />
-      <UiHint text="Дубликаты внутри списка и совпадения с существующими правилами пропускаются. Кириллические домены вставляйте в punycode." />
+      <UiHint text="Дубликаты внутри списка и совпадения с существующими правилами пропускаются. Кириллические домены вставляйте в punycode (латинская запись вида xn--...)." />
       <template #footer>
         <UiButton
           :disabled="imBusy"
@@ -1105,6 +1114,16 @@ onMounted(openFromLink);
 </template>
 
 <style scoped>
+.hrow {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  margin-top: 4px;
+}
+.hrow > :first-child {
+  flex: 1;
+  min-width: 0;
+}
 .bulkrow {
   display: flex;
   gap: 8px;

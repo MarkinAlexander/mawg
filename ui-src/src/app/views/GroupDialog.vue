@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { UiButton, UiColor, UiDialog, UiHint, UiInput, UiSelect, type UiSelectOption, UiSwitch } from '../../components/ui'
+import { UiButton, UiColor, UiDialog, UiHelp, UiHint, UiInput, UiSelect, type UiSelectOption, UiSwitch } from '../../components/ui'
 import { useGroups } from '../../stores/groups'
 import { useToast } from '../../stores/toast'
 import type { GroupPolicy, GroupView } from '../../api/types'
+import { G } from '../glossary'
 import {
   parseSources, POLICY_HINTS, POLICY_OPTIONS, srcListInitial, SRC_MODE_HINTS,
   SRC_MODE_OPTIONS, srcModeInitial,
@@ -144,13 +145,16 @@ async function save(): Promise<void> {
         :hint="SRC_MODE_HINTS[srcMode] || ''"
       />
       <template v-if="srcListVisible">
-        <UiInput
-          v-model="srcList"
-          label="IP или CIDR, через запятую"
-          placeholder="192.168.1.50, 192.168.2.0/24"
-          mono
-          class="secret"
-        />
+        <div class="hrow">
+          <UiInput
+            v-model="srcList"
+            label="IP или подсети, через запятую"
+            placeholder="192.168.1.50, 192.168.2.0/24"
+            mono
+            class="secret"
+          />
+          <UiHelp :text="G.cidr" />
+        </div>
         <UiSwitch
           v-model="srcRouter"
           label="Включая роутер"
@@ -180,7 +184,7 @@ async function save(): Promise<void> {
     </template>
     <UiHint
       v-else
-      text="Блокировка (blackhole): трафик группы отбрасывается, политика отвала не применяется."
+      text="Блокировка (blackhole): трафик группы отбрасывается - ни в туннель, ни напрямую. Политика на случай пропажи канала не применяется."
     />
     <template #footer>
       <UiButton @click="open = false">

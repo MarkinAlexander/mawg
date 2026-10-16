@@ -55,7 +55,7 @@ describe('GroupDialog', () => {
     expect(selBtns.length).toBe(3);
     expect(selBtns[0].text()).toContain('nwg0 - пул proton');
     expect(selBtns[1].text()).toContain('только выбранные IP');
-    expect(selBtns[2].text()).toContain('прямой ход');
+    expect(selBtns[2].text()).toContain('идти напрямую');
     // список источников и галка роутера видны в режиме list
     const ipInput = dlg.findAll('input').find((i) => i.attributes('placeholder')?.includes('192.168.1.50'));
     expect((ipInput!.element as HTMLInputElement).value).toBe('192.168.1.50');
@@ -78,7 +78,7 @@ describe('GroupDialog', () => {
   it('blackhole: политика скрыта (sources видны), Сохранить шлёт onDead:""', async () => {
     const { w, f } = await makeDlg({ ...GRP, interface: 'blackhole' });
     const dlg = dlgOf(w);
-    expect(dlg.text()).toContain('политика отвала не применяется');
+    expect(dlg.text()).toContain('Политика на случай пропажи канала не применяется');
     expect(dlg.findAll('.psel-btn').length).toBe(2); // интерфейс + кто ходит
     await btnIn(dlg, 'Сохранить')[0].trigger('click');
     await vi.waitFor(() => {

@@ -55,12 +55,12 @@ export const POLICY_HINTS: Record<string, string> = {
 
 export const POLICY_OPTIONS: { value: string; label: string }[] = [
   { value: '', label: 'по умолчанию (как у пула)' },
-  { value: 'direct', label: 'прямой ход (проверив интернет)' },
+  { value: 'direct', label: 'идти напрямую (проверив интернет)' },
   { value: 'iface', label: 'переключить на запасной интерфейс' },
 ];
 
 export const POLICY_SHORT: Record<string, string> = {
-  direct: 'прямой ход',
+  direct: 'напрямую',
   iface: 'запасной интерфейс',
 };
 

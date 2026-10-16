@@ -155,7 +155,7 @@ describe('GroupsView - список групп', () => {
 
     const g1 = block(w, 'g1');
     expect(g1.text()).toContain('telegram');
-    expect(g1.text()).toContain('при отвале: прямой ход');
+    expect(g1.text()).toContain('если канал пропал: напрямую');
     expect(g1.text()).toContain('источники: IP-список (1) + роутер');
     expect(g1.text()).toContain('nwg0');
     expect(g1.text()).toContain('пул proton');
@@ -439,7 +439,7 @@ describe('GroupsView - пресеты и каскады (Ф3.7б)', () => {
     await btnIn(w, '+ каскад')[0].trigger('click');
     await nextTick();
     const dlg = w.findAll('dialog').find((d) => d.find('h3').text() === 'Каскад')!;
-    expect(dlg.text()).toContain('Создается служебная группа');
+    expect(dlg.text()).toContain('Создаётся служебная группа');
     const btns = dlg.findAll('.psel-btn');
     expect(btns[0].text()).toBe('пул proton'); // первый вариант - источник
     expect(btns[1].text()).toBe('интерфейс nwg0 - пул proton'); // путь - первый не занятый
