@@ -277,9 +277,11 @@ describe('NextLayout', () => {
     // все вкладки, ссылки на legacy больше нет
     expect(sheet.findAll('a')).toHaveLength(TABS.length)
 
-    // клик по вкладке закрывает
-    await sheet.findAll('a')[0].trigger('click')
-    expect(w.find('.sheet').exists()).toBe(false)
+    // клик по ДРУГОЙ вкладке закрывает (переход; текущая вкладка -
+    // дублирующий переход, меню остаётся открытым - 67-док §3.11)
+    const other = sheet.findAll('a').filter((l) => l.attributes('href') !== '#/next/overview')[0]
+    await other.trigger('click')
+    await vi.waitFor(() => expect(w.find('.sheet').exists()).toBe(false))
     expect(fab.attributes('aria-expanded')).toBe('false')
 
     // фон и Esc тоже закрывают
@@ -544,5 +546,51 @@ describe('NextLayout - левая краевая полоса: задвиган�
     expect(w.find('.menu-wrap').exists()).toBe(false);
     expect(fab(w).exists()).toBe(true);
     w.unmount();
+  });
+});
+
+describe('NextLayout - закрытие меню переходом не откатывает навигацию (67-док §3.11)', () => {
+  it('клик по вкладке из шторки: маршрут сменился, меню закрыто, history.back НЕ дёргается', async () => {
+    const router = await makeRouter();
+    vi.stubGlobal('fetch', apiStub());
+    const w = mount(NextLayout, { attachTo: document.body, global: { plugins: [router] } });
+    await nextTick();
+    const back = vi.spyOn(history, 'back').mockImplementation(() => {});
+    const fab = w.find('.menu-fab');
+    await fab.trigger('click');
+    await vi.waitFor(() => expect(w.find('.menu-wrap').exists()).toBe(true));
+
+    // клик по ДРУГОЙ вкладке (текущая - /next/overview)
+    const target = w.findAll('.sheet a').filter((l) => l.attributes('href') !== '#/next/overview')[0];
+    const want = target!.attributes('href');
+    await target!.trigger('click');
+    await vi.waitFor(() => {
+      expect(w.find('.menu-wrap').exists()).toBe(false);
+      expect(window.location.hash).toContain(want!.replace('#', ''));
+    });
+    // переход: барьер остаётся позади новой страницы - back() НЕ дёргается
+    expect(back).not.toHaveBeenCalled();
+    w.unmount();
+    back.mockRestore();
+  });
+});
+
+describe('NextLayout - клик по ТЕКУЩЕЙ вкладке закрывает меню без back (67-док §3.11)', () => {
+  it('дублирующий переход: меню закрыто, history.back НЕ дёргается', async () => {
+    const back = vi.spyOn(history, 'back').mockImplementation(() => {});
+    const router = await makeRouter();
+    vi.stubGlobal('fetch', apiStub());
+    const w = mount(NextLayout, { attachTo: document.body, global: { plugins: [router] } });
+    await nextTick();
+    const fab = w.find('.menu-fab');
+    await fab.trigger('click');
+    await vi.waitFor(() => expect(w.find('.menu-wrap').exists()).toBe(true));
+    // первая вкладка - текущая (/next/overview): перехода не будет
+    await w.findAll('.sheet a')[0].trigger('click');
+    await vi.waitFor(() => expect(w.find('.menu-wrap').exists()).toBe(false));
+    // барьер той же страницы - back() корректен (возврат на неё же)
+    expect(back).toHaveBeenCalledTimes(1);
+    w.unmount();
+    back.mockRestore();
   });
 });
