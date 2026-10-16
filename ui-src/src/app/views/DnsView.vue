@@ -1,19 +1,19 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
-import { UiBadge, UiButton, UiCard, UiHint, UiInput, UiSelect, type UiSelectOption, UiSwitch, UiTextarea } from '../../components/ui';
+import { UiBadge, UiButton, UiCard, UiHelp, UiHint, UiInput, UiSelect, type UiSelectOption, UiSwitch, UiTextarea } from '../../components/ui';
 import { api } from '../../api/client';
 import type { DnsProbeRow, DnsState, DnsPolicyRes, DnsUpstream, DnsUpstreamsRes } from '../../api/types';
 import { useStatus } from '../../stores/status';
 import { useToast } from '../../stores/toast';
 import { useConfirm } from '../../stores/confirm';
 
-// DNS-раздел (46-док §3, срез OpenWrt 64-док): состояние DNS-стека
-// (dnsmasq, remap53) + переключение dnsmasq ↔ MT «живучим» профилем;
-// каскад апстримов MT - живой стейт и редактор через форк rev8+
-// (GET/PUT /dns/upstreams, стейт в памяти MT, правка = запись конфига
-// + горячая подмена без рестарта демона).
+// DNS-раздел: состояние службы DNS, резервные серверы MT (каскад) и
+// правила автопереключения L1-L5. Формулировки - «язык задач» (слово
+// владельца 2026-10-16: без внутреннего жаргона; подробности - по знакам
+// вопроса UiHelp, самодокументация вместо ссылок на журналы сессий).
 const { push } = useToast();
 const { confirm } = useConfirm();
+const { state: statusState } = useStatus();
 
 const state = ref<DnsState | null>(null);
 const cascade = ref<DnsUpstreamsRes | null>(null);
@@ -59,30 +59,31 @@ const health = computed(() => cascade.value?.state?.health);
 const healthText = computed(() => {
   const h = health.value;
   if (!h) return '';
-  if (!h.enabled) return 'канарейка выключена';
-  return `канарейка: вниз за ${h.failCycles} сбоя подряд, вверх за ${h.restoreCycles} чистых, возврат не чаще раза в ${h.restoreGap}`;
+  if (!h.enabled) return 'автопроверка выключена';
+  const gap = h.restoreGap.replace('m0s', ' мин').replace('m', ' мин').replace('s', ' с');
+  return `отключение при ${h.failCycles} сбоях подряд, восстановление после ${h.restoreCycles} успешных проверок, пауза между переключениями ${gap}`;
 });
 
 function upTooltip(u: DnsUpstream): string {
   const bits: string[] = [];
   if (u.reason) bits.push('причина: ' + u.reason);
   if (u.lastSwap && !u.lastSwap.startsWith('0001-')) bits.push('переключён: ' + new Date(u.lastSwap).toLocaleString());
-  bits.push(`сбои подряд: ${u.fails}, чистые подряд: ${u.oks}`);
+  bits.push(`сбои подряд: ${u.fails}, успешные подряд: ${u.oks}`);
   return bits.join(' · ');
 }
 
 const dnsmasqText = computed(() => {
   const d = state.value?.dnsmasq;
   if (!d) return '';
-  if (d.inMT) return d.servers.length > 1 ? `в MT + ещё (${d.servers.length})` : 'в MT (127.0.0.1#3553)';
-  if (d.servers.length) return `свой список: ${d.servers.join(', ')}`;
-  return 'напрямую (из resolvfile)';
+  if (d.inMT) return d.servers.length > 1 ? `через MT + ещё (${d.servers.length})` : 'через MT (127.0.0.1#3553)';
+  if (d.servers.length) return `свои серверы: ${d.servers.join(', ')}`;
+  return 'напрямую (серверы провайдера)';
 });
 
 const upstreamsText = computed(() => {
   const m = state.value?.mt;
   if (!m) return '';
-  if (m.upstreams?.length) return `${m.upstreams.join(' → ')} (приоритет = порядок)`;
+  if (m.upstreams?.length) return `${m.upstreams.join(' → ')} (первый - главный)`;
   return m.upstream || 'неизвестно';
 });
 
@@ -90,17 +91,17 @@ async function toggle(): Promise<void> {
   if (!state.value || busy.value) return;
   const toMT = !state.value.dnsmasq.inMT;
   const ok = await confirm({
-    title: toMT ? 'dnsmasq → MT' : 'dnsmasq → напрямую',
+    title: toMT ? 'DNS через модуль MT' : 'Возврат к прямым DNS',
     text: toMT
-      ? 'dnsmasq будет направлен в dns-proxy MT (127.0.0.1#3553). Прядевой список серверов спрячется в uci и вернётся при обратном переключении. Рестарт dnsmasq - краткий перерыв ответов.'
-      : 'dnsmasq вернётся к прядевым серверам (рестор из uci), MT:3553 останется доступен напрямую. Рестарт dnsmasq.',
-    okLabel: toMT ? 'Направить' : 'Вернуть',
+      ? 'DNS-запросы роутера будут обрабатываться модулем MagiTrickle (127.0.0.1#3553). Текущие серверы сохранятся в запасе и вернутся при обратном переключении. Рестарт службы DNS - краткий перерыв в ответах.'
+      : 'Роутер вернётся к серверам провайдера напрямую; модуль MT останется доступен. Рестарт службы DNS - краткий перерыв в ответах.',
+    okLabel: toMT ? 'Перевести' : 'Вернуть',
   });
   if (!ok) return;
   busy.value = true;
   try {
     await api('POST', '/dns/dnsmasq', { mode: toMT ? 'mt' : 'direct' });
-    push(toMT ? 'dnsmasq направлен в MT' : 'dnsmasq возвращён напрямую');
+    push(toMT ? 'DNS переведён через MT' : 'DNS возвращён к прямым серверам');
     await load();
   } catch (e) {
     push(e instanceof Error ? e.message : String(e), true);
@@ -108,7 +109,7 @@ async function toggle(): Promise<void> {
   busy.value = false;
 }
 
-// --- редактор каскада (порядок = приоритет) ---
+// --- редактор списка серверов MT (порядок = приоритет) ---
 const edit = ref<string[] | null>(null);
 const newAddr = ref('');
 const editList = computed(() => edit.value ?? []);
@@ -159,15 +160,15 @@ function addAddr(): void {
 async function saveEdit(): Promise<void> {
   if (!edit.value || !editValid.value || busy.value) return;
   const ok = await confirm({
-    title: 'Каскад апстримов MT',
-    text: 'Новый список будет записан в config.yaml MT и подхвачен без рестарта демона. Порядок = приоритет: клиенты идут в первый живой апстрим.',
+    title: 'Резервные серверы MT',
+    text: 'Новый список будет записан в настройки MT и заработает без перезапуска. Первым используется верхний доступный сервер.',
     okLabel: 'Сохранить',
   });
   if (!ok) return;
   busy.value = true;
   try {
     await api('PUT', '/dns/upstreams', { upstreams: edit.value });
-    push('каскад апстримов сохранён');
+    push('список серверов сохранён');
     edit.value = null;
     await Promise.all([load(), loadCascade()]);
   } catch (e) {
@@ -176,10 +177,8 @@ async function saveEdit(): Promise<void> {
   busy.value = false;
 }
 
-// --- политика каскада L1-L5 (46-док §3): уровни -> порядок апстримов MT,
-// применение одним PUT в форк; гистерезис переключений - в MT ---
-const { state: statusState } = useStatus();
-
+// --- правила автопереключения L1-L5: уровни -> порядок серверов MT,
+// применение одним запросом в MT; переключает уровни сам MT ---
 const policy = ref<DnsPolicyRes | null>(null);
 const polEnabled = ref(false);
 const polPrimary = ref('');
@@ -230,19 +229,19 @@ async function applyPolicy(): Promise<void> {
     return;
   }
   const ok = await confirm({
-    title: 'Применить политику каскада',
-    text: (body.tunnel ? `Пул ${body.tunnel} получит пресет dns-tunnel (публичные резолверы - в туннель). ` : '')
-      + 'Порядок апстримов MT будет переписан: основные → запасные'
+    title: 'Сохранить правила автопереключения',
+    text: (body.tunnel ? `Для туннельного уровня будет настроено правило обхода через «${body.tunnel}». ` : '')
+      + 'Цепочка серверов MT будет переписана: основные → запасные'
       + (body.yandex ? ' → Яндекс' : '')
       + (body.provider ? ' → провайдер' : '')
-      + '. Переключает уровни сам MT (канарейка, K/M/restoreGap).',
-    okLabel: 'Применить',
+      + '. Само переключение при сбоях делает MT - автоматически и незаметно.',
+    okLabel: 'Сохранить и применить',
   });
   if (!ok) return;
   polBusy.value = true;
   try {
     await api('PUT', '/dns/policy', body);
-    push('политика каскада применена');
+    push('правила автопереключения применены');
     await Promise.all([load(), loadCascade(), loadPolicy()]);
   } catch (e) {
     push(e instanceof Error ? e.message : String(e), true);
@@ -250,7 +249,7 @@ async function applyPolicy(): Promise<void> {
   polBusy.value = false;
 }
 
-const verdictRu: Record<string, string> = { clean: 'чисто', spoof: 'ПОДМЕНА', noanswer: 'нет ответа', error: 'недоступен' };
+const verdictRu: Record<string, string> = { clean: 'работает', spoof: 'ПОДМЕНА', noanswer: 'нет ответа', error: 'недоступен' };
 function verdictVariant(v: string): 'ok' | 'warn' | 'err' {
   return v === 'clean' ? 'ok' : v === 'error' ? 'err' : 'warn';
 }
@@ -272,7 +271,7 @@ async function probePolicy(): Promise<void> {
   <UiCard
     id="card-dns"
     title="DNS"
-    subtitle="состояние DNS-стека роутера, каскад апстримов MT и переключение dnsmasq"
+    subtitle="состояние службы DNS и резервные серверы"
   >
     <template #actions>
       <UiBadge
@@ -284,7 +283,7 @@ async function probePolicy(): Promise<void> {
 
     <UiHint
       v-if="notSupported"
-      text="DNS-менеджер пока реализован только для OpenWrt; Кинетик - после отладки OpenWrt (слово владельца)."
+      text="Управление DNS пока реализовано для OpenWrt; на Кинетике появится позже."
     />
     <template v-else>
       <UiHint
@@ -295,7 +294,7 @@ async function probePolicy(): Promise<void> {
         v-if="state"
         class="kv"
       >
-        <b>dnsmasq</b>
+        <b>Служба DNS<UiHelp text="dnsmasq - служба имён на самом роутере: через неё домашние устройства получают адреса сайтов. «Через MT» - запросы обрабатывает защитный модуль MagiTrickle (порт 3553); «свои серверы» - список задан вручную; «напрямую» - серверы провайдера." /></b>
         <span>
           <UiBadge
             :text="dnsmasqText"
@@ -305,27 +304,28 @@ async function probePolicy(): Promise<void> {
             v-if="state.dnsmasq.strict"
             variant="err"
             text="строгий режим (SPOF)"
+            tooltip="профиль без запаса: единственный сервер умрёт - DNS встанет целиком"
           />
         </span>
-        <b>кэш dnsmasq</b>
+        <b>Кэш адресов<UiHelp text="Память недавних ответов DNS: повторные сайты открываются быстрее, короткие сбои сервера не замечаются." /></b>
         <span class="muted">{{ state.dnsmasq.cacheSize != null ? `${state.dnsmasq.cacheSize} записей` : 'не задан' }}</span>
-        <b>ремап :53</b>
+        <b>Перенаправление<UiHelp text="Весь DNS-трафик домашних устройств (порт 53) принудительно идёт через модуль MT - защита работает даже для техники, которой вручную вписали чужой DNS." /></b>
         <span>
           <UiBadge
-            :text="state.mt.remap53 ? ':53 → MT (DNSOR)' : 'DNSOR не найден'"
+            :text="state.mt.remap53 ? 'весь :53 → MT' : 'не найдено'"
             :variant="state.mt.remap53 ? 'ok' : 'muted'"
           />
         </span>
         <template v-if="!capable">
-          <b>апстримы MT</b>
+          <b>Серверы MT<UiHelp text="Список внешних DNS-серверов защитного модуля; порядок = приоритет. Здесь виден список из файла настроек: живой статус требует MT 0.8.2-rev8+." /></b>
           <span class="muted">{{ upstreamsText }}</span>
         </template>
       </div>
 
-      <!-- каскад апстримов MT: живой стейт (форк rev8+) -->
+      <!-- резервные серверы MT: живой статус (форк rev8+) -->
       <template v-if="capable">
         <div class="subhead">
-          <b>каскад апстримов MT</b>
+          <b>Резервные серверы<UiHelp text="Внешние DNS-серверы в порядке приоритета: запросы идут в первый доступный, при его сбое - в следующий по списку. Доступность проверяется контрольным запросом к deb.torproject.org: честный сервер возвращает известный набор адресов, подменённый виден сразу и помечается «не работает»." /></b>
           <span class="muted">{{ healthText }}</span>
         </div>
         <div class="kv">
@@ -343,18 +343,19 @@ async function probePolicy(): Promise<void> {
               <UiBadge
                 v-if="u.active"
                 variant="info"
-                text="активный"
-                tooltip="первый живой - клиентские запросы идут в него в первую очередь"
+                text="работает сейчас"
+                tooltip="первый доступный - запросы идут в него в первую очередь"
               />
               <UiBadge
                 v-if="!u.alive"
                 variant="err"
-                text="мёртвый"
+                text="не работает"
                 :tooltip="upTooltip(u)"
               />
             </span>
           </template>
         </div>
+        <UiHint text="Автопроверка: контрольный запрос к deb.torproject.org; честный сервер возвращает известный набор адресов, подменённый - виден сразу и помечается «не работает»." />
 
         <!-- редактор: список/порядок/добавление -->
         <div
@@ -365,7 +366,7 @@ async function probePolicy(): Promise<void> {
             :disabled="busy"
             @click="startEdit"
           >
-            Редактировать каскад
+            Редактировать список
           </UiButton>
         </div>
         <template v-else>
@@ -438,11 +439,11 @@ async function probePolicy(): Promise<void> {
             />
           </div>
         </template>
-        <UiHint text="Порядок = приоритет: запросы идут в первый живой апстрим (канарейка deb.torproject.org решает, кто отравлен; вниз за K сбоев подряд, вверх за M чистых и не чаще раза в restoreGap). Правка пишется в config.yaml MT и подхватывается без рестарта демона." />
+        <UiHint text="Правка записывается в настройки MT и заработает без перезапуска. Порядок в списке = приоритет." />
       </template>
       <UiHint
         v-else-if="state"
-        text="Живой статус и редактор каскада требуют MagiTrickle 0.8.2-rev8+; показан список апстримов из config.yaml."
+        text="Живой статус и правка списка требуют MagiTrickle 0.8.2-rev8+; показан список серверов из файла настроек."
       />
 
       <div class="dnsactions">
@@ -451,24 +452,27 @@ async function probePolicy(): Promise<void> {
           :disabled="!state"
           @click="toggle"
         >
-          {{ state?.dnsmasq.inMT ? 'Вернуть напрямую' : 'Направить dnsmasq в MT' }}
+          {{ state?.dnsmasq.inMT ? 'Вернуть на прямые DNS' : 'Направить DNS через MT' }}
         </UiButton>
         <UiButton
           :busy="busy"
           @click="load"
         >
-          Обновить
+          Обновить статус
         </UiButton>
       </div>
 
-      <UiHint text="«Живучий» профиль: dnsmasq держит MT:3553 параллельно интерфейсному upstream - смерть MT даёт деградацию до прямого DNS, не смерть (63-док)." />
+      <div class="kv">
+        <b>Надёжность<UiHelp text="«Режим повышенной надёжности»: DNS работает через MT, а серверы провайдера хранятся в запасе. Если MT остановится, служба DNS автоматически перейдёт на прямые серверы - интернет не пропадёт (возможно, вернётся реклама и фильтрация провайдера)." /></b>
+        <span class="muted">серверы провайдера в запасе, смерть MT - переход, а не отказ</span>
+      </div>
     </template>
   </UiCard>
 
   <UiCard
     id="card-dns-policy"
-    title="Политика каскада"
-    subtitle="уровни L1-L5 → порядок апстримов MT; переключает уровни сам MT (канарейка)"
+    title="Правила автопереключения"
+    subtitle="уровни L1–L5: серверы проверяются по порядку, при сбое - переход на следующий"
   >
     <template #actions>
       <UiBadge
@@ -480,57 +484,70 @@ async function probePolicy(): Promise<void> {
 
     <UiHint
       v-if="!policy || !policy.capable"
-      text="Политика требует MagiTrickle 0.8.2-rev8+ (мультиапстрим с канарейкой). Обновите MT - и настройте уровни здесь."
+      text="Для автопереключения нужен MagiTrickle 0.8.2-rev8+ (список серверов с автопроверкой). Обновите MT - и настройте уровни здесь."
     />
     <template v-else>
-      <UiSwitch
-        v-model="polEnabled"
-        label="политика включена"
-        tooltip="уровни применяются в порядок апстримов MT; выключение не трогает текущие апстримы"
-      />
-      <UiTextarea
-        v-model="polPrimary"
-        label="L1 основные (по одному адресу в строке)"
-        :rows="2"
-        mono
-        placeholder="8.8.8.8"
-      />
+      <div class="hrow">
+        <UiSwitch
+          v-model="polEnabled"
+          label="Автопереключение включено"
+          tooltip="выключенная политика только сохраняется - текущие серверы не трогаются"
+        />
+        <UiHelp text="Роутер держит цепочку DNS-серверов: от основных (уровень 1) до последнего рубежа (уровень 5). Если очередной сервер не отвечает или врёт, запросы автоматически уходят на следующий; когда основной «оживёт», роутер вернётся к нему - без вашего участия." />
+      </div>
+      <div class="hrow">
+        <UiTextarea
+          v-model="polPrimary"
+          label="Уровень 1 (L1) - основные серверы"
+          :rows="2"
+          mono
+          placeholder="8.8.8.8"
+        />
+        <UiHelp text="Первые в цепочке - их роутер пробует в первую очередь. По одному адресу на строку; порт можно не указывать (подставится стандартный 53)." />
+      </div>
       <UiSelect
         v-model="polTunnel"
         :options="tunnelOptions"
-        label="L2: основные через туннель (пул)"
+        label="Уровень 2 (L2) - основные через туннель"
       />
-      <UiHint text="Выбранный пул получит пресет dns-tunnel (публичные резолверы маршрутизируются в туннель group-правилами). Пусто - основные напрямую; существующая группа dns-tunnel при смене пула переезжает." />
-      <UiTextarea
-        v-model="polFallback"
-        label="L3 запасные (напрямую)"
-        :rows="2"
-        mono
-        placeholder="1.1.1.1:53"
-      />
-      <div class="polswitches">
+      <UiHint text="Те же основные серверы, но запросы к ним пойдут внутри выбранного VPN-подключения - так DNS не заблокировать. Пусто - основные ходят напрямую." />
+      <div class="hrow">
+        <UiTextarea
+          v-model="polFallback"
+          label="Уровень 3 (L3) - запасные серверы"
+          :rows="2"
+          mono
+          placeholder="1.1.1.1:53"
+        />
+        <UiHelp text="Независимые серверы в запас: включаются, когда основные недоступны и напрямую, и через туннель." />
+      </div>
+      <div class="hrow">
         <UiSwitch
           v-model="polYandex"
-          label="L4: Яндекс DNS (77.88.8.8)"
+          label="Уровень 4 (L4) - Яндекс DNS (77.88.8.8)"
         />
+        <UiHelp text="Надёжный публичный сервер, доступный напрямую: хороший последний рубеж - если он работает, DNS в порядке." />
+      </div>
+      <div class="hrow">
         <UiSwitch
           v-model="polProvider"
-          label="L5: DNS провайдера (срез resolv.conf.auto при применении)"
+          label="Уровень 5 (L5) - DNS провайдера (определяется автоматически)"
         />
+        <UiHelp text="Адрес сервера провайдера берётся из системных настроек роутера в момент сохранения. Если провайдер сменит его - примените правила заново." />
       </div>
 
       <div class="kv">
         <template v-if="composedText">
-          <b>порядок</b>
+          <b>Цепочка серверов</b>
           <span class="muted">{{ composedText }}</span>
         </template>
         <template v-if="activeText">
-          <b>сейчас в MT</b>
+          <b>Активно сейчас</b>
           <span class="muted">{{ activeText }}</span>
         </template>
         <template v-if="policy.tunnelGroup">
-          <b>dns-tunnel</b>
-          <span class="muted">на пуле {{ policy.tunnelGroup.interface }}</span>
+          <b>Туннельный обход<UiHelp text="Правило dns-tunnel: запросы к публичным резолверам (8.8.8.8, 1.1.1.1 и др.) уходят внутри туннеля выбранного подключения." /></b>
+          <span class="muted">настроен через {{ policy.tunnelGroup.interface }}</span>
         </template>
       </div>
 
@@ -539,14 +556,14 @@ async function probePolicy(): Promise<void> {
           :busy="polBusy"
           @click="applyPolicy"
         >
-          Применить политику
+          Сохранить и применить
         </UiButton>
         <UiButton
           :busy="probing"
           :disabled="!polEnabled"
           @click="probePolicy"
         >
-          Проверить уровни
+          Проверить все уровни
         </UiButton>
       </div>
 
@@ -570,7 +587,10 @@ async function probePolicy(): Promise<void> {
         </template>
       </div>
 
-      <UiHint text="Канарейка - A-запрос deb.torproject.org через каждый уровень. Туннельные уровни зондируются по-настоящему: трафик самой панели маркируется группой MT и уходит в туннель. Смена уровня - работа MT: вниз за K сбоев подряд, вверх за M чистых и не чаще раза в restoreGap." />
+      <div class="hrow">
+        <UiHint text="Как работает проверка: роутер отправляет контрольный запрос к deb.torproject.org через каждый уровень. Если сервер не отвечает или подменяет ответ - он помечается нерабочим, запросы уходят на следующий уровень." />
+        <UiHelp text="Почему домен именно этот: его подмена видна по самому ответу - сравнивается с эталонным набором адресов. «Сервер отвечает» и «серверу можно верить» - не одно и то же: на сетях с блокировками сервер может бодро отдавать неверные адреса." />
+      </div>
     </template>
   </UiCard>
 </template>
@@ -589,6 +609,16 @@ async function probePolicy(): Promise<void> {
   align-items: baseline;
   flex-wrap: wrap;
   margin-top: 12px;
+}
+.hrow {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  margin-top: 4px;
+}
+.hrow > :first-child {
+  flex: 1;
+  min-width: 0;
 }
 .editrows {
   display: flex;
@@ -617,11 +647,5 @@ async function probePolicy(): Promise<void> {
 .editrow .rowbtns {
   display: flex;
   gap: 4px;
-}
-.polswitches {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin: 4px 0;
 }
 </style>
