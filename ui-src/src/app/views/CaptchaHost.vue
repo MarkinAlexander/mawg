@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import { UiButton, UiDialog, UiHint, UiInput } from '../../components/ui'
+import { UiButton, UiDialog, UiHelp, UiHint, UiInput } from '../../components/ui'
 import { useCaptcha } from '../../stores/captcha'
+import { G } from '../glossary'
 
 // Хост капчи Amnezia (легаси dlgCaptcha): монтируется рядом с ConfirmHost.
 const { state, refresh, answer, cancel } = useCaptcha();
@@ -43,6 +44,7 @@ function send(): void {
         ↻
       </UiButton>
     </div>
+    <UiHelp :text="G.capcha" />
     <UiHint :text="state.hint" />
     <UiInput
       v-model="solution"

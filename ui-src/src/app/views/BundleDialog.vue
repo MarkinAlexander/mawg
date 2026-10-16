@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { UiBadge, UiButton, UiDialog, UiHint, UiInput, UiSelect, type UiSelectOption, UiSwitch } from '../../components/ui'
+import { UiBadge, UiButton, UiDialog, UiHelp, UiHint, UiInput, UiSelect, type UiSelectOption, UiSwitch } from '../../components/ui'
 import { useBundles } from '../../stores/bundles'
 import { useGroups } from '../../stores/groups'
 import { useIfaces } from '../../stores/ifaces'
 import { usePools } from '../../stores/status'
 import { useToast } from '../../stores/toast'
 import type { BundleView } from '../../api/types'
+import { G } from '../glossary'
 
 // Диалог набора (легаси openBundleDlg/bdSave 2342-2384): имя (при правке
 // фиксировано), участники по приоритету (выше/ниже/убрать + добавление из
@@ -125,7 +126,7 @@ async function withBusy(fn: () => Promise<void>): Promise<void> {
       tooltip="Латиница или кириллица, цифры и дефисы, до 24 символов"
     />
     <div class="sect">
-      Участники по приоритету (первый = основной)
+      Участники по приоритету (первый = основной)<UiHelp :text="G.bundle" />
     </div>
     <div class="memlist">
       <div

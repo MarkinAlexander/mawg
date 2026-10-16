@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { UiBadge, UiButton, UiCheckbox, UiCard, UiHint, UiSelect, type UiSelectOption, UiSwitch, UiTextarea } from '../../components/ui'
+import { UiBadge, UiButton, UiCheckbox, UiCard, UiHelp, UiHint, UiSelect, type UiSelectOption, UiSwitch, UiTextarea } from '../../components/ui'
 import { useGroups } from '../../stores/groups'
 import { useConfirm } from '../../stores/confirm'
 import { useToast } from '../../stores/toast'
@@ -219,8 +219,11 @@ async function impGo(): Promise<void> {
   <UiCard
     id="card-backups"
     title="Резервные копии"
-    subtitle="хранятся на роутере в base/backups, по 10 последних каждого вида"
+    subtitle="хранятся на роутере, по 10 последних каждого вида"
   >
+    <template #actions>
+      <UiHelp text="Копии лежат в каталоге базы панели на роутере (base/backups). «Полный» - вся панель одним архивом: настройки, пулы, каскады, наборы, правила, конфиг MagiTrickle; «правила (shadow)» - только группы правил; «MT-конфиг» - сырой файл настроек MagiTrickle. Перед каждой массовой записью копии делаются автоматически." />
+    </template>
     <UiHint text="«Полный» - вся панель одним архивом: настройки (порт, доступ, RCI), пулы, каскады, наборы, правила, конфиг MagiTrickle. shadow - правила (восстановление штатной записью), MT-конфиг - сырой config.yaml MagiTrickle (файл + рестарт демона). Перед каждой массовой записью MT-копии делаются автоматически." />
     <div class="bkrow">
       <UiButton
@@ -261,7 +264,7 @@ async function impGo(): Promise<void> {
   <UiCard
     id="card-transfer"
     title="Импорт и выгрузка групп"
-    subtitle="группы правил отдельным файлом - вечная копия на ПК и перенос между панелями"
+    subtitle="группы правил отдельным файлом: копия на ПК не затирается и переносится между панелями"
   >
     <div class="sect">
       Выгрузка на ПК

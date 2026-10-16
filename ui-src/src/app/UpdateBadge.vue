@@ -30,7 +30,7 @@ async function onClick() {
   if (!info?.update || starting.value || dlgOpen.value) return;
   const ok = await confirm({
     title: 'Обновление mawg',
-    text: `Скачать и установить ${info.latest}? Бинарник качается с проверкой sha256, сервис перезапустится, панель на минуту уйдёт.`,
+    text: `Скачать и установить ${info.latest}? Файл проверяется на подлинность (sha256), служба перезапустится, панель на минуту уйдёт и откроется сама.`,
     okLabel: 'Обновить',
   });
   if (!ok) return;
