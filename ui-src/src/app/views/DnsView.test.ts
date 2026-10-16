@@ -10,6 +10,7 @@ import type { DnsState, DnsPolicyRes, DnsUpstreamsRes, Status } from '../../api/
 // (UiHelp, 67-док).
 
 const statePayload: DnsState = {
+  platform: 'openwrt',
   dnsmasq: { servers: ['127.0.0.1#3553'], inMT: true, noresolv: false, cacheSize: 1000, strict: false },
   mt: { upstream: '8.8.8.8:53', upstreams: ['8.8.8.8:53', '77.88.8.8:53'], remap53: true },
 }
@@ -117,6 +118,7 @@ describe('DnsView - состояние DNS (OpenWrt)', () => {
 
   it('строгий режим помечен как SPOF, не в MT - кнопка направления', async () => {
     const strict: DnsState = {
+      platform: 'openwrt',
       dnsmasq: { servers: [], inMT: false, noresolv: true, cacheSize: 0, strict: true },
       mt: { upstream: '127.0.0.1:53', remap53: false },
     }
@@ -328,6 +330,45 @@ describe('DnsView - правила автопереключения L1-L5', () =
     const w = mount(DnsView);
     await vi.waitFor(() => expect(w.find('#card-dns-policy').text()).toContain('нужен MagiTrickle 0.8.2-rev8+'));
     expect(w.find('#card-dns-policy textarea').exists()).toBe(false);
+    w.unmount();
+  });
+});
+
+describe('DnsView - keenetic (71-док)', () => {
+  const keenState: DnsState = {
+    platform: 'keenetic',
+    dnsmasq: { servers: [], inMT: false, noresolv: false, strict: false },
+    mt: { upstream: '8.8.8.8:53', upstreams: ['8.8.8.8:53'], remap53: true },
+  };
+
+  it('перехват DNS вместо dnsmasq-разреза, без кнопок переключения, MT-часть на месте', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.endsWith('/dns/state')) {
+        return new Response(JSON.stringify(keenState), { status: 200 });
+      }
+      if (url.endsWith('/dns/upstreams')) {
+        return new Response(JSON.stringify(cascadePayload), { status: 200 });
+      }
+      if (url.endsWith('/dns/policy')) {
+        return new Response(JSON.stringify({ capable: true, policy: { enabled: false } }), { status: 200 });
+      }
+      if (url.endsWith('/status')) {
+        return new Response(JSON.stringify({ pools: [] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    }));
+    const w = mount(DnsView);
+    await vi.waitFor(() => expect(w.find('#card-dns').text()).toContain('Перехват DNS'));
+    const card = w.find('#card-dns');
+    // keenetic-разрез: нет dnsmasq-строк и кнопок переключения
+    expect(card.text()).not.toContain('Служба DNS');
+    expect(card.text()).not.toContain('Кэш адресов');
+    expect(card.text()).not.toContain('Направить DNS через MT');
+    expect(card.text()).not.toContain('Надёжность');
+    expect(card.text()).toContain('Собственные серверы Keenetic панель не меняет');
+    // [?] у перехвата, MT-часть переиспользована
+    expect(card.html()).not.toContain('<uihelp');
+    expect(card.text()).toContain('Резервные серверы');
     w.unmount();
   });
 });

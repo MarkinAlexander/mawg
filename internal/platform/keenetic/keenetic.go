@@ -774,3 +774,9 @@ func (b *Backend) RestartMagitrickle() error {
 }
 
 func (b *Backend) MTConfigPath() string { return "/opt/var/lib/magitrickle/config.yaml" }
+
+// RunShell - ShellRunner для DNS-менеджера (71-док): ограниченный
+// /bin/sh -c с потолком времени, как на OpenWrt.
+func (b *Backend) RunShell(script string, timeout time.Duration) (string, error) {
+	return platform.RunBoundedCombined(exec.Command("/bin/sh", "-c", script), timeout)
+}

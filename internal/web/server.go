@@ -900,16 +900,23 @@ func (s *Server) dnsRunner() (dnsmgr.Runner, bool) {
 	return nil, false
 }
 
-// dnsState - состояние DNS-стека роутера (46-док §3, срез OpenWrt):
-// куда форвардит dnsmasq, живучесть профиля, remap53, апстримы MT
-// (из дискового config.yaml, включая список rev6).
+// dnsState - состояние DNS-стека роутера (46-док §3): openwrt - uci +
+// iptables + remap53; keenetic - только факт перехвата MT_DNSOR и
+// апстримы MT (71-док, дизайн-слово владельца: собственные серверы
+// Keenetic панель не трогает).
 func (s *Server) dnsState(w http.ResponseWriter, r *http.Request) {
 	run, ok := s.dnsRunner()
 	if !ok {
-		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "платформа пока без DNS-менеджера (срез OpenWrt)"})
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "платформа пока без DNS-менеджера"})
 		return
 	}
-	st, err := dnsmgr.Collect(run, s.backend.MTConfigPath())
+	var st dnsmgr.State
+	var err error
+	if s.backend.Name() == store.PlatformKeenetic {
+		st, err = dnsmgr.CollectKeenetic(run, s.backend.MTConfigPath())
+	} else {
+		st, err = dnsmgr.Collect(run, s.backend.MTConfigPath())
+	}
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -924,6 +931,10 @@ func (s *Server) dnsDnsmasq(w http.ResponseWriter, r *http.Request) {
 	run, ok := s.dnsRunner()
 	if !ok {
 		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "платформа пока без DNS-менеджера (срез OpenWrt)"})
+		return
+	}
+	if s.backend.Name() == store.PlatformKeenetic {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "на Keenetic служба DNS не переключается: панель не трогает собственные серверы Keenetic (управление - «Резервные серверы» MagiTrickle)"})
 		return
 	}
 	var req struct {

@@ -24,9 +24,18 @@ const MTListen = "127.0.0.1#3553"
 const uciBakKey = "dhcp.@dnsmasq[0].mawg_server_bak"
 
 type State struct {
-	Dnsmasq Dnsmasq `json:"dnsmasq"`
-	MT      MTProxy `json:"mt"`
+	// Platform - "openwrt" | "keenetic": панель ветвит разрез карточки
+	// (71-док: на Keenetic свои серверы роутера не трогаются).
+	Platform string  `json:"platform"`
+	Dnsmasq  Dnsmasq `json:"dnsmasq"`
+	MT       MTProxy `json:"mt"`
 }
+
+// Платформы DNS-стека (значения совпадают с store.Platform*).
+const (
+	PlatformOpenWrt  = "openwrt"
+	PlatformKeenetic = "keenetic"
+)
 
 type Dnsmasq struct {
 	Servers   []string `json:"servers"` // dhcp.@dnsmasq[0].server; пусто = из resolvfile
@@ -47,7 +56,7 @@ type MTProxy struct {
 // Collect собирает состояние DNS-стека (openwrt: uci + iptables + файл
 // конфига MT; mtConfigPath пуст или не читается - апстримы неизвестны).
 func Collect(r Runner, mtConfigPath string) (State, error) {
-	st := State{}
+	st := State{Platform: PlatformOpenWrt}
 
 	srvOut, _ := r(`uci -q show dhcp.@dnsmasq[0].server`, 10*time.Second)
 	st.Dnsmasq.Servers = parseUCIValues(srvOut)
@@ -69,6 +78,23 @@ func Collect(r Runner, mtConfigPath string) (State, error) {
 	n, _ := r(`iptables -t nat -S MT_DNSOR 2>/dev/null | wc -l`, 10*time.Second)
 	st.MT.Remap53 = strings.TrimSpace(n) != "0"
 
+	if mtConfigPath != "" {
+		if data, err := os.ReadFile(mtConfigPath); err == nil {
+			st.MT.Upstream, st.MT.Upstreams = ParseMTUpstreams(string(data))
+		}
+	}
+	return st, nil
+}
+
+// CollectKeenetic - состояние DNS-стека Keenetic (71-док, дизайн-слово
+// владельца: собственные серверы Keenetic панель не читает и не меняет -
+// управляемый слой один: MagiTrickle). Показываем факт перехвата
+// MT_DNSOR (DNS роутера и устройств завёрнут в MT) и апстримы MT из
+// дискового конфига; Dnsmasq остаётся нулевым.
+func CollectKeenetic(r Runner, mtConfigPath string) (State, error) {
+	st := State{Platform: PlatformKeenetic}
+	n, _ := r(`iptables -t nat -S MT_DNSOR 2>/dev/null | wc -l`, 10*time.Second)
+	st.MT.Remap53 = strings.TrimSpace(n) != "0"
 	if mtConfigPath != "" {
 		if data, err := os.ReadFile(mtConfigPath); err == nil {
 			st.MT.Upstream, st.MT.Upstreams = ParseMTUpstreams(string(data))
