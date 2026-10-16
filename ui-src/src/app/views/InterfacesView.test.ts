@@ -68,10 +68,12 @@ describe('InterfacesView - карточка «Интерфейсы роутер�
   it('компоненты разрешены (не кастом-теги), режимы/бейджи/handshake, скрытые по кнопке', async () => {
     const { w } = await makeView();
     const html = w.html();
-    for (const tag of ['<uicard', '<uiswitch', '<uiselect', '<uidialog', '<uiinput', '<uibutton']) {
+    for (const tag of ['<uicard', '<uiswitch', '<uiselect', '<uidialog', '<uiinput', '<uibutton', '<uihelp']) {
       expect(html.includes(tag)).toBe(false);
     }
     expect(w.findComponent(UiSwitch).exists()).toBe(true);
+    // глоссарий-проход: [?] в карточках (словарь терминов, 70-док)
+    expect(w.findAll('.uihelp').length).toBeGreaterThanOrEqual(5);
 
     const card = ifCard(w);
     expect(card.find('.ifrow').exists()).toBe(true);
@@ -111,7 +113,7 @@ describe('InterfacesView - карточка «Интерфейсы роутер�
     await pbadges[1].trigger('click');
     await nextTick();
     expect(useConfirm().state.open).toBe(true);
-    expect(useConfirm().state.title).toBe('Проба wg11');
+    expect(useConfirm().state.title).toBe('Проверка wg11');
     expect(useConfirm().state.text).toBe('dial tcp 1.1.1.1: i/o timeout');
     useConfirm().ok();
     await nextTick();
@@ -149,7 +151,7 @@ describe('InterfacesView - диалог пробы интерфейса', () => 
     await nextTick();
 
     const dlg = w.findAll('dialog').find((d) => d.find('h3').text() === 'Проверка интерфейса nwg7')!;
-    expect(dlg.text()).toContain('Проба идет через этот интерфейс');
+    expect(dlg.text()).toContain('Проверка идёт через этот интерфейс');
     expect(dlg.find('.psel-btn').text()).toBe('HTTP-страница 204');
     const target = dlg.findAll('input').find((i) => i.attributes('type') !== 'number' && i.attributes('type') !== 'checkbox')!;
     expect((target.element as HTMLInputElement).value).toBe(PROBE_HTTP);

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
-  UiBadge, UiButton, UiCard, UiDialog, UiHint, UiIcon, UiInput,
+  UiBadge, UiButton, UiCard, UiDialog, UiHelp, UiHint, UiIcon, UiInput,
   UiSelect, type UiSelectOption, UiSwitch,
 } from '../../components/ui'
 import { useBundles } from '../../stores/bundles'
@@ -11,6 +11,7 @@ import { usePools } from '../../stores/status'
 import { useToast } from '../../stores/toast'
 import type { BundleView, IfaceInfo, ProbeConfig } from '../../api/types'
 import { PROBE_DEFAULTS, probeBadgeOf, probeTypeOf, targetOnTypeChange } from './ifacesLogic'
+import { G } from '../glossary'
 import BundleDialog from './BundleDialog.vue'
 import CaptchaHost from './CaptchaHost.vue'
 import PoolCard from './PoolCard.vue'
@@ -94,7 +95,7 @@ async function toggleMode(it: IfaceInfo): Promise<void> {
 async function showProbeDetail(it: IfaceInfo): Promise<void> {
   const pb = it.probeStatus ? probeBadgeOf(it.probeStatus) : null;
   if (!pb?.detail) return;
-  await confirm({ title: 'Проба ' + it.device, text: pb.detail, okLabel: 'Закрыть', info: true });
+    await confirm({ title: 'Проверка ' + it.device, text: pb.detail, okLabel: 'Закрыть', info: true });
 }
 
 // --- диалог пробы интерфейса (легаси openIfaceProbeDlg 1124) ---
@@ -113,7 +114,7 @@ const probeTypeOptions: UiSelectOption[] = [
   { value: 'icmp', label: 'Ping IP' },
 ];
 const wanTypeOptions: UiSelectOption[] = [
-  { value: 'http', label: 'HTTP 204' },
+  { value: 'http', label: 'HTTP-страница (код 204)' },
   { value: 'icmp', label: 'Ping IP' },
 ];
 
@@ -267,6 +268,7 @@ async function saveWan(): Promise<void> {
       >
         {{ showHidden ? 'скрыть служебные' : `показать скрытые (${hiddenCount})` }}
       </UiButton>
+      <UiHelp text="Строки списка: up/down - поднято ли физическое соединение; handshake - «рукопожатие» туннеля с сервером («N с назад» = туннель жив, обмена не было N секунд); бейдж проверки - вердикт периодической пробы канала, клик - подробная причина. Пулы управляются панелью (mawg), внешние интерфейсы только показываются." />
     </template>
 
     <UiHint
@@ -298,10 +300,12 @@ async function saveWan(): Promise<void> {
         <UiBadge
           :text="r.it.linkUp ? 'up' : 'down'"
           :variant="r.it.linkUp ? 'ok' : (r.it.mode === 'hidden' ? 'muted' : 'err')"
+          :tooltip="r.it.linkUp ? 'соединение поднято' : 'соединение опущено'"
         />
         <span
           v-if="r.hs"
           class="hs"
+          :title="G.handshake"
         >{{ r.hs }}</span>
         <UiBadge
           v-if="r.pb"
@@ -346,9 +350,10 @@ async function saveWan(): Promise<void> {
   <UiCard
     id="card-bundles"
     title="Наборы интерфейсов"
-    subtitle="Группы MagiTrickle привязываются к набору: mawg держит их на первом здоровом участнике (приоритет по порядку), при отказе переключает на следующий, при восстановлении возвращает. Участники: пулы mawg и внешние интерфейсы."
+    subtitle="Трафик групп идёт в первого здорового участника набора; при отказе - в следующего, при восстановлении - обратно."
   >
     <template #actions>
+      <UiHelp :text="G.bundle + ' Участники: пулы mawg и внешние интерфейсы. Группы правил привязываются к набору целиком - переключение для них незаметно.'" />
       <UiButton
         variant="primary"
         @click="bundleEditing = null; bundleDlgOpen = true"
@@ -412,19 +417,25 @@ async function saveWan(): Promise<void> {
   <UiCard
     id="card-probe"
     title="Проверка канала провайдера"
-    subtitle="Перед тем как засчитать отказ интерфейса, проверяется основной канал интернета той же пробой. Канал недоступен или деградировал - отказ интерфейса не засчитывается, ротация не запускается."
+    subtitle="Перед тем как засчитать отказ интерфейса, проверяется сам интернет. Если интернет недоступен или отвечает дольше порога - отказ интерфейса не засчитывается и ротация не запускается."
   >
-    <UiSwitch
-      v-model="wanOn"
-      label="включить проверку канала провайдера"
-      tooltip="включить проверку канала провайдера"
-    />
-    <UiSelect
-      :model-value="wanType"
-      :options="wanTypeOptions"
-      label="тип проверки"
-      @update:model-value="onWanTypeChange"
-    />
+    <div class="hrow">
+      <UiSwitch
+        v-model="wanOn"
+        label="включить проверку канала провайдера"
+        tooltip="включить проверку канала провайдера"
+      />
+      <UiHelp :text="G.probe" />
+    </div>
+    <div class="hrow">
+      <UiSelect
+        :model-value="wanType"
+        :options="wanTypeOptions"
+        label="тип проверки"
+        @update:model-value="onWanTypeChange"
+      />
+      <UiHelp :text="G.probeHttp204" />
+    </div>
     <UiInput
       v-model="wanTarget"
       label="цель проверки"
@@ -440,11 +451,14 @@ async function saveWan(): Promise<void> {
         </UiButton>
       </template>
     </UiInput>
-    <UiSwitch
-      v-model="wanRttOn"
-      label="порог RTT"
-      tooltip="включить порог RTT"
-    />
+    <div class="hrow">
+      <UiSwitch
+        v-model="wanRttOn"
+        label="порог RTT"
+        tooltip="включить порог RTT"
+      />
+      <UiHelp :text="G.rtt" />
+    </div>
     <UiInput
       v-model="wanRtt"
       type="number"
@@ -460,23 +474,29 @@ async function saveWan(): Promise<void> {
     width="440px"
   >
     <template v-if="dlg">
-      <UiHint text="Проба идет через этот интерфейс. Используется для здоровья в наборах и показывается в панели интерфейсов." />
-      <UiSelect
-        :model-value="dlg.type"
-        :options="probeTypeOptions"
-        label="Тип пробы"
-        @update:model-value="onProbeTypeChange"
-      />
+      <UiHint text="Проверка идёт через этот интерфейс. Её вердикт - «здоровье» интерфейса в наборах и статус в списке выше." />
+      <div class="hrow">
+        <UiSelect
+          :model-value="dlg.type"
+          :options="probeTypeOptions"
+          label="Тип проверки"
+          @update:model-value="onProbeTypeChange"
+        />
+        <UiHelp :text="G.probeHttp204" />
+      </div>
       <UiInput
         v-model="dlg.target"
-        label="Цель пробы"
+        label="Цель проверки"
         :placeholder="PROBE_DEFAULTS[dlg.type]"
       />
-      <UiSwitch
-        v-model="dlg.rttOn"
-        label="считать нерабочим при RTT выше"
-        tooltip="включить порог RTT"
-      />
+      <div class="hrow">
+        <UiSwitch
+          v-model="dlg.rttOn"
+          label="считать нерабочим при RTT выше"
+          tooltip="включить порог RTT"
+        />
+        <UiHelp :text="G.rtt" />
+      </div>
       <UiInput
         v-model="dlg.rtt"
         type="number"
@@ -585,6 +605,16 @@ async function saveWan(): Promise<void> {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+.hrow {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  margin-top: 4px;
+}
+.hrow > :first-child {
+  flex: 1;
+  min-width: 0;
 }
 .star {
   font-size: 10px;
