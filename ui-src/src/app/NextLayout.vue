@@ -21,10 +21,18 @@ onBeforeUnmount(stop);
 // тап по фону, по вкладке, смена маршрута, Escape.
 const route = useRoute();
 const menuOpen = ref(false);
+// закрытие меню ПЕРЕХОДОМ (клик по вкладке в шторке): барьер истории
+// остаётся позади новой страницы - Back с неё попадёт на старую, как и
+// должно; history.back() здесь нельзя - он откатит только что сделанный
+// роутером pushState (кейс: «не переключает ни на какую страницу»)
+let menuClosedByRoute = false;
 watch(
   () => route.path,
   () => {
-    menuOpen.value = false;
+    if (menuOpen.value) {
+      menuClosedByRoute = true;
+      menuOpen.value = false;
+    }
   },
 );
 
@@ -55,13 +63,15 @@ watch(menuOpen, (open) => {
   } else {
     document.removeEventListener('keydown', onKeydown);
     window.removeEventListener('popstate', onPopState);
-    // закрыли сами (тап/жест/Esc/вкладка) - снять барьер, чтобы
-    // следующий Back не съел пустую запись; при Back барьер уже съел
-    // браузер (onPopState снял флаг) - второй back не нужен
-    if (historyBarrier) {
+    // закрыли сами (тап по фону/жест/Esc/кнопка) - снять барьер своим
+    // history.back (вернёт на текущую запись - останемся на странице);
+    // при закрытии ПЕРЕХОДОМ back() нельзя - откатит роутерный pushState
+    if (historyBarrier && !menuClosedByRoute) {
       historyBarrier = false;
       history.back();
     }
+    historyBarrier = false;
+    menuClosedByRoute = false;
   }
 });
 
@@ -168,6 +178,16 @@ function onEdgeClick(e: MouseEvent): void {
   if (target && target !== strip) {
     target.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: x, clientY: y }));
   }
+}
+
+// клик по шторке: по ссылке - закрытие переходом (роутер сам меняет
+// историю, барьер не трогаем - иначе back() отменит переход); по ссылке
+// на ТЕКУЩУЮ вкладку перехода не будет - обычное закрытие со снятием
+// барьера; по фону/заголовку - то же
+function onSheetNavClick(e: MouseEvent): void {
+  const a = (e.target as HTMLElement | null)?.closest?.('a') as HTMLAnchorElement | null;
+  menuClosedByRoute = !!a && a.getAttribute('href') !== window.location.hash;
+  menuOpen.value = false;
 }
 
 // кнопка «Назад» при открытом меню закрывает меню, а не уводит со
@@ -327,7 +347,7 @@ const appVisible = computed(() => !status.authNeeded && (status.loaded || !!stat
         />
         <nav
           class="sheet"
-          @click="menuOpen = false"
+          @click="onSheetNavClick"
         >
           <div class="sheet-title">
             Вкладки
