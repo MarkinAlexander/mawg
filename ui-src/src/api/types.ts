@@ -307,6 +307,26 @@ export interface DnsUpstreamsRes {
   state?: DnsUpstreamsState
 }
 
+// Политика каскада DNS (46-док §3, 66-док): уровни L1-L5 mawg компонирует
+// в порядок апстримов MT (один PUT в форк); гистерезис переключений -
+// в форке (канарейка K/M/restoreGap).
+export interface DnsCascadePolicy {
+  enabled: boolean
+  primary?: string[] // L1: основные (host[:port]); с tunnel - L2 через пул
+  tunnel?: string // пул для пресета dns-tunnel; пусто - основные напрямую
+  fallback?: string[] // L3: запасные напрямую
+  yandex?: boolean // L4: 77.88.8.8
+  provider?: boolean // L5: DNS провайдера (resolv.conf.auto, срез при применении)
+}
+
+export interface DnsPolicyRes {
+  capable: boolean
+  policy: DnsCascadePolicy
+  composed?: string[] // порядок из сохранённой политики
+  active?: string[] // живой порядок апстримов MT
+  tunnelGroup?: { id?: string; interface?: string }
+}
+
 // --- интерфейсы/слоты/wan-probe ---
 
 // проба здоровья (store.ProbeConfig): цель - публичный IPv4 или http(s) URL;

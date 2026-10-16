@@ -265,6 +265,20 @@ func (s *Store) SetWANProbe(p *ProbeConfig) error {
 	return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
 }
 
+// DNSCascade - политика каскада DNS (nil = не задана).
+func (s *Store) DNSCascade() *DnsCascadePolicy {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.root.Settings.DNSCascade
+}
+
+func (s *Store) SetDNSCascade(p *DnsCascadePolicy) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.root.Settings.DNSCascade = p
+	return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
+}
+
 // GroupPolicy - политика поведения группы при отвале интерфейса.
 func (s *Store) GroupPolicy(id string) GroupPolicy {
 	s.mu.Lock()

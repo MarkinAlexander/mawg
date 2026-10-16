@@ -14,13 +14,15 @@ import (
 	"mawg/internal/store"
 )
 
-// fakeMT - фейковый форк MT (rev8): /version, GET/PUT /dns/upstreams;
-// PUT-тела собираются в lastPuts для проверок проксирования.
+// fakeMT - фейковый форк MT (rev8): /version, GET/PUT /dns/upstreams,
+// группы (bulk PUT для пресетов); PUT-тела собираются в lastPuts.
 type fakeMT struct {
 	version    string
 	mu         sync.Mutex
 	lastPuts   []string
 	getCounter int
+	groups     []magitrickle.Group
+	groupPuts  []string // тела bulk/single PUT групп
 }
 
 func (f *fakeMT) snapshot() map[string]any {
@@ -55,6 +57,39 @@ func (f *fakeMT) handler() http.Handler {
 		f.lastPuts = append(f.lastPuts, string(buf[:n]))
 		f.mu.Unlock()
 		json.NewEncoder(w).Encode(f.snapshot())
+	})
+	// группы: список, bulk PUT (AddGroup/UpdateGroups), одиночный PUT
+	mux.HandleFunc("GET /api/v1/groups", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		json.NewEncoder(w).Encode(map[string]any{"groups": f.groups})
+	})
+	mux.HandleFunc("PUT /api/v1/groups", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Groups []magitrickle.Group `json:"groups"`
+		}
+		json.NewDecoder(r.Body).Decode(&body)
+		f.mu.Lock()
+		if len(body.Groups) > 0 {
+			last := body.Groups[len(body.Groups)-1]
+			f.groupPuts = append(f.groupPuts, "bulk:"+last.Name+"@"+last.Interface)
+		}
+		f.groups = body.Groups
+		f.mu.Unlock()
+		json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	})
+	mux.HandleFunc("PUT /api/v1/groups/{id}", func(w http.ResponseWriter, r *http.Request) {
+		var g magitrickle.Group
+		json.NewDecoder(r.Body).Decode(&g)
+		f.mu.Lock()
+		f.groupPuts = append(f.groupPuts, "single:"+g.Name+"@"+g.Interface)
+		for i := range f.groups {
+			if f.groups[i].ID == r.PathValue("id") {
+				f.groups[i] = g
+			}
+		}
+		f.mu.Unlock()
+		json.NewEncoder(w).Encode(map[string]any{"ok": true})
 	})
 	return mux
 }
