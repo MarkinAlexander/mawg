@@ -78,6 +78,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/dns/probe", s.dnsProbe)
 	mux.HandleFunc("GET /api/v1/dns/state", s.dnsState)
 	mux.HandleFunc("POST /api/v1/dns/dnsmasq", s.dnsDnsmasq)
+	mux.HandleFunc("GET /api/v1/dns/upstreams", s.dnsUpstreams)
+	mux.HandleFunc("PUT /api/v1/dns/upstreams", s.dnsUpstreamsSet)
 	mux.HandleFunc("PUT /api/v1/wanprobe", s.putWANProbe)
 	mux.HandleFunc("GET /api/v1/rcitoken", s.getRCIToken)
 	mux.HandleFunc("PUT /api/v1/rcitoken", s.putRCIToken)
@@ -934,6 +936,51 @@ func (s *Server) dnsDnsmasq(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	st, err := dnsmgr.Collect(run, s.backend.MTConfigPath())
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "state": st})
+}
+
+// dnsUpstreams - состояние каскада апстримов dns-proxy MT (форк rev8+,
+// 64-док §6): живой стейт менеджера (alive/active/причины) через прокси
+// в MT. MT без rev8 (Кинетик rev4, стенд до апгрейда) - честный
+// {"capable":false}: панель показывает апстримы из config.yaml и хинт.
+func (s *Server) dnsUpstreams(w http.ResponseWriter, r *http.Request) {
+	if !s.mtDnsUpstreamsCapable(r.Context()) {
+		writeJSON(w, http.StatusOK, map[string]any{"capable": false})
+		return
+	}
+	st, err := s.mtClient().DnsUpstreams(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "MT недоступен: " + err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"capable": true, "state": st})
+}
+
+// dnsUpstreamsSet - правка списка апстримов dns-proxy MT {"upstreams":
+// ["8.8.8.8", "77.88.8.8:5353"]} (порядок = приоритет). Прямую правку
+// config.yaml из mawg не делаем - гонка с записью конфига самим MT;
+// форк-эндпоинт сохраняет конфиг и горячо подменяет список сам.
+func (s *Server) dnsUpstreamsSet(w http.ResponseWriter, r *http.Request) {
+	if !s.mtDnsUpstreamsCapable(r.Context()) {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "правка апстримов требует MagiTrickle 0.8.2-rev8+ (обновите MT)"})
+		return
+	}
+	var req struct {
+		Upstreams []string `json:"upstreams"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
+		writeErr(w, fmt.Errorf("кривой запрос"))
+		return
+	}
+	if err := s.mtClient().SetDnsUpstreams(r.Context(), req.Upstreams); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	st, err := s.mtClient().DnsUpstreams(r.Context())
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 		return

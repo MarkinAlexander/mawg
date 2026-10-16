@@ -275,6 +275,37 @@ export interface DnsState {
   }
 }
 
+// GET /dns/upstreams: живой стейт каскада апстримов dns-proxy MT
+// (форк rev8+, 64-док §6). capable=false - MT старой ревизии: статус и
+// редактор недоступны, апстримы видны в /dns/state из config.yaml.
+export interface DnsUpstream {
+  address: string
+  alive: boolean
+  active: boolean
+  fails: number
+  oks: number
+  lastSwap: string
+  reason?: string
+}
+
+export interface DnsUpstreamsState {
+  available: boolean
+  health: {
+    enabled: boolean
+    interval: string
+    timeout: string
+    failCycles: number
+    restoreCycles: number
+    restoreGap: string
+  }
+  upstreams: DnsUpstream[]
+}
+
+export interface DnsUpstreamsRes {
+  capable: boolean
+  state?: DnsUpstreamsState
+}
+
 // --- интерфейсы/слоты/wan-probe ---
 
 // проба здоровья (store.ProbeConfig): цель - публичный IPv4 или http(s) URL;
