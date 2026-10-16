@@ -80,12 +80,16 @@ type Result struct {
 // 1.1.1.1/dns.google - по IP/с известным SNI, чтобы зонд не зависел от
 // bootstrap-резолва.
 func Defaults() []Level {
+	// Level-лейблы - человекочитаемые подписи для панели (67-док, глоссарий-
+	// проход Обзора: «dnsmasq» и пр. в подсказках [?], не в подписях).
+	// DoH/DoT/TCP-лейблы владелец велел оставить как есть - расшифровка
+	// каждого уровня делается подсказкой [?] на стороне UI.
 	levels := []Level{
-		{Level: "dnsmasq", Kind: "udp", Server: "127.0.0.1:53"},
-		{Level: "dns-proxy MT", Kind: "udp", Server: "127.0.0.1:3553"},
+		{Level: "Служба DNS роутера", Kind: "udp", Server: "127.0.0.1:53"},
+		{Level: "DNS через MT", Kind: "udp", Server: "127.0.0.1:3553"},
 	}
 	if up := UpstreamFromResolv(); up != "" {
-		levels = append(levels, Level{Level: "upstream ISP", Kind: "udp", Server: up})
+		levels = append(levels, Level{Level: "DNS провайдера", Kind: "udp", Server: up})
 	}
 	return append(levels,
 		// Ноги сервисов - из списка блокировки 63-док (Фаза E: Google выжил

@@ -138,8 +138,10 @@ func TestCheckDoH(t *testing.T) {
 
 func TestDefaultsContainsMTAndUpstream(t *testing.T) {
 	levels := Defaults()
+	// первые три - человекочитаемые (67-док), DoH/DoT/TCP - как были
+	// (слово владельца: расшифровка терминов - в подсказках [?] UI)
 	fixed := map[string]bool{
-		"dnsmasq": true, "dns-proxy MT": true,
+		"Служба DNS роутера": true, "DNS через MT": true,
 		"DoH Cloudflare": true, "DoH Google": true, "DoT Google": true,
 		"интернет TCP 1.1.1.1:443": true, "интернет TCP 77.88.8.8:443": true,
 	}
@@ -149,9 +151,9 @@ func TestDefaultsContainsMTAndUpstream(t *testing.T) {
 			seen++
 			continue
 		}
-		// upstream ISP опционален: есть только там, где есть resolv.conf
-		if l.Level == "upstream ISP" && l.Server == "" {
-			t.Fatalf("upstream ISP без адреса")
+		// DNS провайдера опционален: есть только там, где есть resolv.conf
+		if l.Level == "DNS провайдера" && l.Server == "" {
+			t.Fatalf("DNS провайдера без адреса")
 		}
 	}
 	if seen != len(fixed) {
