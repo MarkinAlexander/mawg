@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { UiBadge, UiButton, UiCard, UiHelp, UiHint, UiInput, UiSelect, type UiSelectOption, UiSwitch, UiTextarea } from '../../components/ui';
 import { api } from '../../api/client';
-import type { DnsProbeRow, DnsState, DnsPolicyRes, DnsUpstream, DnsUpstreamsRes } from '../../api/types';
+import type { DnsProbeRow, DnsState, DnsPolicyRes, DnsUpstream, DnsUpstreamsRes, KeeneticOwn } from '../../api/types';
 import { useStatus } from '../../stores/status';
 import { useToast } from '../../stores/toast';
 import { useConfirm } from '../../stores/confirm';
@@ -54,6 +54,66 @@ const notSupported = computed(() => loadErr.value.includes('платформа')
 // 71-док: на Keenetic свои серверы роутера не трогаем - показываем
 // только перехват MT_DNSOR и управляемую MT-часть
 const isKeen = computed(() => state.value?.platform === 'keenetic');
+
+// --- собственные серверы Keenetic (только просмотр + проба, 71-док):
+// reading running-config - панель их не меняет ---
+const own = ref<KeeneticOwn | null>(null);
+const ownLoaded = ref(false);
+const ownProbing = ref(false);
+const ownVerdicts = ref<Record<string, DnsProbeRow>>({});
+
+async function loadOwn(): Promise<void> {
+  try {
+    own.value = await api<KeeneticOwn>('GET', '/dns/keenetic/own');
+  } catch {
+    own.value = null;
+  }
+  ownLoaded.value = true;
+}
+watch(isKeen, (v) => {
+  if (v && !ownLoaded.value) void loadOwn();
+}, { immediate: true });
+
+const ownRows = computed(() => {
+  if (!own.value) return [];
+  const rows: { key: string; label: string; sub: string; kind?: string; server?: string; sni?: string }[] = [];
+  if (!(own.value.doh || []).length) rows.push({ key: 'empty-doh', label: 'DoH', sub: 'записей не найдено' });
+  for (const d of own.value.doh || []) {
+    rows.push({ key: `doh|${d.uri}`, label: d.uri, sub: d.format ? `формат ${d.format}` : '', kind: 'doh', server: d.uri });
+  }
+  if (!(own.value.dot || []).length) rows.push({ key: 'empty-dot', label: 'DoT', sub: 'записей не найдено' });
+  for (const t of own.value.dot || []) {
+    const server = t.port ? `${t.address}:${t.port}` : `${t.address}:853`;
+    rows.push({ key: `dot|${server}|${t.sni || ''}`, label: server, sub: t.sni ? `sni ${t.sni}` : '', kind: 'dot', server, sni: t.sni });
+  }
+  if (!(own.value.udp || []).length) rows.push({ key: 'empty-udp', label: 'Простые (UDP)', sub: 'записей не найдено' });
+  for (const u of own.value.udp || []) {
+    for (const srv of u.servers) rows.push({ key: `udp|${srv}`, label: srv, sub: `подключение ${u.interface}`, kind: 'udp', server: srv });
+  }
+  for (const u of own.value.v6 || []) {
+    for (const srv of u.servers) rows.push({ key: `v6|${srv}`, label: srv, sub: `подключение ${u.interface} (IPv6)`, kind: 'udp', server: srv });
+  }
+  return rows;
+});
+
+async function probeOwn(): Promise<void> {
+  if (ownProbing.value) return;
+  ownProbing.value = true;
+  const next: Record<string, DnsProbeRow> = {};
+  for (const e of ownRows.value) {
+    if (!e.kind || !e.server) continue;
+    try {
+      let q = `/dns/probe?kind=${e.kind}&server=${encodeURIComponent(e.server)}`;
+      if (e.sni) q += `&sni=${encodeURIComponent(e.sni)}`;
+      const r = await api<{ results: DnsProbeRow[] }>('GET', q);
+      if (r.results?.[0]) next[e.key] = r.results[0];
+    } catch {
+      // сервер останется без вердикта - не диагностика, а сеть
+    }
+  }
+  ownVerdicts.value = next;
+  ownProbing.value = false;
+}
 
 const capable = computed(() => cascade.value?.capable === true && !!cascade.value.state);
 const ups = computed(() => cascade.value?.state?.upstreams ?? []);
@@ -339,6 +399,41 @@ async function probePolicy(): Promise<void> {
         v-if="state && isKeen"
         text="Собственные серверы Keenetic панель не меняет - управляемая часть одна: резервные серверы MagiTrickle ниже."
       />
+
+      <template v-if="state && isKeen">
+        <div class="subhead">
+          <b>Собственные серверы Keenetic<UiHelp text="DNS-серверы, прописанные в настройках самого Keenetic. Панель показывает их только для диагностики и не меняет их. Кнопка «Проверить» прогоняет контрольный запрос через каждый сервер и помечает «работает/не работает»." /></b>
+          <UiButton
+            :busy="ownProbing"
+            @click="probeOwn"
+          >
+            Проверить
+          </UiButton>
+        </div>
+        <div class="kv">
+          <template
+            v-for="e in ownRows"
+            :key="e.key"
+          >
+            <b :class="{ muted: !e.kind }">{{ e.label }}<UiHelp
+              v-if="!e.kind"
+              text="Этот тип серверов в настройках Keenetic не найден."
+            /></b>
+            <span>
+              <UiBadge
+                v-if="ownVerdicts[e.key]"
+                :text="verdictRu[ownVerdicts[e.key].verdict] || ownVerdicts[e.key].verdict"
+                :variant="verdictVariant(ownVerdicts[e.key].verdict)"
+                :tooltip="ownVerdicts[e.key].detail || ''"
+              />
+              <span
+                v-if="e.sub"
+                class="muted"
+              >{{ e.sub }}</span>
+            </span>
+          </template>
+        </div>
+      </template>
 
       <!-- резервные серверы MT: живой статус (форк rev8+) -->
       <template v-if="capable">

@@ -189,6 +189,54 @@ func TestCollectKeenetic(t *testing.T) {
 	}
 }
 
+// реальный формат строк из разведки 69-док (running-config Кинетика
+// владельца): DoH dnsm, DoT без порта/sni, name-server по подключения,
+// filter-profile upstream не должен попадать в глобальные
+func TestParseKeeneticOwn(t *testing.T) {
+	cfgText := `dns-proxy
+    rebind-protect auto
+    https upstream https://dns.google/dns-query dnsm
+    tls upstream 1.1.1.1
+    filter profile DnsProfile0 description antizapret
+    filter profile DnsProfile0 dns53 upstream 7.8.8.8
+    filter profile DnsProfile0 intercept enable
+!
+ip name-server 8.8.8.8 "" on ISP
+ip name-server 8.8.4.4 "" on Wireguard5
+ip name-server 10.2.0.1 "" on Wireguard6
+ipv6 name-server 2001:4860:4860::8888 "" on Wireguard5
+`
+	own := ParseKeeneticOwn(cfgText)
+	if len(own.DoH) != 1 || own.DoH[0].URI != "https://dns.google/dns-query" || own.DoH[0].Format != "dnsm" {
+		t.Fatalf("DoH: %+v", own.DoH)
+	}
+	if len(own.DoT) != 1 || own.DoT[0].Address != "1.1.1.1" || own.DoT[0].Port != "" {
+		t.Fatalf("DoT: %+v", own.DoT)
+	}
+	if len(own.Udp) != 3 {
+		t.Fatalf("UDP: %+v", own.Udp)
+	}
+	if own.Udp[0].Interface != "ISP" || len(own.Udp[0].Servers) != 1 || own.Udp[0].Servers[0] != "8.8.8.8" {
+		t.Fatalf("UDP ISP: %+v", own.Udp[0])
+	}
+	if len(own.V6) != 1 || own.V6[0].Servers[0] != "2001:4860:4860::8888" {
+		t.Fatalf("V6: %+v", own.V6)
+	}
+
+	// DoT с портом и sni + http-формат json
+	cfgText2 := `dns-proxy
+    tls upstream 8.8.8.8 853 sni dns.google
+    https upstream https://dns.adguard.com/dns-query json
+!`
+	own2 := ParseKeeneticOwn(cfgText2)
+	if own2.DoT[0].Port != "853" || own2.DoT[0].SNI != "dns.google" {
+		t.Fatalf("DoT порт/sni: %+v", own2.DoT[0])
+	}
+	if own2.DoH[0].Format != "json" {
+		t.Fatalf("DoH формат: %+v", own2.DoH[0])
+	}
+}
+
 func TestSetDnsmasqTarget(t *testing.T) {
 	var lastScript string
 	r := func(script string, timeout time.Duration) (string, error) {

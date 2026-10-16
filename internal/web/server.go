@@ -76,6 +76,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/v1/ifaces/{device}/probe", s.setIfaceProbe)
 	mux.HandleFunc("GET /api/v1/wanprobe", s.getWANProbe)
 	mux.HandleFunc("GET /api/v1/dns/probe", s.dnsProbe)
+	mux.HandleFunc("GET /api/v1/dns/keenetic/own", s.dnsKeeneticOwn)
 	mux.HandleFunc("GET /api/v1/dns/state", s.dnsState)
 	mux.HandleFunc("POST /api/v1/dns/dnsmasq", s.dnsDnsmasq)
 	mux.HandleFunc("GET /api/v1/dns/upstreams", s.dnsUpstreams)
@@ -958,6 +959,28 @@ func (s *Server) dnsDnsmasq(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "state": st})
+}
+
+// dnsKeeneticOwn - собственные DNS-серверы Keenetic (только просмотр,
+// 71-док: панель их не меняет): DoH/DoT секции dns-proxy и простые
+// ip/ipv6 name-server по подключения - из running-config через ndmc.
+// Вердикты «работает?» даёт GET /dns/probe?kind=&server= по каждому.
+func (s *Server) dnsKeeneticOwn(w http.ResponseWriter, r *http.Request) {
+	if s.backend.Name() != store.PlatformKeenetic {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "собственные DNS-серверы есть только на Keenetic"})
+		return
+	}
+	run, ok := s.dnsRunner()
+	if !ok {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "платформа без шелла"})
+		return
+	}
+	own, err := dnsmgr.CollectKeeneticOwn(run)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, own)
 }
 
 // dnsUpstreams - состояние каскада апстримов dns-proxy MT (форк rev8+,

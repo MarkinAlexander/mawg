@@ -103,6 +103,120 @@ func CollectKeenetic(r Runner, mtConfigPath string) (State, error) {
 	return st, nil
 }
 
+// KeeneticOwn - собственные DNS-серверы Keenetic, прочитанные из
+// running-config (только просмотр; 71-док: панель их не меняет).
+type KeeneticOwn struct {
+	DoH []KeeneticDoh `json:"doh"`
+	DoT []KeeneticDot `json:"dot"`
+	Udp []KeeneticUdp `json:"udp"` // простые DNS по подключениям (IPv4)
+	V6  []KeeneticUdp `json:"v6,omitempty"`
+}
+
+type KeeneticDoh struct {
+	URI    string `json:"uri"`
+	Format string `json:"format,omitempty"` // dnsm | json
+}
+
+type KeeneticDot struct {
+	Address string `json:"address"`
+	Port    string `json:"port,omitempty"` // пусто = 853
+	SNI     string `json:"sni,omitempty"`
+}
+
+type KeeneticUdp struct {
+	Interface string   `json:"interface"`
+	Servers   []string `json:"servers"`
+}
+
+// ParseKeeneticOwn - разбор running-config Keenetic (69-док): глобальные
+// https/tls upstream в секции dns-proxy (строки filter profile - чужие,
+// это апстримы фильтр-профилей) и ip/ipv6 name-server по подключения.
+func ParseKeeneticOwn(config string) KeeneticOwn {
+	own := KeeneticOwn{}
+	inProxy := false
+	for _, raw := range strings.Split(config, "\n") {
+		line := strings.TrimRight(raw, " \t\r")
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case trimmed == "dns-proxy" && !strings.HasPrefix(line, " "):
+			inProxy = true
+		case trimmed == "!" && !strings.HasPrefix(line, " "):
+			inProxy = false
+		}
+		switch {
+		case inProxy && strings.HasPrefix(trimmed, "https upstream "):
+			parts := strings.Fields(strings.TrimPrefix(trimmed, "https upstream "))
+			if len(parts) > 0 {
+				doh := KeeneticDoh{URI: parts[0]}
+				if len(parts) > 1 && (parts[1] == "dnsm" || parts[1] == "json") {
+					doh.Format = parts[1]
+				}
+				own.DoH = append(own.DoH, doh)
+			}
+		case inProxy && strings.HasPrefix(trimmed, "tls upstream "):
+			fields := strings.Fields(strings.TrimPrefix(trimmed, "tls upstream "))
+			dot := KeeneticDot{Address: fields[0]}
+			for i := 1; i < len(fields); i++ {
+				switch {
+				case fields[i] == "sni" && i+1 < len(fields):
+					i++
+					dot.SNI = fields[i]
+				case dot.Port == "" && isPort(fields[i]):
+					dot.Port = fields[i]
+				}
+			}
+			own.DoT = append(own.DoT, dot)
+		case strings.HasPrefix(trimmed, "ip name-server ") || strings.HasPrefix(trimmed, "ipv6 name-server "):
+			v6 := strings.HasPrefix(trimmed, "ipv6 ")
+			fields := strings.Fields(trimmed)
+			// ip name-server <addr> [port] [ "<domain>" ] on <iface>
+			if len(fields) < 4 || fields[len(fields)-2] != "on" {
+				continue
+			}
+			iface := fields[len(fields)-1]
+			addr := fields[2]
+			if v6 {
+				own.V6 = upsertIface(own.V6, iface, addr)
+			} else {
+				own.Udp = upsertIface(own.Udp, iface, addr)
+			}
+		}
+	}
+	return own
+}
+
+func isPort(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, ch := range s {
+		if ch < '0' || ch > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func upsertIface(list []KeeneticUdp, iface, addr string) []KeeneticUdp {
+	for i := range list {
+		if list[i].Interface == iface {
+			list[i].Servers = append(list[i].Servers, addr)
+			return list
+		}
+	}
+	return append(list, KeeneticUdp{Interface: iface, Servers: []string{addr}})
+}
+
+// CollectKeeneticOwn - собственные DNS-серверы Keenetic живьём:
+// running-config через ndmc (CLI, RCI-токен не нужен; 69-док).
+func CollectKeeneticOwn(r Runner) (KeeneticOwn, error) {
+	out, err := r(`ndmc -c "show running-config"`, 30*time.Second)
+	if err != nil {
+		return KeeneticOwn{}, fmt.Errorf("running-config: %w", err)
+	}
+	return ParseKeeneticOwn(out), nil
+}
+
 // parseUCIValues - значения uci-листа из вывода `uci show`: строки вида
 // `dhcp.@dnsmasq[0].server='a' 'b'` (и старые `key+='b'` приращения).
 func parseUCIValues(out string) []string {

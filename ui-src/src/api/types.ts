@@ -260,6 +260,15 @@ export interface DnsProbeRow {
   detail?: string
 }
 
+// GET /dns/keenetic/own: собственные DNS-серверы Keenetic из
+// running-config (только просмотр, 71-док; вердикты - GET /dns/probe)
+export interface KeeneticOwn {
+  doh: { uri: string; format?: string }[]
+  dot: { address: string; port?: string; sni?: string }[]
+  udp: { interface: string; servers: string[] }[]
+  v6?: { interface: string; servers: string[] }[]
+}
+
 // GET /dns/state: состояние DNS-стека роутера (46-док §3).
 // platform: "openwrt" - полный разрез (dnsmasq/кэш/перенаправление);
 // "keenetic" - только перехват MT_DNSOR + апстримы MT (71-док: свои
