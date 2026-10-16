@@ -5,7 +5,6 @@ import { ConfirmHost, ToastHost, UiButton, UiIcon } from '../components/ui'
 import { inflight } from '../api/client'
 import { useStatus, type MtState } from '../stores/status'
 import { usePrivacy } from '../stores/privacy'
-import { useToast } from '../stores/toast'
 import { TABS } from './tabs'
 import SearchDialog from './SearchDialog.vue'
 import LoginDialog from './LoginDialog.vue'
@@ -29,50 +28,11 @@ watch(
   },
 );
 
-// смахивание FAB (слово владельца 2026-10-16: кнопка меню перекрывает
-// подсказки [?] на телефоне - дать возможность кнопку смахнуть, как
-// меню тянется от края). Тянем кнопку - следует за пальцем; свайп за
-// порогом в любую сторону - убирается ДО ПЕРЕЗАГРУЗКИ страницы (в
-// памяти, не в localStorage); тап - меню как раньше. Меню остаётся
-// доступным краном от правого края.
-const { push } = useToast();
+// кнопка меню: смахивание убирает/возвращает её жестами у правого края
+// (67-док §3.7, слово владельца 2026-10-16: FAB перекрывал подсказки
+// [?] на телефоне; единственный механизм - края, без драга самой кнопки
+// и без тостов про перезагрузку). fabGone - в памяти компонента.
 const fabGone = ref(false);
-const fabOffset = ref({ x: 0, y: 0 });
-let fabDrag: { x: number; y: number; moved: boolean } | null = null;
-let fabSuppressClick = false;
-const FAB_SWIPE_PX = 64;
-
-function onFabDown(e: PointerEvent): void {
-  if (fabGone.value) return;
-  fabDrag = { x: e.clientX, y: e.clientY, moved: false };
-  // capture держит move/up на кнопке даже за её пределами (нет в jsdom - опционально)
-  (e.currentTarget as HTMLElement)?.setPointerCapture?.(e.pointerId);
-}
-function onFabMove(e: PointerEvent): void {
-  if (!fabDrag) return;
-  const dx = e.clientX - fabDrag.x;
-  const dy = e.clientY - fabDrag.y;
-  if (Math.abs(dx) > 8 || Math.abs(dy) > 8) fabDrag.moved = true;
-  fabOffset.value = { x: dx, y: dy };
-}
-function onFabUp(): void {
-  if (!fabDrag) return;
-  const { x, y } = fabOffset.value;
-  if (Math.abs(x) > FAB_SWIPE_PX || Math.abs(y) > FAB_SWIPE_PX) {
-    fabGone.value = true;
-    push('Кнопка меню убрана - вернётся после перезагрузки страницы');
-  }
-  fabSuppressClick = fabDrag.moved; // драг не должен открывать меню
-  fabDrag = null;
-  fabOffset.value = { x: 0, y: 0 };
-}
-function onFabClick(): void {
-  if (fabSuppressClick) {
-    fabSuppressClick = false;
-    return;
-  }
-  menuOpen.value = !menuOpen.value;
-}
 
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape') menuOpen.value = false;
@@ -130,8 +90,9 @@ function onSecretKeydown(e: KeyboardEvent) {
   }
 }
 
-// жест от правого края: pointerdown в 24px от правого края на мобильной
-// ширине, тянем влево >40px (и горизонталь сильнее вертикали) - открываем.
+// жесты у правого края (на мобильной ширине): вытянуть из-за края
+// (справа налево, dx < -40) - открыть меню и проявить кнопку; задвинуть
+// за край (слева направо, dx > +40) - закрыть шторку и спрятать кнопку.
 // Pointer Events покрывают и палец, и мышь; на десктопе меню скрыто,
 // поэтому guard по matchMedia.
 const EDGE_PX = 24;
@@ -143,12 +104,21 @@ function onPointerDown(e: PointerEvent) {
   swipeStart = { x: e.clientX, y: e.clientY };
 }
 function onPointerMove(e: PointerEvent) {
-  if (!swipeStart || menuOpen.value) return;
+  if (!swipeStart) return;
   const dx = e.clientX - swipeStart.x;
   const dy = e.clientY - swipeStart.y;
-  if (dx < -SWIPE_PX && Math.abs(dx) > Math.abs(dy)) {
-    menuOpen.value = true;
+  if (Math.abs(dx) >= SWIPE_PX && Math.abs(dx) > Math.abs(dy)) {
     swipeStart = null;
+    if (dx < 0) {
+      // вытянуть из-за края: меню + кнопка
+      menuOpen.value = true;
+      fabGone.value = false;
+    } else {
+      // задвинуть за край: шторка закрыта, кнопка спрятана
+      menuOpen.value = false;
+      fabGone.value = true;
+    }
+    return;
   }
   // жест отменён уходом по вертикали (скролл)
   if (Math.abs(dy) > SWIPE_PX) swipeStart = null;
@@ -267,23 +237,15 @@ const appVisible = computed(() => !status.authNeeded && (status.loaded || !!stat
 
     <!-- мобильное меню: кнопка внизу справа + шторка снизу (в шапке места
          не занимает и вёрстку не двигает); на десктопе скрыты media-query.
-         Кнопку можно смахнуть в любую сторону - убирается до перезагрузки
-         (67-док: не перекрывает подсказки [?]); меню остаётся доступным
-         свайпом от правого края -->
+         Кнопку прячут/проявляют жесты у правого края (67-док §3.7) -->
     <button
       v-if="appVisible && !fabGone"
       type="button"
       class="menu-fab"
-      :class="{ dragging: !!fabDrag?.moved }"
-      :style="fabDrag?.moved ? { transform: `translate(${fabOffset.x}px, ${fabOffset.y}px)` } : undefined"
       :aria-expanded="menuOpen"
       aria-label="меню"
-      title="вкладки (можно смахнуть с экрана)"
-      @pointerdown="onFabDown"
-      @pointermove="onFabMove"
-      @pointerup="onFabUp"
-      @pointercancel="onFabUp"
-      @click="onFabClick"
+      title="вкладки"
+      @click="menuOpen = !menuOpen"
     >
       <span /><span /><span />
     </button>
@@ -395,15 +357,6 @@ main {
     background: var(--ok);
     border: none;
     box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
-    /* палец на кнопке = драг, не скролл страницы; возврат на место -
-       плавный, во время драга - без инерции */
-    touch-action: none;
-    transition: transform 0.15s ease;
-  }
-  .menu-fab.dragging {
-    transition: none;
-    opacity: 0.85;
-    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.5);
   }
   .menu-fab span {
     display: block;
