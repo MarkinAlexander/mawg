@@ -3,6 +3,7 @@
 package singbox
 
 import (
+	"context"
 	"fmt"
 	"time"
 )
@@ -61,3 +62,15 @@ type PoolStatus struct {
 }
 
 func (m *Manager) PoolStatus(name string) (PoolStatus, bool) { return PoolStatus{}, false }
+
+func (m *Manager) ClashProxies(ctx context.Context) (map[string]ClashProxy, error) {
+	return nil, fmt.Errorf("движок sing-box доступен только на роутере")
+}
+
+func (m *Manager) ClashSelect(ctx context.Context, group, name string) error {
+	return fmt.Errorf("движок sing-box доступен только на роутере")
+}
+
+func (m *Manager) ClashGroupDelay(ctx context.Context, group, testURL string, timeout time.Duration) (map[string]int, error) {
+	return nil, fmt.Errorf("движок sing-box доступен только на роутере")
+}

@@ -35,6 +35,7 @@ const cooldown = ref('5');
 const keepalive = ref('25');
 const updateInt = ref('0');
 const fallback = ref('direct');
+const groupMode = ref('urltest');
 const members = ref<PoolMember[]>([]);
 const freeConf = ref('');
 const premCountry = ref('');
@@ -59,6 +60,10 @@ const fbHintText = computed(() => fallbackHint(
 const probeTypeOptions: UiSelectOption[] = [
   { value: 'http', label: 'HTTP-страница 204 (надежнее, ICMP режут)' },
   { value: 'icmp', label: 'Ping публичного IP' },
+];
+const groupModeOptions: UiSelectOption[] = [
+  { value: 'urltest', label: 'лучший пинг (авто)' },
+  { value: 'selector', label: 'ручной выбор узла' },
 ];
 const amnCountryOptions = computed<UiSelectOption[]>(() =>
   (pool.value?.settings.amnezia?.countries || [])
@@ -111,6 +116,7 @@ watch(open, (v) => {
   cooldown.value = String(p.settings.cooldownMin ?? 5);
   keepalive.value = String(p.settings.keepalive ?? 0);
   updateInt.value = String(p.settings.updateIntervalH || 0);
+  groupMode.value = p.settings.groupMode === 'selector' ? 'selector' : 'urltest';
   const fb = p.settings.fallback || 'direct';
   fallback.value = fbOptions.value.some((o) => o.value === fb) ? fb : 'direct';
   amnCountry.value = p.settings.amnezia?.country || '';
@@ -243,6 +249,7 @@ async function save(): Promise<void> {
         fallback: fallback.value,
         maxRttMs: rttOn.value ? +rtt.value || 0 : 0,
         updateIntervalH: updateInt.value === '' ? 0 : +updateInt.value || 0,
+        ...(isEng.value ? { groupMode: groupMode.value } : {}),
       });
       const renamed = newName.value.trim();
       if (renamed && renamed !== p.name) await a.rename(p.name, renamed);
@@ -404,6 +411,16 @@ async function save(): Promise<void> {
       <UiHint
         v-if="isEng"
         text="Проверка автоматическая: mawg получает целевую страницу через узел (строгий HTTP-тест, ping не используется). После порога отказов узел подписки переключается на следующий, неудачный уходит в cooldown."
+      />
+      <UiSelect
+        v-if="isEng"
+        v-model="groupMode"
+        :options="groupModeOptions"
+        label="Режим группы движка"
+      />
+      <UiHint
+        v-if="isEng"
+        text="urltest: движок сам держит узел с лучшим пингом. selector: узел выбирается вручную в карточке пула, авто-переключений нет."
       />
       <UiSwitch
         v-model="rttOn"

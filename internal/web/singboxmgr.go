@@ -227,6 +227,7 @@ func (s *Server) applyEngine() ([]string, error) {
 			FailThreshold:    p.Settings.FailThreshold,
 			CooldownMin:      p.Settings.CooldownMin,
 			MaxRTTms:         p.Settings.MaxRTTms,
+			GroupMode:        p.Settings.GroupMode,
 		}
 		nodes, err := s.readPoolNodes(p.Name)
 		switch {

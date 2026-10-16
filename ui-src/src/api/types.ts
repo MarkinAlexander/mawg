@@ -152,6 +152,7 @@ export interface ServerSettings {
 export interface PoolSettings {
   platform?: string
   engineMode?: string // "singbox" - пул через tun-движок
+  groupMode?: string // движковый пул: "selector" - ручной выбор узла, "urltest" (дефолт) - лучший пинг
   tunName?: string
   source?: string
   probeHost?: string
@@ -489,4 +490,18 @@ export interface PoolMember {
   endpoint?: string
   active?: boolean
   enabled: boolean
+}
+
+// GET /pools/{name}/engine: узлы движкового пула из clash_api движка
+// (60-док). mode: "urltest" (авто-лучший пинг) | "selector" (ручной
+// выбор); delay - последний успешный замер, мс (0 = не измерен/мёртв).
+export interface EngineNode {
+  tag: string
+  delay: number
+}
+
+export interface PoolEngine {
+  mode: string
+  now: string
+  nodes: EngineNode[]
 }

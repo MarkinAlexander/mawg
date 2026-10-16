@@ -294,6 +294,22 @@ func (m *Manager) clashBase() int {
 	return m.ClashPort
 }
 
+// ClashProxies - все прокси и группы движка (clash_api, порт с учётом
+// shared-режима); узлы/задержки пула читает веб-слой (60-док).
+func (m *Manager) ClashProxies(ctx context.Context) (map[string]ClashProxy, error) {
+	return ClashProxies(ctx, m.clashBase())
+}
+
+// ClashSelect - ручной выбор узла в selector-группе пула.
+func (m *Manager) ClashSelect(ctx context.Context, group, name string) error {
+	return ClashSelect(ctx, m.clashBase(), group, name)
+}
+
+// ClashGroupDelay - перемерить urltest-группу пула сейчас.
+func (m *Manager) ClashGroupDelay(ctx context.Context, group, testURL string, timeout time.Duration) (map[string]int, error) {
+	return ClashGroupDelay(ctx, m.clashBase(), group, testURL, timeout)
+}
+
 func (m *Manager) fragmentPath() string { return filepath.Join(m.SharedDir, FragmentName) }
 
 func (m *Manager) alive() bool {

@@ -7,7 +7,7 @@ import { usePoolActions, type PoolAct } from '../../stores/pools'
 import { useToast } from '../../stores/toast'
 import { useSecrets } from '../secrets'
 import { probeHuman } from './groupsLogic'
-import type { ConfigView, PoolView } from '../../api/types'
+import type { ConfigView, PoolEngine, PoolView } from '../../api/types'
 
 // Карточка пула (легаси ensureCard/updateCard 67-265). Данные приходят из
 // /status (5с) - карточка чисто отображает + мутации. Шестерёнка настроек и
@@ -88,6 +88,42 @@ async function delPool(): Promise<void> {
 // --- строка карточки (легаси updateCard 174) ---
 const engine = computed(() => status.data?.engine);
 const isEng = computed(() => props.pool.settings.engineMode === 'singbox');
+
+// --- узлы движкового пула (60-док): список + пинги из clash_api движка,
+// ручной выбор в selector (⚡), перемер в urltest. Ленивая загрузка по
+// открытию секции - как «Конфиги» у нативных пулов. ---
+const nodesOpen = ref(false);
+const engineState = ref<PoolEngine | null>(null);
+const engineErr = ref('');
+async function loadEngine(): Promise<void> {
+  engineErr.value = '';
+  try {
+    engineState.value = await a.engine(props.pool.name);
+  } catch (e) {
+    engineState.value = null;
+    engineErr.value = e instanceof Error ? e.message : String(e);
+  }
+}
+watch(nodesOpen, (v) => {
+  if (v) void loadEngine();
+});
+const engMode = computed(() => engineState.value?.mode || props.pool.settings.groupMode || 'urltest');
+async function pickNode(tag: string): Promise<void> {
+  if (busy.value) return;
+  await run(`${props.pool.name}:selnode`, async () => {
+    await a.engineSelect(props.pool.name, tag);
+    push(`Выбран узел: ${tag}`);
+    await loadEngine();
+  });
+}
+async function retestNodes(): Promise<void> {
+  if (busy.value) return;
+  await run(`${props.pool.name}:retest`, async () => {
+    push('Перемер задержек узлов запущен…');
+    await a.engineRetest(props.pool.name);
+    await loadEngine();
+  });
+}
 const modeBadge = computed(() => {
   if (props.pool.disabled) return { text: 'выключен', variant: 'muted' as const };
   if (props.pool.mode === 'fallback') return { text: 'фоллбек', variant: 'err' as const };
@@ -268,6 +304,71 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
         :tooltip="protoTitle(b.kind)"
       />
     </div>
+
+    <!-- узлы движкового пула: подписка целиком в группе движка (60-док) -->
+    <details
+      v-if="isEng"
+      class="cfg"
+      :open="nodesOpen"
+      @toggle="nodesOpen = ($event.target as HTMLDetailsElement).open"
+    >
+      <summary title="узлы подписки в группе движка; urltest держит лучший пинг сам">
+        Узлы ({{ engineState ? engineState.nodes.length : '…' }})
+      </summary>
+      <UiHint text="Пинг - замер движка до цели пробы, не ICMP до эндпоинта. urltest: движок сам держит лучший (перемер кнопкой); selector: выбор узла кликом ⚡." />
+      <UiHint
+        v-if="engineErr"
+        :text="'ошибка: ' + engineErr"
+      />
+      <div
+        v-if="engineState"
+        class="cfglist"
+      >
+        <div
+          v-for="n in engineState.nodes"
+          :key="n.tag"
+          class="cfgrow"
+          :class="{ active: engineState.now === n.tag }"
+        >
+          <span class="cfgmain">
+            <span class="cfgname">{{ n.tag }}</span>
+            <UiBadge
+              v-if="engineState.now === n.tag"
+              text="активен"
+              variant="ok"
+            />
+            <UiBadge
+              :text="n.delay > 0 ? `${n.delay} мс` : '—'"
+              :variant="n.delay > 0 ? 'ok' : 'muted'"
+              :tooltip="n.delay > 0 ? 'последний замер движка' : 'не измерен или не отвечает'"
+            />
+          </span>
+          <span class="cfgctl">
+            <UiButton
+              v-if="engMode === 'selector'"
+              variant="icon"
+              tooltip="выбрать этот узел (selector - ручной режим)"
+              :disabled="engineState.now === n.tag"
+              :busy="busy === `${pool.name}:selnode`"
+              @click="pickNode(n.tag)"
+            >
+              ⚡
+            </UiButton>
+          </span>
+        </div>
+      </div>
+      <div
+        v-if="engineState && engMode === 'urltest'"
+        class="btnrow"
+      >
+        <UiButton
+          :busy="busy === `${pool.name}:retest`"
+          @click="retestNodes"
+        >
+          Перемерить пинги
+        </UiButton>
+      </div>
+    </details>
 
     <div class="btnrow">
       <template v-if="enabled">

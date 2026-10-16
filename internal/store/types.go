@@ -93,6 +93,9 @@ type PoolSettings struct {
 	// EngineDetour - каскад движка: туннель пула (wireguard-эндпоинт)
 	// заводится через группу другого движкового пула (detour в sing-box).
 	EngineDetour string `json:"engineDetour,omitempty"`
+	// GroupMode - режим группы движка (60-док): "selector" - ручной выбор
+	// узла; пусто/"urltest" - лучший по пингу (авто, дефолт).
+	GroupMode string `json:"groupMode,omitempty"`
 	// NativeAWG3 - free-пул поднимается нативным kmod amneziawg 3.x
 	// (OpenWrt), без движка sing-box. Служебный: задаёт web-слой при
 	// создании, в JSON настроек не пишем.
