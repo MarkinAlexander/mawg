@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, type DOMWrapper } from '@vue/test-utils'
 import { createRouter, createWebHashHistory } from 'vue-router'
 import { nextTick } from 'vue'
 import NextLayout from './NextLayout.vue'
@@ -399,19 +399,20 @@ describe('NextLayout - краевая полоса жестов и кнопка 
     return w;
   }
 
-  const strip = (w: ReturnType<typeof mount>) => w.find('.edge-zone');
+  const stripRight = (w: ReturnType<typeof mount>) => w.find('.edge-zone.right');
+  const stripLeft = (w: ReturnType<typeof mount>) => w.find('.edge-zone.left');
   const fab = (w: ReturnType<typeof mount>) => w.find('.menu-fab');
   // свайп по полосе (jsdom не знает PointerEvent - MouseEvent с типом)
-  const swipe = async (w: ReturnType<typeof mount>, fromX: number, toX: number) => {
-    await strip(w).trigger('pointerdown', { clientX: fromX, clientY: 300 });
-    await strip(w).trigger('pointermove', { clientX: toX, clientY: 300 });
-    await strip(w).trigger('pointerup', { clientX: toX, clientY: 300 });
+  const swipe = async (w: ReturnType<typeof mount>, strip: DOMWrapper<Element>, fromX: number, toX: number) => {
+    await strip.trigger('pointerdown', { clientX: fromX, clientY: 300 });
+    await strip.trigger('pointermove', { clientX: toX, clientY: 300 });
+    await strip.trigger('pointerup', { clientX: toX, clientY: 300 });
   };
   const X = () => window.innerWidth; // jsdom 1024
 
   it('вытянуть из-за края: меню открыто, кнопка проявлена', async () => {
     const w = await makeLayout();
-    await swipe(w, X(), X() - 100);
+    await swipe(w, stripRight(w), X(), X() - 100);
     await nextTick();
     expect(w.find('.menu-wrap').exists()).toBe(true);
     expect(fab(w).exists()).toBe(true);
@@ -420,10 +421,10 @@ describe('NextLayout - краевая полоса жестов и кнопка 
 
   it('задвинуть за край: шторка закрыта, кнопка спрятана', async () => {
     const w = await makeLayout();
-    await swipe(w, X(), X() - 100);
+    await swipe(w, stripRight(w), X(), X() - 100);
     await nextTick();
     expect(w.find('.menu-wrap').exists()).toBe(true);
-    await swipe(w, X() - 10, X() + 90);
+    await swipe(w, stripLeft(w), 10, 110);
     await nextTick();
     expect(w.find('.menu-wrap').exists()).toBe(false);
     expect(fab(w).exists()).toBe(false);
@@ -432,10 +433,10 @@ describe('NextLayout - краевая полоса жестов и кнопка 
 
   it('цикл: спрятал - вытянуть возвращает и меню, и кнопку', async () => {
     const w = await makeLayout();
-    await swipe(w, X() - 10, X() + 90); // задвинуть
+    await swipe(w, stripLeft(w), 10, 110); // задвинуть
     await nextTick();
     expect(fab(w).exists()).toBe(false);
-    await swipe(w, X(), X() - 100); // вытянуть
+    await swipe(w, stripRight(w), X(), X() - 100); // вытянуть
     await nextTick();
     expect(fab(w).exists()).toBe(true);
     expect(w.find('.menu-wrap').exists()).toBe(true);
@@ -444,9 +445,9 @@ describe('NextLayout - краевая полоса жестов и кнопка 
 
   it('вертикальный уход - жест отменён', async () => {
     const w = await makeLayout();
-    await strip(w).trigger('pointerdown', { clientX: X() - 10, clientY: 300 });
-    await strip(w).trigger('pointermove', { clientX: X() - 10, clientY: 500 });
-    await strip(w).trigger('pointerup', { clientX: X() - 10, clientY: 500 });
+    await stripRight(w).trigger('pointerdown', { clientX: X() - 10, clientY: 300 });
+    await stripRight(w).trigger('pointermove', { clientX: X() - 10, clientY: 500 });
+    await stripRight(w).trigger('pointerup', { clientX: X() - 10, clientY: 500 });
     await nextTick();
     expect(w.find('.menu-wrap').exists()).toBe(false);
     expect(fab(w).exists()).toBe(true);
@@ -462,7 +463,7 @@ describe('NextLayout - краевая полоса жестов и кнопка 
     const orig = document.elementFromPoint;
     document.elementFromPoint = () => under;
     const w = await makeLayout();
-    await strip(w).trigger('click', { clientX: X() - 10, clientY: 300 });
+    await stripRight(w).trigger('click', { clientX: X() - 10, clientY: 300 });
     expect(clicked).toBe(1);
     document.elementFromPoint = orig;
     w.unmount();
@@ -500,5 +501,48 @@ describe('NextLayout - краевая полоса жестов и кнопка 
     w.unmount();
     push.mockRestore();
     back.mockRestore();
+  });
+});
+
+describe('NextLayout - левая краевая полоса: задвигание (67-док §3.10)', () => {
+  async function makeLayout() {
+    const router = await makeRouter();
+    const w = mount(NextLayout, { attachTo: document.body, global: { plugins: [router] } });
+    await nextTick();
+    return w;
+  }
+
+  const stripLeft = (w: ReturnType<typeof mount>) => w.find('.edge-zone.left');
+  const stripRight = (w: ReturnType<typeof mount>) => w.find('.edge-zone.right');
+  const fab = (w: ReturnType<typeof mount>) => w.find('.menu-fab');
+
+  it('задвигание от ЛЕВОГО края (палец вправо, в экран): шторка закрыта, кнопка спрятана', async () => {
+    const w = await makeLayout();
+    // открыть правой полосой
+    await stripRight(w).trigger('pointerdown', { clientX: 1024, clientY: 300 });
+    await stripRight(w).trigger('pointermove', { clientX: 924, clientY: 300 });
+    await stripRight(w).trigger('pointerup', { clientX: 924, clientY: 300 });
+    await vi.waitFor(() => expect(w.find('.menu-wrap').exists()).toBe(true));
+
+    // задвинуть левой полосой: палец от левого края ВПРАВО
+    await stripLeft(w).trigger('pointerdown', { clientX: 10, clientY: 300 });
+    await stripLeft(w).trigger('pointermove', { clientX: 110, clientY: 300 });
+    await stripLeft(w).trigger('pointerup', { clientX: 110, clientY: 300 });
+    await nextTick();
+    expect(w.find('.menu-wrap').exists()).toBe(false);
+    expect(fab(w).exists()).toBe(false);
+    w.unmount();
+  });
+
+  it('на левой полосе свайп влево (от экрана) ничего не делает', async () => {
+    const w = await makeLayout();
+    // неправильное направление: палец идёт ВЛЕВО (к краю, из экрана)
+    await stripLeft(w).trigger('pointerdown', { clientX: 110, clientY: 300 });
+    await stripLeft(w).trigger('pointermove', { clientX: 10, clientY: 300 });
+    await stripLeft(w).trigger('pointerup', { clientX: 10, clientY: 300 });
+    await nextTick();
+    expect(w.find('.menu-wrap').exists()).toBe(false);
+    expect(fab(w).exists()).toBe(true);
+    w.unmount();
   });
 });
