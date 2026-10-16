@@ -190,7 +190,7 @@ describe('PoolSettingsDialog - режим группы движка (60-док)'
       settings: { ...pool.settings, engineMode: 'singbox', tunName: 'tun1', source: '' },
     };
     const { dlg, f } = await makeDialog({}, [eng], { platform: 'openwrt' });
-    expect(dlg.text()).toContain('Режим группы движка');
+    expect(dlg.text()).toContain('Выбор узла в подписке');
     expect(dlg.text()).toContain('лучший пинг (авто)');
 
     // открыть дропдаун режима группы: ищем по текущему значению
@@ -213,7 +213,7 @@ describe('PoolSettingsDialog - режим группы движка (60-док)'
   it('не-движковый: режима группы нет, PUT без groupMode', async () => {
     const { dlg, f } = await makeDialog({}, [pool]);
     await vi.waitFor(() => expect(dlg.text()).toContain('Источник'));
-    expect(dlg.text()).not.toContain('Режим группы движка');
+    expect(dlg.text()).not.toContain('Выбор узла в подписке');
     await btn(dlg, 'Сохранить')[0].trigger('click');
     await vi.waitFor(() => {
       const put = f.mock.calls.find((c) => (c[0] as string).endsWith('/pools/proton') && c[1]?.method === 'PUT');

@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { UiBadge, UiButton, UiCard, UiHint, UiIcon, UiInput, UiSelect, type UiSelectOption, UiSwitch } from '../../components/ui'
+import { UiBadge, UiButton, UiCard, UiHelp, UiHint, UiIcon, UiInput, UiSelect, type UiSelectOption, UiSwitch } from '../../components/ui'
 import { useConfirm } from '../../stores/confirm'
 import { useStatus } from '../../stores/status'
 import { usePoolActions, type PoolAct } from '../../stores/pools'
 import { useToast } from '../../stores/toast'
 import { useSecrets } from '../secrets'
+import { G } from '../glossary'
 import { probeHuman } from './groupsLogic'
 import type { ConfigView, PoolEngine, PoolView } from '../../api/types'
 
@@ -52,13 +53,14 @@ function toggleEnabled(v: boolean): void {
 // «Проверить» с обратной связью (слово владельца: «нажимаю и не понимаю
 // что происходит»): триггерим пробу и держим кнопку busy, пока /status не
 // принесёт новый lastResult (максимум ~15с), вердикт - тостом по-человечески
-const probeHelp = 'handshake - сколько секунд назад рукопожатие туннеля; icmp/tcp - пинг эндпоинта; lossy - пинг выше порога (канал жив, но медленный, порог - в настройках пула); «выше порога» - отказ засчитан; link down - интерфейс опущен; settling - конфиг применён, идёт стабилизация';
+// словарь вердиктов проверки ([?], 70-док): handshake/icmp/lossy/link down
+const probeHelp = 'handshake - сколько секунд назад было «рукопожатие» туннеля (соединение живо); icmp/tcp - проверка пингом сервера; lossy - пинг выше порога (канал жив, но медленный, порог - в настройках пула); «выше порога» - отказ засчитан; link down - интерфейс опущен; settling - конфиг применён, идёт стабилизация';
 async function checkNow(): Promise<void> {
   if (probing.value || busy.value) return;
   probing.value = true;
   busy.value = `${props.pool.name}:check`;
   const before = props.pool.lastResult;
-  push('Проверка запущена: рукопожатие + пинг эндпоинта…');
+  push('Проверка запущена: соединение и пинг сервера…');
   try {
     await a.act(props.pool.name, 'check');
     for (let i = 0; i < 10; i++) {
@@ -125,9 +127,9 @@ async function retestNodes(): Promise<void> {
   });
 }
 const modeBadge = computed(() => {
-  if (props.pool.disabled) return { text: 'выключен', variant: 'muted' as const };
-  if (props.pool.mode === 'fallback') return { text: 'фоллбек', variant: 'err' as const };
-  return { text: 'работает', variant: 'ok' as const };
+  if (props.pool.disabled) return { text: 'выключен', variant: 'muted' as const, tooltip: '' };
+  if (props.pool.mode === 'fallback') return { text: 'фоллбек', variant: 'err' as const, tooltip: G.fallback };
+  return { text: 'работает', variant: 'ok' as const, tooltip: '' };
 });
 const sub = computed(() => {
   const p = props.pool;
@@ -148,7 +150,7 @@ const result = computed(() => {
 });
 
 // плашки протоколов движка (что именно гоняет: AWG 3.x, vless/ws, ...)
-const protoTitle = (kind: string) => (kind === 'proxy' ? 'прокси-узел движка' : 'конфиг WG/AWG движка');
+const protoTitle = (kind: string) => (kind === 'proxy' ? 'узел подписки (vless/trojan и др.)' : 'конфиг WireGuard/AmneziaWG');
 
 // --- премиум (легаси 209-227): импорт только с nativeAWG3, смена страны -
 // только у импортированного ---
@@ -257,6 +259,7 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
       <UiBadge
         :text="modeBadge.text"
         :variant="modeBadge.variant"
+        :tooltip="modeBadge.tooltip"
       />
       <!-- вкл/выкл свитчем (слово владельца: единый стиль чекеров, подпись
            состояния рядом; красная кнопка «Выключить» пугала) -->
@@ -274,23 +277,21 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
       >
         <UiIcon name="gear" />
       </UiButton>
+      <UiHelp :text="G.pool" />
     </template>
 
     <div class="kv">
       <!-- secret динамически: только адрес из конфигов; «проверка» и
            счётчики видны всегда (слово владельца 2026-10-15) -->
-      <b>конфиг</b><span :class="{ secret: secrets.endpoint(pool.activeEndpoint) }">{{ pool.activeEndpoint || '-' }}</span>
-      <b>проверка</b><span
-        :title="probeHelp"
-        style="cursor: help"
-      >{{ result }}</span>
+      <b>конфиг<UiHelp :text="G.config" /></b><span :class="{ secret: secrets.endpoint(pool.activeEndpoint) }">{{ pool.activeEndpoint || '-' }}</span>
+      <b>проверка<UiHelp :text="probeHelp" /></b><span>{{ result }}</span>
       <template v-if="pool.lastError">
         <b class="err">ошибка</b><span
           class="err"
           :class="{ secret: secrets.line(pool.lastError) }"
         >{{ pool.lastError }}</span>
       </template>
-      <b>ротаций</b><span>{{ pool.rotations }}</span>
+      <b>ротаций<UiHelp :text="G.rotation" /></b><span>{{ pool.rotations }}</span>
     </div>
 
     <div
@@ -313,9 +314,9 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
       @toggle="nodesOpen = ($event.target as HTMLDetailsElement).open"
     >
       <summary title="узлы подписки в группе движка; urltest держит лучший пинг сам">
-        Узлы ({{ engineState ? engineState.nodes.length : '…' }})
+        Узлы ({{ engineState ? engineState.nodes.length : '…' }})<UiHelp :text="G.urltest" />
       </summary>
-      <UiHint text="Пинг - замер движка до цели пробы, не ICMP до эндпоинта. urltest: движок сам держит лучший (перемер кнопкой); selector: выбор узла кликом ⚡." />
+      <UiHint text="Пинг - замер движка до цели пробы, не пинг самого сервера." />
       <UiHint
         v-if="engineErr"
         :text="'ошибка: ' + engineErr"
@@ -451,7 +452,7 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
       @toggle="cfgOpen = ($event.target as HTMLDetailsElement).open"
     >
       <summary title="порядок конфигов = приоритет ротации">
-        Конфиги ({{ (pool.configs || []).length }})
+        Конфиги ({{ (pool.configs || []).length }})<UiHelp :text="G.rotation" />
       </summary>
       <UiHint text="порядок списка = приоритет ротации, выше = раньше" />
       <div class="cfglist">
@@ -472,12 +473,13 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
               v-if="(c.coolForSec || 0) > 0"
               :text="`cooldown ${coolMin(c.coolForSec)}м`"
               variant="muted"
+              :tooltip="G.cooldown"
             />
             <UiBadge
               v-if="c.conflict"
               text="!"
               variant="warn"
-              :tooltip="`${c.conflict}: исключен из ротации, тумблер не включит`"
+              :tooltip="`${c.conflict}: исключён из ротации, переключатель его не включит`"
             />
             <span
               class="cfgend"

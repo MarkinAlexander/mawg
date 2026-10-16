@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { UiBadge, UiBanner, UiButton, UiDialog, UiHint, UiInput, UiSelect, type UiSelectOption, UiTextarea } from '../../components/ui'
+import { UiBadge, UiBanner, UiButton, UiDialog, UiHelp, UiHint, UiInput, UiSelect, type UiSelectOption, UiTextarea } from '../../components/ui'
 import { useStatus } from '../../stores/status'
 import { usePoolActions } from '../../stores/pools'
 import { useCaptcha } from '../../stores/captcha'
 import { useToast } from '../../stores/toast'
 import type { LinkInspect, SourcePlan } from '../../api/types'
 import { inspectLine, planView, slotGate, slotOptions } from './poolsLogic'
+import { G } from '../glossary'
 
 // Диалог создания пула (легаси dlgPool/setPoolMode 404-805). Режимы:
 // конфиги | ссылка или подписка | Amnezia Free. Слоты - только Keenetic,
@@ -204,7 +205,7 @@ async function create(): Promise<void> {
       const { useConfirm } = await import('../../stores/confirm');
       const ok = await useConfirm().confirm({
         title: 'Занятый слот',
-        text: `Слот ${slot.value} уже используется. При активации пула его конфигурация будет заменена, текущие пиры пропадут. Создать пул на этом слоте?`,
+        text: `Слот ${slot.value} уже используется. При активации пула его конфигурация будет заменена, текущие узлы подключения пропадут. Создать пул на этом слоте?`,
         okLabel: 'Создать',
       });
       if (!ok) return;
@@ -348,24 +349,27 @@ const fallbackOptions: UiSelectOption[] = [
         placeholder="proton"
         tooltip="строчная латиница, цифры и дефисы, начинается с буквы, до 15 символов"
       />
-      <UiSelect
-        v-if="isKeenetic && mode !== 'free'"
-        v-model="slot"
-        :options="slotPickOptions"
-        label="Слот Keenetic"
-        :disabled="slotsLoading"
-        :hint="gate.text || undefined"
-      >
-        <template #action>
-          <UiButton
-            :busy="busy"
-            tooltip="создать следующий слот WireguardN через CLI"
-            @click="addSlot"
-          >
-            + слот
-          </UiButton>
-        </template>
-      </UiSelect>
+      <div class="hrow">
+        <UiSelect
+          v-if="isKeenetic && mode !== 'free'"
+          v-model="slot"
+          :options="slotPickOptions"
+          label="Слот Keenetic"
+          :disabled="slotsLoading"
+          :hint="gate.text || undefined"
+        >
+          <template #action>
+            <UiButton
+              :busy="busy"
+              tooltip="создать следующий слот WireguardN через CLI роутера"
+              @click="addSlot"
+            >
+              + слот
+            </UiButton>
+          </template>
+        </UiSelect>
+        <UiHelp :text="G.slot" />
+      </div>
       <UiBanner
         v-if="slotsErr"
         kind="err"
@@ -378,11 +382,14 @@ const fallbackOptions: UiSelectOption[] = [
         label="Протокол (OpenWrt)"
         :disabled="mode === 'free'"
       />
-      <UiSelect
-        v-model="fallback"
-        :options="fallbackOptions"
-        label="Если все конфиги недоступны"
-      />
+      <div class="hrow">
+        <UiSelect
+          v-model="fallback"
+          :options="fallbackOptions"
+          label="Если все конфиги недоступны"
+        />
+        <UiHelp :text="G.fallback" />
+      </div>
       <template v-if="mode === 'link' || mode === 'free'">
         <UiTextarea
           v-if="mode === 'link'"
@@ -392,17 +399,22 @@ const fallbackOptions: UiSelectOption[] = [
           mono
           placeholder="vpn://... / wireguard://... / amneziawg://...&#10;vless://... / trojan://...&#10;https://example.com/sub"
         />
-        <UiHint
+        <div
           v-if="showInspect"
-          :text="inspectText"
-        />
+          class="hrow"
+        >
+          <UiHint
+            :text="inspectText"
+          />
+          <UiHelp :text="G.source" />
+        </div>
         <div
           v-if="isAmneziaKey"
           class="amn"
         >
           <div class="amntitle">
             Это ключ Amnezia Premium/Free API - mawg обменяет его у gateway Амнезии на конфиг
-            <b>{{ (inspectRes?.amnezia?.serviceProtocol || 'awg').toUpperCase() }}</b> и создаст пул.
+            <b>{{ (inspectRes?.amnezia?.serviceProtocol || 'awg').toUpperCase() }}</b> и создаст пул.<UiHelp :text="G.gateway" />
           </div>
           <UiSelect
             v-model="amneziaVia"
@@ -451,6 +463,16 @@ const fallbackOptions: UiSelectOption[] = [
   gap: 6px;
   flex-wrap: wrap;
   margin-bottom: 6px;
+}
+.hrow {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  margin-top: 4px;
+}
+.hrow > :first-child {
+  flex: 1;
+  min-width: 0;
 }
 .amn {
   border: 1px solid var(--border);
