@@ -3,7 +3,7 @@ import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import DnsView from './DnsView.vue'
 import { useStatus } from '../../stores/status'
-import type { DnsState, DnsPolicyRes, DnsUpstreamsRes, Status } from '../../api/types'
+import type { DnsState, DnsPolicyRes, DnsUpstreamsRes, KeeneticOwn, Status } from '../../api/types'
 
 // DNS-раздел: состояние службы DNS + резервные серверы MT + правила
 // автопереключения L1-L5. Формулировки - «язык задач», подробности в [?]
@@ -369,6 +369,71 @@ describe('DnsView - keenetic (71-док)', () => {
     // [?] у перехвата, MT-часть переиспользована
     expect(card.html()).not.toContain('<uihelp');
     expect(card.text()).toContain('Резервные серверы');
+    w.unmount();
+  });
+});
+
+describe('DnsView - keenetic: собственные серверы (71-док §4.1)', () => {
+  const ownPayload: KeeneticOwn = {
+    doh: [{ uri: 'https://dns.google/dns-query', format: 'dnsm' }],
+    dot: [{ address: '1.1.1.1' }],
+    udp: [
+      { interface: 'ISP', servers: ['8.8.8.8'] },
+      { interface: 'Wireguard5', servers: ['8.8.8.8', '8.8.4.4'] },
+    ],
+  };
+
+  function stubOwn(withOwn: boolean): void {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.endsWith('/dns/state')) {
+        return new Response(JSON.stringify({
+          platform: 'keenetic',
+          dnsmasq: { servers: [], inMT: false, noresolv: false, strict: false },
+          mt: { upstream: '8.8.8.8:53', remap53: true },
+        }), { status: 200 });
+      }
+      if (url.endsWith('/dns/keenetic/own')) {
+        return new Response(JSON.stringify(withOwn ? ownPayload : { doh: [], dot: [], udp: [] }), { status: 200 });
+      }
+      if (url.endsWith('/dns/upstreams')) {
+        return new Response(JSON.stringify({ capable: false }), { status: 200 });
+      }
+      if (url.endsWith('/dns/policy')) {
+        return new Response(JSON.stringify({ capable: false, policy: { enabled: false } }), { status: 200 });
+      }
+      if (url.includes('/dns/probe?')) {
+        return new Response(JSON.stringify({ results: [
+          { level: url, kind: 'udp', server: 'x', verdict: 'clean', canonical: 5, total: 5, ms: 10 },
+        ] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    }));
+  }
+
+  it('список своих серверов с разбивкой по типам, проба даёт вердикты', async () => {
+    stubOwn(true);
+    const w = mount(DnsView);
+    await vi.waitFor(() => expect(w.find('#card-dns').text()).toContain('Собственные серверы Keenetic'));
+    const card = w.find('#card-dns');
+    expect(card.text()).toContain('https://dns.google/dns-query');
+    expect(card.text()).toContain('формат dnsm');
+    expect(card.text()).toContain('1.1.1.1:853');
+    expect(card.text()).toContain('подключение Wireguard5');
+    expect(card.text()).not.toContain('записей не найдено');
+
+    await card.findAll('.uibtn').find((b) => b.text() === 'Проверить')!.trigger('click');
+    await vi.waitFor(() => expect(card.text()).toContain('работает'));
+    w.unmount();
+  });
+
+  it('пустые типы - честные «записей не найдено»', async () => {
+    stubOwn(false);
+    const w = mount(DnsView);
+    await vi.waitFor(() => expect(w.find('#card-dns').text()).toContain('записей не найдено'));
+    const card = w.find('#card-dns').text();
+    expect(card).toContain('DoH');
+    expect(card).toContain('DoT');
+    expect(card).toContain('Простые (UDP)');
     w.unmount();
   });
 });
