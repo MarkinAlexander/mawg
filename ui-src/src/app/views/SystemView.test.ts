@@ -81,12 +81,12 @@ describe('SystemView - журнал событий', () => {
     await vi.waitFor(() => expect(w.findAll('.log > div')).toHaveLength(5));
     const rows = w.findAll('.log > div');
     // легаси slice(-80).reverse(): последняя запись сверху
-    expect(rows[0].text()).toContain('install');
-    expect(rows[4].text()).toContain('rotate');
+    expect(rows[0].text()).toContain('установка');
+    expect(rows[4].text()).toContain('ротация');
     for (const [i, kind] of ['install', 'magitrickle', 'fallback', 'applied', 'rotate'].entries()) {
       expect(rows[i].find('.k-' + kind).exists()).toBe(true);
     }
-    expect(rows[0].text()).toMatch(/^\[\d{2}:\d{2}:\d{2}\] free: install установлено$/);
+    expect(rows[0].text()).toMatch(/^\[\d{2}:\d{2}:\d{2}\] free: установка установлено$/);
     w.unmount();
   });
 
@@ -104,7 +104,7 @@ describe('SystemView - журнал событий', () => {
     // дропдаун типов собран из данных: 3 вида + «все события»
     await logCard.find('.psel-btn').trigger('click');
     expect(logCard.findAll('.psel-item')).toHaveLength(4);
-    await logCard.findAll('.psel-item').filter((o) => o.text() === 'applied')[0].trigger('click');
+    await logCard.findAll('.psel-item').filter((o) => o.text() === 'применено')[0].trigger('click');
     await nextTick();
     expect(logCard.findAll('.log > div')).toHaveLength(1);
     expect(logCard.find('.evcount').text()).toContain('показано 1 из 3');
