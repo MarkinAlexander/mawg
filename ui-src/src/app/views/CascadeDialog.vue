@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { UiButton, UiDialog, UiHint, UiSelect, type UiSelectOption, UiTextarea } from '../../components/ui'
+import { UiButton, UiDialog, UiHelp, UiHint, UiSelect, type UiSelectOption, UiTextarea } from '../../components/ui'
 import { api } from '../../api/client'
 import { useGroups } from '../../stores/groups'
 import { usePools } from '../../stores/status'
 import { useToast } from '../../stores/toast'
 import { cascadeOptions, wireCascadeSel } from './groupsLogic'
+import { G } from '../glossary'
 
 // Диалог каскада (легаси fillCascadeSelects 2067 + csCreate 2090): источник
 // и путь из пулов и интерфейсов (выбранное в одном дизейблится в другом),
@@ -108,11 +109,12 @@ async function save(): Promise<void> {
     :busy="busy"
     width="440px"
   >
-    <UiHint text="Создается служебная группа: трафик к эндпоинтам источника направляется через путь-посредник. Включается и выключается обычным тумблером группы; при ротации источника адреса добавляются сами." />
+    <UiHint text="Создаётся служебная группа: трафик к серверам первого подключения направляется через второе. Включается и выключается обычным переключателем группы; при ротации источника адреса подставляются сами." />
+    <UiHelp :text="G.cascade" />
     <UiSelect
       :model-value="source"
       :options="srcUi"
-      label="Что гоняем (источник эндпоинтов)"
+      label="Что заворачиваем (подключение-источник)"
       @update:model-value="onSource"
     />
     <UiHint
@@ -122,7 +124,7 @@ async function save(): Promise<void> {
     <UiTextarea
       v-if="hostsVisible"
       v-model="hosts"
-      label="Адреса или домены его эндпоинтов (по одному в строке)"
+      label="Адреса или домены его серверов (по одному в строке)"
       :rows="3"
       placeholder="8.39.125.1"
       class="secret"
@@ -130,7 +132,7 @@ async function save(): Promise<void> {
     <UiSelect
       :model-value="via"
       :options="viaUi"
-      label="Через что (путь)"
+      label="Через что направить"
       @update:model-value="onVia"
     />
     <template #footer>
