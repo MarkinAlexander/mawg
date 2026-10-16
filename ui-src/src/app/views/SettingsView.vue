@@ -5,6 +5,7 @@ import {
   UiButton,
   UiCard,
   UiDialog,
+  UiHelp,
   UiHint,
   UiIcon,
   UiInput,
@@ -19,6 +20,7 @@ import { useServerSettings } from '../../stores/settings'
 import { useStatus } from '../../stores/status'
 import { useSystem } from '../../stores/system'
 import { useToast } from '../../stores/toast'
+import { G } from '../glossary'
 import { startRestartWait } from '../restartFlow'
 import { ipValid, lanSubnet24, panelTargetOrigin, subnet24 } from './settingsLogic'
 
@@ -380,7 +382,7 @@ async function rciSave(): Promise<void> {
         v-model="addr"
         label="адрес"
         placeholder="0.0.0.0"
-        tooltip="адрес прослушивания"
+        tooltip="на каких адресах панель принимает подключения"
         class="secret"
       />
       <UiInput
@@ -390,7 +392,9 @@ async function rciSave(): Promise<void> {
         class="secret"
       />
     </div>
-    <UiHint text="0.0.0.0 - все интерфейсы, 127.0.0.1 - только локально (для nginx-прокси), конкретный IP - один интерфейс. Авторизация и разрешённые адреса применяются сразу, адрес и порт - после перезапуска демона (кнопка появится здесь же)." />
+    <div class="hrow">
+      <UiHint text="0.0.0.0 - принимать с любых сетей, 127.0.0.1 - только с самого роутера (например, если доступ через прокси). Авторизация и разрешённые адреса применяются сразу, адрес и порт - после перезапуска службы панели (кнопка появится здесь же)." /><UiHelp text="Служба панели (демон) - фоновая программа на роутере: перезапуск коротко закрывает страницу, она откроется сама." />
+    </div>
     <div class="row end">
       <UiButton
         :disabled="!dirty"
@@ -485,13 +489,15 @@ async function rciSave(): Promise<void> {
         </UiButton>
       </template>
     </UiSelect>
-    <UiHint text="IP или подсеть, с которых открыт доступ к панели. Пусто - доступ всем. Изменения применяются и сохраняются сразу. При ручном добавлении адреса, который не покрывает ваш текущий, ваш адрес допишется в список автоматически - чтобы доступ к панели не потерялся. Роутер всегда может открыть панель сам." />
+    <div class="hrow">
+      <UiHint text="IP или подсеть, с которых открыт доступ к панели. Пусто - доступ всем. Изменения применяются и сохраняются сразу. При ручном добавлении адреса, который не покрывает ваш текущий, ваш адрес допишется в список автоматически - чтобы доступ к панели не потерялся. Роутер всегда может открыть панель сам." /><UiHelp :text="G.cidr" />
+    </div>
 
     <template v-if="isKeenetic">
       <div class="sect">
-        Токен локального API Keenetic
+        Токен локального API Keenetic<UiHelp :text="G.rci" />
       </div>
-      <UiHint text="На прошивках 5.2+ локальный RCI требует токен (NDM-4515): создайте его в веб-интерфейсе Keenetic и вставьте сюда. Без токена mawg работает через CLI медленнее. На 5.1 и старее не нужен." />
+      <UiHint text="На прошивках 5.2+ роутер требует токен для локальных команд (ошибка NDM-4515): создайте его в веб-интерфейсе Keenetic и вставьте сюда. Без токена панель работает медленнее. На 5.1 и старее не нужен." />
       <UiInput
         v-model="rciToken"
         label="RCI-токен"
@@ -582,6 +588,16 @@ async function rciSave(): Promise<void> {
 </template>
 
 <style scoped>
+.hrow {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  margin-top: 4px;
+}
+.hrow > :first-child {
+  flex: 1;
+  min-width: 0;
+}
 .sect {
   font-weight: 600;
   font-size: 13px;

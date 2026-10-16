@@ -85,8 +85,9 @@ async function submit(): Promise<void> {
         :text="err"
       />
       <p class="hint">
-        Пароль первичного входа - в файле first-auth.txt в каталоге базы
-        панели на роутере. Сброс: <code>mawg -reset-auth</code> по SSH.
+        Пароль первого входа лежит в файле first-auth.txt в каталоге базы
+        панели на роутере. Сброс пароля - команда <code>mawg -reset-auth</code>
+        на роутере (по SSH).
       </p>
       <UiButton
         type="submit"
