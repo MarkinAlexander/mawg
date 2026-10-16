@@ -1,6 +1,8 @@
 package dnsmgr
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -131,6 +133,62 @@ func TestCollect(t *testing.T) {
 }
 
 // переключения: в MT - бэкап прядевого списка; обратно - рестор и чистка
+// keenetic (71-док): только перехват MT_DNSOR + апстримы из конфига,
+// dnsmasq-блок нулевой, платформа проставлена
+func TestCollectKeenetic(t *testing.T) {
+	calls := 0
+	r := func(script string, timeout time.Duration) (string, error) {
+		calls++
+		if strings.Contains(script, "MT_DNSOR") {
+			return "3\n", nil
+		}
+		t.Fatalf("неожиданный скрипт на keenetic: %s", script)
+		return "", nil
+	}
+	st, err := CollectKeenetic(r, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Platform != PlatformKeenetic {
+		t.Fatalf("platform = %q, want keenetic", st.Platform)
+	}
+	if !st.MT.Remap53 {
+		t.Fatal("MT_DNSOR жив, а remap53=false")
+	}
+	if calls != 1 {
+		t.Fatalf("ожидался 1 шелл-вызов, было %d", calls)
+	}
+	if st.Dnsmasq.InMT || st.Dnsmasq.Strict || len(st.Dnsmasq.Servers) != 0 {
+		t.Fatalf("dnsmasq-блок должен быть нулевым: %+v", st.Dnsmasq)
+	}
+
+	// конфиг MT: апстримы читаются тем же парсером (реальный формат
+	// yaml.v2 - sampleConfig со стенда 0.42)
+	cfg := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(cfg, []byte(sampleConfig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r2 := func(script string, timeout time.Duration) (string, error) {
+		return "3\n", nil
+	}
+	st2, err := CollectKeenetic(r2, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st2.MT.Upstreams) != 2 || st2.MT.Upstreams[0] != "8.8.8.8:53" {
+		t.Fatalf("апстримы из конфига: %+v", st2.MT)
+	}
+
+	// цепочки нет - перехвата нет
+	r3 := func(script string, timeout time.Duration) (string, error) {
+		return "0\n", nil
+	}
+	st3, _ := CollectKeenetic(r3, "")
+	if st3.MT.Remap53 {
+		t.Fatal("MT_DNSOR пуст, а remap53=true")
+	}
+}
+
 func TestSetDnsmasqTarget(t *testing.T) {
 	var lastScript string
 	r := func(script string, timeout time.Duration) (string, error) {

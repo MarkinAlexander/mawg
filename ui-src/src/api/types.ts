@@ -260,8 +260,12 @@ export interface DnsProbeRow {
   detail?: string
 }
 
-// GET /dns/state: состояние DNS-стека роутера (46-док §3, срез OpenWrt 64-док)
+// GET /dns/state: состояние DNS-стека роутера (46-док §3).
+// platform: "openwrt" - полный разрез (dnsmasq/кэш/перенаправление);
+// "keenetic" - только перехват MT_DNSOR + апстримы MT (71-док: свои
+// серверы Keenetic панель не трогает), dnsmasq нулевой.
 export interface DnsState {
+  platform: 'openwrt' | 'keenetic'
   dnsmasq: {
     servers: string[]
     inMT: boolean

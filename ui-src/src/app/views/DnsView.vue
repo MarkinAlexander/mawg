@@ -51,6 +51,9 @@ onBeforeUnmount(() => {
 });
 
 const notSupported = computed(() => loadErr.value.includes('платформа'));
+// 71-док: на Keenetic свои серверы роутера не трогаем - показываем
+// только перехват MT_DNSOR и управляемую MT-часть
+const isKeen = computed(() => state.value?.platform === 'keenetic');
 
 const capable = computed(() => cascade.value?.capable === true && !!cascade.value.state);
 const ups = computed(() => cascade.value?.state?.upstreams ?? []);
@@ -294,33 +297,48 @@ async function probePolicy(): Promise<void> {
         v-if="state"
         class="kv"
       >
-        <b>Служба DNS<UiHelp text="dnsmasq - служба имён на самом роутере: через неё домашние устройства получают адреса сайтов. «Через MT» - запросы обрабатывает защитный модуль MagiTrickle (порт 3553); «свои серверы» - список задан вручную; «напрямую» - серверы провайдера." /></b>
-        <span>
-          <UiBadge
-            :text="dnsmasqText"
-            :variant="state.dnsmasq.inMT ? 'ok' : (state.dnsmasq.servers.length ? 'warn' : 'muted')"
-          />
-          <UiBadge
-            v-if="state.dnsmasq.strict"
-            variant="err"
-            text="строгий режим (SPOF)"
-            tooltip="профиль без запаса: единственный сервер умрёт - DNS встанет целиком"
-          />
-        </span>
-        <b>Кэш адресов<UiHelp text="Память недавних ответов DNS: повторные сайты открываются быстрее, короткие сбои сервера не замечаются." /></b>
-        <span class="muted">{{ state.dnsmasq.cacheSize != null ? `${state.dnsmasq.cacheSize} записей` : 'не задан' }}</span>
-        <b>Перенаправление<UiHelp text="Весь DNS-трафик домашних устройств (порт 53) принудительно идёт через модуль MT - защита работает даже для техники, которой вручную вписали чужой DNS." /></b>
-        <span>
-          <UiBadge
-            :text="state.mt.remap53 ? 'весь :53 → MT' : 'не найдено'"
-            :variant="state.mt.remap53 ? 'ok' : 'muted'"
-          />
-        </span>
+        <template v-if="isKeen">
+          <b>Перехват DNS<UiHelp text="Весь DNS-трафик домашних устройств и самого роутера принудительно заворачивается в MagiTrickle (цепочка MT_DNSOR) - защита работает даже для техники, которой вручную вписан чужой DNS." /></b>
+          <span>
+            <UiBadge
+              :text="state.mt.remap53 ? 'работает' : 'не найдено'"
+              :variant="state.mt.remap53 ? 'ok' : 'warn'"
+            />
+          </span>
+        </template>
+        <template v-else>
+          <b>Служба DNS<UiHelp text="dnsmasq - служба имён на самом роутере: через неё домашние устройства получают адреса сайтов. «Через MT» - запросы обрабатывает защитный модуль MagiTrickle (порт 3553); «свои серверы» - список задан вручную; «напрямую» - серверы провайдера." /></b>
+          <span>
+            <UiBadge
+              :text="dnsmasqText"
+              :variant="state.dnsmasq.inMT ? 'ok' : (state.dnsmasq.servers.length ? 'warn' : 'muted')"
+            />
+            <UiBadge
+              v-if="state.dnsmasq.strict"
+              variant="err"
+              text="строгий режим (SPOF)"
+              tooltip="профиль без запаса: единственный сервер умрёт - DNS встанет целиком"
+            />
+          </span>
+          <b>Кэш адресов<UiHelp text="Память недавних ответов DNS: повторные сайты открываются быстрее, короткие сбои сервера не замечаются." /></b>
+          <span class="muted">{{ state.dnsmasq.cacheSize != null ? `${state.dnsmasq.cacheSize} записей` : 'не задан' }}</span>
+          <b>Перенаправление<UiHelp text="Весь DNS-трафик домашних устройств (порт 53) принудительно идёт через модуль MT - защита работает даже для техники, которой вручную вписали чужой DNS." /></b>
+          <span>
+            <UiBadge
+              :text="state.mt.remap53 ? 'весь :53 → MT' : 'не найдено'"
+              :variant="state.mt.remap53 ? 'ok' : 'muted'"
+            />
+          </span>
+        </template>
         <template v-if="!capable">
           <b>Серверы MT<UiHelp text="Список внешних DNS-серверов защитного модуля; порядок = приоритет. Здесь виден список из файла настроек: живой статус требует MT 0.8.2-rev8+." /></b>
           <span class="muted">{{ upstreamsText }}</span>
         </template>
       </div>
+      <UiHint
+        v-if="state && isKeen"
+        text="Собственные серверы Keenetic панель не меняет - управляемая часть одна: резервные серверы MagiTrickle ниже."
+      />
 
       <!-- резервные серверы MT: живой статус (форк rev8+) -->
       <template v-if="capable">
@@ -448,6 +466,7 @@ async function probePolicy(): Promise<void> {
 
       <div class="dnsactions">
         <UiButton
+          v-if="!isKeen"
           :busy="busy"
           :disabled="!state"
           @click="toggle"
@@ -462,7 +481,10 @@ async function probePolicy(): Promise<void> {
         </UiButton>
       </div>
 
-      <div class="kv">
+      <div
+        v-if="!isKeen"
+        class="kv"
+      >
         <b>Надёжность<UiHelp text="«Режим повышенной надёжности»: DNS работает через MT, а серверы провайдера хранятся в запасе. Если MT остановится, служба DNS автоматически перейдёт на прямые серверы - интернет не пропадёт (возможно, вернётся реклама и фильтрация провайдера)." /></b>
         <span class="muted">серверы провайдера в запасе, смерть MT - переход, а не отказ</span>
       </div>
