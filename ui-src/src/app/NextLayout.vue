@@ -113,14 +113,16 @@ function onSecretKeydown(e: KeyboardEvent) {
   }
 }
 
-// краевая полоса жестов (67-док §3.8, слово владельца: Firefox - меню
-// открывалось, но кнопка не пряталась; Brave/Chromium - не работал даже
-// жест: браузеры забирают краевой свайп под скролл/навигацию и шлют
-// pointercancel). Невидимая полоса во весь правый край с
-// touch-action: none - браузеру ЗАПРЕЩЕНО перехватывать касание на ней,
-// все move доезжают (setPointerCapture держит палец на полосе). Тап без
-// свайпа пересылается содержимому под полосой (elementFromPoint), чтобы
-// правая кромка экрана не стала мёртвой.
+// краевые полосы жестов (67-док §3.8+§3.10, слово владельца: Firefox -
+// меню открывалось, но кнопка не пряталась; Brave/Chromium - не работал
+// даже жест: браузеры забирают краевой свайп под скролл/навигацию и шлют
+// pointercancel; потом выяснилось: задвигающий свайп у правого края уводит
+// ПАЛЕЦ ЗА ЭКРАН - диджитайзер теряет его раньше порога). Итог - ДВЕ
+// полосы с touch-action: none, оба жеста движут пальцем ВНУТРЬ экрана:
+// правая - вытянуть из-за края (меню + проявить кнопку), левая -
+// задвинуть (закрыть шторку + спрятать кнопку). Тап без свайпа
+// пересылается содержимому под полосой (elementFromPoint), чтобы кромки
+// не стали мёртвыми.
 const SWIPE_PX = 40;  // порог срабатывания
 let edgeStart: { x: number; y: number } | null = null;
 let edgeSwiped = false;
@@ -129,21 +131,26 @@ function onEdgeDown(e: PointerEvent): void {
   edgeSwiped = false;
   (e.currentTarget as HTMLElement)?.setPointerCapture?.(e.pointerId);
 }
-function onEdgeMove(e: PointerEvent): void {
+function onEdgeMoveRight(e: PointerEvent): void {
   if (!edgeStart || edgeSwiped) return;
   const dx = e.clientX - edgeStart.x;
   const dy = e.clientY - edgeStart.y;
-  if (Math.abs(dx) >= SWIPE_PX && Math.abs(dx) > Math.abs(dy)) {
+  // вытянуть из-за ПРАВОГО края (палец идёт влево, в экран)
+  if (dx <= -SWIPE_PX && Math.abs(dx) > Math.abs(dy)) {
     edgeSwiped = true;
-    if (dx < 0) {
-      // вытянуть из-за края: меню + кнопка
-      menuOpen.value = true;
-      fabGone.value = false;
-    } else {
-      // задвинуть за край: шторка закрыта, кнопка спрятана
-      menuOpen.value = false;
-      fabGone.value = true;
-    }
+    menuOpen.value = true;
+    fabGone.value = false;
+  }
+}
+function onEdgeMoveLeft(e: PointerEvent): void {
+  if (!edgeStart || edgeSwiped) return;
+  const dx = e.clientX - edgeStart.x;
+  const dy = e.clientY - edgeStart.y;
+  // задвинуть (палец идёт вправо, в экран): шторка закрыта, кнопка спрятана
+  if (dx >= SWIPE_PX && Math.abs(dx) > Math.abs(dy)) {
+    edgeSwiped = true;
+    menuOpen.value = false;
+    fabGone.value = true;
   }
 }
 function onEdgeUp(): void {
@@ -267,14 +274,23 @@ const appVisible = computed(() => !status.authNeeded && (status.loaded || !!stat
     <main v-if="appVisible">
       <RouterView />
     </main>
-    <!-- краевая полоса жестов (только мобильная ширина): свайпы меню у
-         правого края, тапы пересылаются содержимому; над шторкой, чтобы
-         жестом её же и закрывать -->
+    <!-- краевые полосы жестов (только мобильная ширина): правая -
+         вытянуть меню (и проявить кнопку), левая - задвинуть (закрыть
+         шторку и спрятать кнопку); тапы пересылаются содержимому -->
     <div
       v-if="appVisible"
-      class="edge-zone"
+      class="edge-zone right"
       @pointerdown="onEdgeDown"
-      @pointermove="onEdgeMove"
+      @pointermove="onEdgeMoveRight"
+      @pointerup="onEdgeUp"
+      @pointercancel="onEdgeUp"
+      @click="onEdgeClick"
+    />
+    <div
+      v-if="appVisible"
+      class="edge-zone left"
+      @pointerdown="onEdgeDown"
+      @pointermove="onEdgeMoveLeft"
       @pointerup="onEdgeUp"
       @pointercancel="onEdgeUp"
       @click="onEdgeClick"
@@ -429,9 +445,9 @@ main {
   inset: 0;
   z-index: 84;
 }
-/* краевая полоса жестов: на десктопе скрыта; touch-action none -
+/* краевые полосы жестов: на десктопе скрыты; touch-action none -
    браузеру запрещено отбирать свайп под скролл/навигацию (Brave/Firefox);
-   над шторкой (84) - задвигать её жестом */
+   обе НАД шторкой (84): задвигать её жестом от левого края */
 .edge-zone {
   display: none;
 }
@@ -440,11 +456,16 @@ main {
     display: block;
     position: fixed;
     top: 0;
-    right: 0;
     bottom: 0;
     width: 24px;
     z-index: 86;
     touch-action: none;
+  }
+  .edge-zone.right {
+    right: 0;
+  }
+  .edge-zone.left {
+    left: 0;
   }
 }
 .sheet-backdrop {
