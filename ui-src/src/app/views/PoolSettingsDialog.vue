@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { UiBadge, UiButton, UiDialog, UiHint, UiInput, UiSelect, type UiSelectOption, UiSwitch, UiTextarea } from '../../components/ui'
+import { UiBadge, UiButton, UiDialog, UiHelp, UiHint, UiInput, UiSelect, type UiSelectOption, UiSwitch, UiTextarea } from '../../components/ui'
 import { useIfaces } from '../../stores/ifaces'
 import { usePoolActions } from '../../stores/pools'
 import { useStatus } from '../../stores/status'
@@ -9,6 +9,7 @@ import { useConfirm } from '../../stores/confirm'
 import { useToast } from '../../stores/toast'
 import type { PoolMember, PoolView } from '../../api/types'
 import { fallbackHint } from './poolsLogic'
+import { G } from '../glossary'
 
 // Диалог настроек пула (легаси openSettings/spSave 935-1043): источник,
 // переименование, Free (конфиг/перевыпуск/лок пробы), premium-страна,
@@ -273,13 +274,16 @@ async function save(): Promise<void> {
         <div class="sect">
           Источник (ссылка, vpn:// или URL подписки)
         </div>
-        <UiTextarea
-          v-model="source"
-          label="Источник"
-          :rows="3"
-          mono
-          class="secret"
-        />
+        <div class="hrow">
+          <UiTextarea
+            v-model="source"
+            label="Источник"
+            :rows="3"
+            mono
+            class="secret"
+          />
+          <UiHelp :text="G.source" />
+        </div>
         <div class="inrow">
           <UiSelect
             v-if="showAmnCountry"
@@ -302,7 +306,7 @@ async function save(): Promise<void> {
           label="Автообновление источника, ч"
           hint="0 = из заголовка подписки, без него сутки; при деградации пула mawg перепроверит источник и сам"
         />
-        <UiHint text="Сервер сменил IP или ссылка протухла - вставьте новую и нажмите. Старые конфиги пула будут заменены разобранными. Для ключа Amnezia mawg повторит обмен (тем же устройством, без новой выдачи); можно сменить локацию списком." />
+        <UiHint text="Сервер сменил адрес или ссылка перестала работать - вставьте новую и нажмите. Старые конфиги пула будут заменены разобранными. Для ключа Amnezia mawg повторит обмен (тем же устройством, без новой выдачи); можно сменить локацию списком." />
       </template>
 
       <UiInput
@@ -396,12 +400,15 @@ async function save(): Promise<void> {
         v-if="isFree"
         text="Цель пробы для Amnezia Free зафиксирована (1.1.1.1 - адрес из списка сервиса): Free - сплит-туннель, сервер пускает только к адресам из выданного списка и без IPv6, произвольная цель будет мигать."
       />
-      <UiSelect
-        v-model="probeType"
-        :options="probeTypeOptions"
-        label="Тип пробы через туннель"
-        :disabled="probeLocked"
-      />
+      <div class="hrow">
+        <UiSelect
+          v-model="probeType"
+          :options="probeTypeOptions"
+          label="Тип пробы через туннель"
+          :disabled="probeLocked"
+        />
+        <UiHelp :text="G.probeHttp204" />
+      </div>
       <UiInput
         v-model="probeHost"
         label="Цель пробы"
@@ -412,21 +419,27 @@ async function save(): Promise<void> {
         v-if="isEng"
         text="Проверка автоматическая: mawg получает целевую страницу через узел (строгий HTTP-тест, ping не используется). После порога отказов узел подписки переключается на следующий, неудачный уходит в cooldown."
       />
-      <UiSelect
-        v-if="isEng"
-        v-model="groupMode"
-        :options="groupModeOptions"
-        label="Режим группы движка"
-      />
+      <div class="hrow">
+        <UiSelect
+          v-if="isEng"
+          v-model="groupMode"
+          :options="groupModeOptions"
+          label="Выбор узла в подписке"
+        />
+        <UiHelp :text="G.urltest" />
+      </div>
       <UiHint
         v-if="isEng"
         text="urltest: движок сам держит узел с лучшим пингом. selector: узел выбирается вручную в карточке пула, авто-переключений нет."
       />
-      <UiSwitch
-        v-model="rttOn"
-        label="считать нерабочим при RTT выше"
-        tooltip="включить порог RTT"
-      />
+      <div class="hrow">
+        <UiSwitch
+          v-model="rttOn"
+          label="считать нерабочим при RTT выше"
+          tooltip="включить порог RTT"
+        />
+        <UiHelp :text="G.rtt" />
+      </div>
       <UiInput
         v-model="rtt"
         type="number"
@@ -438,27 +451,41 @@ async function save(): Promise<void> {
         type="number"
         label="Интервал проверки, сек"
       />
-      <UiInput
-        v-model="threshold"
-        type="number"
-        label="Отказов подряд до ротации"
-      />
-      <UiInput
-        v-model="cooldown"
-        type="number"
-        label="Cooldown неудачного конфига, мин"
-      />
-      <UiInput
+      <div class="hrow">
+        <UiInput
+          v-model="threshold"
+          type="number"
+          label="Отказов подряд до ротации"
+        />
+        <UiHelp :text="G.rotation" />
+      </div>
+      <div class="hrow">
+        <UiInput
+          v-model="cooldown"
+          type="number"
+          label="Cooldown неудачного конфига, мин"
+        />
+        <UiHelp :text="G.cooldown" />
+      </div>
+      <div
         v-if="!isEng"
-        v-model="keepalive"
-        type="number"
-        label="Keepalive, сек (0 = из конфига)"
-      />
-      <UiSelect
-        v-model="fallback"
-        :options="fbOptions"
-        label="Если все конфиги недоступны"
-      />
+        class="hrow"
+      >
+        <UiInput
+          v-model="keepalive"
+          type="number"
+          label="Keepalive, сек (0 = из конфига)"
+        />
+        <UiHelp :text="G.keepalive" />
+      </div>
+      <div class="hrow">
+        <UiSelect
+          v-model="fallback"
+          :options="fbOptions"
+          label="Если все конфиги недоступны"
+        />
+        <UiHelp :text="G.fallback" />
+      </div>
       <UiHint
         v-if="fbHintText"
         :text="fbHintText"
@@ -480,6 +507,16 @@ async function save(): Promise<void> {
 </template>
 
 <style scoped>
+.hrow {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  margin-top: 4px;
+}
+.hrow > :first-child {
+  flex: 1;
+  min-width: 0;
+}
 .sect {
   font-weight: 600;
   font-size: 13px;
