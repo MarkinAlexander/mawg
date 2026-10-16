@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
-import { UiBadge, UiButton, UiCard, UiHint, UiInput } from '../../components/ui';
+import { UiBadge, UiButton, UiCard, UiHint, UiInput, UiSelect, type UiSelectOption, UiSwitch, UiTextarea } from '../../components/ui';
 import { api } from '../../api/client';
-import type { DnsState, DnsUpstream, DnsUpstreamsRes } from '../../api/types';
+import type { DnsProbeRow, DnsState, DnsPolicyRes, DnsUpstream, DnsUpstreamsRes } from '../../api/types';
+import { useStatus } from '../../stores/status';
 import { useToast } from '../../stores/toast';
 import { useConfirm } from '../../stores/confirm';
 
@@ -42,6 +43,7 @@ let pollTimer: ReturnType<typeof setInterval> | null = null;
 onMounted(() => {
   load();
   loadCascade();
+  loadPolicy();
   pollTimer = setInterval(loadCascade, 10000);
 });
 onBeforeUnmount(() => {
@@ -172,6 +174,97 @@ async function saveEdit(): Promise<void> {
     push(e instanceof Error ? e.message : String(e), true);
   }
   busy.value = false;
+}
+
+// --- политика каскада L1-L5 (46-док §3): уровни -> порядок апстримов MT,
+// применение одним PUT в форк; гистерезис переключений - в MT ---
+const { state: statusState } = useStatus();
+
+const policy = ref<DnsPolicyRes | null>(null);
+const polEnabled = ref(false);
+const polPrimary = ref('');
+const polTunnel = ref('');
+const polFallback = ref('');
+const polYandex = ref(false);
+const polProvider = ref(false);
+const polBusy = ref(false);
+const probeRows = ref<DnsProbeRow[] | null>(null);
+const probing = ref(false);
+
+const linesOf = (s: string): string[] => s.split('\n').map((x) => x.trim()).filter(Boolean);
+
+async function loadPolicy(): Promise<void> {
+  try {
+    policy.value = await api<DnsPolicyRes>('GET', '/dns/policy');
+    const p = policy.value.policy;
+    polEnabled.value = !!p.enabled;
+    polPrimary.value = (p.primary || []).join('\n');
+    polTunnel.value = p.tunnel || '';
+    polFallback.value = (p.fallback || []).join('\n');
+    polYandex.value = !!p.yandex;
+    polProvider.value = !!p.provider;
+  } catch {
+    policy.value = null;
+  }
+}
+
+const tunnelOptions = computed<UiSelectOption[]>(() => [
+  { value: '', label: 'напрямую (без туннеля)' },
+  ...(statusState.data?.pools || []).map((p) => ({ value: p.name, label: p.name })),
+]);
+
+const composedText = computed(() => (policy.value?.composed || []).join(' → '));
+const activeText = computed(() => (policy.value?.active || []).join(' → '));
+
+async function applyPolicy(): Promise<void> {
+  const body = {
+    enabled: polEnabled.value,
+    primary: linesOf(polPrimary.value),
+    tunnel: polTunnel.value,
+    fallback: linesOf(polFallback.value),
+    yandex: polYandex.value,
+    provider: polProvider.value,
+  };
+  if (body.enabled && body.primary.length === 0 && body.fallback.length === 0 && !body.yandex && !body.provider) {
+    push('включённая политика требует хотя бы один уровень', true);
+    return;
+  }
+  const ok = await confirm({
+    title: 'Применить политику каскада',
+    text: (body.tunnel ? `Пул ${body.tunnel} получит пресет dns-tunnel (публичные резолверы - в туннель). ` : '')
+      + 'Порядок апстримов MT будет переписан: основные → запасные'
+      + (body.yandex ? ' → Яндекс' : '')
+      + (body.provider ? ' → провайдер' : '')
+      + '. Переключает уровни сам MT (канарейка, K/M/restoreGap).',
+    okLabel: 'Применить',
+  });
+  if (!ok) return;
+  polBusy.value = true;
+  try {
+    await api('PUT', '/dns/policy', body);
+    push('политика каскада применена');
+    await Promise.all([load(), loadCascade(), loadPolicy()]);
+  } catch (e) {
+    push(e instanceof Error ? e.message : String(e), true);
+  }
+  polBusy.value = false;
+}
+
+const verdictRu: Record<string, string> = { clean: 'чисто', spoof: 'ПОДМЕНА', noanswer: 'нет ответа', error: 'недоступен' };
+function verdictVariant(v: string): 'ok' | 'warn' | 'err' {
+  return v === 'clean' ? 'ok' : v === 'error' ? 'err' : 'warn';
+}
+
+async function probePolicy(): Promise<void> {
+  probing.value = true;
+  probeRows.value = null;
+  try {
+    const r = await api<{ results: DnsProbeRow[] }>('POST', '/dns/policy/probe', {});
+    probeRows.value = r.results || [];
+  } catch (e) {
+    push(e instanceof Error ? e.message : String(e), true);
+  }
+  probing.value = false;
 }
 </script>
 
@@ -371,6 +464,115 @@ async function saveEdit(): Promise<void> {
       <UiHint text="«Живучий» профиль: dnsmasq держит MT:3553 параллельно интерфейсному upstream - смерть MT даёт деградацию до прямого DNS, не смерть (63-док)." />
     </template>
   </UiCard>
+
+  <UiCard
+    id="card-dns-policy"
+    title="Политика каскада"
+    subtitle="уровни L1-L5 → порядок апстримов MT; переключает уровни сам MT (канарейка)"
+  >
+    <template #actions>
+      <UiBadge
+        v-if="policy"
+        variant="ok"
+        text="L1-L5"
+      />
+    </template>
+
+    <UiHint
+      v-if="!policy || !policy.capable"
+      text="Политика требует MagiTrickle 0.8.2-rev8+ (мультиапстрим с канарейкой). Обновите MT - и настройте уровни здесь."
+    />
+    <template v-else>
+      <UiSwitch
+        v-model="polEnabled"
+        label="политика включена"
+        tooltip="уровни применяются в порядок апстримов MT; выключение не трогает текущие апстримы"
+      />
+      <UiTextarea
+        v-model="polPrimary"
+        label="L1 основные (по одному адресу в строке)"
+        :rows="2"
+        mono
+        placeholder="8.8.8.8"
+      />
+      <UiSelect
+        v-model="polTunnel"
+        :options="tunnelOptions"
+        label="L2: основные через туннель (пул)"
+      />
+      <UiHint text="Выбранный пул получит пресет dns-tunnel (публичные резолверы маршрутизируются в туннель group-правилами). Пусто - основные напрямую; существующая группа dns-tunnel при смене пула переезжает." />
+      <UiTextarea
+        v-model="polFallback"
+        label="L3 запасные (напрямую)"
+        :rows="2"
+        mono
+        placeholder="1.1.1.1:53"
+      />
+      <div class="polswitches">
+        <UiSwitch
+          v-model="polYandex"
+          label="L4: Яндекс DNS (77.88.8.8)"
+        />
+        <UiSwitch
+          v-model="polProvider"
+          label="L5: DNS провайдера (срез resolv.conf.auto при применении)"
+        />
+      </div>
+
+      <div class="kv">
+        <template v-if="composedText">
+          <b>порядок</b>
+          <span class="muted">{{ composedText }}</span>
+        </template>
+        <template v-if="activeText">
+          <b>сейчас в MT</b>
+          <span class="muted">{{ activeText }}</span>
+        </template>
+        <template v-if="policy.tunnelGroup">
+          <b>dns-tunnel</b>
+          <span class="muted">на пуле {{ policy.tunnelGroup.interface }}</span>
+        </template>
+      </div>
+
+      <div class="dnsactions">
+        <UiButton
+          :busy="polBusy"
+          @click="applyPolicy"
+        >
+          Применить политику
+        </UiButton>
+        <UiButton
+          :busy="probing"
+          :disabled="!polEnabled"
+          @click="probePolicy"
+        >
+          Проверить уровни
+        </UiButton>
+      </div>
+
+      <div
+        v-if="probeRows"
+        class="kv"
+      >
+        <template
+          v-for="r in probeRows"
+          :key="r.level"
+        >
+          <b>{{ r.level }}</b>
+          <span>
+            <UiBadge
+              :text="verdictRu[r.verdict] || r.verdict"
+              :variant="verdictVariant(r.verdict)"
+              :tooltip="r.detail || ''"
+            />
+            <span class="muted">{{ r.ms }} мс</span>
+          </span>
+        </template>
+      </div>
+
+      <UiHint text="Канарейка - A-запрос deb.torproject.org через каждый уровень. Туннельные уровни зондируются по-настоящему: трафик самой панели маркируется группой MT и уходит в туннель. Смена уровня - работа MT: вниз за K сбоев подряд, вверх за M чистых и не чаще раза в restoreGap." />
+    </template>
+  </UiCard>
 </template>
 
 <style scoped>
@@ -415,5 +617,11 @@ async function saveEdit(): Promise<void> {
 .editrow .rowbtns {
   display: flex;
   gap: 4px;
+}
+.polswitches {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 4px 0;
 }
 </style>

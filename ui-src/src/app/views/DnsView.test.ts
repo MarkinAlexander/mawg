@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import DnsView from './DnsView.vue'
-import type { DnsState, DnsUpstreamsRes } from '../../api/types'
+import { useStatus } from '../../stores/status'
+import type { DnsState, DnsPolicyRes, DnsUpstreamsRes, Status } from '../../api/types'
 
 // DNS-раздел (46-док §3, срез OpenWrt 64-док): состояние DNS-стека
 // + переключение dnsmasq ↔ MT; каскад апстримов MT - живой стейт и
@@ -64,6 +65,9 @@ vi.mock('../../stores/toast', () => ({
 
 beforeEach(() => {
   vi.unstubAllGlobals()
+  const s = useStatus()
+  s.stop()
+  s.state.data = null
 })
 
 describe('DnsView - состояние DNS (OpenWrt, 64-док)', () => {
@@ -190,3 +194,121 @@ describe('DnsView - каскад апстримов MT (форк rev8+, 64-до�
     w.unmount()
   })
 })
+
+describe('DnsView - политика каскада L1-L5 (46-док §3, 66-док)', () => {
+  const policyPayload: DnsPolicyRes = {
+    capable: true,
+    policy: { enabled: true, primary: ['8.8.8.8'], tunnel: 'proton', fallback: ['1.1.1.1:5353'], yandex: true, provider: false },
+    composed: ['8.8.8.8:53', '1.1.1.1:5353', '77.88.8.8:53'],
+    active: ['8.8.8.8:53', '1.1.1.1:5353', '77.88.8.8:53'],
+    tunnelGroup: { id: '597de595', interface: 'proton' },
+  };
+
+  function policyStub(capture?: { put?: unknown; probe?: boolean }) {
+    return vi.fn(async (url: string, opts?: RequestInit) => {
+      if (url.endsWith('/dns/policy/probe')) {
+        if (capture) capture.probe = true;
+        return new Response(JSON.stringify({ results: [
+          { level: 'L2 туннель proton: 8.8.8.8:53', kind: 'udp', server: '8.8.8.8:53', verdict: 'clean', canonical: 5, total: 5, ms: 265 },
+          { level: 'L4 Яндекс', kind: 'udp', server: '77.88.8.8:53', verdict: 'clean', canonical: 5, total: 5, ms: 22 },
+        ] }), { status: 200 });
+      }
+      if (url.endsWith('/dns/policy')) {
+        if ((opts?.method ?? 'GET') === 'PUT') {
+          if (capture) capture.put = JSON.parse(String(opts?.body));
+          return new Response(JSON.stringify({ ok: true }), { status: 200 });
+        }
+        return new Response(JSON.stringify(policyPayload), { status: 200 });
+      }
+      if (url.endsWith('/dns/upstreams')) {
+        if ((opts?.method ?? 'GET') === 'PUT') return new Response(JSON.stringify({ ok: true }), { status: 200 });
+        return new Response(JSON.stringify(cascadePayload), { status: 200 });
+      }
+      if (url.endsWith('/dns/state')) {
+        return new Response(JSON.stringify(statePayload), { status: 200 });
+      }
+      if (url.endsWith('/status')) {
+        return new Response(JSON.stringify({ pools: [{ name: 'proton' }, { name: 'warp' }] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+  }
+
+  it('карточка: сохранённая политика в полях, порядок/сейчас/туннель-группа видны', async () => {
+    // пулы для селекта туннеля - из стора статуса (NextLayout в тестах нет)
+    useStatus().state.data = {
+      version: 'v', platform: 'openwrt', backendName: 'openwrt', authEnabled: false,
+      nativeAWG3: false, mtSources: true,
+      pools: [{ name: 'proton' }, { name: 'warp' }] as Status['pools'],
+    } as Status;
+    vi.stubGlobal('fetch', policyStub());
+    const w = mount(DnsView);
+    await vi.waitFor(() => expect(w.find('#card-dns-policy').text()).toContain('на пуле proton'));
+    const text = w.find('#card-dns-policy').text();
+    expect(text).toContain('политика включена');
+    expect(text).toContain('8.8.8.8:53 → 1.1.1.1:5353 → 77.88.8.8:53');
+    expect(text).toContain('сейчас в MT');
+    // селект туннеля резолвит текущее значение из пулов /status
+    // (лейбл триггера = proton; список опций закрыт, «напрямую» в нём)
+    expect(text).toContain('proton');
+    w.unmount();
+  });
+
+  it('Применить: confirm -> PUT /dns/policy с собранным телом (строки textarea -> массив)', async () => {
+    const capture: { put?: unknown; probe?: boolean } = {};
+    vi.stubGlobal('fetch', policyStub(capture));
+    const w = mount(DnsView);
+    const btn = (label: string) => w.findAll('button').find((b) => b.text().includes(label));
+    await vi.waitFor(() => expect(btn('Применить политику')).toBeTruthy());
+
+    // правим запасные: две строки
+    const areas = w.findAll('#card-dns-policy textarea');
+    expect(areas.length).toBe(2);
+    await areas[1].setValue('9.9.9.9\n149.112.112.112');
+    await nextTick();
+    await btn('Применить политику')!.trigger('click');
+    await vi.waitFor(() => {
+      expect(capture.put).toEqual({
+        enabled: true,
+        primary: ['8.8.8.8'],
+        tunnel: 'proton',
+        fallback: ['9.9.9.9', '149.112.112.112'],
+        yandex: true,
+        provider: false,
+      });
+    });
+    w.unmount();
+  });
+
+  it('Проверить уровни: POST probe -> строки с вердиктами', async () => {
+    const capture: { put?: unknown; probe?: boolean } = {};
+    vi.stubGlobal('fetch', policyStub(capture));
+    const w = mount(DnsView);
+    const btn = (label: string) => w.findAll('button').find((b) => b.text().includes(label));
+    await vi.waitFor(() => expect(btn('Проверить уровни')).toBeTruthy());
+    await btn('Проверить уровни')!.trigger('click');
+    await vi.waitFor(() => expect(capture.probe).toBe(true));
+    await vi.waitFor(() => expect(w.find('#card-dns-policy').text()).toContain('L2 туннель proton: 8.8.8.8:53'));
+    expect(w.find('#card-dns-policy .uibadge.v-ok').exists()).toBe(true);
+    w.unmount();
+  });
+
+  it('MT без rev8 - честный хинт вместо формы', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.endsWith('/dns/policy')) {
+        return new Response(JSON.stringify({ capable: false, policy: { enabled: false } }), { status: 200 });
+      }
+      if (url.endsWith('/dns/state')) {
+        return new Response(JSON.stringify(statePayload), { status: 200 });
+      }
+      if (url.endsWith('/dns/upstreams')) {
+        return new Response(JSON.stringify({ capable: false }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    }));
+    const w = mount(DnsView);
+    await vi.waitFor(() => expect(w.find('#card-dns-policy').text()).toContain('требует MagiTrickle 0.8.2-rev8+'));
+    expect(w.find('#card-dns-policy textarea').exists()).toBe(false);
+    w.unmount();
+  });
+});

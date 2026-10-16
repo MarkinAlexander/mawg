@@ -332,6 +332,11 @@ func repairFromShadow(groups []Group) ([]Group, bool) {
 	if len(lost) < 3 && len(lost)*2 < len(mtShadow) {
 		return groups, false
 	}
+	if restoredOnce == nil {
+		// клиент без SetShadowStorage (тесты/встраивание): карта счётчиков
+		// не инициализирована продом - писать в nil нельзя
+		restoredOnce = map[string]int{}
+	}
 	for _, g := range lost {
 		restoredOnce[g.ID]++
 	}
