@@ -25,6 +25,9 @@ function apiStub(routes: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.unstubAllGlobals();
   vi.stubGlobal('fetch', apiStub());
+  // jsdom не знает matchMedia: edge-свайп меню гардится им на документе,
+  // pointer-события тестов всплывают туда и падают без стаба
+  vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false, addListener: vi.fn(), removeListener: vi.fn() })));
   const s = useStatus().state;
   // статус известен (гейт контента открыт) - гейт-тесты переопределяют
   s.loaded = true;
@@ -435,3 +438,52 @@ describe('NextLayout', () => {
     w.unmount()
   })
 })
+
+describe('NextLayout - смахивание кнопки меню (67-док)', () => {
+  async function makeLayout() {
+    const router = await makeRouter();
+    const w = mount(NextLayout, { attachTo: document.body, global: { plugins: [router] } });
+    await nextTick();
+    return w;
+  }
+
+  const fab = (w: ReturnType<typeof mount>) => w.find('.menu-fab');
+
+  it('свайп за порогом убирает кнопку до перезагрузки, тост подсказывает', async () => {
+    const w = await makeLayout();
+    expect(fab(w).exists()).toBe(true);
+    await fab(w).trigger('pointerdown', { clientX: 300, clientY: 300 });
+    // драг влево за порог 64px
+    await fab(w).trigger('pointermove', { clientX: 200, clientY: 300 });
+    expect(fab(w).attributes('style')).toContain('translate(-100px');
+    await fab(w).trigger('pointerup', { clientX: 200, clientY: 300 });
+    expect(fab(w).exists()).toBe(false);
+    expect(w.text()).toContain('Кнопка меню убрана - вернётся после перезагрузки страницы');
+    w.unmount();
+  });
+
+  it('малый сдвиг - кнопка на месте, тап открывает меню как раньше', async () => {
+    const w = await makeLayout();
+    await fab(w).trigger('pointerdown', { clientX: 300, clientY: 300 });
+    await fab(w).trigger('pointermove', { clientX: 295, clientY: 302 });
+    await fab(w).trigger('pointerup', { clientX: 295, clientY: 302 });
+    expect(fab(w).exists()).toBe(true);
+    expect(fab(w).attributes('style')).toBeUndefined(); // вернулась на место
+    await fab(w).trigger('click');
+    // (nextTick мало: смена menuOpen -> шторка доезжает за пару тиков)
+    await vi.waitFor(() => expect(w.find('.menu-wrap').exists()).toBe(true));
+    w.unmount();
+  });
+
+  it('драг не открывает меню (подавление клика после перемещения)', async () => {
+    const w = await makeLayout();
+    await fab(w).trigger('pointerdown', { clientX: 300, clientY: 300 });
+    await fab(w).trigger('pointermove', { clientX: 280, clientY: 320 }); // >8px, но < порога
+    await fab(w).trigger('pointerup', { clientX: 280, clientY: 320 });
+    expect(fab(w).exists()).toBe(true);
+    await fab(w).trigger('click');
+    await nextTick();
+    expect(w.find('.menu-wrap').exists()).toBe(false); // клик после драга подавлен
+    w.unmount();
+  });
+});
