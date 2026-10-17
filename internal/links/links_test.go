@@ -267,14 +267,14 @@ func b64vmess(json string) string {
 
 func TestParseVmessV2rayN(t *testing.T) {
 	// живой узел подписки стенда 0.42 (2026-10-17): tcp, scy auto
-	n, err := ParseLink("sub", b64vmess(`{"add":"94.232.41.144","id":"c03bd061-ed83-40d8-8cac-01c55be0dd78","net":"tcp","port":36167,"ps":"vmess-test","scy":"auto","tls":"none","type":"none","v":"2"}`))
+	n, err := ParseLink("sub", b64vmess(`{"add":"203.0.113.7","id":"11111111-2222-3333-4444-555555555555","net":"tcp","port":36167,"ps":"vmess-test","scy":"auto","tls":"none","type":"none","v":"2"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n.Type != "vmess" || n.Host != "94.232.41.144" || n.Port != 36167 {
+	if n.Type != "vmess" || n.Host != "203.0.113.7" || n.Port != 36167 {
 		t.Fatalf("основа: %+v", n)
 	}
-	if n.UUID != "c03bd061-ed83-40d8-8cac-01c55be0dd78" {
+	if n.UUID != "11111111-2222-3333-4444-555555555555" {
 		t.Fatalf("uuid: %s", n.UUID)
 	}
 	if n.Tag != "sub|vmess-test" || n.Security != "auto" || n.Transport != "" || n.TLS != nil {

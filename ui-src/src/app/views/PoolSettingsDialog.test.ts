@@ -119,7 +119,7 @@ describe('PoolSettingsDialog', () => {
       { name: 'jp-1', proto: 'vless', endpoint: '', enabled: true },
       // имена с адресом (host|узел тега, IPv4 в имени) - тоже secret
       // (слово владельца 2026-10-17: тег узла выдавал адрес мимо сокрытия)
-      { name: '94.232.41.144|moscow', proto: 'vless', endpoint: '94.232.41.144:23747', enabled: true },
+      { name: '203.0.113.7|moscow', proto: 'vless', endpoint: '203.0.113.7:23747', enabled: true },
       { name: 'conf-109.248.163.108', proto: 'awg', endpoint: '109.248.163.108:49809', enabled: true },
     ] } }, [eng]);
     await vi.waitFor(() => expect(dlg.text()).toContain('Состав пула'));

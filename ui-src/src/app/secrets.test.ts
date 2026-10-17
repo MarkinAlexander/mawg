@@ -14,7 +14,7 @@ const pool = (over: Partial<PoolView>): PoolView => ({
 
 describe('secrets - IPv4 в произвольном тексте (слово владельца 2026-10-17)', () => {
   it('тег узла с адресом и IPv4-имя скрываются, домены и версии - нет', () => {
-    expect(addrSecretIn('94.232.41.144|moscow-xhttp')).toBe(true);
+    expect(addrSecretIn('203.0.113.7|moscow-xhttp')).toBe(true);
     expect(addrSecretIn('conf-109.248.163.108')).toBe(true);
     expect(addrSecretIn('grpc-riga')).toBe(false);
     expect(addrSecretIn('sub.example.com|node')).toBe(false);
