@@ -974,10 +974,16 @@ func (s *Store) appendEventLocked(ev Event) {
 
 func (s *Store) loadEvents() {
 	var evs []Event
+	var legacyRead []string
 	for _, path := range []string{s.eventsTmpPath() + ".old", s.eventsTmpPath(), s.eventsOldPath(), s.eventsPath()} {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			continue
+		}
+		if strings.HasPrefix(path, s.base) {
+			// легаси-файл на флеше: после чтения снимаем (слово владельца
+			// 2026-10-17: мёртвый груз после апгрейда не должен висеть)
+			legacyRead = append(legacyRead, path)
 		}
 		for _, line := range strings.Split(string(data), "\n") {
 			line = strings.TrimSpace(line)
@@ -994,6 +1000,9 @@ func (s *Store) loadEvents() {
 		evs = evs[len(evs)-eventsMemCap:]
 	}
 	s.log = evs
+	for _, path := range legacyRead {
+		_ = os.Remove(path)
+	}
 }
 
 func (s *Store) Events() []Event {

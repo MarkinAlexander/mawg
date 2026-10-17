@@ -26,13 +26,9 @@ func TestEventsOnTmpfs(t *testing.T) {
 	}
 	st.LogEvent("p", "probe", "новое событие")
 
-	// база: легаси-файл не изменён (на флешку больше не пишем)
-	got, err := os.ReadFile(legacy)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != legacyLine {
-		t.Fatalf("легаси events.json изменён - журнал уехал на флешку")
+	// база: легаси-файл прочитан и УДАЛЕН (мёртвый груз не висит)
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Fatalf("легаси events.json должен быть удалён после чтения")
 	}
 	if _, err := os.Stat(filepath.Join(base, "events.json.old")); !os.IsNotExist(err) {
 		t.Fatalf("events.json.old появился на флешке")
