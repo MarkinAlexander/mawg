@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -190,7 +191,7 @@ func TestDnsPolicyProbe(t *testing.T) {
 	defer resp.Body.Close()
 	var body struct {
 		Results []struct {
-			Level  string `json:"level"`
+			Level   string `json:"level"`
 			Verdict string `json:"verdict"`
 		} `json:"results"`
 	}
@@ -212,5 +213,117 @@ func TestDnsPolicyProbe(t *testing.T) {
 	}
 	if body.Results[2].Verdict != "clean" {
 		t.Fatalf("L4 Яндекс должен быть clean: %+v", body.Results[2])
+	}
+}
+
+// normalizeUpstream со схемами: DoT/DoH-канонизация (умолчания портов/пути)
+func TestNormalizeUpstreamSchemes(t *testing.T) {
+	ok := map[string]string{
+		"tls://1.1.1.1":             "tls://1.1.1.1:853",
+		"tls://dns.google:8853":     "tls://dns.google:8853",
+		"https://dns.google":        "https://dns.google:443/dns-query",
+		"https://1.1.1.1/dns-query": "https://1.1.1.1:443/dns-query",
+		" https://dns.google/ ":     "https://dns.google:443/dns-query",
+	}
+	for raw, want := range ok {
+		got, err := normalizeUpstream(raw)
+		if err != nil || got != want {
+			t.Fatalf("normalizeUpstream(%q) = %q, %v; want %q", raw, got, err, want)
+		}
+	}
+	for _, bad := range []string{"tls://", "https://", "http://x", "quic://x", "tls://1.1.1.1/p", "tls://x:0", "https://x:99999/"} {
+		if _, err := normalizeUpstream(bad); err == nil {
+			t.Fatalf("normalizeUpstream(%q) должен ошибаться", bad)
+		}
+	}
+}
+
+// rev8-форк: политика с DoT/DoH-уровнями честно отказывается (нужен rev11),
+// plain работает как раньше; rev11: схема доезжает каноном, статика
+// dns-tunnel группы пополняется адресом DoH-провайдера политики
+func TestDnsPolicyEncryptedLevels(t *testing.T) {
+	srv, fm := policyServer(t) // fakeMT rev8
+
+	code, out := putJSON(t, srv.URL+"/api/v1/dns/policy",
+		`{"enabled":true,"primary":["tls://1.1.1.1"],"fallback":["https://dns.google"]}`)
+	if code != http.StatusNotImplemented || !strings.Contains(out["error"].(string), "rev11") {
+		t.Fatalf("rev8 должен требовать rev11: %d %+v", code, out)
+	}
+	if len(fm.lastPuts) != 0 || len(fm.groupPuts) != 0 {
+		t.Fatalf("отказ должен быть до записи в MT: %v %v", fm.lastPuts, fm.groupPuts)
+	}
+
+	// выключенная с схемой - сохраняется (применения нет)
+	code, _ = putJSON(t, srv.URL+"/api/v1/dns/policy", `{"enabled":false,"primary":["tls://1.1.1.1"]}`)
+	if code != http.StatusOK {
+		t.Fatalf("выключенная политика с DoT: %d", code)
+	}
+
+	// rev11-форк: применение проходит, адреса каноном, статика в группе
+	fm.mu.Lock()
+	fm.version = "0.8.2-rev11-mawg-dev"
+	fm.mu.Unlock()
+	code, out = putJSON(t, srv.URL+"/api/v1/dns/policy",
+		`{"enabled":true,"primary":["tls://1.1.1.1"],"tunnel":"proton","fallback":["https://203.0.113.9"]}`)
+	if code != http.StatusOK {
+		t.Fatalf("rev11 apply: %d %+v", code, out)
+	}
+	if len(fm.lastPuts) != 1 ||
+		!strings.Contains(fm.lastPuts[0], `"tls://1.1.1.1:853"`) ||
+		!strings.Contains(fm.lastPuts[0], `"https://203.0.113.9:443/dns-query"`) {
+		t.Fatalf("порядок с схемами: %s", fm.lastPuts[0])
+	}
+	if len(fm.groupPuts) != 1 || !strings.Contains(fm.groupPuts[0], "dns-tunnel@proton") {
+		t.Fatalf("группа dns-tunnel: %v", fm.groupPuts)
+	}
+	// статика политики (адрес DoH-провайдера) - в правилах группы
+	fm.mu.Lock()
+	staticOK := false
+	for _, g := range fm.groups {
+		if g.Name != "dns-tunnel" {
+			continue
+		}
+		for _, r := range g.Rules {
+			if r.Type == "subnet" && r.Rule == "203.0.113.9/32" {
+				staticOK = true
+			}
+		}
+	}
+	fm.mu.Unlock()
+	if !staticOK {
+		t.Fatalf("статика dns-tunnel для DoH-провайдера не добавлена: %+v", fm.groups)
+	}
+
+	// GET теперь видит dohCapable
+	body := getJSON(t, srv.URL+"/api/v1/dns/policy", http.StatusOK)
+	if body["dohCapable"] != true {
+		t.Fatalf("dohCapable: %+v", body)
+	}
+}
+
+// upstreamHostIPs: IP-литерал напрямую, имя резолвится, мусор - в failed
+func TestUpstreamHostIPs(t *testing.T) {
+	ips, failed := upstreamHostIPs(context.Background(), []string{
+		"tls://192.0.2.10:853",
+		"https://198.51.100.7:443/dns-query",
+		"8.8.8.8:53",
+		"tls://192.0.2.10:853", // дубль - схлопнется
+	})
+	if len(failed) != 0 {
+		t.Fatalf("failed: %v", failed)
+	}
+	want := []string{"192.0.2.10", "198.51.100.7", "8.8.8.8"}
+	if len(ips) != len(want) {
+		t.Fatalf("ips: %v", ips)
+	}
+	for i := range want {
+		if ips[i] != want[i] {
+			t.Fatalf("ips[%d]=%s, хочу %s", i, ips[i], want[i])
+		}
+	}
+	// неразрешимое имя - честный failed, не падение
+	ips, failed = upstreamHostIPs(context.Background(), []string{"tls://нет-такого-хоста.invalid"})
+	if len(ips) != 0 || len(failed) != 1 {
+		t.Fatalf("failed-имя: ips=%v failed=%v", ips, failed)
 	}
 }
