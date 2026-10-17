@@ -30,9 +30,16 @@ func clashTestServer(t *testing.T) (*httptest.Server, *[]string, *[]string) {
 		puts = append(puts, string(buf[:n]))
 		w.Write([]byte(`{}`))
 	})
-	mux.HandleFunc("GET /group/", func(w http.ResponseWriter, r *http.Request) {
-		gets = append(gets, r.URL.Path+"?"+r.URL.Query().Encode())
+	mux.HandleFunc("GET /group/{name}/delay", func(w http.ResponseWriter, r *http.Request) {
+		gets = append(gets, r.URL.Path+"?"+r.URL.RawQuery)
 		w.Write([]byte(`{"узел-1":333,"узел-2":111}`))
+	})
+	// как живой clash: путь БЕЗ /delay - это инфо группы (объект), а не
+	// карта задержек; если клиент опять потеряет суффикс - декод упадёт
+	// и тест поймает (живой урок 0.42: /group/{name} без /delay)
+	mux.HandleFunc("GET /group/", func(w http.ResponseWriter, r *http.Request) {
+		gets = append(gets, r.URL.Path+"?"+r.URL.RawQuery)
+		w.Write([]byte(`{"type":"URLTest","name":"mawg-sub","now":"узел-2","all":["узел-1","узел-2"],"history":[]}`))
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -95,7 +102,7 @@ func TestClashSelectAndGroupDelay(t *testing.T) {
 	if delays["узел-1"] != 333 || delays["узел-2"] != 111 {
 		t.Fatalf("delays: %v", delays)
 	}
-	if len(*gets) != 1 || !strings.Contains((*gets)[0], "url=http%3A%2F%2F1.1.1.1%2F") || !strings.Contains((*gets)[0], "timeout=5000") {
+	if len(*gets) != 1 || !strings.HasPrefix((*gets)[0], "/group/mawg-sub/delay?") || !strings.Contains((*gets)[0], "url=http%3A%2F%2F1.1.1.1%2F") || !strings.Contains((*gets)[0], "timeout=5000") {
 		t.Fatalf("GET group/delay с кривыми параметрами: %v", *gets)
 	}
 }
