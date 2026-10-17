@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { UiBadge, UiBanner, UiButton, UiCard, UiDialog, UiHelp, UiHint, UiInput, UiSelect, type UiSelectOption, UiSwitch, UiTable, type UiTableColumn } from '../../components/ui'
+import { UiBadge, UiBanner, UiButton, UiCard, UiDialog, UiHelp, UiHint, UiInput, UiSelect, type UiSelectOption, UiTable, type UiTableColumn } from '../../components/ui'
 import { useEvents } from '../../stores/events'
 import { useStatus } from '../../stores/status'
 import { useSystem } from '../../stores/system'
@@ -8,7 +8,7 @@ import { useConfirm } from '../../stores/confirm'
 import { useToast } from '../../stores/toast'
 import type { AppEvent, SystemItem } from '../../api/types'
 import { useSecrets } from '../secrets'
-import { G } from '../glossary'
+import LxInstallDialog from './LxInstallDialog.vue'
 
 // Журнал событий (легаси refreshLog): хвост 80, НОВЫЕ СВЕРХУ, k-цвета
 // пяти видов. Место - вкладка «Система» (44-дока §6). Опрос таб-локальный:
@@ -89,37 +89,10 @@ async function refreshSystem(): Promise<void> {
   }
 }
 
-// --- установка компонента (легаси installComp 2890 + dlgLx 2928) ---
-const dlg = ref<{
-  open: boolean
-  item: SystemItem | null
-  phase: 'form' | 'progress' | 'result'
-  flavor: string
-  backup: boolean
-  ok: boolean
-  out: string
-} | null>(null);
-
-const flavorOptions: UiSelectOption[] = [
-  { value: 'plain', label: 'обычный: быстрый старт, занимает больше места' },
-  { value: 'upx', label: 'сжатый (upx): в ~4 раза меньше на диске, старт дольше' },
-];
-const mb = (b: number) => (b / 1048576).toFixed(0) + ' МБ';
-const isLxReplace = computed(() => dlg.value?.item?.action === 'singbox-lx-replace');
-const backupFits = computed(() => {
-  const it = dlg.value?.item;
-  return !!it && (it.freeBytes || 0) > (it.backupBytes || 0) + 64 * 1048576;
-});
-const backupText = computed(() => {
-  const it = dlg.value?.item;
-  if (!it) return '';
-  return backupFits.value
-    ? `сохранить старое ядро рядом (sing-box.pre-lx, ${mb(it.backupBytes || 0)}, свободно ${mb(it.freeBytes || 0)})`
-    : `для копии старого ядра (${mb(it.backupBytes || 0)}) места не хватит (свободно ${mb(it.freeBytes || 0)}) - будет удалено без сохранения`;
-});
-const dlgTitle = computed(() =>
-  dlg.value?.item ? `${dlg.value.item.actionLabel || 'Установить'} - ${dlg.value.item.id === 'singbox-lx' ? 'ядро sing-box-lx' : dlg.value.item.title}` : '',
-);
+// --- установка компонента (легаси installComp 2890 + dlgLx 2928); диалог
+// ядра sing-box-lx (профиль/бэкап) - общий компонент LxInstallDialog, он
+// нужен и в потоке создания пула ---
+const lxOpen = ref(false);
 
 async function openInstall(item: SystemItem): Promise<void> {
   // легаси installComp перечитывает /system/check - предмет свежим
@@ -127,12 +100,7 @@ async function openInstall(item: SystemItem): Promise<void> {
   const fresh = items.value.find((i) => i.id === item.id);
   if (!fresh) return;
   if (fresh.id === 'singbox-lx') {
-    dlg.value = {
-      open: true, item: fresh, phase: 'form',
-      flavor: 'plain',
-      backup: fresh.action === 'singbox-lx-replace' && (fresh.backupBytes || 0) > 0 && (fresh.freeBytes || 0) > (fresh.backupBytes || 0) + 64 * 1048576,
-      ok: false, out: '',
-    };
+    lxOpen.value = true;
     return;
   }
   if (!fresh.confirm) return;
@@ -143,7 +111,6 @@ async function openInstall(item: SystemItem): Promise<void> {
 }
 
 async function runInstall(payload: { id: string; flavor?: string; backup?: boolean }): Promise<void> {
-  if (dlg.value) dlg.value.phase = 'progress';
   try {
     const r = await sys.install(payload);
     showResult(!!r.ok, r.output || '', r.ok ? '' : r.error || 'неизвестная ошибка');
@@ -151,30 +118,12 @@ async function runInstall(payload: { id: string; flavor?: string; backup?: boole
     showResult(false, '', e instanceof Error ? e.message : String(e));
   }
 }
-function installForm(): void {
-  const it = dlg.value?.item;
-  if (!it) return;
-  void runInstall({ id: it.id, flavor: dlg.value?.flavor || 'plain', backup: dlg.value?.backup || false });
-}
 
 function showResult(ok: boolean, output: string, errText: string): void {
-  const outText = (errText ? errText + '\n\n' : '') + output.trim();
-  if (dlg.value) {
-    dlg.value.ok = ok;
-    dlg.value.out = outText;
-    dlg.value.phase = 'result';
-  } else {
-    result.value = { open: true, ok, out: outText };
-  }
+  result.value = { open: true, ok, out: (errText ? errText + '\n\n' : '') + output.trim() };
   void sys.refresh(); // легаси: после установки перечитываем системную проверку
 }
 const result = ref<{ open: boolean; ok: boolean; out: string } | null>(null);
-const dlgOpen = computed({
-  get: () => dlg.value?.open ?? false,
-  set: (v: boolean) => {
-    if (dlg.value) dlg.value.open = v;
-  },
-});
 const resultOpen = computed({
   get: () => result.value?.open ?? false,
   set: (v: boolean) => {
@@ -347,79 +296,7 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
     </UiBanner>
   </UiCard>
 
-  <UiDialog
-    v-model:open="dlgOpen"
-    :title="dlgTitle"
-    :busy="dlg?.phase === 'progress'"
-    :locked="dlg?.phase === 'progress'"
-    width="480px"
-  >
-    <template v-if="dlg">
-      <template v-if="dlg.phase === 'form'">
-        <div class="lxtext">
-          {{ dlg.item?.confirm }}
-        </div>
-        <div class="hrow">
-          <UiSelect
-            v-model="dlg.flavor"
-            :options="flavorOptions"
-            label="Профиль сборки"
-          />
-          <UiHelp :text="G.checksum" />
-        </div>
-        <UiSwitch
-          v-if="isLxReplace && (dlg.item?.backupBytes || 0) > 0"
-          :model-value="dlg.backup"
-          :label="backupText"
-          tight
-          :disabled="!backupFits"
-          tooltip="сохранить старое ядро рядом перед заменой"
-          @update:model-value="(v: boolean) => dlg && (dlg.backup = v)"
-        />
-        <UiHint
-          v-if="dlg.item?.note"
-          :text="dlg.item.note"
-        />
-      </template>
-      <div
-        v-else-if="dlg.phase === 'progress'"
-        class="progress"
-      >
-        Идёт установка: качается релиз (~30-90 МБ), проверяется контрольная сумма, прогоняется тест-запуск. Это занимает до пары минут - не закрывайте панель.
-      </div>
-      <template v-else>
-        <div
-          class="rstitle"
-          :class="dlg.ok ? 'ok' : 'err'"
-        >
-          {{ dlg.ok ? 'Установлено' : 'Ошибка установки' }}
-        </div>
-        <div class="rsout">
-          {{ dlg.out }}
-        </div>
-      </template>
-    </template>
-    <template #footer>
-      <template v-if="dlg?.phase === 'form'">
-        <UiButton @click="dlgOpen = false">
-          Отмена
-        </UiButton>
-        <UiButton
-          variant="primary"
-          @click="installForm"
-        >
-          {{ dlg?.item?.actionLabel || 'Установить' }}
-        </UiButton>
-      </template>
-      <UiButton
-        v-else-if="dlg?.phase === 'result'"
-        variant="primary"
-        @click="dlgOpen = false"
-      >
-        Закрыть
-      </UiButton>
-    </template>
-  </UiDialog>
+  <LxInstallDialog v-model:open="lxOpen" />
 
   <UiDialog
     v-model:open="resultOpen"
@@ -524,18 +401,6 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
 }
 .ver {
   color: var(--dim);
-}
-.lxtext {
-  font-size: 13px;
-  white-space: pre-line;
-  line-height: 1.5;
-}
-.progress {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 13px;
-  line-height: 1.5;
 }
 .rstitle {
   font-weight: 600;

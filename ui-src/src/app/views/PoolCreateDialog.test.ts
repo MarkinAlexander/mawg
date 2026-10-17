@@ -137,4 +137,84 @@ describe('PoolCreateDialog', () => {
     useConfirm().ok();
     dlg.unmount();
   });
+
+  it('openwrt + vless-ссылка: вопроса о протоколе нет (движок-путь)', async () => {
+    const { dlg, f } = await makeDialog({
+      '/links/inspect': { native: 0, engine: 1, types: ['vless'] },
+    }, { platform: 'openwrt' });
+    await btn(dlg, 'ссылка или подписка')[0].trigger('click');
+    await nextTick();
+    // до разбора селекта нет и после разбора (только движковые узлы) - нет
+    expect(dlg.text()).not.toContain('Протокол (OpenWrt)');
+    await dlg.find('textarea').setValue('vless://uuid@1.2.3.4:443?security=tls#node');
+    await vi.waitFor(() => expect(dlg.text()).toContain('прокси-узлов: 1 (vless)'), { timeout: 3000 });
+    expect(dlg.text()).not.toContain('Протокол (OpenWrt)');
+
+    await dlg.find('input').setValue('vl');
+    await btn(dlg, 'Создать')[0].trigger('click');
+    await vi.waitFor(() => {
+      const post = f.mock.calls.find((c) => (c[0] as string).endsWith('/pools/from-source'));
+      expect(JSON.parse(post![1]!.body as string)).toEqual({
+        name: 'vl', fallback: 'direct', openwrtProto: 'wireguard', source: 'vless://uuid@1.2.3.4:443?security=tls#node',
+      });
+    });
+    dlg.unmount();
+  });
+
+  it('openwrt + amneziawg-ссылка: селект появился с предвыбором amneziawg', async () => {
+    const { dlg } = await makeDialog({
+      '/links/inspect': { native: 1, engine: 0, types: ['amneziawg'] },
+    }, { platform: 'openwrt' });
+    await btn(dlg, 'ссылка или подписка')[0].trigger('click');
+    await nextTick();
+    expect(dlg.text()).not.toContain('Протокол (OpenWrt)'); // до разбора вопроса нет
+    await dlg.find('textarea').setValue('amneziawg://key@1.2.3.4:51820');
+    await vi.waitFor(() => expect(dlg.text()).toContain('Протокол (OpenWrt)'), { timeout: 3000 });
+    const sel = dlg.findAll('.psel-btn').find((b) => b.text().includes('amneziawg'));
+    expect(sel).toBeDefined(); // предвыбор из типов узлов
+    dlg.unmount();
+  });
+
+  it('движка нет + vless-узлы: предложение установки в потоке -> POST /system/install', async () => {
+    const { dlg, f } = await makeDialog({
+      '/links/inspect': { native: 0, engine: 1, types: ['vless'] },
+      '/system/check': { platform: 'openwrt', items: [
+        { id: 'singbox-lx', title: 'ядро sing-box', installed: false, version: '',
+          action: 'install', confirm: 'Скачать и установить ядро sing-box-lx?', note: '' },
+      ] },
+      '/system/install': { ok: true, output: 'установлен: sing-box-lx' },
+    }, { platform: 'openwrt', engine: undefined });
+    await btn(dlg, 'ссылка или подписка')[0].trigger('click');
+    await nextTick();
+    await dlg.find('textarea').setValue('vless://uuid@1.2.3.4:443?security=tls#node');
+    await vi.waitFor(() => expect(dlg.text()).toContain('нужен движок sing-box'), { timeout: 3000 });
+
+    await btn(dlg, 'Установить ядро sing-box-lx')[0].trigger('click');
+    // диалог установки: предмет свежий (перечитан /system/check), дефолт plain
+    // (маркер «Профиль сборки» - у внешнего диалога в баннере тоже есть
+    // «ядро sing-box-lx», им не matcher'ить)
+    const lxdlg = await vi.waitFor(() => {
+      const d = dlg.findAll('dialog').find((x) => x.text().includes('Профиль сборки'));
+      expect(d).toBeDefined();
+      return d!;
+    });
+    expect(lxdlg.text()).toContain('Скачать и установить ядро sing-box-lx?');
+    await btn(dlg, 'Установить').at(-1)!.trigger('click');
+    await vi.waitFor(() => {
+      const post = f.mock.calls.find((c) => (c[0] as string).endsWith('/system/install'));
+      expect(JSON.parse(post![1]!.body as string)).toEqual({ id: 'singbox-lx', flavor: 'plain', backup: false });
+    });
+    await vi.waitFor(() => expect(dlg.text()).toContain('Установлено'));
+    expect(useToast().toasts.list.some((t) => t.text.includes('Ядро sing-box-lx установлено'))).toBe(true);
+    dlg.unmount();
+  });
+
+  it('free без движка: предложение установки видно сразу', async () => {
+    const { dlg } = await makeDialog({}, { engine: undefined });
+    await btn(dlg, 'Amnezia Free без аккаунта')[0].trigger('click');
+    await nextTick();
+    expect(dlg.text()).toContain('нужен движок sing-box');
+    expect(btn(dlg, 'Установить ядро sing-box-lx').length).toBeGreaterThan(0);
+    dlg.unmount();
+  });
 });
