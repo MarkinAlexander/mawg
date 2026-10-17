@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SlotInfo } from '../../api/types'
-import { fallbackHint, inspectLine, planView, slotGate, slotOptions } from './poolsLogic'
+import { fallbackHint, inspectLine, planView, protoGate, slotGate, slotOptions } from './poolsLogic'
 import { probeHuman } from './groupsLogic'
 
 const slot = (over: Partial<SlotInfo>): SlotInfo => ({
@@ -56,6 +56,35 @@ describe('poolsLogic - слоты', () => {
     })).toBe('ключ Amnezia PREMIUM API · WG/AWG узлов: 2 · прокси-узлов: 1 (vless, trojan) · интервал подписки: 6 ч');
     expect(inspectLine({ native: 0, engine: 0 })).toBe('узлов не найдено');
     expect(inspectLine({ error: 'x', native: 0, engine: 0 })).toBe('не разбирается: x');
+  });
+});
+
+describe('poolsLogic - вопрос о протоколе (парсинг до вопросов)', () => {
+  it('cfg - показывается, free - нет', () => {
+    expect(protoGate('cfg', null)).toEqual({ show: true, proto: '' });
+    expect(protoGate('free', null)).toEqual({ show: false, proto: '' });
+  });
+
+  it('link: без разбора/ошибка/только движковые узлы - вопроса нет', () => {
+    expect(protoGate('link', null).show).toBe(false);
+    expect(protoGate('link', { error: 'bad', native: 0, engine: 0 }).show).toBe(false);
+    expect(protoGate('link', { native: 0, engine: 2, types: ['vless'] }).show).toBe(false);
+  });
+
+  it('link: WG/AWG-узлы - селект с предвыбором из типов', () => {
+    expect(protoGate('link', { native: 1, engine: 0, types: ['amneziawg'] }))
+      .toEqual({ show: true, proto: 'amneziawg' });
+    expect(protoGate('link', { native: 1, engine: 0, types: ['wireguard'] }))
+      .toEqual({ show: true, proto: 'wireguard' });
+    expect(protoGate('link', { native: 2, engine: 3, types: ['wireguard', 'vless'] }))
+      .toEqual({ show: true, proto: 'wireguard' });
+  });
+
+  it('link: ключ Amnezia - vless без вопроса, awg с вопросом', () => {
+    expect(protoGate('link', { amnezia: { serviceType: 'free', serviceProtocol: 'vless' }, native: 0, engine: 0 }).show)
+      .toBe(false);
+    expect(protoGate('link', { amnezia: { serviceType: 'premium', serviceProtocol: 'awg' }, native: 0, engine: 0 }).show)
+      .toBe(true);
   });
 });
 

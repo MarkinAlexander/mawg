@@ -60,6 +60,31 @@ export function slotGate(
   return { off: true, text: `Прокси-узлы (${inspect.engine}) - будет создан tun-интерфейс движка sing-box (tun1, tun2...), слот не нужен.` };
 }
 
+// нужен ли вопрос «Протокол (OpenWrt)» и что предвыбрать: ссылка парсится
+// СРАЗУ и флоу ведёт по результату - движковые узлы (vless/trojan) идут в
+// tun движка без вопроса о протоколе, селект WG/AWG - только настоящим
+// WG/AWG-узлам и ручным конфигам (слово владельца 2026-10-17)
+export function protoGate(
+  mode: 'cfg' | 'link' | 'free',
+  inspect: LinkInspect | null | undefined,
+): { show: boolean; proto: 'wireguard' | 'amneziawg' | '' } {
+  if (mode === 'cfg') return { show: true, proto: '' };
+  if (mode === 'free') return { show: false, proto: '' };
+  if (!inspect || inspect.error) return { show: false, proto: '' };
+  if (inspect.amnezia) {
+    // ключ Amnezia: VLESS-конфиг идёт движком (вопроса нет), AWG - нативно
+    return { show: inspect.amnezia.serviceProtocol !== 'vless', proto: '' };
+  }
+  if (inspect.native > 0) {
+    const types = inspect.types || [];
+    return {
+      show: true,
+      proto: types.includes('amneziawg') && !types.includes('wireguard') ? 'amneziawg' : 'wireguard',
+    };
+  }
+  return { show: false, proto: '' };
+}
+
 // текст строки разбора ссылки (легаси inspectSource 498-505)
 export function inspectLine(ins: LinkInspect): string {
   const t: string[] = [];
