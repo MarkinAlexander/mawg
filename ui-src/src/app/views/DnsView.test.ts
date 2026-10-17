@@ -222,6 +222,7 @@ describe('DnsView - резервные серверы MT (форк rev8+)', () =
 describe('DnsView - правила автопереключения L1-L5', () => {
   const policyPayload: DnsPolicyRes = {
     capable: true,
+    dohCapable: true,
     policy: { enabled: true, primary: ['8.8.8.8'], tunnel: 'proton', fallback: ['1.1.1.1:5353'], yandex: true, provider: false },
     composed: ['8.8.8.8:53', '1.1.1.1:5353', '77.88.8.8:53'],
     active: ['8.8.8.8:53', '1.1.1.1:5353', '77.88.8.8:53'],
@@ -283,10 +284,16 @@ describe('DnsView - правила автопереключения L1-L5', () =
     const btn = (label: string) => w.findAll('button').find((b) => b.text().includes(label));
     await vi.waitFor(() => expect(btn('Сохранить и применить')).toBeTruthy());
 
+    // без правок кнопка недоступна (слово владельца 2026-10-18)
+    const saveBtn = w.findAll('button').find((b) => b.text().includes('Сохранить и применить'))!;
+    expect(saveBtn.attributes('disabled')).toBeDefined();
+
     const areas = w.findAll('#card-dns-policy textarea');
     expect(areas.length).toBe(2);
     await areas[1].setValue('9.9.9.9\n149.112.112.112');
     await nextTick();
+    // правка есть - кнопка доступна
+    expect(saveBtn.attributes('disabled')).toBeUndefined();
     await btn('Сохранить и применить')!.trigger('click');
     await vi.waitFor(() => {
       expect(capture.put).toEqual({
@@ -311,6 +318,45 @@ describe('DnsView - правила автопереключения L1-L5', () =
     await vi.waitFor(() => expect(capture.probe).toBe(true));
     await vi.waitFor(() => expect(w.find('#card-dns-policy').text()).toContain('L2 туннель proton: 8.8.8.8:53'));
     expect(w.find('#card-dns-policy .uibadge.v-ok').exists()).toBe(true);
+    w.unmount();
+  });
+
+  it('MT rev11+: пресеты DoH/DoT дописывают адрес в основные (без дубля)', async () => {
+    const capture: { put?: unknown } = {};
+    vi.stubGlobal('fetch', policyStub(capture));
+    const w = mount(DnsView);
+    const btn = (label: string) => w.findAll('button').find((b) => b.text() === label);
+    await vi.waitFor(() => expect(btn('Google DoT')).toBeTruthy());
+
+    await btn('Google DoT')!.trigger('click');
+    await btn('Google DoT')!.trigger('click'); // дубль не размножается
+    await btn('Cloudflare DoH')!.trigger('click');
+    await nextTick();
+    const areas = w.findAll('#card-dns-policy textarea');
+    const primaryEl = areas[0].element as HTMLTextAreaElement;
+    expect(primaryEl.value).toContain('tls://8.8.8.8');
+    expect(primaryEl.value).toContain('https://1.1.1.1/dns-query');
+    expect(primaryEl.value.match(/tls:\/\/8\.8\.8\.8/g)).toHaveLength(1);
+
+    await w.findAll('button').find((b) => b.text().includes('Сохранить и применить'))!.trigger('click');
+    await vi.waitFor(() => {
+      expect(capture.put).toMatchObject({ primary: ['8.8.8.8', 'tls://8.8.8.8', 'https://1.1.1.1/dns-query'] });
+    });
+    w.unmount();
+  });
+
+  it('MT rev10-: пресетов DoH/DoT нет', async () => {
+    const noDoh = { ...policyPayload, dohCapable: false };
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.endsWith('/dns/policy')) return new Response(JSON.stringify(noDoh), { status: 200 });
+      if (url.endsWith('/dns/state')) return new Response(JSON.stringify(statePayload), { status: 200 });
+      if (url.endsWith('/dns/upstreams')) return new Response(JSON.stringify(cascadePayload), { status: 200 });
+      if (url.endsWith('/status')) return new Response(JSON.stringify({ pools: [{ name: 'proton' }] }), { status: 200 });
+      return new Response(JSON.stringify({}), { status: 200 });
+    }));
+    const w = mount(DnsView);
+    await vi.waitFor(() => expect(w.find('#card-dns-policy').text()).toContain('настроен через proton'));
+    expect(w.findAll('button').some((b) => b.text() === 'Google DoT')).toBe(false);
     w.unmount();
   });
 
