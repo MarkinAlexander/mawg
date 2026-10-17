@@ -35,7 +35,9 @@ func (s *Server) sb() (*singbox.Manager, error) {
 	if sbMgr != nil && sbMode == mode {
 		return sbMgr, nil
 	}
-	cfg := singbox.RunConfig{Mode: mode, WebPort: s.store.Settings().WebPort}
+	cfg := singbox.RunConfig{Mode: mode, WebPort: s.store.Settings().WebPort,
+		// события таймерной ротации узлов - в журнал панели
+		LogEvent: func(pool, kind, msg string) { s.store.LogEvent(pool, kind, msg) }}
 	if mode == "shared" {
 		cfg.SharedDir, cfg.SharedInit = s.sharedPaths()
 	}
@@ -228,11 +230,23 @@ func (s *Server) applyEngine() ([]string, error) {
 			CooldownMin:      p.Settings.CooldownMin,
 			MaxRTTms:         p.Settings.MaxRTTms,
 			GroupMode:        p.Settings.GroupMode,
+			RotateSec:        p.Settings.RotateSec,
 		}
 		nodes, err := s.readPoolNodes(p.Name)
 		switch {
 		case err == nil && (len(nodes) > 0 || len(p.Configs) == 0):
 			spec.Nodes = nodes
+			// выключенные узлы в конфиг движка не попадают (слово
+			// владельца 2026-10-17: позволить исключать, как у конфигов)
+			if len(p.Settings.NodeOff) > 0 {
+				kept := make([]links.Node, 0, len(spec.Nodes))
+				for _, n := range spec.Nodes {
+					if !p.Settings.NodeOff[n.ConfName()] {
+						kept = append(kept, n)
+					}
+				}
+				spec.Nodes = kept
+			}
 		case os.IsNotExist(err) && len(p.Configs) > 0:
 			// пул без nodes.json, но с конфигами WG/AWG (Amnezia Free и
 			// AWG 3.x-импорт) - конфиги едут wireguard-эндпоинтами

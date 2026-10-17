@@ -106,6 +106,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/pools/{name}/engine", s.getPoolEngine)
 	mux.HandleFunc("PUT /api/v1/pools/{name}/engine/select", s.putPoolEngineSelect)
 	mux.HandleFunc("POST /api/v1/pools/{name}/engine/retest", s.postPoolEngineRetest)
+	mux.HandleFunc("POST /api/v1/pools/{name}/engine/toggle", s.postPoolEngineToggle)
 	mux.HandleFunc("GET /api/v1/pools/{name}/configs/{file}", s.getPoolConfigRaw)
 	mux.HandleFunc("POST /api/v1/pools/{name}/premium", s.importPremium)
 	mux.HandleFunc("POST /api/v1/pools/{name}/premium/country", s.switchPremium)
@@ -1346,11 +1347,18 @@ func (s *Server) updatePool(w http.ResponseWriter, r *http.Request) {
 		merged.MagitrickleGroupID = patch.MagitrickleGroupID
 	}
 	if patch.GroupMode != "" {
-		if patch.GroupMode != "urltest" && patch.GroupMode != "selector" {
-			writeErr(w, fmt.Errorf("groupMode: urltest|selector"))
+		if patch.GroupMode != "urltest" && patch.GroupMode != "selector" && patch.GroupMode != "rotate" {
+			writeErr(w, fmt.Errorf("groupMode: urltest|selector|rotate"))
 			return
 		}
 		merged.GroupMode = patch.GroupMode
+	}
+	if patch.RotateSec != 0 {
+		if patch.RotateSec < 10 || patch.RotateSec > 86400 {
+			writeErr(w, fmt.Errorf("интервал ротации: 10-86400 секунд"))
+			return
+		}
+		merged.RotateSec = patch.RotateSec
 	}
 	// Каскад движка (detour) владельцем отвергнут: всё, заведённое через
 	// ядро, умирает вместе с ядром, а на OpenWrt без sing-box юзер вообще

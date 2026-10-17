@@ -109,7 +109,16 @@ async function loadEngine(): Promise<void> {
 watch(nodesOpen, (v) => {
   if (v) void loadEngine();
 });
-const engMode = computed(() => engineState.value?.mode || props.pool.settings.groupMode || 'urltest');
+const engMode = computed(() =>
+  engineState.value?.groupMode || props.pool.settings.groupMode || engineState.value?.mode || 'urltest');
+async function toggleNode(tag: string, on: boolean): Promise<void> {
+  if (busy.value) return;
+  await run(`${props.pool.name}:nodeoff`, async () => {
+    await a.engineToggle(props.pool.name, tag);
+    push(on ? 'Узел исключён из пула' : 'Узел возвращён в пул');
+    await loadEngine();
+  });
+}
 async function pickNode(tag: string): Promise<void> {
   if (busy.value) return;
   await run(`${props.pool.name}:selnode`, async () => {
@@ -333,7 +342,7 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
           v-for="n in engineState.nodes"
           :key="n.tag"
           class="cfgrow"
-          :class="{ active: engineState.now === n.tag }"
+          :class="{ active: !n.off && engineState.now === n.tag, dimmed: n.off }"
         >
           <span class="cfgmain">
             <span class="cfgname">{{ n.tag }}</span>
@@ -344,11 +353,18 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
               tooltip="протокол узла и его транспорт"
             />
             <UiBadge
-              v-if="engineState.now === n.tag"
+              v-if="n.off"
+              text="исключён"
+              variant="warn"
+              tooltip="узел не попадает в конфиг движка; вернуть - тумблером справа"
+            />
+            <UiBadge
+              v-if="!n.off && engineState.now === n.tag"
               text="активен"
               variant="ok"
             />
             <UiBadge
+              v-if="!n.off"
               :text="n.delay > 0 ? `${n.delay} мс` : '—'"
               :variant="n.delay > 0 ? 'ok' : 'muted'"
               :tooltip="n.delay > 0 ? 'последний замер движка' : 'не измерен или не отвечает'"
@@ -356,7 +372,7 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
           </span>
           <span class="cfgctl">
             <UiButton
-              v-if="engMode === 'selector'"
+              v-if="engMode === 'selector' && !n.off"
               variant="icon"
               tooltip="выбрать этот узел (selector - ручной режим)"
               :disabled="engineState.now === n.tag"
@@ -365,11 +381,17 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
             >
               ⚡
             </UiButton>
+            <UiSwitch
+              :model-value="!n.off"
+              tooltip="участвует в пуле (выключенный узел не попадает в конфиг движка)"
+              :disabled="!!busy"
+              @update:model-value="(v: boolean) => toggleNode(n.tag, !v)"
+            />
           </span>
         </div>
       </div>
       <div
-        v-if="engineState && engMode === 'urltest'"
+        v-if="engineState"
         class="btnrow"
       >
         <UiButton
@@ -379,6 +401,10 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
           Перемерить пинги
         </UiButton>
       </div>
+      <UiHint
+        v-if="engineState && engMode === 'rotate'"
+        :text="'Ротация: mawg меняет узел по кругу каждые ' + (pool.settings.rotateSec || 300) + ' с, перемеряя группу и переходя только на рабочие.'"
+      />
     </details>
 
     <div class="btnrow">

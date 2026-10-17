@@ -46,6 +46,9 @@ const keepalive = ref('25');
 const updateInt = ref('0');
 const fallback = ref('direct');
 const groupMode = ref('urltest');
+const rotateSec = ref('300');
+const engineNodes = ref<{ tag: string; delay: number; off?: boolean }[]>([]);
+const engineNow = ref('');
 const members = ref<PoolMember[]>([]);
 const freeConf = ref('');
 const premCountry = ref('');
@@ -74,7 +77,39 @@ const probeTypeOptions: UiSelectOption[] = [
 const groupModeOptions: UiSelectOption[] = [
   { value: 'urltest', label: 'лучший пинг (авто)' },
   { value: 'selector', label: 'ручной выбор узла' },
+  { value: 'rotate', label: 'ротация по таймеру (только рабочие)' },
 ];
+const nodeOptions = computed<UiSelectOption[]>(() =>
+  engineNodes.value
+    .filter((n) => !n.off)
+    .map((n) => {
+      const nm = n.tag.includes('|') ? n.tag.slice(n.tag.indexOf('|') + 1) : n.tag;
+      return { value: n.tag, label: `${nm}${n.delay > 0 ? ` - ${n.delay} мс` : ''}` };
+    }));
+async function pickEngineNode(tag: string): Promise<void> {
+  if (!tag || tag === engineNow.value || busy.value) return;
+  busy.value = true;
+  try {
+    await a.engineSelect(props.poolName, tag);
+    engineNow.value = tag;
+    const nm = tag.includes('|') ? tag.slice(tag.indexOf('|') + 1) : tag;
+    push('Узел выбран: ' + nm);
+  } catch (e) {
+    push(e instanceof Error ? e.message : String(e), true);
+  } finally {
+    busy.value = false;
+  }
+}
+async function loadEngineNodes(): Promise<void> {
+  try {
+    const r = await a.engine(props.poolName);
+    engineNodes.value = r.nodes || [];
+    engineNow.value = r.now || '';
+  } catch {
+    engineNodes.value = [];
+    engineNow.value = '';
+  }
+}
 const amnCountryOptions = computed<UiSelectOption[]>(() =>
   (pool.value?.settings.amnezia?.countries || [])
     .filter((c) => (c.protocols ? c.protocols.length > 0 : true))
@@ -126,7 +161,10 @@ watch(open, (v) => {
   cooldown.value = String(p.settings.cooldownMin ?? 5);
   keepalive.value = String(p.settings.keepalive ?? 0);
   updateInt.value = String(p.settings.updateIntervalH || 0);
-  groupMode.value = p.settings.groupMode === 'selector' ? 'selector' : 'urltest';
+  const gm = p.settings.groupMode;
+  groupMode.value = gm === 'selector' || gm === 'rotate' ? gm : 'urltest';
+  rotateSec.value = String((p.settings.rotateSec || 0) > 0 ? (p.settings.rotateSec as number) : 300);
+  if (isEng.value) void loadEngineNodes();
   const fb = p.settings.fallback || 'direct';
   fallback.value = fbOptions.value.some((o) => o.value === fb) ? fb : 'direct';
   amnCountry.value = p.settings.amnezia?.country || '';
@@ -259,7 +297,10 @@ async function save(): Promise<void> {
         fallback: fallback.value,
         maxRttMs: rttOn.value ? +rtt.value || 0 : 0,
         updateIntervalH: updateInt.value === '' ? 0 : +updateInt.value || 0,
-        ...(isEng.value ? { groupMode: groupMode.value } : {}),
+        ...(isEng.value ? {
+          groupMode: groupMode.value,
+          ...(groupMode.value === 'rotate' ? { rotateSec: Math.max(10, +rotateSec.value || 300) } : {}),
+        } : {}),
       });
       const renamed = newName.value.trim();
       if (renamed && renamed !== p.name) await a.rename(p.name, renamed);
@@ -440,9 +481,33 @@ async function save(): Promise<void> {
         />
         <UiHelp :text="G.urltest" />
       </div>
+      <div
+        v-if="isEng && groupMode === 'rotate'"
+        class="hrow"
+      >
+        <UiInput
+          v-model="rotateSec"
+          label="Менять узел каждые, сек"
+          tooltip="минимум 10; перед переходом mawg перемеряет группу и уходит только на ответивший узел"
+        />
+        <UiHelp :text="G.urltest" />
+      </div>
+      <div
+        v-if="isEng && groupMode === 'selector' && nodeOptions.length"
+        class="hrow"
+      >
+        <UiSelect
+          :model-value="engineNow"
+          :options="nodeOptions"
+          label="Активный узел"
+          hint="применяется сразу, без «Сохранить»"
+          @update:model-value="pickEngineNode"
+        />
+        <UiHelp :text="G.urltest" />
+      </div>
       <UiHint
         v-if="isEng"
-        text="urltest: движок сам держит узел с лучшим пингом. selector: узел выбирается вручную в карточке пула, авто-переключений нет."
+        text="лучший пинг: движок сам держит узел с лучшим пингом (переключает при разнице больше 10 мс). ручной выбор: узел задаётся здесь или молнией в карточке пула. ротация по таймеру: mawg меняет узел по кругу, перемеряя группу и переходя только на рабочие."
       />
       <div class="hrow">
         <UiSwitch
