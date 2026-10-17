@@ -341,6 +341,44 @@ func TestInstallLXCoreForeignDropBackup(t *testing.T) {
 	}
 }
 
+// тесный диск (1 байт) + чужое ядро + отказ от копии: чужое снимается
+// до копирования, установка проходит (кейс 0.42: 42МБ чужое, 1.4МБ свободно)
+func TestInstallLXCoreForeignDropBackupTightDisk(t *testing.T) {
+	f := newFakeLXCore(t, "1.14.2-lx.7")
+	f.targetVer = "1.13.3"
+	if err := os.MkdirAll(filepath.Dir(f.targetBin), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(f.targetBin, []byte("upstream-binary-42MB"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldFree := diskFree
+	diskFree = func(p string) int64 {
+		// «диск»: пока чужое ядро на месте - 1 байт свободно,
+		// после его снятия - мегабайт (удаление освобождает место)
+		if _, err := os.Stat(f.targetBin); err == nil {
+			return 1
+		}
+		return 1 << 20
+	}
+	t.Cleanup(func() { diskFree = oldFree })
+	opts := f.opts(true)
+	opts.DropForeignBackup = true
+	res, err := InstallLXCore(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("установка на тесном диске с отказом от копии: %v", err)
+	}
+	if !strings.Contains(res.Log, "чужое ядро снято до копирования") {
+		t.Fatalf("в логе нет шага снятия чужого ядра: %s", res.Log)
+	}
+	if got, _ := os.ReadFile(f.targetBin); !strings.Contains(string(got), "sing-box-lx") {
+		t.Fatalf("ядро не установлено: %q", got)
+	}
+	if _, err := os.Stat(f.targetBin + ".pre-lx"); !os.IsNotExist(err) {
+		t.Fatalf(".pre-lx не должен существовать: %v", err)
+	}
+}
+
 func TestInstallLXCoreBadChecksum(t *testing.T) {
 	f := newFakeLXCore(t, "1.14.2-lx.7")
 	if err := os.WriteFile(filepath.Join(f.dir, "SHA256SUMS"), []byte("deadbeef  "+f.asset+"\n"), 0o644); err != nil {
