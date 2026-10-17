@@ -58,6 +58,16 @@ export function lineSecretIn(hosts: Set<string>, text: string): boolean {
   return false;
 }
 
+// в тексте есть IPv4-адрес (94.232.41.144|узел и т.п.): приватный режим
+// прячет такие строки и без знания хостов. Публичные резолверы
+// (8.8.8.8, 1.1.1.1) в тегах узлов не встречаются, так что не задеваем
+// слово владельца «публичные DNS видны» (слово 2026-10-17: тег узла
+// выдаёт адрес мимо сокрытия).
+const IPV4_RE = /\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/;
+export function addrSecretIn(text: string | undefined): boolean {
+  return !!text && IPV4_RE.test(text);
+}
+
 export function useSecrets() {
   const { pools } = usePools();
   const hosts = computed(() => collectHosts(pools.value));

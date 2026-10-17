@@ -9,6 +9,7 @@ import { useConfirm } from '../../stores/confirm'
 import { useToast } from '../../stores/toast'
 import type { PoolMember, PoolView } from '../../api/types'
 import { fallbackHint } from './poolsLogic'
+import { addrSecretIn, hostOf } from '../secrets'
 import { G } from '../glossary'
 
 // Диалог настроек пула (легаси openSettings/spSave 935-1043): источник,
@@ -19,6 +20,14 @@ const open = defineModel<boolean>('open', { default: false });
 
 const { state: status } = useStatus();
 const a = usePoolActions();
+
+// имя участника скрывается, если в нём сидит хост его же endpoint или
+// просто IPv4 (слово владельца 2026-10-17: тег узла выдаёт адрес)
+function nameSecret(m: PoolMember): boolean {
+  if (!m.name) return false;
+  if (addrSecretIn(m.name)) return true;
+  return !!m.endpoint && m.name.includes(hostOf(m.endpoint));
+}
 const { push } = useToast();
 const { confirm } = useConfirm();
 const { state: ifaces } = useIfaces();
@@ -374,9 +383,12 @@ async function save(): Promise<void> {
             class="member"
           >
             <UiBadge :text="m.proto + (m.detail ? '/' + m.detail : '')" />
+            <!-- имя тоже может нести адрес (host|узел, файл-имя с хостом):
+                 скрываем вместе с endpoint (слово владельца 2026-10-17) -->
             <span
               class="mname"
               :title="m.name"
+              :class="{ secret: nameSecret(m) }"
             >{{ m.name }}</span>
             <span
               class="mend"

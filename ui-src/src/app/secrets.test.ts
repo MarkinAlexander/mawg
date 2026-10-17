@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { collectHosts, endpointSecretIn, hostOf, lineSecretIn, ruleSecretIn } from './secrets'
+import { addrSecretIn, collectHosts, endpointSecretIn, hostOf, lineSecretIn, ruleSecretIn } from './secrets'
 import type { PoolView } from '../api/types'
 
 // слово владельца 2026-10-15: скрываются адреса из конфигов, а не места -
@@ -10,6 +10,18 @@ const pool = (over: Partial<PoolView>): PoolView => ({
   rotations: 0, disabled: false, consecFails: 0,
   settings: {}, configs: [], premium: { imported: false, countries: [] }, protos: [],
   ...over,
+});
+
+describe('secrets - IPv4 в произвольном тексте (слово владельца 2026-10-17)', () => {
+  it('тег узла с адресом и IPv4-имя скрываются, домены и версии - нет', () => {
+    expect(addrSecretIn('94.232.41.144|moscow-xhttp')).toBe(true);
+    expect(addrSecretIn('conf-109.248.163.108')).toBe(true);
+    expect(addrSecretIn('grpc-riga')).toBe(false);
+    expect(addrSecretIn('sub.example.com|node')).toBe(false);
+    expect(addrSecretIn('sing-box 1.14.2-lx.12')).toBe(false);
+    expect(addrSecretIn('')).toBe(false);
+    expect(addrSecretIn(undefined)).toBe(false);
+  });
 });
 
 describe('secrets (адреса из конфигов)', () => {
