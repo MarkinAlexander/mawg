@@ -207,12 +207,19 @@ func TestDnsPolicyProbe(t *testing.T) {
 	if !strings.HasPrefix(body.Results[2].Level, "L4 Яндекс") {
 		t.Fatalf("подпись L4: %q", body.Results[2].Level)
 	}
-	// мёртвые локальные порты - error; L4 Яндекс (реальный сервер) - чисто
+	// мёртвые локальные порты - error; L4 Яндекс (реальный сервер) - чисто.
+	// Внешний UDP из CI-раннера может не пройти за бюджет (флейк v0.7.1:
+	// раннер US не дотянулся до 77.88.8.8) - transport-error терпим,
+	// подмену (spoof) - нет: это содержательный вердикт канарейки
 	if body.Results[0].Verdict != "error" || body.Results[1].Verdict != "error" {
 		t.Fatalf("мёртвые уровни должны быть error: %+v", body.Results)
 	}
-	if body.Results[2].Verdict != "clean" {
-		t.Fatalf("L4 Яндекс должен быть clean: %+v", body.Results[2])
+	switch body.Results[2].Verdict {
+	case "clean":
+	case "error":
+		t.Skipf("L4 Яндекс не ответил за бюджет (внешняя сеть CI): %+v", body.Results[2])
+	default:
+		t.Fatalf("L4 Яндекс подменён?: %+v", body.Results[2])
 	}
 }
 
