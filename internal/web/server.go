@@ -1656,6 +1656,12 @@ func (s *Server) postSystemInstall(w http.ResponseWriter, r *http.Request) {
 		s.installLXCore(w, r, req.Flavor, backup)
 		return
 	}
+	// MagiTrickle ставим кодом из релиза mawg-форка (детект таргета, пакет
+	// под opkg/apk) - шелл-скрипт bin.magitrickle.dev больше не предлагаем
+	if req.ID == "magitrickle" {
+		s.installMagitrickle(w, r)
+		return
+	}
 	check := s.systemCheck()
 	for _, item := range check.Items {
 		if item.ID != req.ID {
