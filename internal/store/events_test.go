@@ -7,7 +7,18 @@ import (
 	"testing"
 )
 
+// tmpfs-журнал общий на машину - перед тестом чистить
+func cleanTmpJournal(t *testing.T) {
+	t.Helper()
+	for _, f := range []string{"mawg-events.jsonl", "mawg-events.jsonl.old"} {
+		if err := os.Remove(filepath.Join(os.TempDir(), f)); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestEventsPersistAcrossReopen(t *testing.T) {
+	cleanTmpJournal(t)
 	base := t.TempDir()
 	st, err := Open(base)
 	if err != nil {
@@ -30,6 +41,7 @@ func TestEventsPersistAcrossReopen(t *testing.T) {
 }
 
 func TestEventsRotationAndTailLoad(t *testing.T) {
+	cleanTmpJournal(t)
 	base := t.TempDir()
 	st, err := Open(base)
 	if err != nil {

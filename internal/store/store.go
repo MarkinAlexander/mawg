@@ -92,6 +92,14 @@ func (s *Store) saveLocked(path string, v any) error {
 func (s *Store) poolsDir() string  { return filepath.Join(s.base, "pools") }
 func (s *Store) backupDir() string { return filepath.Join(s.base, "backups") }
 
+// Журнал живёт в tmpfs (слово владельца 2026-10-17: флешку не
+// изнашивать - журнал некритичен, теряется только при ребуте роутера,
+// рестарт mawg переживает). Легаси-файлы на флеше (base/events.json
+// и .old) читаются при старте один раз (апгрейд) и больше не пишутся.
+func (s *Store) eventsTmpPath() string {
+	return filepath.Join(os.TempDir(), "mawg-events.jsonl")
+}
+
 func (s *Store) eventsPath() string    { return filepath.Join(s.base, "events.json") }
 func (s *Store) eventsOldPath() string { return s.eventsPath() + ".old" }
 
@@ -948,7 +956,7 @@ func (s *Store) LogEvent(pool, kind, message string) {
 // ронять работу; при переполнении файл ротируется в .old (одна копия
 // истории, старшая теряется).
 func (s *Store) appendEventLocked(ev Event) {
-	path := s.eventsPath()
+	path := s.eventsTmpPath()
 	if st, err := os.Stat(path); err == nil && st.Size() >= eventsMaxBytes {
 		os.Rename(path, s.eventsOldPath())
 	}
@@ -966,7 +974,7 @@ func (s *Store) appendEventLocked(ev Event) {
 
 func (s *Store) loadEvents() {
 	var evs []Event
-	for _, path := range []string{s.eventsOldPath(), s.eventsPath()} {
+	for _, path := range []string{s.eventsTmpPath() + ".old", s.eventsTmpPath(), s.eventsOldPath(), s.eventsPath()} {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			continue
