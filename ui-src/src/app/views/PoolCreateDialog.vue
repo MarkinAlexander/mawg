@@ -8,6 +8,7 @@ import { useToast } from '../../stores/toast'
 import type { LinkInspect, SourcePlan } from '../../api/types'
 import { inspectLine, planView, protoGate, slotGate, slotOptions } from './poolsLogic'
 import LxInstallDialog from './LxInstallDialog.vue'
+import { addrSecretIn } from '../secrets'
 import { G } from '../glossary'
 
 // Диалог создания пула (легаси dlgPool/setPoolMode 404-805). Режимы:
@@ -341,7 +342,7 @@ const fallbackOptions: UiSelectOption[] = [
             :key="e.tag"
             class="engrow"
           >
-            • {{ e.tag }}
+            • <span :class="{ secret: addrSecretIn(e.tag) }">{{ e.tag }}</span>
             <UiBadge :text="e.type" />
             <UiBadge
               :text="pv.engineSavedForLx ? 'ждёт lx-ядро' : 'нужен движок'"

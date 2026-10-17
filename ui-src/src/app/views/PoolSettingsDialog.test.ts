@@ -117,10 +117,16 @@ describe('PoolSettingsDialog', () => {
       { name: 'nl-1', proto: 'awg', endpoint: '203.0.113.48:51820', enabled: true, active: true },
       { name: 'de-1', proto: 'vless', detail: 'tls', endpoint: '203.0.113.49:443', enabled: false },
       { name: 'jp-1', proto: 'vless', endpoint: '', enabled: true },
+      // имена с адресом (host|узел тега, IPv4 в имени) - тоже secret
+      // (слово владельца 2026-10-17: тег узла выдавал адрес мимо сокрытия)
+      { name: '203.0.113.46|moscow', proto: 'vless', endpoint: '203.0.113.46:23747', enabled: true },
+      { name: 'conf-203.0.113.47', proto: 'awg', endpoint: '203.0.113.47:49809', enabled: true },
     ] } }, [eng]);
     await vi.waitFor(() => expect(dlg.text()).toContain('Состав пула'));
     const ends = dlg.findAll('.mend');
-    expect(ends.map((e) => e.classes().includes('secret'))).toEqual([true, true, false]);
+    expect(ends.map((e) => e.classes().includes('secret'))).toEqual([true, true, false, true, true]);
+    const names = dlg.findAll('.mname');
+    expect(names.map((e) => e.classes().includes('secret'))).toEqual([false, false, false, true, true]);
     // источник подписки (vless://строки) - поле-обёртка с secret
     expect(dlg.find('.secret textarea').exists()).toBe(true);
     // цель пробы (gstatic - публичное) - инпут не внутри .secret
