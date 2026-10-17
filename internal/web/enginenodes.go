@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"mawg/internal/links"
 	"mawg/internal/singbox"
 )
 
@@ -50,7 +51,9 @@ func (s *Server) engineGroup(w http.ResponseWriter, r *http.Request, name string
 }
 
 // getPoolEngine - GET /api/v1/pools/{name}/engine: режим группы,
-// активный узел, узлы с последним замером задержки.
+// активный узел, узлы с последним замером задержки. Каждому узлу -
+// его тип и транспорт (слово владельца 2026-10-17: у подключений
+// разнобой - vless по tcp/grpc/xhttp, показывать, что это, не только пинг).
 func (s *Server) getPoolEngine(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	_, proxies, group, ok := s.engineGroup(w, r, name)
@@ -58,12 +61,25 @@ func (s *Server) getPoolEngine(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	type node struct {
-		Tag   string `json:"tag"`
-		Delay int    `json:"delay"`
+		Tag       string `json:"tag"`
+		Delay     int    `json:"delay"`
+		Type      string `json:"type,omitempty"`
+		Transport string `json:"transport,omitempty"`
+	}
+	byName := map[string]links.Node{}
+	if ns, err := s.readPoolNodes(name); err == nil {
+		for _, n := range ns {
+			byName[n.ConfName()] = n
+		}
 	}
 	nodes := make([]node, 0, len(group.All))
 	for _, tag := range group.All {
-		nodes = append(nodes, node{Tag: tag, Delay: singbox.LastDelay(proxies[tag])})
+		nd := node{Tag: tag, Delay: singbox.LastDelay(proxies[tag])}
+		if n, found := byName[strings.TrimPrefix(tag, engineGroupTag+name+"|")]; found {
+			nd.Type = strings.ToUpper(n.Type)
+			nd.Transport = strings.TrimPrefix(transportBadgeOf(n), "/")
+		}
+		nodes = append(nodes, nd)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"mode":  strings.ToLower(group.Type), // URLTest/Selector -> urltest/selector
