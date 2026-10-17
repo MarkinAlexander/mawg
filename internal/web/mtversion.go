@@ -54,6 +54,27 @@ func (s *Server) mtDnsUpstreamsCapable(ctx context.Context) bool {
 	return magitrickle.DnsUpstreamsSupported(magitrickle.ConfigVersion(data))
 }
 
+// mtDohUpstreamsCapable - умеет ли подключённый MT зашифрованные апстримы
+// каскада (форк rev11+, DoT tls:// и DoH https://). Порядок тот же:
+// живой /api/v1/version, фолбэк - configVersion дискового config.yaml.
+func (s *Server) mtDohUpstreamsCapable(ctx context.Context) bool {
+	if v, err := s.mtClient().GetVersion(ctx); err == nil && v != "" {
+		return magitrickle.DohUpstreamsSupported(v)
+	}
+	if s.backend == nil {
+		return false
+	}
+	path := s.backend.MTConfigPath()
+	if path == "" {
+		return false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	return magitrickle.DohUpstreamsSupported(magitrickle.ConfigVersion(data))
+}
+
 // mtRealVersion - версия РАБОТАЮЩЕГО бинаря MagiTrickle, а не opkg-пакета:
 // наш форк ставится поверх апстримного пакета, и «0.8.2-1» ничего не
 // говорит о ревизии. Порядок: живой GET /api/v1/version (форк rev5+),

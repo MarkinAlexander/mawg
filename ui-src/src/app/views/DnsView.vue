@@ -269,6 +269,22 @@ const probing = ref(false);
 
 const linesOf = (s: string): string[] => s.split('\n').map((x) => x.trim()).filter(Boolean);
 
+// шифрованные резолверы (MT rev11+): адрес сразу канонический, кнопка
+// дописывает строку в основные; на rev10- не показываем
+const dohCapable = computed(() => !!policy.value?.dohCapable);
+const dohPresets = [
+  { label: 'Google DoH', addr: 'https://dns.google' },
+  { label: 'Cloudflare DoH', addr: 'https://1.1.1.1/dns-query' },
+  { label: 'AdGuard DoH', addr: 'https://94.140.14.14/dns-query' },
+  { label: 'Google DoT', addr: 'tls://8.8.8.8' },
+  { label: 'Cloudflare DoT', addr: 'tls://1.1.1.1' },
+];
+function addDohPreset(addr: string): void {
+  const cur = linesOf(polPrimary.value);
+  if (!cur.includes(addr)) cur.push(addr);
+  polPrimary.value = cur.join('\n');
+}
+
 async function loadPolicy(): Promise<void> {
   try {
     policy.value = await api<DnsPolicyRes>('GET', '/dns/policy');
@@ -291,6 +307,20 @@ const tunnelOptions = computed<UiSelectOption[]>(() => [
 
 const composedText = computed(() => (policy.value?.composed || []).join(' → '));
 const activeText = computed(() => (policy.value?.active || []).join(' → '));
+
+// «Сохранить и применить» доступна только после правок: без изменений
+// кнопка недоступна (слово владельца 2026-10-18: «просто так доступна,
+// хотя я ничего не правил, это не логично»)
+const polDirty = computed(() => {
+  const p = policy.value?.policy;
+  if (!p) return false;
+  return polEnabled.value !== !!p.enabled
+    || polPrimary.value !== (p.primary || []).join('\n')
+    || polTunnel.value !== (p.tunnel || '')
+    || polFallback.value !== (p.fallback || []).join('\n')
+    || polYandex.value !== !!p.yandex
+    || polProvider.value !== !!p.provider;
+});
 
 async function applyPolicy(): Promise<void> {
   const body = {
@@ -657,9 +687,25 @@ async function probePolicy(): Promise<void> {
           label="Уровень 1 (L1) - основные серверы"
           :rows="2"
           mono
-          placeholder="8.8.8.8"
+          placeholder="8.8.8.8&#10;tls://1.1.1.1 · https://dns.google"
         />
-        <UiHelp text="Первые в цепочке - их роутер пробует в первую очередь. По одному адресу на строку; порт можно не указывать (подставится стандартный 53)." />
+        <UiHelp text="Первые в цепочке - их роутер пробует в первую очередь. По одному адресу на строку; порт можно не указывать (подставится стандартный 53). Шифрованные серверы: DoT - tls://адрес (порт 853), DoH - https://адрес/dns-query (порт 443) - требуют MT 0.8.2-rev11+." />
+      </div>
+      <div
+        v-if="dohCapable"
+        class="hrow"
+      >
+        <span class="muted">Добавить шифрованный:</span>
+        <button
+          v-for="p in dohPresets"
+          :key="p.addr"
+          type="button"
+          class="dohpreset"
+          @click="addDohPreset(p.addr)"
+        >
+          {{ p.label }}
+        </button>
+        <UiHelp text="Кнопки дописывают готовый адрес в основные серверы. DoH/DoT - DNS поверх TLS: подменить или подсмотреть ответы на пути нельзя; сами запросы к серверу можно пустить через туннель (уровень L2)." />
       </div>
       <UiSelect
         v-model="polTunnel"
@@ -675,7 +721,7 @@ async function probePolicy(): Promise<void> {
           mono
           placeholder="1.1.1.1:53"
         />
-        <UiHelp text="Независимые серверы в запас: включаются, когда основные недоступны и напрямую, и через туннель." />
+        <UiHelp text="Независимые серверы в запас: включаются, когда основные недоступны и напрямую, и через туннель. Формат адресов тот же, включая tls:// и https://." />
       </div>
       <div class="hrow">
         <UiSwitch
@@ -710,6 +756,8 @@ async function probePolicy(): Promise<void> {
       <div class="dnsactions">
         <UiButton
           :busy="polBusy"
+          :disabled="!polDirty"
+          tooltip="становится доступной после правки любого уровня"
           @click="applyPolicy"
         >
           Сохранить и применить
@@ -752,6 +800,18 @@ async function probePolicy(): Promise<void> {
 </template>
 
 <style scoped>
+.dohpreset {
+  border: 1px solid var(--border, #3a3f4a);
+  background: transparent;
+  color: inherit;
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.dohpreset:hover {
+  border-color: var(--accent, #4a8fd4);
+}
 .dnsactions {
   display: flex;
   gap: 8px;
