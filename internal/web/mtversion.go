@@ -3,9 +3,11 @@ package web
 import (
 	"context"
 	"os"
-	"strings"
+	"strconv"
+	"time"
 
 	"mawg/internal/magitrickle"
+	"mawg/internal/mtinstall"
 	"mawg/internal/provision"
 )
 
@@ -98,11 +100,29 @@ func (s *Server) mtRealVersion(ctx context.Context) string {
 	return magitrickle.ConfigVersion(data)
 }
 
+// mtLatestRelease - последний релиз mawg-форка MT для кнопки «обновить»
+// (кэш 10 минут; оффлайн/ошибка = nil, кнопки не будет). Подмена для тестов.
+var mtLatestRelease = func(ctx context.Context) *mtinstall.Release {
+	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	rel, err := mtinstall.LatestRelease(cctx)
+	if err != nil {
+		return nil
+	}
+	return rel
+}
+
 // enrichMagitrickleVersion - в системной проверке показываем ревизию
 // бинаря, а не пакета: «0.8.2-rev4-mawgfix2 (пакет 0.8.2-1)» сразу видно,
 // что стоит форк. Ревизию не определили - честная пометка. Стоит апстримный
 // бинарь (без rev) - предлагаем обновление до mawg-форка пакетом из релиза.
+// Форк старше последнего релиза - кнопка «обновить до revN» (слово
+// владельца 2026-10-18: «тут тоже нельзя обновить MT с гитхаба»).
 func (s *Server) enrichMagitrickleVersion(items []provision.Item) {
+	latestRev := 0
+	if rel := mtLatestRelease(context.Background()); rel != nil {
+		latestRev = magitrickle.RevOf(rel.TagName)
+	}
 	for i := range items {
 		if items[i].ID != "magitrickle" || !items[i].Installed {
 			continue
@@ -114,10 +134,16 @@ func (s *Server) enrichMagitrickleVersion(items []provision.Item) {
 			} else {
 				items[i].Version = v
 			}
-			if !strings.Contains(v, "rev") {
+			cur := magitrickle.RevOf(v)
+			switch {
+			case cur == 0:
 				items[i].Action = provision.MtForkAction
 				items[i].ActionLabel = "обновить до mawg-форка"
 				items[i].Confirm = "Стоит MagiTrickle без ревизии форка (" + v + "): источники групп и API каскада DNS недоступны. mawg установит пакет mawg-форка из релиза GitHub штатным менеджером пакетов; конфиг сохраняется, группы перезапустятся."
+			case latestRev > cur:
+				items[i].Action = provision.MtForkAction
+				items[i].ActionLabel = "обновить до rev" + strconv.Itoa(latestRev)
+				items[i].Confirm = "Вышел релиз mawg-форка rev" + strconv.Itoa(latestRev) + " (установлена rev" + strconv.Itoa(cur) + "). mawg скачает пакет из GitHub и обновит штатным менеджером пакетов; конфиг и группы сохраняются, служба перезапустится."
 			}
 		} else {
 			items[i].Note = "показана версия пакета; ревизия бинаря не определена (конфиг ещё не сохранялся этим бинарем)"

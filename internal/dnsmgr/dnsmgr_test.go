@@ -139,7 +139,8 @@ func TestCollectKeenetic(t *testing.T) {
 	calls := 0
 	r := func(script string, timeout time.Duration) (string, error) {
 		calls++
-		if strings.Contains(script, "MT_DNSOR") {
+		// полный путь: /bin/sh прошивки не видит /opt/sbin в PATH (кейс Кинетика)
+		if strings.Contains(script, "/opt/sbin/iptables -t nat -S MT_DNSOR") {
 			return "3\n", nil
 		}
 		t.Fatalf("неожиданный скрипт на keenetic: %s", script)

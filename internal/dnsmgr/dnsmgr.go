@@ -93,7 +93,10 @@ func Collect(r Runner, mtConfigPath string) (State, error) {
 // дискового конфига; Dnsmasq остаётся нулевым.
 func CollectKeenetic(r Runner, mtConfigPath string) (State, error) {
 	st := State{Platform: PlatformKeenetic}
-	n, _ := r(`iptables -t nat -S MT_DNSOR 2>/dev/null | wc -l`, 10*time.Second)
+	// iptables живёт в Entware (/opt/sbin), а /bin/sh прошивки не видит
+	// /opt в PATH - только полный путь (живой кейс Кинетика: цепь жива,
+	// детект говорил «не найдено»)
+	n, _ := r(`/opt/sbin/iptables -t nat -S MT_DNSOR 2>/dev/null | wc -l`, 10*time.Second)
 	st.MT.Remap53 = strings.TrimSpace(n) != "0"
 	if mtConfigPath != "" {
 		if data, err := os.ReadFile(mtConfigPath); err == nil {
