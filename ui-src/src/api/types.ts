@@ -407,6 +407,7 @@ export interface TunInfo {
 export interface EngineInfo {
   available?: boolean
   running?: boolean
+  api?: boolean
   version?: string
   mode?: string
   fragment?: string

@@ -195,7 +195,14 @@ const engine = computed(() => status.data?.engine);
 const engineInfo = computed(() => {
   const eng = engine.value;
   if (!eng || !eng.available) return 'движок не найден';
-  const parts = [eng.running ? 'ядро работает' : 'ядро не отвечает'];
+  // честные состояния (слово владельца 2026-10-17): «не запущено» -
+  // процесса нет; «запущено, но не отвечает» - API молчит
+  const state = !eng.running
+    ? 'ядро не запущено'
+    : eng.api === false
+      ? 'ядро запущено, но не отвечает'
+      : 'ядро работает';
+  const parts = [state];
   if (eng.mode === 'shared' && eng.fragment) parts.push(eng.fragment);
   return parts.join(' | ');
 });
