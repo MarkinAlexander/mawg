@@ -1,9 +1,26 @@
 # mawg - Multi-AWG Changer
 
-Менеджер WireGuard/AmneziaWG интерфейсов с ротацией конфигов для роутеров
-Keenetic/NetCraze (прошивка 5.1+, Entware; NetCraze - продолжение Keenetic OS,
-совместимо) и OpenWrt (24.10+). Один бинарник, веб-интерфейс и REST API
+Менеджер VPN-подключений для роутеров Keenetic/NetCraze (прошивка 5.1+,
+Entware) и OpenWrt (24.10+). Один бинарник, веб-интерфейс и REST API
 на порту 8090.
+
+## Поддерживаемые протоколы
+
+- **WireGuard** и **AmneziaWG** (1.x/2.x/3.x, включая I-пакеты-обфускацию) -
+  нативными интерфейсами роутера: максимальная скорость, никакой лишней
+  прослойки. Amnezia обменивает ключ `vpn://` на AWG-конфиги сама.
+- **VLESS** (с TLS и REALITY, отпечаток uTLS), **VMess** (обе формы ссылки:
+  контейнер v2rayN base64-JSON и legacy-cleartext; шифры канала sing-box -
+  auto/none/zero/aes-128-cfb/aes-128-gcm/chacha20-poly1305), **Trojan** -
+  исполняются движком sing-box в выделенном tun-интерфейсе. Транспорты:
+  ws, grpc, xhttp, httpupgrade, http/h2.
+- **Подписки**: вставьте ссылку или текст со списком узлов (vless://,
+  vmess://, trojan://, wireguard://, amneziawg:// вперемешку) - mawg
+  разоберёт всё разом и разложит по типам: WG/AWG станут нативными
+  конфигами, прокси-узлы уедут в пул движка.
+
+Прокси-узлам нужен движок sing-box (см. «Движок sing-box») - оригинальное
+ядро, если уже стоит, или sing-box-lx одной кнопкой из панели.
 
 ## Быстрая установка
 
@@ -26,6 +43,20 @@ AmneziaWG до 3.1 на OpenWrt).
 Пакетный менеджер определяется автоматически: `opkg` на OpenWrt 24.10
 и `apk` на OpenWrt 25.x. Поддержка Keenetic/Entware с `opkg` сохраняется.
 
+## Удаление
+
+Если проект не подошёл - одна команда останавливает mawg и снимает его
+(данные настроек и пулов сохраняются):
+
+    curl -o /tmp/mawg.sh https://raw.githubusercontent.com/MarkinAlexander/mawg/main/install.sh && sh /tmp/mawg.sh -r
+
+Флаг `--purge` вместо `-r` удаляет и каталог данных (`/etc/mawg` на
+OpenWrt, `/opt/etc/mawg` на Keenetic) - включая идентичности Amnezia
+Free/Premium. MagiTrickle и ядро sing-box при этом не трогаются (они
+ставятся пакетами - снимаются своим менеджером: `opkg remove magitrickle`
+или `apk del magitrickle`). Группы MagiTrickle, созданные из mawg,
+остаются в конфиге MT и продолжают работать с их текущими интерфейсами.
+
 ## Что умеет
 
 - несколько именованных пулов-интерфейсов (proton, warp, ...) с фиксированными именами
@@ -45,18 +76,38 @@ AmneziaWG до 3.1 на OpenWrt).
   свежий handshake засчитывается даже при потере icmp
 - ручные включение/выключение пула, настройки пула и переименование (Keenetic)
   из веб-интерфейса
-- панель Правила: полный CRUD групп и правил MagiTrickle из нашего интерфейса -
+- панель Правила: полный CRUD групп и правил MagiTrickle из веб-панели -
   цвета групп, редактирование, drag-and-drop реордеринг, 10 шаблонов списков
   (Telegram, Meta, Discord, Twitter/X, TikTok, Roblox, Google, Porn, Anime,
   GeoBlock)
 - панель Система: детект и установка зависимостей (WireGuard, AmneziaWG 3.1,
   MagiTrickle, компонент WireGuard на Keenetic) по подтверждению
-- пулы из ссылок и подписок: vless://, trojan://, wireguard://, amneziawg://
-  и Amnezia vpn:// - вставляются в «+ интерфейс» или подаются через CLI;
-  транспорты ws/grpc/xhttp/httpupgrade, TLS и REALITY с uTLS-отпечатком
-- движок sing-box для прокси-протоколов: vless/trojan работают в tun-интерфейсе
-  движка, WireGuard/AmneziaWG - нативными интерфейсами; годится уже
-  установленное оригинальное ядро или наше ядро sing-box-lx (см. ниже)
+- пулы из ссылок и подписок: vless://, vmess://, trojan://, wireguard://,
+  amneziawg:// и Amnezia vpn:// - вставляются в «+ интерфейс» или подаются
+  через CLI; транспорты ws/grpc/xhttp/httpupgrade, TLS и REALITY с
+  uTLS-отпечатком
+- движок sing-box для прокси-протоколов: vless/vmess/trojan работают в
+  tun-интерфейсе движка, WireGuard/AmneziaWG - нативными интерфейсами;
+  годится уже установленное оригинальное ядро или ядро sing-box-lx
+  (см. ниже)
+- режимы работы с подпиской: лучший пинг (автовыбор узла с минимальной
+  задержкой), ручной выбор узла (селектор в настройках пула, применяется
+  сразу и переживает обновление подписки), ротация по таймеру (строго на
+  рабочие узлы); любой узел можно исключить тумблером - в конфиг движка
+  он не попадает
+- DNS: каскад серверов с автопереключением по содержимому ответа (канарейка
+  спуфа), уровни L1-L5, шифрованные DoT/DoH-серверы, туннелирование DNS
+  через пул - см. раздел «DNS» ниже
+- приватный режим (глаз в шапке): адреса серверов, ключи и ссылки в панели
+  размываются - показывать по клику
+- резервные копии: полный снимок настроек панели и MagiTrickle в один
+  tar.gz, скачивание/восстановление из веб-интерфейса
+- журнал событий с фильтрами, поиск по всем страницам настроек,
+  подсказки [?] у каждого термина, мобильная версия с жестами
+- авторизация панели (логин/пароль), ограничение доступа по IP/подсетям,
+  смена порта и адреса прослушивания
+- самообновление: `mawg update` или кнопкой в панели - качает свежий
+  релиз с GitHub и переустанавливает бинарник
 - логи только в RAM с ограничением 256 КБ, флеш не изнашивается
 
 ## Как устроена ротация
@@ -191,9 +242,10 @@ v2rayN (base64 JSON) и legacy-cleartext; шифры канала - набор s
 шифр уводится на auto.
 
 Узлы WireGuard/AmneziaWG становятся обычными конфигами пула (нативный
-интерфейс), прокси-узлы (vless/trojan) живут в tun-интерфейсе движка sing-box -
-им нужен установленный sing-box (см. «Движок sing-box» ниже). Ссылка Amnezia
-vpn:// обменивается на AWG-конфиги у gateway (см. Amnezia Free/Premium ниже).
+интерфейс), прокси-узлы (vless/vmess/trojan) живут в tun-интерфейсе
+движка sing-box - им нужен установленный sing-box (см. «Движок sing-box»
+ниже). Ссылка Amnezia vpn:// обменивается на AWG-конфиги у gateway (см.
+Amnezia Free/Premium ниже).
 
 Те же разбор и создание доступны по REST (`POST /api/v1/links/inspect`,
 `POST /api/v1/pools/from-source`) и из консоли:
@@ -217,6 +269,36 @@ apk add), затем включает и запускает службу. Фор
 версии бинаря (`0.8.2-rev10-mawg-dev`); версия без `rev` = апстрим, панель
 предложит обновление. Пакет обновляется той же кнопкой при выходе нового
 релиза форка.
+
+## DNS: перехват, каскад, защита от подмены
+
+Для маршрутизации по доменам MagiTrickle перехватывает DNS локальной сети
+(dnsmasq роутера направляется на MT). mawg управляет тем, КУДА MagiTrickle
+дальше несёт запросы, и следит, чтобы ответы не подменялись:
+
+- **Цепочка серверов (L1-L5)**: основные → основные через туннель →
+  запасные → Яндекс → провайдер. Переключение автоматическое: сервер не
+  отвечает или врёт - запросы уходят на следующий, «оживет» - роутер
+  вернётся к нему сам.
+- **Канарейка спуфа**: здоровье сервера проверяется не фактом ответа, а
+  содержанием - контрольный запрос к deb.torproject.org сверяется с
+  эталонным набором адресов. «Живой» сервер, отдающий подмену (яд),
+  признаётся мёртвым - обычный пинг такого не ловит.
+- **Шифрованные серверы**: уровни могут быть DoT (`tls://1.1.1.1`) и DoH
+  (`https://dns.google`) - ответы по пути не подменить и не подсмотреть.
+  Готовые кнопки: Google, Cloudflare, AdGuard.
+- **DNS через туннель**: уровень L2 направляет запросы к публичным
+  резолверам внутри выбранного VPN-пула (в туннель попадают и адреса
+  DoT/DoH-серверов) - заблокировать DNS снаружи становится нельзя.
+- **Проверка**: кнопка «Проверить все уровни» прогоняет канарейку через
+  каждый сервер своим транспортом и показывает вердикт и задержку;
+  карточка «Проверка DNS и сети» на Обзоре - матрицей по всем путям
+  (UDP/DoT/DoH, «интернет жив?» мимо DNS).
+
+На Keenetic собственные серверы DNS роутера (DoH/DoT, настроенные в вебе
+Keenetic) mawg не меняет - только показывает с проверкой каждого.
+Переключение dnsmasq OpenWrt на MT и обратно - кнопкой в DNS-разделе,
+с бэкапом настройки.
 
 ## Движок sing-box
 
@@ -399,20 +481,22 @@ MagiTrickle должен быть установлен и запущен на п
 
 ## REST API
 
-База: http://роутер:8090/api/v1
+База: http://роутер:8090/api/v1 (полный список - в коде маршрутизатора;
+основное):
 
     GET  /status                          состояние пулов
     GET  /slots                           слоты Wireguard (Keenetic)
     GET  /ifaces                          интерфейсы системы с режимами и статусами проб
     POST /ifaces/{device}/mode            {mode: external|hidden}
     PUT  /ifaces/{device}/probe           проба внешнего {type,target,maxRttMs}, пустой target = убрать
-    GET  /wanprobe                        проба канала провайдера
-    PUT  /wanprobe                        {type,target,maxRttMs}, пустой target = выключить
+    GET  /wanprobe | PUT /wanprobe        проба канала провайдера (пустой target = выключить)
     GET  /events                          журнал событий
     POST /pools                           создать пул {name, keeneticSlot|openwrtProto, fallback, probeHost}
     POST /links/inspect                   разобрать ссылку/подписку в план (узлы, движок, дубликаты)
     POST /pools/from-source               создать пул из ссылки/подписки {name, source, ...}
-    PUT  /pools/{name}                    изменить настройки (проба: IP или http(s) URL, порог maxRttMs)
+    GET  /subs | POST /subs/{name}/refresh   подписки пулов, обновление с источника
+    PUT  /pools/{name}                    изменить настройки (проба: IP или http(s) URL, порог maxRttMs,
+                                        режим подписки groupMode: urltest|selector|rotate, rotateSec)
     DELETE /pools/{name}                  удалить пул
     POST /pools/{name}/rename             переименовать (Keenetic) {name}
     POST /pools/{name}/configs            загрузить конфиги (multipart, .conf/.zip)
@@ -426,10 +510,20 @@ MagiTrickle должен быть установлен и запущен на п
     POST /pools/{name}/check              проверить сейчас
     POST /pools/{name}/activate           {file} применить конкретный конфиг
     POST /pools/{name}/enable|disable     включить/выключить пул вручную
-    GET  /bundles                         наборы интерфейсов
-    POST /bundles                         создать {name, members, groups}
-    PUT  /bundles/{name}                  изменить
-    DELETE /bundles/{name}                удалить
+    GET  /pools/{name}/members            состав пула (имена узлов, адреса скрыты)
+    GET  /pools/{name}/engine             узлы движкового пула: типы, транспорты, задержки
+    PUT  /pools/{name}/engine/select      {tag} выбрать узел (режим selector)
+    POST /pools/{name}/engine/retest      перемерить задержки всех узлов
+    POST /pools/{name}/engine/toggle      {tag} исключить/вернуть узел
+    GET  /bundles | POST /bundles | PUT /bundles/{name} | DELETE /bundles/{name}
+                                       наборы интерфейсов
+    GET  /dns/state                       кто сейчас обслуживает DNS (dnsmasq/MT, апстримы)
+    POST /dns/dnsmasq                     направить DNS через MT / вернуть как было
+    GET  /dns/upstreams                   живой каскад: серверы, здоровье, активный
+    GET  /dns/policy | PUT /dns/policy    политика L1-L5 (уровни, туннель, DoT/DoH)
+    POST /dns/policy/probe                канарейка по каждому уровню
+    GET  /dns/probe                       матрица проверки DNS и сети
+    GET  /dns/keenetic/own                собственные серверы DNS Keenetic с пробой
     GET  /magitrickle                     доступность MagiTrickle
     GET  /mt/groups                       группы с правилами
     POST /mt/groups                       создать группу {name, interface, color}
@@ -441,11 +535,18 @@ MagiTrickle должен быть установлен и запущен на п
     POST /mt/groups/{id}/rules/order      порядок правил {ids: [...]}
     POST /mt/groups/{id}/rules/{rid}/enable     {enable: bool}
     DELETE /mt/groups/{id}/rules/{rid}    удалить правило
+    POST /mt/groups/import                импорт групп/правил текстом
     GET  /mt/interfaces                   известные интерфейсы
     GET  /mt/presets                      шаблоны правил
     POST /mt/presets/{id}/apply           применить шаблон {interface}
+    GET  /mt/backups | POST /mt/backup    резервные копии настроек MT
+    GET  /mt/backups/{file} | POST /mt/restore    скачать / восстановить
     GET  /system/check                    проверить зависимости
-    POST /system/install                  установить {id} (по подтверждению)
+    POST /system/install                  установить {id} (по подтверждению; magitrickle
+                                       ставится пакетом из релиза mawg-форка)
+    GET  /system/update/check             есть ли свежий релиз mawg
+    POST /system/update/run               обновить mawg с GitHub
+    POST /auth/login | /auth/logout | /auth/password    авторизация панели
 
 ## Сборка из исходников
 
