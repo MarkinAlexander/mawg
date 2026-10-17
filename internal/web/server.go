@@ -567,7 +567,7 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 			tuns = append(tuns, entry)
 		}
 		out.Engine = map[string]any{
-			"available": true, "running": st.Running, "version": st.Version,
+			"available": true, "running": st.Running, "api": st.API, "version": st.Version,
 			"lx": st.LX, "bin": st.Bin, "mixedPort": st.Mixed, "clashPort": st.Clash,
 			"mode": st.Mode, "fragment": st.Fragment, "cacheFile": st.CacheFile, "tuns": tuns,
 		}
