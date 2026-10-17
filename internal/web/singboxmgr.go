@@ -35,7 +35,7 @@ func (s *Server) sb() (*singbox.Manager, error) {
 	if sbMgr != nil && sbMode == mode {
 		return sbMgr, nil
 	}
-	cfg := singbox.RunConfig{Mode: mode}
+	cfg := singbox.RunConfig{Mode: mode, WebPort: s.store.Settings().WebPort}
 	if mode == "shared" {
 		cfg.SharedDir, cfg.SharedInit = s.sharedPaths()
 	}
@@ -262,7 +262,14 @@ func (s *Server) applyEngine() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return mgr.Apply(specs)
+	skipped, err := mgr.Apply(specs)
+	// что mawg поправил в чужом config.json (clash_api, занятые порты) -
+	// в журнал независимо от исхода Apply: правка чужого файла уже
+	// произошла, владелец должен её видеть даже при позднем отказе
+	if note := mgr.PatchNote(); note != "" {
+		s.store.LogEvent("singbox", "applied", note)
+	}
+	return skipped, err
 }
 
 func (s *Server) readPoolNodes(name string) ([]links.Node, error) {
