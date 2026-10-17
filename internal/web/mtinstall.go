@@ -34,15 +34,25 @@ func (s *Server) installMagitrickle(w http.ResponseWriter, r *http.Request) {
 	}
 	s.sysCache.reset()
 
-	// служба стартует секунды: опрашиваем версию, чтобы ответить живой, а не пакетной
+	// служба стартует секунды, а procd stop не ждёт смерти старого
+	// процесса: первые ответы может давать ещё живой СТАРЫЙ бинарь -
+	// версию, равную прежней, не принимаем, пока окно не кончится
+	// (одинаковая версия в конце окна = честное предупреждение)
 	version := ""
+	lastSeen := ""
 	deadline := time.Now().Add(mtVersionWait)
 	for time.Now().Before(deadline) {
 		if v, verr := s.mtClient().GetVersion(ctx); verr == nil && v != "" {
-			version = v
-			break
+			lastSeen = v
+			if prev == "" || v != prev {
+				version = v
+				break
+			}
 		}
 		time.Sleep(500 * time.Millisecond)
+	}
+	if version == "" {
+		version = lastSeen
 	}
 	msg := "установлен MagiTrickle " + res.Tag + " (" + res.Asset + ")"
 	warn := ""
