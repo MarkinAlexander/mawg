@@ -203,6 +203,21 @@ vpn:// обменивается на AWG-конфиги у gateway (см. Amnezi
     mawg links amnezia "vpn://..."   # обменять ключ Amnezia на AWG-узлы
                                      # (опционально -via socks5://...)
 
+## Установка MagiTrickle из панели
+
+Если MagiTrickle не установлен (или стоит апстримный бинарь без ревизии
+форка), mawg ставит его сам: в «Системе» у пункта MagiTrickle кнопка
+установки/обновления. mawg определяет платформу и архитектуру (opkg
+print-architecture / apk), скачивает пакет mawg-форка
+(`magitrickle_<ver>_<платформа>_<таргет>.ipk`/`.apk`) из релиза
+[MarkinAlexander/magitrickle](https://github.com/MarkinAlexander/magitrickle/releases)
+и ставит штатным менеджером пакетов с зависимостями (opkg install /
+apk add), затем включает и запускает службу. Форк нужен для источников
+групп (sources), OUTPUT-jump роутера и API каскада DNS - ревизия видна в
+версии бинаря (`0.8.2-rev10-mawg-dev`); версия без `rev` = апстрим, панель
+предложит обновление. Пакет обновляется той же кнопкой при выходе нового
+релиза форка.
+
 ## Движок sing-box
 
 Прокси-протоколы (vless, trojan) исполняются движком sing-box: mawg собирает
