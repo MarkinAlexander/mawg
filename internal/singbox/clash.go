@@ -96,12 +96,14 @@ func ClashSelect(ctx context.Context, base int, group, name string) error {
 
 // ClashGroupDelay - перемерить urltest-группу сейчас
 // (GET /group/{name}/delay?url=&timeout=); возвращает задержки по узлам.
+// Суффикс /delay обязателен: без него маршрут уходит в «инфо группы»,
+// ответ-объект не ложится в карту задержек (живой урок 0.42, 2026-10-17).
 func ClashGroupDelay(ctx context.Context, base int, group, testURL string, timeout time.Duration) (map[string]int, error) {
 	q := url.Values{}
 	q.Set("url", testURL)
 	q.Set("timeout", strconv.Itoa(int(timeout.Milliseconds())))
 	var out map[string]int
-	if err := clashCall(ctx, base, http.MethodGet, "/group/"+url.PathEscape(group)+"?"+q.Encode(), nil, &out); err != nil {
+	if err := clashCall(ctx, base, http.MethodGet, "/group/"+url.PathEscape(group)+"/delay?"+q.Encode(), nil, &out); err != nil {
 		return nil, err
 	}
 	return out, nil
