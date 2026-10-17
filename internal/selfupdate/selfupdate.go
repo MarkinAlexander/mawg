@@ -55,15 +55,22 @@ func Latest(ctx context.Context) (Release, error) {
 	return rel, nil
 }
 
-func newer(current, latest string) bool {
-	c := strings.TrimPrefix(strings.TrimSpace(current), "v")
-	l := strings.TrimPrefix(strings.TrimSpace(latest), "v")
-	if c == "" || c == "dev" || l == "" || c == l {
-		return false
+// verBase убирает суффикс дев-сборки (v0.6.11-dev39, git-describe
+// 0.6.12-49-gabc): обновление сравнивает базовые тройки. Слово владельца
+// 2026-10-18: дев-версии обязаны уметь обновляться на релизы - так он
+// проверяет механизм автообновления (дев 6.11 -> релиз 6.12 = обновление;
+// дев 6.11 -> релиз 6.11 = нет, дев свежее своего релиза).
+func verBase(v string) string {
+	if i := strings.IndexByte(v, '-'); i >= 0 {
+		return v[:i]
 	}
-	// дев-сборки (v0.6.10-devN) сами на релизы не обновляются: суффикс
-	// существует ровно для того, чтобы релиз случайно не затёр дев-фичи
-	if strings.Contains(c, "-") {
+	return v
+}
+
+func newer(current, latest string) bool {
+	c := verBase(strings.TrimPrefix(strings.TrimSpace(current), "v"))
+	l := verBase(strings.TrimPrefix(strings.TrimSpace(latest), "v"))
+	if c == "" || c == "dev" || l == "" || c == l {
 		return false
 	}
 	var cc, ll [3]int
