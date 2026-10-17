@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"os"
+	"strings"
 
 	"mawg/internal/magitrickle"
 	"mawg/internal/provision"
@@ -78,7 +79,8 @@ func (s *Server) mtRealVersion(ctx context.Context) string {
 
 // enrichMagitrickleVersion - в системной проверке показываем ревизию
 // бинаря, а не пакета: «0.8.2-rev4-mawgfix2 (пакет 0.8.2-1)» сразу видно,
-// что стоит форк. Ревизию не определили - честная пометка.
+// что стоит форк. Ревизию не определили - честная пометка. Стоит апстримный
+// бинарь (без rev) - предлагаем обновление до mawg-форка пакетом из релиза.
 func (s *Server) enrichMagitrickleVersion(items []provision.Item) {
 	for i := range items {
 		if items[i].ID != "magitrickle" || !items[i].Installed {
@@ -90,6 +92,11 @@ func (s *Server) enrichMagitrickleVersion(items []provision.Item) {
 				items[i].Version = v + " (пакет " + pkg + ")"
 			} else {
 				items[i].Version = v
+			}
+			if !strings.Contains(v, "rev") {
+				items[i].Action = provision.MtForkAction
+				items[i].ActionLabel = "обновить до mawg-форка"
+				items[i].Confirm = "Стоит MagiTrickle без ревизии форка (" + v + "): источники групп и API каскада DNS недоступны. mawg установит пакет mawg-форка из релиза GitHub штатным менеджером пакетов; конфиг сохраняется, группы перезапустятся."
 			}
 		} else {
 			items[i].Note = "показана версия пакета; ревизия бинаря не определена (конфиг ещё не сохранялся этим бинарем)"
