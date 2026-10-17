@@ -24,6 +24,48 @@ func mustNodes(t *testing.T, src string) []links.Node {
 	return res.Nodes
 }
 
+func TestVmessOutbound(t *testing.T) {
+	spec := PoolSpec{Name: "vm", Tun: "tun1", TunIP: "172.19.1.1/30", MixedPort: 2282,
+		ProbeTarget: "http://www.gstatic.com/generate_204",
+		Nodes: []links.Node{{
+			Type: "vmess", Tag: "sub|vm-ws", Host: "1.2.3.4", Port: 8443,
+			UUID: "u-1", Security: "chacha20-poly1305", AlterId: 8,
+			Transport: "ws", Path: "/ws", HeaderHost: "cdn.ex.com",
+			TLS: &links.TLS{Security: "tls", SNI: "ex.com"},
+		}},
+	}
+	data, _, err := BuildConfig([]PoolSpec{spec}, Params{ClashPort: 2291})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg struct {
+		Outbounds []map[string]any `json:"outbounds"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	var ob map[string]any
+	for _, o := range cfg.Outbounds {
+		if o["tag"] == "mawg-vm|vm-ws" {
+			ob = o
+		}
+	}
+	if ob == nil {
+		t.Fatal("vmess-outbound не построен")
+	}
+	if ob["type"] != "vmess" || ob["security"] != "chacha20-poly1305" || ob["alter_id"].(float64) != 8 {
+		t.Fatalf("vmess-поля: %v", ob)
+	}
+	tr, _ := ob["transport"].(map[string]any)
+	if tr["type"] != "ws" || tr["path"] != "/ws" {
+		t.Fatalf("транспорт: %v", tr)
+	}
+	tls, _ := ob["tls"].(map[string]any)
+	if tls["server_name"] != "ex.com" {
+		t.Fatalf("tls: %v", tls)
+	}
+}
+
 func TestBuildConfigUpstream(t *testing.T) {
 	spec := PoolSpec{Name: "demo", Tun: "tun1", TunIP: TuneIP(1), MixedPort: 2282, GroupMode: "selector", Nodes: mustNodes(t, fakeVless)}
 	data, skipped, err := BuildConfig([]PoolSpec{spec}, Params{ClashPort: 2291})

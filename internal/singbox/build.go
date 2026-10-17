@@ -160,7 +160,7 @@ func EligibleNodes(nodes []links.Node, lx bool) (ok []links.Node, reasons []stri
 func nodeOutbound(poolTag string, n links.Node, lx bool) (map[string]any, bool, string) {
 	skip := func(reason string) (map[string]any, bool, string) { return nil, false, reason }
 	switch n.Type {
-	case "vless", "trojan":
+	case "vless", "trojan", "vmess":
 	default:
 		return skip(fmt.Sprintf("%s: тип %s идёт нативным пулом", n.Tag, n.Type))
 	}
@@ -184,6 +184,16 @@ func nodeOutbound(poolTag string, n links.Node, lx bool) (map[string]any, bool, 
 		out["packet_encoding"] = "xudp"
 		if n.Flow != "" && n.Transport == "" {
 			out["flow"] = n.Flow
+		}
+	}
+	if n.Type == "vmess" {
+		security := n.Security
+		if security == "" {
+			security = "auto"
+		}
+		out["security"] = security
+		if n.AlterId > 0 {
+			out["alter_id"] = n.AlterId
 		}
 	}
 	if t := n.TLS; t != nil {
@@ -218,6 +228,15 @@ func nodeOutbound(poolTag string, n links.Node, lx bool) (map[string]any, bool, 
 		out["transport"] = tr
 	case "grpc":
 		out["transport"] = map[string]any{"type": "grpc", "service_name": n.ServiceName}
+	case "http":
+		tr := map[string]any{"type": "http"}
+		if n.Path != "" {
+			tr["path"] = n.Path
+		}
+		if n.HeaderHost != "" {
+			tr["host"] = []string{n.HeaderHost}
+		}
+		out["transport"] = tr
 	case "xhttp":
 		if !lx {
 			return skip(fmt.Sprintf("%s: транспорт xhttp требует движок lx", n.Tag))

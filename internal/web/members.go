@@ -133,6 +133,8 @@ func transportBadgeOf(n links.Node) string {
 		return "/xhttp"
 	case "httpupgrade":
 		return "/httpupgrade"
+	case "http":
+		return "/h2"
 	default:
 		return "/" + n.Transport
 	}
