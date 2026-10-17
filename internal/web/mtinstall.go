@@ -19,6 +19,10 @@ var mtVersionWait = 15 * time.Second
 // mawg-форка: пункт «MagiTrickle» в Системе (маркер действия mt-fork).
 // После установки ждём живой /api/v1/version - служба стартует не мгновенно.
 func (s *Server) installMagitrickle(w http.ResponseWriter, r *http.Request) {
+	prev := ""
+	if v, err := s.mtClient().GetVersion(r.Context()); err == nil {
+		prev = v
+	}
 	s.store.LogEvent("system", "mtinstall", "установка MagiTrickle из релиза форка "+mtinstall.Repo)
 	ctx, cancel := context.WithTimeout(r.Context(), 290*time.Second)
 	defer cancel()
@@ -41,13 +45,25 @@ func (s *Server) installMagitrickle(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(500 * time.Millisecond)
 	}
 	msg := "установлен MagiTrickle " + res.Tag + " (" + res.Asset + ")"
+	warn := ""
+	switch {
+	case version == "":
+		msg += "; версия службы пока не прочитана (проверка зависимостей обновится)"
+		warn = "версия службы не прочитана: MT может не стартовать с новым пакетом - смотрите проверку зависимостей и журнал роутера"
+	case prev != "" && version == prev:
+		warn = "служба отвечает прежней версией (" + prev + "): пакет установлен, но бинарь мог не замениться или служба не перезапустилась"
+	}
 	if version != "" {
 		msg += ", служба отвечает: " + version
-	} else {
-		msg += "; версия службы пока не прочитана (проверка зависимостей обновится)"
+	}
+	if warn != "" {
+		msg += "; ВНИМАНИЕ: " + warn
 	}
 	s.store.LogEvent("system", "mtinstall", msg)
 	out := map[string]any{"ok": true, "output": res.Log, "tag": res.Tag, "asset": res.Asset, "version": version}
+	if warn != "" {
+		out["warning"] = warn
+	}
 	// хуки OUTPUT-групп вернутся штатным 30-секундным SyncHooks
 	writeJSON(w, http.StatusOK, out)
 }

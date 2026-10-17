@@ -38,9 +38,10 @@ func TestSystemInstallMagitrickle(t *testing.T) {
 		t.Fatalf("status code %d", resp.StatusCode)
 	}
 	var out struct {
-		OK   bool   `json:"ok"`
-		Tag  string `json:"tag"`
-		Log  string `json:"output"`
+		OK      bool   `json:"ok"`
+		Tag     string `json:"tag"`
+		Log     string `json:"output"`
+		Warning string `json:"warning"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		t.Fatal(err)
@@ -50,6 +51,10 @@ func TestSystemInstallMagitrickle(t *testing.T) {
 	}
 	if !out.OK || out.Tag != "0.8.2-rev9" || !strings.Contains(out.Log, "запущена") {
 		t.Fatalf("ответ: %+v", out)
+	}
+	// MT в тестах не отвечает - предупреджение о непрочитанной версии обязательно
+	if !strings.Contains(out.Warning, "не прочитана") {
+		t.Fatalf("warning: %q", out.Warning)
 	}
 }
 
