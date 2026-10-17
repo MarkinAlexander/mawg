@@ -420,9 +420,9 @@ describe('PoolCard - узлы движкового пула (60-док)', () => 
     w.unmount();
   });
 
-  it('selector-режим: ⚡ у узлов, клик шлёт PUT /engine/select {node}', async () => {
+  it('selector-режим: ⚡ у узлов, клик шлёт PUT /engine/select {node}; перемер доступен всем режимам', async () => {
     const { w, f } = await openNodes({ ...enginePayload, mode: 'selector' });
-    expect(w.text()).not.toContain('Перемерить пинги');
+    expect(w.text()).toContain('Перемерить пинги');
     const pick = w.findAll('.cfgctl button').filter((b) => b.text().includes('⚡'));
     expect(pick.length).toBe(3);
     expect((pick[1].element as HTMLButtonElement).disabled).toBe(true); // now = узел-2
@@ -430,6 +430,26 @@ describe('PoolCard - узлы движкового пула (60-док)', () => 
     await vi.waitFor(() => {
       const put = f.mock.calls.find((c) => (c[0] as string).endsWith('/engine/select'));
       expect(JSON.parse(put![1]!.body as string)).toEqual({ node: 'узел-1' });
+    });
+    w.unmount();
+  });
+
+  it('тумблер узла: POST /engine/toggle, исключённый узел приглушён с бейджем', async () => {
+    const payload = {
+      ...enginePayload,
+      nodes: [...enginePayload.nodes, { tag: 'узел-4', delay: 0, type: 'VLESS', transport: 'ws', off: true }],
+    };
+    const { w, f } = await openNodes(payload);
+    const rows = w.findAll('.cfgrow');
+    expect(rows[3].classes()).toContain('dimmed');
+    expect(w.text()).toContain('исключён');
+    // включение выключенного -> POST toggle
+    const sw = w.findAllComponents(UiSwitch).filter((x) => x.props('modelValue') === false);
+    expect(sw.length).toBe(1);
+    sw[0].vm.$emit('update:model-value', true);
+    await vi.waitFor(() => {
+      const post = f.mock.calls.find((c) => (c[0] as string).endsWith('/engine/toggle'));
+      expect(JSON.parse(post![1]!.body as string)).toEqual({ node: 'узел-4' });
     });
     w.unmount();
   });

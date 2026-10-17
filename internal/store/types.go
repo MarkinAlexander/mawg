@@ -94,8 +94,14 @@ type PoolSettings struct {
 	// заводится через группу другого движкового пула (detour в sing-box).
 	EngineDetour string `json:"engineDetour,omitempty"`
 	// GroupMode - режим группы движка (60-док): "selector" - ручной выбор
-	// узла; пусто/"urltest" - лучший по пингу (авто, дефолт).
+	// узла; "rotate" - ротация по таймеру строго на рабочие узлы;
+	// пусто/"urltest" - лучший по пингу (авто, дефолт).
 	GroupMode string `json:"groupMode,omitempty"`
+	// RotateSec - интервал ротации узлов для GroupMode="rotate" (сек).
+	RotateSec int `json:"rotateSec,omitempty"`
+	// NodeOff - выключенные узлы подписки (ключ - имя узла, ConfName):
+	// в конфиг движка не попадают, переживают обновление источника.
+	NodeOff map[string]bool `json:"nodeOff,omitempty"`
 	// NativeAWG3 - free-пул поднимается нативным kmod amneziawg 3.x
 	// (OpenWrt), без движка sing-box. Служебный: задаёт web-слой при
 	// создании, в JSON настроек не пишем.

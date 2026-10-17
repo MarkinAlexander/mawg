@@ -135,6 +135,50 @@ describe('PoolSettingsDialog', () => {
     dlg.unmount();
   });
 
+  it('движковый пул: режимы подписки, селектор активного узла, интервал ротации -> PUT', async () => {
+    const eng: PoolView = {
+      ...pool, name: 'sub', device: 'tun1', slot: undefined,
+      settings: { ...pool.settings, engineMode: 'singbox', tunName: 'tun1', groupMode: 'selector', rotateSec: 120 },
+      configs: [],
+    };
+    const { dlg, f } = await makeDialog({
+      '/members': { members: [] },
+      '/engine': { mode: 'selector', groupMode: 'selector', now: 'mawg-sub|grpc', nodes: [
+        { tag: 'mawg-sub|grpc', delay: 90 },
+        { tag: 'mawg-sub|xhttp', delay: 60 },
+      ] },
+    }, [eng]);
+    await vi.waitFor(() => expect(dlg.text()).toContain('Выбор узла в подписке'));
+    // selector: выбор узла прямо в настройках, применяется сразу
+    await vi.waitFor(() => expect(dlg.text()).toContain('Активный узел'));
+    const nodeSel = dlg.findAll('.psel-btn').filter((b) => b.text().includes('grpc'));
+    expect(nodeSel.length).toBeGreaterThan(0);
+    await nodeSel[0].trigger('click');
+    await nextTick();
+    const opt = dlg.findAll('.psel-item').filter((o) => o.text().includes('xhttp'))[0]!;
+    await opt.trigger('click');
+    await vi.waitFor(() => {
+      const put = f.mock.calls.find((c) => (c[0] as string).endsWith('/engine/select'));
+      expect(JSON.parse(put![1]!.body as string)).toEqual({ node: 'mawg-sub|xhttp' });
+    });
+    // rotate: появляется интервал, Сохранить уносит groupMode+rotateSec
+    const modeSel = dlg.findAll('.psel-btn').filter((b) => b.text().includes('ручной выбор'))[0]!;
+    await modeSel.trigger('click');
+    await nextTick();
+    const rot = dlg.findAll('.psel-item').filter((o) => o.text().includes('ротация по таймеру'))[0]!;
+    await rot.trigger('click');
+    await nextTick();
+    expect(dlg.text()).toContain('Менять узел каждые');
+    await btn(dlg, 'Сохранить')[0].trigger('click');
+    await vi.waitFor(() => {
+      const put = f.mock.calls.find((c) => (c[0] as string).endsWith('/pools/sub') && c[1]?.method === 'PUT');
+      const body = JSON.parse(put![1]!.body as string);
+      expect(body.groupMode).toBe('rotate');
+      expect(body.rotateSec).toBe(120);
+    });
+    dlg.unmount();
+  });
+
   it('обновить из источника: POST refresh-source с source и локацией', async () => {
     const { dlg, f } = await makeDialog({ '/refresh-source': { added: 4, amnezia: { serverCountry: 'de' } } }, [pool]);
     await btn(dlg, 'обновить из источника')[0].trigger('click');

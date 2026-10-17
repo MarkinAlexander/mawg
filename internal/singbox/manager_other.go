@@ -16,6 +16,7 @@ type RunConfig struct {
 	SharedInit  string
 	SharedClash int
 	WebPort     int
+	LogEvent    func(pool, kind, msg string)
 }
 
 func NewManager(dir string) (*Manager, error) {

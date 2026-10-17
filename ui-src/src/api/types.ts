@@ -152,7 +152,9 @@ export interface ServerSettings {
 export interface PoolSettings {
   platform?: string
   engineMode?: string // "singbox" - пул через tun-движок
-  groupMode?: string // движковый пул: "selector" - ручной выбор узла, "urltest" (дефолт) - лучший пинг
+  groupMode?: string // движковый пул: "selector" - ручной выбор узла; "rotate" - ротация по таймеру; "urltest" (дефолт) - лучший пинг
+  rotateSec?: number // интервал ротации для groupMode="rotate", сек
+  nodeOff?: Record<string, boolean> // выключенные узлы подписки (имя -> true)
   tunName?: string
   source?: string
   probeHost?: string
@@ -536,10 +538,12 @@ export interface EngineNode {
   delay: number
   type?: string
   transport?: string
+  off?: boolean // исключён из пула (в конфиг движка не попадает)
 }
 
 export interface PoolEngine {
   mode: string
+  groupMode?: string // режим по настройкам mawg: urltest | selector | rotate
   now: string
   nodes: EngineNode[]
 }

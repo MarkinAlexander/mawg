@@ -35,6 +35,8 @@ type Manager struct {
 	resolverTag     string // тег нашего dns-сервера во фрагменте (свободный у чужого конфига)
 	sharedCacheFile string
 	patchNote       string // что mawg поправил в чужом config.json при последнем Apply
+	logEvent        func(pool, kind, msg string)
+	lastRotate      map[string]time.Time // пул -> прошлый таймерный переход (rotate-режим)
 	pid             int
 	probeLoopStop   chan struct{}
 	lastSpecs       []PoolSpec
@@ -48,6 +50,9 @@ type RunConfig struct {
 	SharedInit  string
 	SharedClash int
 	WebPort     int // панель mawg: её порт тоже занят и не отдается чужим inbound'ам
+	// LogEvent - журнал событий панели (pool/kind/message): менеджер
+	// пишет туда события таймерной ротации узлов из своей горутины
+	LogEvent func(pool, kind, msg string)
 }
 
 func NewManager(dir string) (*Manager, error) {
@@ -68,7 +73,8 @@ func NewManagerConfig(dir string, cfg RunConfig) (*Manager, error) {
 	}
 	m := &Manager{eng: eng, Dir: dir, MixedPort: 2281, ClashPort: 2291,
 		Mode: mode, SharedDir: cfg.SharedDir, SharedInit: cfg.SharedInit,
-		sharedClash: cfg.SharedClash, webPort: cfg.WebPort,
+		sharedClash: cfg.SharedClash, webPort: cfg.WebPort, logEvent: cfg.LogEvent,
+		lastRotate: map[string]time.Time{},
 		statuses: map[string]*PoolStatus{}, nodeCooldown: map[string]time.Time{}}
 	m.probeLoopStop = make(chan struct{})
 	go m.probeLoop()
@@ -283,7 +289,80 @@ func (m *Manager) probeLoop() {
 			if due {
 				m.probeSpec(spec)
 			}
+			// ротация по таймеру (rotate-режим): строго на узлы, ответившие
+			// замеру, следующей по кругу после текущего (слово владельца
+			// 2026-10-17)
+			if spec.GroupMode == "rotate" && spec.RotateSec >= 10 {
+				if prev, ok := m.lastRotate[spec.Name]; !ok || now.Sub(prev) >= time.Duration(spec.RotateSec)*time.Second {
+					m.lastRotate[spec.Name] = now
+					m.rotateTimed(spec)
+				}
+			}
 		}
+	}
+}
+
+// rotateTimed - очередной переход таймерной ротации: замерить группу
+// (ответившие = рабочие), взять следующего по кругу после текущего,
+// переключить selector-группу. Никто не ответил - остаёмся, событие в журнал.
+func (m *Manager) rotateTimed(spec PoolSpec) {
+	group := "mawg-" + spec.Name
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	delays, err := m.ClashGroupDelay(ctx, group, spec.ProbeTarget, 5*time.Second)
+	if err != nil {
+		m.note(spec.Name, "ротация не удалась: "+err.Error())
+		return
+	}
+	if len(delays) == 0 {
+		m.note(spec.Name, "ротация: живых узлов нет, остаёмся на текущем")
+		return
+	}
+	var order []string
+	for _, n := range spec.Nodes {
+		if _, ok := delays[groupPrefix(n.Tag, spec.Name)]; ok {
+			order = append(order, groupPrefix(n.Tag, spec.Name))
+		}
+	}
+	if len(order) == 0 { // перестраховка: замер есть, тег не совпал
+		for tag := range delays {
+			order = append(order, tag)
+		}
+	}
+	cur := ""
+	if proxies, err := m.ClashProxies(ctx); err == nil {
+		cur = proxies[group].Now
+	}
+	pick := order[0]
+	for i, t := range order {
+		if t == cur && i+1 < len(order) {
+			pick = order[i+1]
+			break
+		}
+	}
+	if pick == cur {
+		m.note(spec.Name, "ротация: единственный рабочий узел - текущий")
+		return
+	}
+	if err := m.ClashSelect(ctx, group, pick); err != nil {
+		m.note(spec.Name, "ротация не удалась: "+err.Error())
+		return
+	}
+	m.note(spec.Name, "ротация по таймеру: "+cur+" -> "+pick)
+}
+
+// groupPrefix - тег узла в группе движка (build.go: mawg-<пул>|<ConfName>).
+func groupPrefix(nodeTag, pool string) string {
+	name := nodeTag
+	if _, after, ok := strings.Cut(nodeTag, "|"); ok && after != "" {
+		name = after
+	}
+	return "mawg-" + pool + "|" + name
+}
+
+func (m *Manager) note(pool, msg string) {
+	if m.logEvent != nil {
+		m.logEvent(pool, "rotate", msg)
 	}
 }
 
@@ -798,6 +877,7 @@ func (m *Manager) Apply(pools []PoolSpec) ([]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.patchNote = ""
+	m.lastRotate = map[string]time.Time{}
 	m.stmu.Lock()
 	prevStatuses := m.statuses
 	m.statuses = map[string]*PoolStatus{}
@@ -862,6 +942,17 @@ func (m *Manager) Apply(pools []PoolSpec) ([]string, error) {
 		m.lastSpecs = nil
 		return skipped, nil
 	}
+	// живой выбор selector-групп переживает пересборку (иначе hot-reload
+	// бросал бы на первый узел - слово владельца 2026-10-17)
+	selCtx, selCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	if proxies, err := m.ClashProxies(selCtx); err == nil {
+		for i := range runnable {
+			if g, ok := proxies["mawg-"+runnable[i].Name]; ok && g.Now != "" {
+				runnable[i].Selected = g.Now
+			}
+		}
+	}
+	selCancel()
 	if m.Mode == "shared" {
 		return m.applyShared(runnable, skipped)
 	}

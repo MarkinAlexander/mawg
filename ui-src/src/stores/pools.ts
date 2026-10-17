@@ -157,6 +157,11 @@ export function usePoolActions() {
     void refresh();
   }
 
+  async function engineToggle(name: string, node: string): Promise<{ ok: boolean; off: boolean }> {
+    const r = await api<{ ok: boolean; off: boolean }>('POST', `/pools/${encodeURIComponent(name)}/engine/toggle`, { node });
+    void refresh();
+    return r;
+  }
   async function engineRetest(name: string): Promise<Record<string, number>> {
     const r = await api<{ ok: boolean; delays?: Record<string, number> }>('POST', `/pools/${encodeURIComponent(name)}/engine/retest`, {});
     void refresh();
@@ -170,7 +175,7 @@ export function usePoolActions() {
   return {
     act, del, upload, toggleCfg, moveCfg, delCfg, activateCfg, importPremium, switchPremiumCountry,
     create, createFromSource, requestFree, inspect, slots, createSlot,
-    refreshSource, update, rename, reissueFree, members, configText, engine, engineSelect, engineRetest,
+    refreshSource, update, rename, reissueFree, members, configText, engine, engineSelect, engineToggle, engineRetest,
   };
 }
 
