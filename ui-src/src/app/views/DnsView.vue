@@ -382,9 +382,9 @@ async function probePolicy(): Promise<void> {
   >
     <template #actions>
       <UiBadge
-        v-if="state"
+        v-if="state?.platform"
         variant="ok"
-        text="openwrt"
+        :text="state.platform"
       />
     </template>
 

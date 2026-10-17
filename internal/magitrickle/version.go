@@ -71,6 +71,17 @@ func DohUpstreamsSupported(version string) bool {
 	return err == nil && n >= dohUpstreamsRevMin
 }
 
+// RevOf - номер ревизии форка из строки версии (0.8.2-rev11-mawg-dev -> 11);
+// 0 = не форк или ревизия не читается.
+func RevOf(version string) int {
+	m := revRe.FindStringSubmatch(version)
+	if m == nil {
+		return 0
+	}
+	n, _ := strconv.Atoi(m[1])
+	return n
+}
+
 var configVersionRe = regexp.MustCompile(`(?m)^\s*configVersion:\s*"?([^"\s"]+)`)
 
 // ConfigVersion вытаскивает configVersion из дискового config.yaml MT:
