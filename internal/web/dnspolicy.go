@@ -388,26 +388,30 @@ func (s *Server) putDnsPolicy(w http.ResponseWriter, r *http.Request) {
 
 // policyProbeLevel - уровень политики как нога зонда: вид транспорта
 // берётся из схемы адреса (tls:// -> DoT, https:// -> DoH, иначе UDP).
+// Адрес сначала канонизируется: https://dns.google БЕЗ пути - валидный
+// уровень каскада, но POST в корень даёт HTML вместо DNS-ответа (живой
+// кейс 0.42: noanswer при живом DoH).
 func policyProbeLevel(name, addr string) (dnsprobe.Level, bool) {
+	a, err := normalizeUpstream(addr)
+	if err != nil {
+		return dnsprobe.Level{}, false
+	}
 	switch {
-	case strings.HasPrefix(addr, "tls://"):
-		hostPort := strings.TrimPrefix(addr, "tls://")
+	case strings.HasPrefix(a, "tls://"):
+		hostPort := strings.TrimPrefix(a, "tls://")
 		host, port := hostPort, "853"
 		if h, p, err := net.SplitHostPort(hostPort); err == nil {
 			host, port = h, p
 		}
-		return dnsprobe.Level{Level: name + ": " + addr, Kind: "dot", Server: net.JoinHostPort(host, port), SNI: host}, true
-	case strings.HasPrefix(addr, "https://"):
-		u, err := url.Parse(addr)
+		return dnsprobe.Level{Level: name + ": " + a, Kind: "dot", Server: net.JoinHostPort(host, port), SNI: host}, true
+	case strings.HasPrefix(a, "https://"):
+		u, err := url.Parse(a)
 		if err != nil {
 			return dnsprobe.Level{}, false
 		}
-		return dnsprobe.Level{Level: name + ": " + addr, Kind: "doh", Server: addr, SNI: u.Hostname()}, true
+		return dnsprobe.Level{Level: name + ": " + a, Kind: "doh", Server: a, SNI: u.Hostname()}, true
 	}
-	if a, err := normalizeUpstream(addr); err == nil {
-		return dnsprobe.Level{Level: name + ": " + a, Kind: "udp", Server: a}, true
-	}
-	return dnsprobe.Level{}, false
+	return dnsprobe.Level{Level: name + ": " + a, Kind: "udp", Server: a}, true
 }
 
 // postDnsPolicyProbe - POST /api/v1/dns/policy/probe: канарейка
