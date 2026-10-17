@@ -85,6 +85,12 @@ func parseNDMCInterfaces(out string) map[string]rciInterface {
 			if peer != nil {
 				peer.PublicKey = val
 			}
+		case "remote-endpoint-address", "endpoint":
+			// удалённый адрес пира (5.2-alpha: remote-endpoint-address,
+			// прочие прошивки: endpoint) - каскады с iface-источником
+			if peer != nil {
+				peer.Endpoint = val
+			}
 		case "last-handshake":
 			if peer != nil {
 				if n, err := strconv.ParseInt(val, 10, 64); err == nil {

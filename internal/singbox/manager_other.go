@@ -3,6 +3,7 @@
 package singbox
 
 import (
+	"context"
 	"fmt"
 	"time"
 )
@@ -14,6 +15,8 @@ type RunConfig struct {
 	SharedDir   string
 	SharedInit  string
 	SharedClash int
+	WebPort     int
+	LogEvent    func(pool, kind, msg string)
 }
 
 func NewManager(dir string) (*Manager, error) {
@@ -26,6 +29,7 @@ func NewManagerConfig(dir string, cfg RunConfig) (*Manager, error) {
 
 type Status struct {
 	Running   bool   `json:"running"`
+	API       bool   `json:"api"`
 	PID       int    `json:"pid,omitempty"`
 	Version   string `json:"version,omitempty"`
 	LX        bool   `json:"lx"`
@@ -42,7 +46,8 @@ func (m *Manager) Close()       {}
 func (m *Manager) Apply(pools []PoolSpec) ([]string, error) {
 	return nil, fmt.Errorf("движок sing-box доступен только на роутере")
 }
-func (m *Manager) Status() Status { return Status{} }
+func (m *Manager) Status() Status    { return Status{} }
+func (m *Manager) PatchNote() string { return "" }
 
 func (m *Manager) SetCacheFile(mode string) (string, error) {
 	return "", fmt.Errorf("движок sing-box доступен только на роутере")
@@ -61,3 +66,15 @@ type PoolStatus struct {
 }
 
 func (m *Manager) PoolStatus(name string) (PoolStatus, bool) { return PoolStatus{}, false }
+
+func (m *Manager) ClashProxies(ctx context.Context) (map[string]ClashProxy, error) {
+	return nil, fmt.Errorf("движок sing-box доступен только на роутере")
+}
+
+func (m *Manager) ClashSelect(ctx context.Context, group, name string) error {
+	return fmt.Errorf("движок sing-box доступен только на роутере")
+}
+
+func (m *Manager) ClashGroupDelay(ctx context.Context, group, testURL string, timeout time.Duration) (map[string]int, error) {
+	return nil, fmt.Errorf("движок sing-box доступен только на роутере")
+}

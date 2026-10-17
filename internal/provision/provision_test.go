@@ -74,11 +74,11 @@ func withFS(t *testing.T, size, free int64, marker bool) {
 func TestLxCoreItemStates(t *testing.T) {
 	bin := "/opt/bin/sing-box"
 
-	// чужое upstream-ядро: статус «чужое upstream», замена одной кнопкой
+	// чужое upstream-ядро: статус «чужое» (короткий - чип в таблице не рвётся), замена одной кнопкой
 	withFS(t, 63607828, 26214400*1024, false)
 	r := fakeRunner{bin + " version": "sing-box version 1.13.3\n"}
 	item := lxCoreItem(r.run, "keenetic")
-	if item.Installed || item.Action != "singbox-lx-replace" || item.StatusText != "чужое upstream" {
+	if item.Installed || item.Action != "singbox-lx-replace" || item.StatusText != "чужое" {
 		t.Fatalf("чужое ядро: %+v", item)
 	}
 	if item.FreeBytes != 26214400*1024 || item.BackupBytes != 63607828 {

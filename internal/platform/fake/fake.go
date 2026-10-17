@@ -3,6 +3,7 @@ package fake
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"mawg/internal/platform"
 	"mawg/internal/store"
@@ -22,6 +23,9 @@ type Fake struct {
 	StatusMap   map[string]platform.TunnelStatus
 	ApplyErrOn  map[string]error
 	DeviceProbe map[string]DevProbe
+	// ShellFn - сценарный шелл для ShellRunner (DNS-менеджер в тестах):
+	// ключ - подстрока скрипта, значение - вывод; nil функция = ошибка.
+	ShellFn func(script string) (string, error)
 }
 
 type DevProbe struct {
@@ -138,6 +142,14 @@ func (f *Fake) Applied() []string {
 }
 
 func (f *Fake) RestartMagitrickle() error { return nil }
+
+// RunShell - ShellRunner: вывод задаёт ShellFn (сценарий теста).
+func (f *Fake) RunShell(script string, timeout time.Duration) (string, error) {
+	if f.ShellFn == nil {
+		return "", fmt.Errorf("fake: ShellFn не задан")
+	}
+	return f.ShellFn(script)
+}
 
 // MTConfigPath пуст: в синтетике дискового конфига MT нет, бэкапится
 // только shadow.

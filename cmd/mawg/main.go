@@ -130,7 +130,8 @@ const usage = `mawg - Multi-AWG Changer ` + `
   -base <dir>                  каталог данных
   -port <n>                    порт веб-панели (перекрывает настройки)
   -listen <ip>                 адрес прослушивания (перекрывает настройки)
-  -no-auth                     разово запустить без авторизации (аварийный)`
+  -no-auth                     разово запустить без авторизации (аварийный)
+`
 
 func main() {
 	platformName := flag.String("platform", "", "platform override: openwrt | keenetic")

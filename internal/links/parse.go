@@ -55,6 +55,8 @@ func ParseLink(source, raw string) (Node, error) {
 	switch schemeOf(raw) {
 	case "vless":
 		return parseVless(source, raw)
+	case "vmess":
+		return parseVmess(source, raw)
 	case "trojan":
 		return parseTrojan(source, raw)
 	case "wireguard":

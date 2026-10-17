@@ -11,7 +11,8 @@ done
 # MAWG_UPX - явный путь к upx (например, при сборке в worktree без tools/)
 if [ -z "$UPX" ] && [ -n "$MAWG_UPX" ]; then UPX="$MAWG_UPX"; fi
 
-VERSION="$(git describe --tags 2>/dev/null || echo dev)"
+# MAWG_VERSION - явная версия (дев-сборки v0.6.11-devN); без неё - git describe
+VERSION="${MAWG_VERSION:-$(git describe --tags 2>/dev/null || echo dev)}"
 
 build() {
   os="$1"; arch="$2"; extra="$3"; out="$4"

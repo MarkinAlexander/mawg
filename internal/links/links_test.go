@@ -261,6 +261,86 @@ func TestParseVPNRawConfFallback(t *testing.T) {
 	}
 }
 
+func b64vmess(json string) string {
+	return "vmess://" + base64.StdEncoding.EncodeToString([]byte(json))
+}
+
+func TestParseVmessV2rayN(t *testing.T) {
+	// живой узел подписки стенда 0.42 (2026-10-17): tcp, scy auto
+	n, err := ParseLink("sub", b64vmess(`{"add":"203.0.113.7","id":"11111111-2222-3333-4444-555555555555","net":"tcp","port":36167,"ps":"vmess-test","scy":"auto","tls":"none","type":"none","v":"2"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n.Type != "vmess" || n.Host != "203.0.113.7" || n.Port != 36167 {
+		t.Fatalf("основа: %+v", n)
+	}
+	if n.UUID != "11111111-2222-3333-4444-555555555555" {
+		t.Fatalf("uuid: %s", n.UUID)
+	}
+	if n.Tag != "sub|vmess-test" || n.Security != "auto" || n.Transport != "" || n.TLS != nil {
+		t.Fatalf("vmess-поля: %+v", n)
+	}
+}
+
+func TestParseVmessWS(t *testing.T) {
+	n, err := ParseLink("sub", b64vmess(`{"add":"1.2.3.4","port":"8443","id":"u-1","ps":"vm-ws","scy":"chacha20-ietf-poly1305","aid":"8","tls":"true","sni":"ex.com","alpn":"h2,http/1.1","fp":"chrome","net":"ws","path":"/ws","host":"cdn.ex.com"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n.Port != 8443 || n.AlterId != 8 {
+		t.Fatalf("порт/aid: %+v", n)
+	}
+	// ietf-алиас -> канонический шифр ядра
+	if n.Security != "chacha20-poly1305" {
+		t.Fatalf("security: %s", n.Security)
+	}
+	if n.Transport != "ws" || n.Path != "/ws" || n.HeaderHost != "cdn.ex.com" {
+		t.Fatalf("транспорт: %+v", n)
+	}
+	if n.TLS == nil || n.TLS.Security != "tls" || n.TLS.SNI != "ex.com" || n.TLS.Fingerprint != "chrome" {
+		t.Fatalf("tls: %+v", n.TLS)
+	}
+	if len(n.TLS.ALPN) != 2 || n.TLS.ALPN[0] != "h2" {
+		t.Fatalf("alpn: %v", n.TLS.ALPN)
+	}
+}
+
+func TestParseVmessH2AndJunkSecurity(t *testing.T) {
+	// h2 => transport http + TLS автоматически; aid 0 не пишем
+	n, err := ParseLink("sub", b64vmess(`{"add":"h.com","port":443,"id":"u-2","ps":"vm-h2","scy":"aes-128-ctr","net":"h2","path":"/x"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n.Transport != "http" || n.TLS == nil {
+		t.Fatalf("h2: %+v", n)
+	}
+	// неизвестный ядру шифр -> auto (не резектим весь узел)
+	if n.Security != "auto" {
+		t.Fatalf("security: %s", n.Security)
+	}
+}
+
+func TestParseVmessLegacyAndBroken(t *testing.T) {
+	// legacy: base64("auto:uuid@host:port?security=tls&type=ws#метка")
+	raw := "vmess://" + base64.StdEncoding.EncodeToString([]byte("auto:u-3@5.6.7.8:443?security=tls&type=ws&path=%2Fw#leg-vm"))
+	n, err := ParseLink("sub", raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n.Host != "5.6.7.8" || n.Port != 443 || n.UUID != "u-3" || n.Security != "auto" {
+		t.Fatalf("legacy-основа: %+v", n)
+	}
+	if n.Tag != "sub|leg-vm" || n.Transport != "ws" || n.TLS == nil {
+		t.Fatalf("legacy-хвосты: %+v", n)
+	}
+	if _, err := ParseLink("sub", b64vmess(`{"add":"a","port":1,"ps":"нет uuid"}`)); err == nil {
+		t.Fatal("без uuid хотел ошибку")
+	}
+	if _, err := ParseLink("sub", "vmess://!!!!"); err == nil {
+		t.Fatal("битый base64 хотел ошибку")
+	}
+}
+
 func TestParseSubscriptionBase64Padless(t *testing.T) {
 	body := padlessB64(strings.Join(subLinks(), "\n"))
 	res := ParseSubscription("sub1", body)

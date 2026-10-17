@@ -180,13 +180,15 @@ CLI медленнее.
 
 ## Пулы из ссылки или подписки
 
-В «+ интерфейс» есть режим ссылки: вставьте vless://, trojan://,
+В «+ интерфейс» есть режим ссылки: вставьте vless://, vmess://, trojan://,
 wireguard://, amneziawg://, Amnezia vpn:// или ссылку/текст подписки с
 несколькими узлами - mawg разберёт, покажет план (нативные конфиги, узлы для
 движка, дубликаты, пропуски с причинами) и создаст пул. Поддерживаются
-транспорты ws, grpc, xhttp, httpupgrade; TLS и REALITY, включая uTLS-отпечаток
-(fingerprint). vmess не поддерживается - такие узлы будут честно показаны в
-пропусках.
+транспорты ws, grpc, xhttp, httpupgrade, http/h2; TLS и REALITY, включая
+uTLS-отпечаток (fingerprint). vmess понимается в обеих формах - контейнер
+v2rayN (base64 JSON) и legacy-cleartext; шифры канала - набор sing-box
+(auto/none/zero/aes-128-cfb/aes-128-gcm/chacha20-poly1305), неизвестный
+шифр уводится на auto.
 
 Узлы WireGuard/AmneziaWG становятся обычными конфигами пула (нативный
 интерфейс), прокси-узлы (vless/trojan) живут в tun-интерфейсе движка sing-box -

@@ -63,6 +63,9 @@ func TestParseNDMCSingleWithPeer(t *testing.T) {
 	if p.LastHandshake <= 0 || p.LastHandshake > 86400 {
 		t.Fatalf("last-handshake = %d", p.LastHandshake)
 	}
+	if p.Endpoint != "198.51.100.11" {
+		t.Fatalf("endpoint = %q, want 198.51.100.11 (remote-endpoint-address)", p.Endpoint)
+	}
 	if w2.Description != "warp" || w2.Link != "up" {
 		t.Fatalf("iface = %+v", w2)
 	}

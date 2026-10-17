@@ -93,6 +93,15 @@ type PoolSettings struct {
 	// EngineDetour - каскад движка: туннель пула (wireguard-эндпоинт)
 	// заводится через группу другого движкового пула (detour в sing-box).
 	EngineDetour string `json:"engineDetour,omitempty"`
+	// GroupMode - режим группы движка (60-док): "selector" - ручной выбор
+	// узла; "rotate" - ротация по таймеру строго на рабочие узлы;
+	// пусто/"urltest" - лучший по пингу (авто, дефолт).
+	GroupMode string `json:"groupMode,omitempty"`
+	// RotateSec - интервал ротации узлов для GroupMode="rotate" (сек).
+	RotateSec int `json:"rotateSec,omitempty"`
+	// NodeOff - выключенные узлы подписки (ключ - имя узла, ConfName):
+	// в конфиг движка не попадают, переживают обновление источника.
+	NodeOff map[string]bool `json:"nodeOff,omitempty"`
 	// NativeAWG3 - free-пул поднимается нативным kmod amneziawg 3.x
 	// (OpenWrt), без движка sing-box. Служебный: задаёт web-слой при
 	// создании, в JSON настроек не пишем.
@@ -320,6 +329,23 @@ type Settings struct {
 	// no-op PUT: глючная сборка MagiTrickle, панели показывают баннер со
 	// ссылкой на форк.
 	MTGlitchy bool `json:"mtGlitchy,omitempty"`
+	// DNSCascade - политика каскада DNS (46-док §3, 66-док): уровни
+	// L1-L5 компоновщиком mawg превращаются в упорядоченный список
+	// апстримов dns-proxy MT (один PUT в форк); гистерезис переключений
+	// K/M/restoreGap живёт в форке.
+	DNSCascade *DnsCascadePolicy `json:"dnsCascade,omitempty"`
+}
+
+// DnsCascadePolicy - уровни каскада: L1 основные (напрямую или L2 через
+// туннель - пресет dns-tunnel на пуле), L3 запасные, L4 Яндекс,
+// L5 провайдер (из resolv.conf.auto, срез на момент применения).
+type DnsCascadePolicy struct {
+	Enabled  bool     `json:"enabled"`
+	Primary  []string `json:"primary,omitempty"`  // host[:port], порядок = приоритет
+	Tunnel   string   `json:"tunnel,omitempty"`   // имя пула; пусто = основные напрямую
+	Fallback []string `json:"fallback,omitempty"` // host[:port]
+	Yandex   bool     `json:"yandex,omitempty"`   // 77.88.8.8
+	Provider bool     `json:"provider,omitempty"` // интерфейсный upstream
 }
 
 func (s Settings) WithDefaults() Settings {

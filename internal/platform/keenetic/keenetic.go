@@ -20,7 +20,8 @@ import (
 	"mawg/internal/wgconf"
 )
 
-const rciBase = "http://127.0.0.1:79"
+// var (не const) - тесты подменяют адресом httptest-сервера
+var rciBase = "http://127.0.0.1:79"
 
 var (
 	slotRe    = regexp.MustCompile(`(?i)^wireguard(\d+)$`)
@@ -190,6 +191,10 @@ type rciPeer struct {
 	Online        bool   `json:"online"`
 	LastHandshake int64  `json:"last-handshake"`
 	Enabled       bool   `json:"enabled"`
+	// удалённый адрес пира: RCI новых прошивок - remote-endpoint-address,
+	// часть полей/прошивок зовёт поле endpoint
+	Endpoint string `json:"endpoint"`
+	Remote   string `json:"remote-endpoint-address"`
 }
 
 type rciInterface struct {
@@ -210,11 +215,7 @@ func (b *Backend) rciGet(path string) (rciInterface, error) {
 	if dumpErr == nil && ok {
 		return iface, nil
 	}
-	var out rciInterface
-	body, err := b.rciDo(path)
-	if err == nil {
-		err = json.Unmarshal(body, &out)
-	}
+	out, err := b.rciDoIface(path)
 	if err == nil {
 		return out, nil
 	}
@@ -225,6 +226,62 @@ func (b *Backend) rciGet(path string) (rciInterface, error) {
 		return out, err
 	}
 	return iface, nil
+}
+
+func (b *Backend) rciDoIface(path string) (rciInterface, error) {
+	var out rciInterface
+	body, err := b.rciDo(path)
+	if err == nil {
+		err = json.Unmarshal(body, &out)
+	}
+	return out, err
+}
+
+// IfaceEndpoints - адреса (без портов) удалённых пиров роутерного
+// WG-интерфейса, реализация platform.Endpointer для каскадов с
+// iface-источником (баг владельца: адреса просили от руки).
+func (b *Backend) IfaceEndpoints(device string) ([]string, error) {
+	slot := slotFromDevice(device)
+	if slot == "" {
+		return nil, fmt.Errorf("%q не похож на WG-слот Кинетика (nwg<N>)", device)
+	}
+	// общий дамп пиров НЕ содержит (в 5.2-alpha список отдаётся без
+	// peer-блоков) - одиночный запрос всегда свежий и с пирами
+	iface, err := b.rciDoIface("/rci/show/interface/" + slot)
+	if err != nil {
+		if iface, err = b.ndmcInterface(slot); err != nil {
+			return nil, err
+		}
+	}
+	out := peerEndpoints(iface.Wireguard.Peers)
+	if len(out) == 0 {
+		return nil, fmt.Errorf("у интерфейса %s (%s) нет пиров с endpoint", device, slot)
+	}
+	return out, nil
+}
+
+// peerEndpoints - хост-часть endpoint/remote-endpoint-address пиров,
+// без порта и дубликатов.
+func peerEndpoints(peers []rciPeer) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, p := range peers {
+		ep := p.Endpoint
+		if ep == "" {
+			ep = p.Remote
+		}
+		if ep == "" {
+			continue
+		}
+		if h, _, herr := net.SplitHostPort(ep); herr == nil {
+			ep = h
+		}
+		if !seen[ep] {
+			seen[ep] = true
+			out = append(out, ep)
+		}
+	}
+	return out
 }
 
 func (b *Backend) ndmcInterface(slot string) (rciInterface, error) {
@@ -717,3 +774,9 @@ func (b *Backend) RestartMagitrickle() error {
 }
 
 func (b *Backend) MTConfigPath() string { return "/opt/var/lib/magitrickle/config.yaml" }
+
+// RunShell - ShellRunner для DNS-менеджера (71-док): ограниченный
+// /bin/sh -c с потолком времени, как на OpenWrt.
+func (b *Backend) RunShell(script string, timeout time.Duration) (string, error) {
+	return platform.RunBoundedCombined(exec.Command("/bin/sh", "-c", script), timeout)
+}

@@ -10,15 +10,9 @@ import (
 func TestOpenwrtNativeOpkgWithAPKUsesMatchingMagiTrickleFeed(t *testing.T) {
 	f := &packageFixture{apk: true, opkg: true, nativeOpkg: true}
 	res := checkOpenwrt(f.run)
-	for _, item := range res.Items {
-		if item.ID == "magitrickle" && !strings.Contains(item.Action, "opkg update && opkg install magitrickle") {
-			t.Fatalf("native opkg repository setup must match install action: %s", item.Action)
-		}
-	}
-	for _, command := range f.commands {
-		if strings.HasPrefix(command, "apk ") {
-			t.Fatalf("native opkg must match MagiTrickle repository selection: %s", command)
-		}
+	mt := resultItem(t, res, "magitrickle")
+	if mt.Installed || mt.Action != MtForkAction {
+		t.Fatalf("MagiTrickle ставится маркером mt-fork (код mtinstall), а не шеллом: %+v", mt)
 	}
 }
 
@@ -297,18 +291,19 @@ func TestOpenwrtMissingPackageActions(t *testing.T) {
 			f := &packageFixture{apk: manager == "apk", opkg: manager == "opkg", available: available}
 			res := checkOpenwrt(f.run)
 			for id, packages := range map[string]string{
-				"wireguard":   "kmod-wireguard wireguard-tools luci-proto-wireguard",
-				"awg":         "kmod-amneziawg amneziawg-tools",
-				"magitrickle": "magitrickle",
+				"wireguard": "kmod-wireguard wireguard-tools luci-proto-wireguard",
+				"awg":       "kmod-amneziawg amneziawg-tools",
 			} {
 				item := resultItem(t, res, id)
 				if item.Installed || !strings.Contains(item.Action, install+packages) || item.Confirm == "" {
 					t.Errorf("%s = %+v; want missing with %s%s", id, item, install, packages)
 				}
 			}
+			// MagiTrickle - маркер mt-fork: установку ведёт код mtinstall
+			// (пакет из релиза mawg-форка), не шелл-менеджер пакетов
 			mt := resultItem(t, res, "magitrickle")
-			if !strings.Contains(mt.Action, "add_repo.sh && sh /tmp/mt-repo.sh") || !strings.Contains(mt.Action, "/etc/init.d/magitrickle enable && /etc/init.d/magitrickle start") {
-				t.Errorf("MagiTrickle setup/start lost: %s", mt.Action)
+			if mt.Installed || mt.Action != MtForkAction || mt.Confirm == "" {
+				t.Errorf("magitrickle = %+v; want missing with %s", mt, MtForkAction)
 			}
 		})
 	}

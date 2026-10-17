@@ -39,6 +39,11 @@ type Result struct {
 
 type Runner func(script string, timeout time.Duration) (string, error)
 
+// mtForkAction - маркер для web-обработчика: MagiTrickle ставится кодом
+// mtinstall.Install из релиза mawg-форка (bin.magitrickle.dev - апстримный
+// репозиторий без форка - оставлен как запасной путь в install.sh).
+const MtForkAction = "mt-fork"
+
 func shellRun(script string, timeout time.Duration) (string, error) {
 	cmd := exec.Command("/bin/sh", "-c", script)
 	if os.Getenv("PATH") == "" {
@@ -247,8 +252,8 @@ func checkOpenwrt(run Runner) Result {
 	} else {
 		res.Items = append(res.Items, Item{
 			ID: "magitrickle", Title: "MagiTrickle (маршрутизация по доменам)", Installed: false,
-			Action:  "wget -qO /tmp/mt-repo.sh https://bin.magitrickle.dev/packages/add_repo.sh && sh /tmp/mt-repo.sh && " + packages.install("magitrickle") + " && (/etc/init.d/magitrickle enable && /etc/init.d/magitrickle start)",
-			Confirm: "Добавить репозиторий bin.magitrickle.dev и установить MagiTrickle с зависимостями?",
+			Action:  MtForkAction,
+			Confirm: "mawg определит архитектуру роутера, скачает пакет MagiTrickle (mawg-форк: источники групп, нативный OUTPUT-jump, API каскада DNS) из релиза GitHub и установит его штатным менеджером пакетов с зависимостями; служба будет включена и запущена.",
 		})
 	}
 
@@ -295,8 +300,8 @@ func CheckKeenetic(ndmc func(string) (string, error)) Result {
 	} else {
 		res.Items = append(res.Items, Item{
 			ID: "magitrickle", Title: "MagiTrickle (Entware)", Installed: false,
-			Action:  "wget -qO /tmp/mt-repo.sh https://bin.magitrickle.dev/packages/add_repo.sh && sh /tmp/mt-repo.sh && opkg update && opkg install magitrickle socat && chmod +x /opt/etc/init.d/S99magitrickle && /opt/etc/init.d/S99magitrickle start",
-			Confirm: "Добавить репозиторий bin.magitrickle.dev и установить MagiTrickle с socat?",
+			Action:  MtForkAction,
+			Confirm: "mawg определит архитектуру, скачает пакет MagiTrickle (mawg-форк) из релиза GitHub и установит его opkg с зависимостями; служба S99magitrickle будет запущена.",
 		})
 	}
 
@@ -423,7 +428,7 @@ func lxCoreItem(run Runner, platform string) Item {
 			item.ActionLabel = "заменить своей сборкой"
 		}
 	default:
-		item.StatusText = "чужое upstream"
+		item.StatusText = "чужое"
 		item.Action = "singbox-lx-replace"
 		item.ActionLabel = "заменить на lx"
 		item.Note = fmt.Sprintf("Сейчас стоит чужое ядро (upstream %s): mawg его не трогает, замена - только по этой кнопке. Сохранять ли старое перед заменой - выбор в диалоге (зависит от свободного места).", ver)

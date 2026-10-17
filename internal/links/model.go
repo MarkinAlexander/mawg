@@ -35,6 +35,8 @@ type Node struct {
 	Port         int      `json:"port"`
 	UUID         string   `json:"uuid,omitempty"`
 	Password     string   `json:"password,omitempty"`
+	Security     string   `json:"security,omitempty"` // vmess: шифр канала (auto/none/zero/...)
+	AlterId      int      `json:"alterId,omitempty"`  // vmess: устаревший alterId
 	Encryption   string   `json:"encryption,omitempty"`
 	Flow         string   `json:"flow,omitempty"`
 	Transport    string   `json:"transport,omitempty"`

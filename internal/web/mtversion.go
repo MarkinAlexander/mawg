@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"os"
+	"strings"
 
 	"mawg/internal/magitrickle"
 	"mawg/internal/provision"
@@ -31,6 +32,28 @@ func (s *Server) mtSourcesCapable(ctx context.Context) bool {
 	return magitrickle.SourcesSupported(magitrickle.ConfigVersion(data))
 }
 
+// mtDnsUpstreamsCapable - умеет ли подключённый MT отдавать состояние
+// каскада апстримов dns-proxy и принимать правку списка (форк rev8+,
+// GET/PUT /api/v1/dns/upstreams). Порядок тот же, что у sources:
+// живой /api/v1/version, фолбэк - configVersion дискового config.yaml.
+func (s *Server) mtDnsUpstreamsCapable(ctx context.Context) bool {
+	if v, err := s.mtClient().GetVersion(ctx); err == nil && v != "" {
+		return magitrickle.DnsUpstreamsSupported(v)
+	}
+	if s.backend == nil {
+		return false
+	}
+	path := s.backend.MTConfigPath()
+	if path == "" {
+		return false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	return magitrickle.DnsUpstreamsSupported(magitrickle.ConfigVersion(data))
+}
+
 // mtRealVersion - версия РАБОТАЮЩЕГО бинаря MagiTrickle, а не opkg-пакета:
 // наш форк ставится поверх апстримного пакета, и «0.8.2-1» ничего не
 // говорит о ревизии. Порядок: живой GET /api/v1/version (форк rev5+),
@@ -56,7 +79,8 @@ func (s *Server) mtRealVersion(ctx context.Context) string {
 
 // enrichMagitrickleVersion - в системной проверке показываем ревизию
 // бинаря, а не пакета: «0.8.2-rev4-mawgfix2 (пакет 0.8.2-1)» сразу видно,
-// что стоит форк. Ревизию не определили - честная пометка.
+// что стоит форк. Ревизию не определили - честная пометка. Стоит апстримный
+// бинарь (без rev) - предлагаем обновление до mawg-форка пакетом из релиза.
 func (s *Server) enrichMagitrickleVersion(items []provision.Item) {
 	for i := range items {
 		if items[i].ID != "magitrickle" || !items[i].Installed {
@@ -68,6 +92,11 @@ func (s *Server) enrichMagitrickleVersion(items []provision.Item) {
 				items[i].Version = v + " (пакет " + pkg + ")"
 			} else {
 				items[i].Version = v
+			}
+			if !strings.Contains(v, "rev") {
+				items[i].Action = provision.MtForkAction
+				items[i].ActionLabel = "обновить до mawg-форка"
+				items[i].Confirm = "Стоит MagiTrickle без ревизии форка (" + v + "): источники групп и API каскада DNS недоступны. mawg установит пакет mawg-форка из релиза GitHub штатным менеджером пакетов; конфиг сохраняется, группы перезапустятся."
 			}
 		} else {
 			items[i].Note = "показана версия пакета; ревизия бинаря не определена (конфиг ещё не сохранялся этим бинарем)"

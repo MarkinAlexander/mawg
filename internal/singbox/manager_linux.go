@@ -30,9 +30,13 @@ type Manager struct {
 	Mode            string
 	SharedDir       string
 	SharedInit      string
+	webPort         int
 	sharedClash     int
 	resolverTag     string // тег нашего dns-сервера во фрагменте (свободный у чужого конфига)
 	sharedCacheFile string
+	patchNote       string // что mawg поправил в чужом config.json при последнем Apply
+	logEvent        func(pool, kind, msg string)
+	lastRotate      map[string]time.Time // пул -> прошлый таймерный переход (rotate-режим)
 	pid             int
 	probeLoopStop   chan struct{}
 	lastSpecs       []PoolSpec
@@ -45,6 +49,10 @@ type RunConfig struct {
 	SharedDir   string
 	SharedInit  string
 	SharedClash int
+	WebPort     int // панель mawg: её порт тоже занят и не отдается чужим inbound'ам
+	// LogEvent - журнал событий панели (pool/kind/message): менеджер
+	// пишет туда события таймерной ротации узлов из своей горутины
+	LogEvent func(pool, kind, msg string)
 }
 
 func NewManager(dir string) (*Manager, error) {
@@ -65,7 +73,9 @@ func NewManagerConfig(dir string, cfg RunConfig) (*Manager, error) {
 	}
 	m := &Manager{eng: eng, Dir: dir, MixedPort: 2281, ClashPort: 2291,
 		Mode: mode, SharedDir: cfg.SharedDir, SharedInit: cfg.SharedInit,
-		sharedClash: cfg.SharedClash, statuses: map[string]*PoolStatus{}, nodeCooldown: map[string]time.Time{}}
+		sharedClash: cfg.SharedClash, webPort: cfg.WebPort, logEvent: cfg.LogEvent,
+		lastRotate: map[string]time.Time{},
+		statuses: map[string]*PoolStatus{}, nodeCooldown: map[string]time.Time{}}
 	m.probeLoopStop = make(chan struct{})
 	go m.probeLoop()
 	return m, nil
@@ -279,7 +289,80 @@ func (m *Manager) probeLoop() {
 			if due {
 				m.probeSpec(spec)
 			}
+			// ротация по таймеру (rotate-режим): строго на узлы, ответившие
+			// замеру, следующей по кругу после текущего (слово владельца
+			// 2026-10-17)
+			if spec.GroupMode == "rotate" && spec.RotateSec >= 10 {
+				if prev, ok := m.lastRotate[spec.Name]; !ok || now.Sub(prev) >= time.Duration(spec.RotateSec)*time.Second {
+					m.lastRotate[spec.Name] = now
+					m.rotateTimed(spec)
+				}
+			}
 		}
+	}
+}
+
+// rotateTimed - очередной переход таймерной ротации: замерить группу
+// (ответившие = рабочие), взять следующего по кругу после текущего,
+// переключить selector-группу. Никто не ответил - остаёмся, событие в журнал.
+func (m *Manager) rotateTimed(spec PoolSpec) {
+	group := "mawg-" + spec.Name
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	delays, err := m.ClashGroupDelay(ctx, group, spec.ProbeTarget, 5*time.Second)
+	if err != nil {
+		m.note(spec.Name, "ротация не удалась: "+err.Error())
+		return
+	}
+	if len(delays) == 0 {
+		m.note(spec.Name, "ротация: живых узлов нет, остаёмся на текущем")
+		return
+	}
+	var order []string
+	for _, n := range spec.Nodes {
+		if _, ok := delays[groupPrefix(n.Tag, spec.Name)]; ok {
+			order = append(order, groupPrefix(n.Tag, spec.Name))
+		}
+	}
+	if len(order) == 0 { // перестраховка: замер есть, тег не совпал
+		for tag := range delays {
+			order = append(order, tag)
+		}
+	}
+	cur := ""
+	if proxies, err := m.ClashProxies(ctx); err == nil {
+		cur = proxies[group].Now
+	}
+	pick := order[0]
+	for i, t := range order {
+		if t == cur && i+1 < len(order) {
+			pick = order[i+1]
+			break
+		}
+	}
+	if pick == cur {
+		m.note(spec.Name, "ротация: единственный рабочий узел - текущий")
+		return
+	}
+	if err := m.ClashSelect(ctx, group, pick); err != nil {
+		m.note(spec.Name, "ротация не удалась: "+err.Error())
+		return
+	}
+	m.note(spec.Name, "ротация по таймеру: "+cur+" -> "+pick)
+}
+
+// groupPrefix - тег узла в группе движка (build.go: mawg-<пул>|<ConfName>).
+func groupPrefix(nodeTag, pool string) string {
+	name := nodeTag
+	if _, after, ok := strings.Cut(nodeTag, "|"); ok && after != "" {
+		name = after
+	}
+	return "mawg-" + pool + "|" + name
+}
+
+func (m *Manager) note(pool, msg string) {
+	if m.logEvent != nil {
+		m.logEvent(pool, "rotate", msg)
 	}
 }
 
@@ -292,6 +375,22 @@ func (m *Manager) clashBase() int {
 		return m.sharedClash
 	}
 	return m.ClashPort
+}
+
+// ClashProxies - все прокси и группы движка (clash_api, порт с учётом
+// shared-режима); узлы/задержки пула читает веб-слой (60-док).
+func (m *Manager) ClashProxies(ctx context.Context) (map[string]ClashProxy, error) {
+	return ClashProxies(ctx, m.clashBase())
+}
+
+// ClashSelect - ручной выбор узла в selector-группе пула.
+func (m *Manager) ClashSelect(ctx context.Context, group, name string) error {
+	return ClashSelect(ctx, m.clashBase(), group, name)
+}
+
+// ClashGroupDelay - перемерить urltest-группу пула сейчас.
+func (m *Manager) ClashGroupDelay(ctx context.Context, group, testURL string, timeout time.Duration) (map[string]int, error) {
+	return ClashGroupDelay(ctx, m.clashBase(), group, testURL, timeout)
 }
 
 func (m *Manager) fragmentPath() string { return filepath.Join(m.SharedDir, FragmentName) }
@@ -349,13 +448,14 @@ func (m *Manager) writeConfig(pools []PoolSpec) error {
 // --- общий экземпляр (shared): фрагмент в чужой каталог + рестарт чужого сервиса ---
 
 type sharedFacts struct {
-	ClashPort int
-	InTags    map[string]bool
-	OutTags   map[string]bool
-	Tuns      map[string]bool
-	Addrs     map[string]bool
-	DNSTags   map[string]bool
-	CacheFile string
+	ClashPort   int
+	InTags      map[string]bool
+	OutTags     map[string]bool
+	Tuns        map[string]bool
+	Addrs       map[string]bool
+	DNSTags     map[string]bool
+	ListenPorts map[int]bool
+	CacheFile   string
 }
 
 // preflightShared разбирает чужой config.json: порт clash_api для проб и
@@ -386,7 +486,7 @@ func (m *Manager) preflightShared() (*sharedFacts, error) {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("чужой config.json не разбирается: %v", err)
 	}
-	f := &sharedFacts{InTags: map[string]bool{}, OutTags: map[string]bool{}, Tuns: map[string]bool{}, Addrs: map[string]bool{}, DNSTags: map[string]bool{}}
+	f := &sharedFacts{InTags: map[string]bool{}, OutTags: map[string]bool{}, Tuns: map[string]bool{}, Addrs: map[string]bool{}, DNSTags: map[string]bool{}, ListenPorts: map[int]bool{}}
 	str := func(v any) string { s, _ := v.(string); return s }
 	for _, in := range cfg.Inbounds {
 		if t := str(in["tag"]); t != "" {
@@ -394,6 +494,9 @@ func (m *Manager) preflightShared() (*sharedFacts, error) {
 		}
 		if t := str(in["interface_name"]); t != "" {
 			f.Tuns[t] = true
+		}
+		if p, ok := in["listen_port"].(float64); ok {
+			f.ListenPorts[int(p)] = true
 		}
 		if a, ok := in["address"].([]any); ok {
 			for _, x := range a {
@@ -583,6 +686,76 @@ func (m *Manager) reloadShared(timeout time.Duration) error {
 	return m.restartShared(timeout)
 }
 
+// reservedPorts - порты, занятые службами роутера: чужой inbound на них
+// не сможет забиндиться (а если сможет первым - ляжет сосед). Пакетный
+// дефолт sing-box слушает shadowsocks на :::8080 - это API MagiTrickle.
+func (m *Manager) reservedPorts() map[int]string {
+	web := m.webPort
+	if web <= 0 {
+		web = 8090
+	}
+	return map[int]string{
+		8080:        "API MagiTrickle",
+		3553:        "DNS-прокси MagiTrickle",
+		web:         "панель mawg",
+		m.ClashPort: "clash_api mawg",
+	}
+}
+
+// freePort подбирает свободный TCP-порт для переноса чужого inbound
+// (8388+ - классика shadowsocks, ничего своего рядом нет).
+func (m *Manager) freePort() int {
+	for p := 8388; p <= 8399; p++ {
+		l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", p))
+		if err != nil {
+			continue
+		}
+		l.Close()
+		return p
+	}
+	return 0
+}
+
+// ensureSharedClashAPI включает clash_api в чужой config.json (и разгружает
+// занятые порты его inbound'ов): без clash_api пробы и переключение узлов
+// невозможны, а пакетный дефолт конфига его не ставит. Правка с бэкапом и
+// проверкой check-ом, при провале - откат.
+func (m *Manager) ensureSharedClashAPI() error {
+	path := filepath.Join(m.SharedDir, "config.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("чужой конфиг %s не читается: %v", path, err)
+	}
+	out, changed, note, err := editClashAPI(data, m.ClashPort, m.reservedPorts(), m.freePort)
+	if err != nil {
+		return err
+	}
+	if !changed {
+		return nil
+	}
+	m.backupShared()
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, out, 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err := m.checkShared(); err != nil {
+		_ = os.WriteFile(path, data, 0o600)
+		return fmt.Errorf("check не прошёл, правка clash_api откачена: %v", err)
+	}
+	m.patchNote = note
+	return nil
+}
+
+// PatchNote - что mawg поправил в чужом config.json при последнем Apply
+// (пусто, если ничего).
+func (m *Manager) PatchNote() string {
+	return m.patchNote
+}
+
 // backupShared сохраняет config.json владельца перед каждым apply
 // (последние 5 копий в <база mawg>/singbox/shared-backups)
 func (m *Manager) backupShared() {
@@ -621,6 +794,18 @@ func (m *Manager) applyShared(runnable []PoolSpec, skipped []string) ([]string, 
 	if err != nil {
 		return skipped, err
 	}
+	if facts.ClashPort == 0 {
+		// clash_api в чужом конфиге нет - включаем сами (с бэкапом и
+		// check-ом): без него пробы невозможны, а просить владельца
+		// править JSON руками - не наш путь. Сюда попадаем и когда чужой
+		// сервис ещё не запущен: патч остаётся в конфиге к его старту.
+		if err := m.ensureSharedClashAPI(); err != nil {
+			return skipped, fmt.Errorf("не удалось включить clash_api в чужой config.json: %v (исправьте конфиг вручную или используйте свой экземпляр движка)", err)
+		}
+		if facts, err = m.preflightShared(); err != nil {
+			return skipped, err
+		}
+	}
 	m.resolverTag = facts.resolverTag()
 	m.sharedCacheFile = facts.CacheFile
 	if facts.ClashPort == 0 {
@@ -644,6 +829,9 @@ func (m *Manager) applyShared(runnable []PoolSpec, skipped []string) ([]string, 
 		}
 		if facts.Addrs[spec.TunIP] {
 			return skipped, fmt.Errorf("адрес %s уже занят чужим конфигом", spec.TunIP)
+		}
+		if facts.ListenPorts[spec.MixedPort] {
+			return skipped, fmt.Errorf("порт пробы %d уже слушает чужой inbound - освободите его в config.json", spec.MixedPort)
 		}
 	}
 	if !m.sharedAlive() {
@@ -688,6 +876,8 @@ func (m *Manager) applyShared(runnable []PoolSpec, skipped []string) ([]string, 
 func (m *Manager) Apply(pools []PoolSpec) ([]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.patchNote = ""
+	m.lastRotate = map[string]time.Time{}
 	m.stmu.Lock()
 	prevStatuses := m.statuses
 	m.statuses = map[string]*PoolStatus{}
@@ -752,6 +942,17 @@ func (m *Manager) Apply(pools []PoolSpec) ([]string, error) {
 		m.lastSpecs = nil
 		return skipped, nil
 	}
+	// живой выбор selector-групп переживает пересборку (иначе hot-reload
+	// бросал бы на первый узел - слово владельца 2026-10-17)
+	selCtx, selCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	if proxies, err := m.ClashProxies(selCtx); err == nil {
+		for i := range runnable {
+			if g, ok := proxies["mawg-"+runnable[i].Name]; ok && g.Now != "" {
+				runnable[i].Selected = g.Now
+			}
+		}
+	}
+	selCancel()
 	if m.Mode == "shared" {
 		return m.applyShared(runnable, skipped)
 	}
@@ -810,6 +1011,7 @@ func (m *Manager) waitClash(timeout time.Duration) error {
 
 type Status struct {
 	Running   bool   `json:"running"`
+	API       bool   `json:"api"` // clash-эндпоинт отвечает (слово владельца 2026-10-17: отличать «не запущено» от «не отвечает»)
 	PID       int    `json:"pid,omitempty"`
 	Version   string `json:"version,omitempty"`
 	LX        bool   `json:"lx"`
@@ -832,6 +1034,15 @@ func (m *Manager) Status() Status {
 		st.Running = m.alive()
 		if st.Running {
 			st.PID = m.pid
+		}
+	}
+	// жив ли clash-эндпоинт: «процесс есть, но не отвечает» и «не
+	// запущено» - разные диагнозы для пользователя
+	if st.Running {
+		cl := &http.Client{Timeout: 750 * time.Millisecond}
+		if resp, err := cl.Get(fmt.Sprintf("http://127.0.0.1:%d/version", m.clashBase())); err == nil {
+			resp.Body.Close()
+			st.API = resp.StatusCode == http.StatusOK
 		}
 	}
 	return st
