@@ -529,9 +529,13 @@ export interface PoolMember {
 // GET /pools/{name}/engine: узлы движкового пула из clash_api движка
 // (60-док). mode: "urltest" (авто-лучший пинг) | "selector" (ручной
 // выбор); delay - последний успешный замер, мс (0 = не измерен/мёртв).
+// type/transport - протокол узла и транспорт (VLESS/grpc; слово
+// владельца 2026-10-17: у подключений разнобой - показывать тип).
 export interface EngineNode {
   tag: string
   delay: number
+  type?: string
+  transport?: string
 }
 
 export interface PoolEngine {

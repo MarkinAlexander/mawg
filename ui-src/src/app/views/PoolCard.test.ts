@@ -370,7 +370,11 @@ describe('PoolCard - приватный режим по адресам конф�
 describe('PoolCard - узлы движкового пула (60-док)', () => {
   const enginePayload = {
     mode: 'urltest', now: 'узел-2',
-    nodes: [{ tag: 'узел-1', delay: 250 }, { tag: 'узел-2', delay: 120 }, { tag: 'узел-3', delay: 0 }],
+    nodes: [
+      { tag: 'узел-1', delay: 250, type: 'VLESS', transport: 'grpc' },
+      { tag: 'узел-2', delay: 120, type: 'VLESS' },
+      { tag: 'узел-3', delay: 0, type: 'TROJAN', transport: 'ws' },
+    ],
   };
 
   function engineStub(payload = enginePayload) {
@@ -408,6 +412,11 @@ describe('PoolCard - узлы движкового пула (60-док)', () => 
     expect(rows[1].classes()).toContain('active'); // now = узел-2
     expect(w.text()).toContain('Перемерить пинги');
     expect(w.text()).not.toContain('выбрать этот узел');
+    // тип/транспорт у каждого узла (слово владельца 2026-10-17)
+    expect(w.text()).toContain('VLESS/grpc');
+    expect(w.text()).toContain('TROJAN/ws');
+    // «конфиг» движковому пулу не показываем (нет конфигов)
+    expect(w.find('.kv').text()).not.toContain('конфиг');
     w.unmount();
   });
 

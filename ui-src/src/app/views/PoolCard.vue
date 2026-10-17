@@ -282,8 +282,12 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
 
     <div class="kv">
       <!-- secret динамически: только адрес из конфигов; «проверка» и
-           счётчики видны всегда (слово владельца 2026-10-15) -->
-      <b>конфиг<UiHelp :text="G.config" /></b><span :class="{ secret: secrets.endpoint(pool.activeEndpoint) }">{{ pool.activeEndpoint || '-' }}</span>
+           счётчики видны всегда (слово владельца 2026-10-15). «конфиг» -
+           только нативным пулам: у движкового конфигов нет (слово
+           владельца 2026-10-17) -->
+      <template v-if="!isEng">
+        <b>конфиг<UiHelp :text="G.config" /></b><span :class="{ secret: secrets.endpoint(pool.activeEndpoint) }">{{ pool.activeEndpoint || '-' }}</span>
+      </template>
       <b>проверка<UiHelp :text="probeHelp" /></b><span>{{ result }}</span>
       <template v-if="pool.lastError">
         <b class="err">ошибка</b><span
@@ -333,6 +337,12 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
         >
           <span class="cfgmain">
             <span class="cfgname">{{ n.tag }}</span>
+            <UiBadge
+              v-if="n.type"
+              :text="n.type + (n.transport ? '/' + n.transport : '')"
+              variant="muted"
+              tooltip="протокол узла и его транспорт"
+            />
             <UiBadge
               v-if="engineState.now === n.tag"
               text="активен"
