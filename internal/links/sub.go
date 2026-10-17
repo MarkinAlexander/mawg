@@ -71,7 +71,7 @@ func looksLikeLinkList(b []byte) bool {
 		return false
 	}
 	t := string(b)
-	for _, scheme := range []string{"vless://", "trojan://", "wireguard://", "amneziawg://", "vpn://", "ss://", "hysteria", "tuic://", "socks://", "http://", "https://"} {
+	for _, scheme := range []string{"vless://", "vmess://", "trojan://", "wireguard://", "amneziawg://", "vpn://", "ss://", "hysteria", "tuic://", "socks://", "http://", "https://"} {
 		if strings.Contains(t, scheme) {
 			return true
 		}
