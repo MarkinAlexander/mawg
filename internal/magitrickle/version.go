@@ -54,6 +54,23 @@ func DnsUpstreamsSupported(version string) bool {
 	return err == nil && n >= dnsUpstreamsRevMin
 }
 
+// dohUpstreamsRevMin - первая ревизия форка с зашифрованными апстримами
+// каскада: DoT tls://host:853 (RFC 7858) и DoH https://host/dns-query
+// (RFC 8484), 0.8.2-rev11.
+const dohUpstreamsRevMin = 11
+
+// DohUpstreamsSupported говорит, понимает ли MT схемы tls:// и https://
+// в списке апстримов dns-proxy (rev11+); на старых ревизиях политика с
+// DoT/DoH-уровнями честно отказывается применяться.
+func DohUpstreamsSupported(version string) bool {
+	m := revRe.FindStringSubmatch(version)
+	if m == nil {
+		return false
+	}
+	n, err := strconv.Atoi(m[1])
+	return err == nil && n >= dohUpstreamsRevMin
+}
+
 var configVersionRe = regexp.MustCompile(`(?m)^\s*configVersion:\s*"?([^"\s"]+)`)
 
 // ConfigVersion вытаскивает configVersion из дискового config.yaml MT:

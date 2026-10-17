@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -23,11 +24,15 @@ import (
 )
 
 // normalizeUpstream - "8.8.8.8" / "[::1]:5353" -> "host:port" (порт по
-// умолчанию 53).
+// умолчанию 53); "tls://host[:853]" -> канонический DoT-адрес,
+// "https://host[:443][/dns-query]" -> канонический DoH-URL (форк rev11+).
 func normalizeUpstream(raw string) (string, error) {
 	t := strings.TrimSpace(raw)
 	if t == "" {
 		return "", fmt.Errorf("пустой адрес")
+	}
+	if strings.Contains(t, "://") {
+		return normalizeEncryptedUpstream(t)
 	}
 	host, port := t, "53"
 	if h, p, err := net.SplitHostPort(t); err == nil {
@@ -42,6 +47,116 @@ func normalizeUpstream(raw string) (string, error) {
 		return "", fmt.Errorf("порт в %q: %q", raw, port)
 	}
 	return net.JoinHostPort(host, port), nil
+}
+
+// normalizeEncryptedUpstream - DoT/DoH-адреса каскада (ревизия форка 11+):
+// порты и путь DoH достраиваются умолчаниями, канонический вид - как в
+// конфиге форка.
+func normalizeEncryptedUpstream(t string) (string, error) {
+	switch {
+	case strings.HasPrefix(t, "tls://"):
+		rest := strings.TrimPrefix(t, "tls://")
+		if strings.ContainsAny(rest, "/?#") {
+			return "", fmt.Errorf("путь не имеет смысла для DoT: %q", t)
+		}
+		host, port := rest, "853"
+		if h, p, err := net.SplitHostPort(rest); err == nil {
+			host, port = h, p
+		}
+		host = strings.Trim(host, "[]")
+		if host == "" {
+			return "", fmt.Errorf("нет адреса в %q", t)
+		}
+		n, err := strconv.Atoi(port)
+		if err != nil || n < 1 || n > 65535 {
+			return "", fmt.Errorf("порт в %q: %q", t, port)
+		}
+		return "tls://" + net.JoinHostPort(host, port), nil
+	case strings.HasPrefix(t, "https://"):
+		u, err := url.Parse(t)
+		if err != nil {
+			return "", fmt.Errorf("%q: %v", t, err)
+		}
+		host := u.Hostname()
+		if host == "" {
+			return "", fmt.Errorf("нет адреса в %q", t)
+		}
+		port := u.Port()
+		if port == "" {
+			port = "443"
+		}
+		if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
+			return "", fmt.Errorf("порт в %q: %q", t, port)
+		}
+		path := u.EscapedPath()
+		if path == "" || path == "/" {
+			path = "/dns-query"
+		}
+		return (&url.URL{Scheme: "https", Host: net.JoinHostPort(host, port), Path: path}).String(), nil
+	}
+	return "", fmt.Errorf("неизвестная схема в %q (поддержаны tls:// и https://)", t)
+}
+
+// hasEncryptedUpstream - есть ли в списке DoT/DoH-адреса (нужен форк rev11+).
+func hasEncryptedUpstream(addrs []string) bool {
+	for _, a := range addrs {
+		if strings.HasPrefix(a, "tls://") || strings.HasPrefix(a, "https://") {
+			return true
+		}
+	}
+	return false
+}
+
+// upstreamHostIPs - адреса (IP) апстримов политики для статики группы
+// dns-tunnel: IP-литерал берётся напрямую, имя резолвится системным
+// резолвером (обычно это текущий каскад - бутстрап замкнут, но работает:
+// резолв обычный, шифруется только итоговый DNS-трафик). Неразрешимые
+// пропускаются со списком для предупреждения.
+func upstreamHostIPs(ctx context.Context, addrs []string) (ips []string, failed []string) {
+	seen := map[string]struct{}{}
+	resolveCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
+	for _, a := range addrs {
+		var host string
+		switch {
+		case strings.HasPrefix(a, "tls://"):
+			host = strings.TrimPrefix(a, "tls://")
+		case strings.HasPrefix(a, "https://"):
+			if u, err := url.Parse(a); err == nil {
+				host = u.Hostname()
+			}
+		default:
+			host = a
+		}
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			host = h
+		}
+		host = strings.Trim(host, "[]")
+		if host == "" {
+			continue
+		}
+		if ip := net.ParseIP(host); ip != nil {
+			if _, dup := seen[host]; !dup {
+				seen[host] = struct{}{}
+				ips = append(ips, host)
+			}
+			continue
+		}
+		resolved, err := net.DefaultResolver.LookupIPAddr(resolveCtx, host)
+		if err != nil || len(resolved) == 0 {
+			failed = append(failed, host)
+			continue
+		}
+		for _, ipa := range resolved {
+			s := ipa.IP.String()
+			if _, dup := seen[s]; !dup {
+				seen[s] = struct{}{}
+				ips = append(ips, s)
+			}
+			break // первого адреса достаточно (провайдеры - anycast)
+		}
+	}
+	return ips, failed
 }
 
 // composeCascadePolicy - порядок апстримов из политики: основные →
@@ -102,14 +217,44 @@ func (s *Server) dnsTunnelGroup(ctx context.Context) map[string]string {
 	return nil
 }
 
+// tunnelGroupRules - правила группы dns-tunnel: встроенный набор публичных
+// резолверов + статика под адреса апстримов ПОЛИТИКИ (DoT/DoH-провайдеры
+// тоже должны заворачиваться в туннель, когда выбран «через пул»).
+func tunnelGroupRules(extraIPs []string) []magitrickle.Rule {
+	preset, _ := magitrickle.PresetByID("dns-tunnel")
+	rules := make([]magitrickle.Rule, 0, len(preset.Rules)+len(extraIPs))
+	seen := map[string]struct{}{}
+	for _, r := range preset.Rules {
+		key := r.Type + "|" + r.Rule
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		rules = append(rules, r)
+	}
+	for _, ip := range extraIPs {
+		typ, rule := "subnet", ip+"/32"
+		if strings.Contains(ip, ":") {
+			typ, rule = "subnet6", ip+"/128"
+		}
+		key := typ + "|" + rule
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		rules = append(rules, magitrickle.Rule{Type: typ, Rule: rule, Enable: true})
+	}
+	return rules
+}
+
 // ensureDnsTunnelGroup - группа dns-tunnel на пуле: создаётся по пресету,
 // при смене интерфейса обновляется (группа целиком - GOTCHAS про частичный
 // PUT), при совпадении - no-op. Идемпотентно для повторного применения.
-func (s *Server) ensureDnsTunnelGroup(ctx context.Context, iface string) (string, error) {
-	preset, ok := magitrickle.PresetByID("dns-tunnel")
-	if !ok {
+func (s *Server) ensureDnsTunnelGroup(ctx context.Context, iface string, extraIPs []string) (string, error) {
+	if _, ok := magitrickle.PresetByID("dns-tunnel"); !ok {
 		return "", fmt.Errorf("пресет dns-tunnel не найден")
 	}
+	rules := tunnelGroupRules(extraIPs)
 	client := s.mtClient()
 	if err := client.EnsureHealthy(ctx); err != nil {
 		return "", err
@@ -122,17 +267,17 @@ func (s *Server) ensureDnsTunnelGroup(ctx context.Context, iface string) (string
 		if g.Name != "dns-tunnel" {
 			continue
 		}
-		if g.Interface == iface {
+		if g.Interface == iface && rulesEqual(g.Rules, rules) {
 			return g.ID, nil
 		}
 		g.Interface = iface
-		g.Rules = preset.Rules // список резолверов встроен в код - актуальнее дискового
+		g.Rules = rules // встроенный список + статика политики - актуальнее дискового
 		if err := client.UpdateGroup(ctx, g, true); err != nil {
 			return "", fmt.Errorf("группа dns-tunnel не обновлена: %w", err)
 		}
 		return g.ID, nil
 	}
-	if err := client.AddGroup(ctx, magitrickle.Group{Name: "dns-tunnel", Interface: iface, Enable: true, Rules: preset.Rules}); err != nil {
+	if err := client.AddGroup(ctx, magitrickle.Group{Name: "dns-tunnel", Interface: iface, Enable: true, Rules: rules}); err != nil {
 		return "", fmt.Errorf("группа dns-tunnel не создана: %w", err)
 	}
 	if gs, err := client.GroupsWithRules(ctx); err == nil {
@@ -145,12 +290,26 @@ func (s *Server) ensureDnsTunnelGroup(ctx context.Context, iface string) (string
 	return "", nil
 }
 
+// rulesEqual - одинаков ли набор правил (порядок важен - это порядок
+// матчинга; честное сравнение без переупорядочивания).
+func rulesEqual(a, b []magitrickle.Rule) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Type != b[i].Type || a[i].Rule != b[i].Rule || a[i].Enable != b[i].Enable {
+			return false
+		}
+	}
+	return true
+}
+
 // getDnsPolicy - GET /api/v1/dns/policy: сохранённая политика, скомпонованный
 // порядок, живой порядок форка, статус группы dns-tunnel.
 func (s *Server) getDnsPolicy(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	capable := s.mtDnsUpstreamsCapable(ctx)
-	res := map[string]any{"capable": capable}
+	res := map[string]any{"capable": capable, "dohCapable": s.mtDohUpstreamsCapable(ctx)}
 	p := s.store.DNSCascade()
 	if p == nil {
 		p = &store.DnsCascadePolicy{}
@@ -175,8 +334,9 @@ func (s *Server) getDnsPolicy(w http.ResponseWriter, r *http.Request) {
 }
 
 // putDnsPolicy - PUT /api/v1/dns/policy {policy}: сохранить и применить -
-// группа dns-tunnel на выбранном пуле, затем один PUT порядка в форк.
-// Выключенная политика только сохраняется (текущие апстримы не трогаем).
+// группа dns-tunnel на выбранном пуле (статика под адреса политики
+// в комплекте), затем один PUT порядка в форк. Выключенная политика
+// только сохраняется (текущие апстримы не трогаем).
 func (s *Server) putDnsPolicy(w http.ResponseWriter, r *http.Request) {
 	var p store.DnsCascadePolicy
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16384)).Decode(&p); err != nil {
@@ -192,8 +352,18 @@ func (s *Server) putDnsPolicy(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "применение политики требует MagiTrickle 0.8.2-rev8+"})
 		return
 	}
+	if p.Enabled && hasEncryptedUpstream(composed) && !s.mtDohUpstreamsCapable(r.Context()) {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "DoT/DoH-уровни требуют MagiTrickle 0.8.2-rev11+ (обновите MT в Системе)"})
+		return
+	}
 	if p.Enabled && p.Tunnel != "" {
-		if _, err := s.ensureDnsTunnelGroup(r.Context(), p.Tunnel); err != nil {
+		// адреса апстримов политики -> статика dns-tunnel: запросы к
+		// провайдерам DoT/DoH тоже заворачиваются в туннель
+		ips, failed := upstreamHostIPs(r.Context(), composed)
+		for _, h := range failed {
+			s.store.LogEvent("dns", "policy", "адрес "+h+" не разрезолвился для статики dns-tunnel (применю без него; повторите позже)")
+		}
+		if _, err := s.ensureDnsTunnelGroup(r.Context(), p.Tunnel, ips); err != nil {
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 			return
 		}
@@ -216,10 +386,38 @@ func (s *Server) putDnsPolicy(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "composed": composed})
 }
 
+// policyProbeLevel - уровень политики как нога зонда: вид транспорта
+// берётся из схемы адреса (tls:// -> DoT, https:// -> DoH, иначе UDP).
+// Адрес сначала канонизируется: https://dns.google БЕЗ пути - валидный
+// уровень каскада, но POST в корень даёт HTML вместо DNS-ответа (живой
+// кейс 0.42: noanswer при живом DoH).
+func policyProbeLevel(name, addr string) (dnsprobe.Level, bool) {
+	a, err := normalizeUpstream(addr)
+	if err != nil {
+		return dnsprobe.Level{}, false
+	}
+	switch {
+	case strings.HasPrefix(a, "tls://"):
+		hostPort := strings.TrimPrefix(a, "tls://")
+		host, port := hostPort, "853"
+		if h, p, err := net.SplitHostPort(hostPort); err == nil {
+			host, port = h, p
+		}
+		return dnsprobe.Level{Level: name + ": " + a, Kind: "dot", Server: net.JoinHostPort(host, port), SNI: host}, true
+	case strings.HasPrefix(a, "https://"):
+		u, err := url.Parse(a)
+		if err != nil {
+			return dnsprobe.Level{}, false
+		}
+		return dnsprobe.Level{Level: name + ": " + a, Kind: "doh", Server: a, SNI: u.Hostname()}, true
+	}
+	return dnsprobe.Level{Level: name + ": " + a, Kind: "udp", Server: a}, true
+}
+
 // postDnsPolicyProbe - POST /api/v1/dns/policy/probe: канарейка
 // (deb.torproject.org) по каждому уровню политики; трафик самой mawg
 // маркируется группами MT (rev7+), так что туннельные уровни зондируются
-// по-настоящему - через туннель.
+// по-настоящему - через туннель; DoT/DoH-уровни - своим транспортом.
 func (s *Server) postDnsPolicyProbe(w http.ResponseWriter, r *http.Request) {
 	p := s.store.DNSCascade()
 	if p == nil {
@@ -227,31 +425,27 @@ func (s *Server) postDnsPolicyProbe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var levels []dnsprobe.Level
-	label := func(lvl, addr string) string {
-		return lvl + ": " + addr
+	appendLevel := func(name, addr string) {
+		if l, ok := policyProbeLevel(name, addr); ok {
+			levels = append(levels, l)
+		}
 	}
 	for _, raw := range p.Primary {
-		if a, err := normalizeUpstream(raw); err == nil {
-			name := "L1 напрямую"
-			if p.Tunnel != "" {
-				name = "L2 туннель " + p.Tunnel
-			}
-			levels = append(levels, dnsprobe.Level{Level: label(name, a), Kind: "udp", Server: a})
+		name := "L1 напрямую"
+		if p.Tunnel != "" {
+			name = "L2 туннель " + p.Tunnel
 		}
+		appendLevel(name, raw)
 	}
 	for _, raw := range p.Fallback {
-		if a, err := normalizeUpstream(raw); err == nil {
-			levels = append(levels, dnsprobe.Level{Level: label("L3 запасной", a), Kind: "udp", Server: a})
-		}
+		appendLevel("L3 запасной", raw)
 	}
 	if p.Yandex {
-		levels = append(levels, dnsprobe.Level{Level: "L4 Яндекс", Kind: "udp", Server: "77.88.8.8:53"})
+		levels = append(levels, dnsprobe.Level{Level: "L4 Яндекс: 77.88.8.8:53", Kind: "udp", Server: "77.88.8.8:53"})
 	}
 	if p.Provider {
 		if up := dnsprobe.UpstreamFromResolv(); up != "" {
-			if a, err := normalizeUpstream(up); err == nil {
-				levels = append(levels, dnsprobe.Level{Level: label("L5 провайдер", a), Kind: "udp", Server: a})
-			}
+			appendLevel("L5 провайдер", up)
 		}
 	}
 	if len(levels) == 0 {

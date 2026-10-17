@@ -336,6 +336,7 @@ export interface DnsCascadePolicy {
 
 export interface DnsPolicyRes {
   capable: boolean
+  dohCapable?: boolean // MT rev11+: уровни DoT (tls://) и DoH (https://)
   policy: DnsCascadePolicy
   composed?: string[] // порядок из сохранённой политики
   active?: string[] // живой порядок апстримов MT
