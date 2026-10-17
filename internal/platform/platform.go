@@ -1,6 +1,8 @@
 package platform
 
 import (
+	"time"
+
 	"mawg/internal/store"
 	"mawg/internal/wgconf"
 )
@@ -42,4 +44,19 @@ type Backend interface {
 	// пусто = платформа не знает пути, бэкапится только shadow.
 	MTConfigPath() string
 	SaveConfig() error
+}
+
+// Endpointer - опциональная возможность платформы: адреса (без портов)
+// удалённых пиров роутерного WG-интерфейса. Нужно каскадам с
+// iface-источником (баг владельца: панель требовала адреса от руки,
+// хотя Кинетик отдаёт их в RCI/ndmc).
+type Endpointer interface {
+	IfaceEndpoints(device string) ([]string, error)
+}
+
+// ShellRunner - опциональная возможность платформы: ограниченный шелл.
+// Нужен DNS-менеджеру: состояние dnsmasq/remap53 и uci-мутации
+// (46-док §3, срез OpenWrt 64-док).
+type ShellRunner interface {
+	RunShell(script string, timeout time.Duration) (string, error)
 }

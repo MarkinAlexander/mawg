@@ -19,10 +19,12 @@ import (
 
 	"mawg/internal/auth"
 	"mawg/internal/cascade"
+	"mawg/internal/dnsprobe"
 	"mawg/internal/magitrickle"
 	"mawg/internal/platform"
 	"mawg/internal/platform/keenetic"
 	"mawg/internal/platform/openwrt"
+	"mawg/internal/dnsmgr"
 	"mawg/internal/provision"
 	"mawg/internal/rotator"
 	"mawg/internal/selfupdate"
@@ -73,6 +75,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/ifaces/{device}/mode", s.setIfaceMode)
 	mux.HandleFunc("PUT /api/v1/ifaces/{device}/probe", s.setIfaceProbe)
 	mux.HandleFunc("GET /api/v1/wanprobe", s.getWANProbe)
+	mux.HandleFunc("GET /api/v1/dns/probe", s.dnsProbe)
+	mux.HandleFunc("GET /api/v1/dns/keenetic/own", s.dnsKeeneticOwn)
+	mux.HandleFunc("GET /api/v1/dns/state", s.dnsState)
+	mux.HandleFunc("POST /api/v1/dns/dnsmasq", s.dnsDnsmasq)
+	mux.HandleFunc("GET /api/v1/dns/upstreams", s.dnsUpstreams)
+	mux.HandleFunc("PUT /api/v1/dns/upstreams", s.dnsUpstreamsSet)
+	mux.HandleFunc("GET /api/v1/dns/policy", s.getDnsPolicy)
+	mux.HandleFunc("PUT /api/v1/dns/policy", s.putDnsPolicy)
+	mux.HandleFunc("POST /api/v1/dns/policy/probe", s.postDnsPolicyProbe)
 	mux.HandleFunc("PUT /api/v1/wanprobe", s.putWANProbe)
 	mux.HandleFunc("GET /api/v1/rcitoken", s.getRCIToken)
 	mux.HandleFunc("PUT /api/v1/rcitoken", s.putRCIToken)
@@ -92,6 +103,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/pools/{name}/configs", s.uploadConfigs)
 	mux.HandleFunc("GET /api/v1/pools/{name}/premium", s.getPremium)
 	mux.HandleFunc("GET /api/v1/pools/{name}/members", s.getPoolMembers)
+	mux.HandleFunc("GET /api/v1/pools/{name}/engine", s.getPoolEngine)
+	mux.HandleFunc("PUT /api/v1/pools/{name}/engine/select", s.putPoolEngineSelect)
+	mux.HandleFunc("POST /api/v1/pools/{name}/engine/retest", s.postPoolEngineRetest)
+	mux.HandleFunc("POST /api/v1/pools/{name}/engine/toggle", s.postPoolEngineToggle)
 	mux.HandleFunc("GET /api/v1/pools/{name}/configs/{file}", s.getPoolConfigRaw)
 	mux.HandleFunc("POST /api/v1/pools/{name}/premium", s.importPremium)
 	mux.HandleFunc("POST /api/v1/pools/{name}/premium/country", s.switchPremium)
@@ -125,6 +140,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/v1/mt/groups/{id}", s.mtDeleteGroup)
 	mux.HandleFunc("POST /api/v1/mt/groups/{id}/rules", s.mtCreateRule)
 	mux.HandleFunc("POST /api/v1/mt/groups/{id}/rules/import", s.mtImportRules)
+	mux.HandleFunc("POST /api/v1/mt/groups/{id}/rules/enable", s.mtRulesEnableAll)
 	mux.HandleFunc("PUT /api/v1/mt/groups/{id}/rules/{rid}", s.mtUpdateRule)
 	mux.HandleFunc("POST /api/v1/mt/groups/{id}/rules/{rid}/enable", s.mtToggleRule)
 	mux.HandleFunc("DELETE /api/v1/mt/groups/{id}/rules/{rid}", s.mtDeleteRule)
@@ -139,6 +155,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/system/update/check", s.updateCheck)
 	mux.HandleFunc("POST /api/v1/system/update/run", s.updateRun)
 	mux.HandleFunc("POST /api/v1/system/restart", s.postSystemRestart)
+	mux.HandleFunc("GET /api/v1/cascades/iface-endpoints", s.ifaceEndpointsHint)
 	mux.HandleFunc("GET /api/v1/cascades", s.cascList)
 	mux.HandleFunc("POST /api/v1/cascades", s.cascCreate)
 	mux.HandleFunc("DELETE /api/v1/cascades/{group}", s.cascDelete)
@@ -155,16 +172,14 @@ func (s *Server) Handler() http.Handler {
 	if err != nil {
 		panic(err)
 	}
-	// основная панель - Vue на /app/; вход с корня идёт туда. Классическая
-	// (самодостаточная страница без panel.js) остаётся страховкой на /legacy/.
-	// {$} - только точный корень, прочая статика (favicon.ico) - как раньше.
+	// основная панель - Vue на /app/; вход с корня идёт туда. Легаси-панель
+	// удалена в Ф3.9 (44-док §5.9). {$} - только точный корень, прочая
+	// статика (favicon.ico) - как раньше.
 	mux.Handle("GET /{$}", http.RedirectHandler("/app/", http.StatusFound))
-	mux.Handle("GET /legacy", http.RedirectHandler("/legacy/", http.StatusMovedPermanently))
-	mux.Handle("GET /legacy/", http.StripPrefix("/legacy/", http.FileServer(http.FS(sub))))
 	mux.Handle("/", http.FileServer(http.FS(sub)))
 
 	// новая панель (Vue, исходники в ui-src) собирается в ui/app командой
-	// `npm run build`; старая панель остаётся на /. Имя ui/app, а не dist -
+	// `npm run build`. Имя ui/app, а не dist -
 	// go:embed не встраивает каталоги из .gitignore (там занят dist/).
 	appSub, err := fs.Sub(uiFS, "ui/app")
 	if err != nil {
@@ -363,18 +378,14 @@ func (s *Server) updateRun(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "started", "to": info.Latest})
 }
 
-// postSystemRestart перезапускает сервис: ответ уходит раньше, чем
-// демон снимется.
-func (s *Server) postSystemRestart(w http.ResponseWriter, r *http.Request) {
-	script := "/etc/init.d/mawg"
-	if s.backend.Name() == store.PlatformKeenetic {
-		script = "/opt/etc/init.d/S99mawg"
-	}
+// restartPanel перезапускает сервис панели в отложенной горутине (ответ
+// вызывающий шлёт сам). Ошибка - только отсутствующий init-скрипт: тогда
+// вызывающий не трогает состояние.
+func restartPanel(s *Server) error {
+	script := mawgServiceScript(s.backend.Name() == store.PlatformKeenetic)
 	if _, err := os.Stat(script); err != nil {
-		writeErr(w, fmt.Errorf("init-скрипт не найден: %s", script))
-		return
+		return fmt.Errorf("init-скрипт не найден: %s", script)
 	}
-	s.store.LogEvent("settings", "server", "перезапуск панели из веб-интерфейса")
 	go func() {
 		time.Sleep(700 * time.Millisecond)
 		cmd := exec.Command(script, "restart")
@@ -382,6 +393,17 @@ func (s *Server) postSystemRestart(w http.ResponseWriter, r *http.Request) {
 		cmd.Stderr = nil
 		cmd.Run()
 	}()
+	return nil
+}
+
+// postSystemRestart перезапускает сервис: ответ уходит раньше, чем
+// демон снимется.
+func (s *Server) postSystemRestart(w http.ResponseWriter, r *http.Request) {
+	if err := restartPanel(s); err != nil {
+		writeErr(w, err)
+		return
+	}
+	s.store.LogEvent("settings", "server", "перезапуск панели из веб-интерфейса")
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "restarting"})
 }
 
@@ -546,7 +568,7 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 			tuns = append(tuns, entry)
 		}
 		out.Engine = map[string]any{
-			"available": true, "running": st.Running, "version": st.Version,
+			"available": true, "running": st.Running, "api": st.API, "version": st.Version,
 			"lx": st.LX, "bin": st.Bin, "mixedPort": st.Mixed, "clashPort": st.Clash,
 			"mode": st.Mode, "fragment": st.Fragment, "cacheFile": st.CacheFile, "tuns": tuns,
 		}
@@ -857,6 +879,154 @@ func (s *Server) putWANProbe(w http.ResponseWriter, r *http.Request) {
 	}
 	s.store.LogEvent("system", "wanprobe", "проверка канала провайдера "+map[bool]string{true: "включена", false: "выключена"}[probe != nil])
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "enabled": probe != nil})
+}
+
+// dnsProbe - зонд DNS-уровней канарейкой (63-док): A-запрос
+// deb.torproject.org через каждый уровень и сверка с каноническим набором.
+// По умолчанию - стандартный набор (dnsmasq/MT/апстрим/DoH/DoT);
+// ?kind=udp&server=host:port[&sni=...] - один уровень (отладка/тесты).
+func (s *Server) dnsProbe(w http.ResponseWriter, r *http.Request) {
+	levels := dnsprobe.Defaults()
+	kind, server := r.URL.Query().Get("kind"), r.URL.Query().Get("server")
+	if kind != "" && server != "" {
+		levels = []dnsprobe.Level{{Level: server, Kind: kind, Server: server, SNI: r.URL.Query().Get("sni")}}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"results": dnsprobe.Run(levels, 3*time.Second)})
+}
+
+// dnsRunner - ShellRunner платформы для DNS-менеджера (openwrt).
+func (s *Server) dnsRunner() (dnsmgr.Runner, bool) {
+	if sr, ok := s.backend.(platform.ShellRunner); ok {
+		return sr.RunShell, true
+	}
+	return nil, false
+}
+
+// dnsState - состояние DNS-стека роутера (46-док §3): openwrt - uci +
+// iptables + remap53; keenetic - только факт перехвата MT_DNSOR и
+// апстримы MT (71-док, дизайн-слово владельца: собственные серверы
+// Keenetic панель не трогает).
+func (s *Server) dnsState(w http.ResponseWriter, r *http.Request) {
+	run, ok := s.dnsRunner()
+	if !ok {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "платформа пока без DNS-менеджера"})
+		return
+	}
+	var st dnsmgr.State
+	var err error
+	if s.backend.Name() == store.PlatformKeenetic {
+		st, err = dnsmgr.CollectKeenetic(run, s.backend.MTConfigPath())
+	} else {
+		st, err = dnsmgr.Collect(run, s.backend.MTConfigPath())
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, st)
+}
+
+// dnsDnsmasq - переключение dnsmasq: {"mode":"mt"} - в MT:3553 («живучий»
+// профиль, 63-док: noresolv/cachesize/resolvfile не трогаются, прядевой
+// список прячется в uci), {"mode":"direct"} - рестор обратно.
+func (s *Server) dnsDnsmasq(w http.ResponseWriter, r *http.Request) {
+	run, ok := s.dnsRunner()
+	if !ok {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "платформа пока без DNS-менеджера (срез OpenWrt)"})
+		return
+	}
+	if s.backend.Name() == store.PlatformKeenetic {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "на Keenetic служба DNS не переключается: панель не трогает собственные серверы Keenetic (управление - «Резервные серверы» MagiTrickle)"})
+		return
+	}
+	var req struct {
+		Mode string `json:"mode"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
+		writeErr(w, fmt.Errorf("кривой запрос"))
+		return
+	}
+	if req.Mode != "mt" && req.Mode != "direct" {
+		writeErr(w, fmt.Errorf("mode: mt|direct"))
+		return
+	}
+	if err := dnsmgr.SetDnsmasqTarget(run, req.Mode); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	st, err := dnsmgr.Collect(run, s.backend.MTConfigPath())
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "state": st})
+}
+
+// dnsKeeneticOwn - собственные DNS-серверы Keenetic (только просмотр,
+// 71-док: панель их не меняет): DoH/DoT секции dns-proxy и простые
+// ip/ipv6 name-server по подключения - из running-config через ndmc.
+// Вердикты «работает?» даёт GET /dns/probe?kind=&server= по каждому.
+func (s *Server) dnsKeeneticOwn(w http.ResponseWriter, r *http.Request) {
+	if s.backend.Name() != store.PlatformKeenetic {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "собственные DNS-серверы есть только на Keenetic"})
+		return
+	}
+	run, ok := s.dnsRunner()
+	if !ok {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "платформа без шелла"})
+		return
+	}
+	own, err := dnsmgr.CollectKeeneticOwn(run)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, own)
+}
+
+// dnsUpstreams - состояние каскада апстримов dns-proxy MT (форк rev8+,
+// 64-док §6): живой стейт менеджера (alive/active/причины) через прокси
+// в MT. MT без rev8 (Кинетик rev4, стенд до апгрейда) - честный
+// {"capable":false}: панель показывает апстримы из config.yaml и хинт.
+func (s *Server) dnsUpstreams(w http.ResponseWriter, r *http.Request) {
+	if !s.mtDnsUpstreamsCapable(r.Context()) {
+		writeJSON(w, http.StatusOK, map[string]any{"capable": false})
+		return
+	}
+	st, err := s.mtClient().DnsUpstreams(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "MT недоступен: " + err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"capable": true, "state": st})
+}
+
+// dnsUpstreamsSet - правка списка апстримов dns-proxy MT {"upstreams":
+// ["8.8.8.8", "77.88.8.8:5353"]} (порядок = приоритет). Прямую правку
+// config.yaml из mawg не делаем - гонка с записью конфига самим MT;
+// форк-эндпоинт сохраняет конфиг и горячо подменяет список сам.
+func (s *Server) dnsUpstreamsSet(w http.ResponseWriter, r *http.Request) {
+	if !s.mtDnsUpstreamsCapable(r.Context()) {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "правка апстримов требует MagiTrickle 0.8.2-rev8+ (обновите MT)"})
+		return
+	}
+	var req struct {
+		Upstreams []string `json:"upstreams"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
+		writeErr(w, fmt.Errorf("кривой запрос"))
+		return
+	}
+	if err := s.mtClient().SetDnsUpstreams(r.Context(), req.Upstreams); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	st, err := s.mtClient().DnsUpstreams(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "state": st})
 }
 
 func (s *Server) renamePool(w http.ResponseWriter, r *http.Request) {
@@ -1176,6 +1346,20 @@ func (s *Server) updatePool(w http.ResponseWriter, r *http.Request) {
 	if patch.MagitrickleGroupID != "" {
 		merged.MagitrickleGroupID = patch.MagitrickleGroupID
 	}
+	if patch.GroupMode != "" {
+		if patch.GroupMode != "urltest" && patch.GroupMode != "selector" && patch.GroupMode != "rotate" {
+			writeErr(w, fmt.Errorf("groupMode: urltest|selector|rotate"))
+			return
+		}
+		merged.GroupMode = patch.GroupMode
+	}
+	if patch.RotateSec != 0 {
+		if patch.RotateSec < 10 || patch.RotateSec > 86400 {
+			writeErr(w, fmt.Errorf("интервал ротации: 10-86400 секунд"))
+			return
+		}
+		merged.RotateSec = patch.RotateSec
+	}
 	// Каскад движка (detour) владельцем отвергнут: всё, заведённое через
 	// ядро, умирает вместе с ядром, а на OpenWrt без sing-box юзер вообще
 	// ничего не получит. Поле EngineDetour оставлено в схеме про запас -
@@ -1470,6 +1654,12 @@ func (s *Server) postSystemInstall(w http.ResponseWriter, r *http.Request) {
 			backup = *req.Backup
 		}
 		s.installLXCore(w, r, req.Flavor, backup)
+		return
+	}
+	// MagiTrickle ставим кодом из релиза mawg-форка (детект таргета, пакет
+	// под opkg/apk) - шелл-скрипт bin.magitrickle.dev больше не предлагаем
+	if req.ID == "magitrickle" {
+		s.installMagitrickle(w, r)
 		return
 	}
 	check := s.systemCheck()
@@ -2008,6 +2198,23 @@ func (s *Server) mtDeleteGroup(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "deleted"})
 }
 
+// ifaceEndpointsHint - авторезолв эндпоинтов роутерного WG-интерфейса
+// для префилла диалога каскадов (баг владельца: каскад с nwg7 требовал
+// адреса от руки, хотя Кинетик их отдаёт в RCI).
+func (s *Server) ifaceEndpointsHint(w http.ResponseWriter, r *http.Request) {
+	c := s.casc()
+	if c == nil {
+		writeErr(w, fmt.Errorf("magitrickle недоступен"))
+		return
+	}
+	hosts, err := c.IfaceEndpoints(r.URL.Query().Get("source"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"hosts": hosts})
+}
+
 func (s *Server) cascList(w http.ResponseWriter, r *http.Request) {
 	c := s.casc()
 	if c == nil {
@@ -2377,6 +2584,55 @@ func (s *Server) mtToggleRule(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	http.NotFound(w, r)
+}
+
+// mtRulesEnableAll включает/выключает ВСЕ правила группы одним PUT группы
+// целиком (частичный PUT затирает поля - шлём группу как есть, меняя только
+// Enable правил). Слово владельца: 465 правил по одному не нащёлкаешь.
+func (s *Server) mtRulesEnableAll(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Enable bool `json:"enable"`
+	}
+	json.NewDecoder(r.Body).Decode(&req)
+	client := s.mtClient()
+	if err := client.EnsureHealthy(r.Context()); err != nil {
+		writeErr(w, err)
+		return
+	}
+	groups, err := client.GroupsWithRules(r.Context())
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	groupID := r.PathValue("id")
+	for i := range groups {
+		g := &groups[i]
+		if g.ID != groupID {
+			continue
+		}
+		changed := 0
+		for j := range g.Rules {
+			if g.Rules[j].Enable != req.Enable {
+				g.Rules[j].Enable = req.Enable
+				changed++
+			}
+		}
+		if changed == 0 {
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "total": len(g.Rules), "changed": 0})
+			return
+		}
+		if err := client.UpdateGroup(r.Context(), *g, true); err != nil {
+			writeErr(w, err)
+			return
+		}
+		client.RefreshShadow(r.Context())
+		action := map[bool]string{true: "включены", false: "выключены"}[req.Enable]
+		s.store.LogEvent("rules", "magitrickle",
+			fmt.Sprintf("в группе %s %s все правила (%d из %d)", g.Name, action, changed, len(g.Rules)))
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "total": len(g.Rules), "changed": changed})
+		return
+	}
+	writeErr(w, fmt.Errorf("группа не найдена"))
 }
 
 func (s *Server) mtDeleteRule(w http.ResponseWriter, r *http.Request) {

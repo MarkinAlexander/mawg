@@ -24,6 +24,26 @@ func TestSourcesSupported(t *testing.T) {
 	}
 }
 
+func TestDnsUpstreamsSupported(t *testing.T) {
+	cases := []struct {
+		version string
+		want    bool
+	}{
+		{"0.8.2-rev4-mawgfix2", false}, // Кинетик
+		{"0.8.2-rev7-mawgfix1", false}, // стенд до апгрейда
+		{"0.8.2-rev8-mawgfix1", true},
+		{"0.8.2-rev10", true},
+		{"0.8.2", false},
+		{"unattached", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		if got := DnsUpstreamsSupported(c.version); got != c.want {
+			t.Errorf("DnsUpstreamsSupported(%q) = %v, want %v", c.version, got, c.want)
+		}
+	}
+}
+
 func TestConfigVersion(t *testing.T) {
 	yaml := []byte("# comment: configVersion: 0.0.1\n" +
 		"configVersion: 0.8.2-rev4-mawgfix2\n" +

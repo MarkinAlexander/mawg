@@ -92,6 +92,14 @@ func (s *Store) saveLocked(path string, v any) error {
 func (s *Store) poolsDir() string  { return filepath.Join(s.base, "pools") }
 func (s *Store) backupDir() string { return filepath.Join(s.base, "backups") }
 
+// Журнал живёт в tmpfs (слово владельца 2026-10-17: флешку не
+// изнашивать - журнал некритичен, теряется только при ребуте роутера,
+// рестарт mawg переживает). Легаси-файлы на флеше (base/events.json
+// и .old) читаются при старте один раз (апгрейд) и больше не пишутся.
+func (s *Store) eventsTmpPath() string {
+	return filepath.Join(os.TempDir(), "mawg-events.jsonl")
+}
+
 func (s *Store) eventsPath() string    { return filepath.Join(s.base, "events.json") }
 func (s *Store) eventsOldPath() string { return s.eventsPath() + ".old" }
 
@@ -262,6 +270,20 @@ func (s *Store) SetWANProbe(p *ProbeConfig) error {
 		p = &norm
 	}
 	s.root.Settings.WANProbe = p
+	return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
+}
+
+// DNSCascade - политика каскада DNS (nil = не задана).
+func (s *Store) DNSCascade() *DnsCascadePolicy {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.root.Settings.DNSCascade
+}
+
+func (s *Store) SetDNSCascade(p *DnsCascadePolicy) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.root.Settings.DNSCascade = p
 	return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
 }
 
@@ -934,7 +956,7 @@ func (s *Store) LogEvent(pool, kind, message string) {
 // ронять работу; при переполнении файл ротируется в .old (одна копия
 // истории, старшая теряется).
 func (s *Store) appendEventLocked(ev Event) {
-	path := s.eventsPath()
+	path := s.eventsTmpPath()
 	if st, err := os.Stat(path); err == nil && st.Size() >= eventsMaxBytes {
 		os.Rename(path, s.eventsOldPath())
 	}
@@ -952,10 +974,16 @@ func (s *Store) appendEventLocked(ev Event) {
 
 func (s *Store) loadEvents() {
 	var evs []Event
-	for _, path := range []string{s.eventsOldPath(), s.eventsPath()} {
+	var legacyRead []string
+	for _, path := range []string{s.eventsTmpPath() + ".old", s.eventsTmpPath(), s.eventsOldPath(), s.eventsPath()} {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			continue
+		}
+		if strings.HasPrefix(path, s.base) {
+			// легаси-файл на флеше: после чтения снимаем (слово владельца
+			// 2026-10-17: мёртвый груз после апгрейда не должен висеть)
+			legacyRead = append(legacyRead, path)
 		}
 		for _, line := range strings.Split(string(data), "\n") {
 			line = strings.TrimSpace(line)
@@ -972,6 +1000,9 @@ func (s *Store) loadEvents() {
 		evs = evs[len(evs)-eventsMemCap:]
 	}
 	s.log = evs
+	for _, path := range legacyRead {
+		_ = os.Remove(path)
+	}
 }
 
 func (s *Store) Events() []Event {
@@ -982,6 +1013,14 @@ func (s *Store) Events() []Event {
 	return out
 }
 
+// ConfigJSON - текущий config.json (настройки сервера: порт/доступ/RCI,
+// пулы, каскады, наборы) одним JSON - для бэкапа настроек панели.
+func (s *Store) ConfigJSON() ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return json.MarshalIndent(s.root, "", "  ")
+}
+
 func (s *Store) SaveBackup(name, content string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -989,11 +1028,15 @@ func (s *Store) SaveBackup(name, content string) (string, error) {
 }
 
 func (s *Store) saveBackupLocked(name, content string) (string, error) {
+	return s.saveBackupLockedExt(name, "conf", content)
+}
+
+func (s *Store) saveBackupLockedExt(name, ext, content string) (string, error) {
 	if err := os.MkdirAll(s.backupDir(), 0o700); err != nil {
 		return "", err
 	}
 	base := fmt.Sprintf("%s-%s", name, time.Now().Format("20060102-150405"))
-	path := filepath.Join(s.backupDir(), base+".conf")
+	path := filepath.Join(s.backupDir(), base+"."+ext)
 	// две записи в одну секунду: не перетираем первую копию - суффикс
 	if _, err := os.Stat(path); err == nil {
 		for i := 1; ; i++ {
@@ -1008,13 +1051,13 @@ func (s *Store) saveBackupLocked(name, content string) (string, error) {
 }
 
 // SaveBackupRotated пишет бэкап и подчищает старые копии того же имени,
-// оставляя keep самых свежих (формат имени name-YYYYMMDD-HHMMSS.conf).
+// оставляя keep самых свежих (формат имени name-YYYYMMDD-HHMMSS.ext).
 // Авто-бэкапы перед массовыми записями могут сыпаться часто - без ротации
 // каталог распухает на флеше роутера.
-func (s *Store) SaveBackupRotated(name, content string, keep int) (string, error) {
+func (s *Store) SaveBackupRotated(name, ext, content string, keep int) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	path, err := s.saveBackupLocked(name, content)
+	path, err := s.saveBackupLockedExt(name, ext, content)
 	if err != nil {
 		return "", err
 	}
@@ -1026,7 +1069,7 @@ func (s *Store) SaveBackupRotated(name, content string, keep int) (string, error
 	var files []string
 	for _, e := range entries {
 		n := e.Name()
-		if strings.HasPrefix(n, prefix) && strings.HasSuffix(n, ".conf") {
+		if strings.HasPrefix(n, prefix) && strings.HasSuffix(n, "."+ext) {
 			files = append(files, n)
 		}
 	}

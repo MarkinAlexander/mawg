@@ -486,6 +486,12 @@ func (b *Backend) IfaceHandshake(device string) int {
 	return -1
 }
 
+// RunShell - ShellRunner для DNS-менеджера: тот же ограниченный
+// /bin/sh -c, потолок задаёт вызывающий слой.
+func (b *Backend) RunShell(script string, timeout time.Duration) (string, error) {
+	return platform.RunBoundedCombined(prep(exec.Command("/bin/sh", "-c", script)), timeout)
+}
+
 func (b *Backend) RestartMagitrickle() error {
 	_, err := runShell("/etc/init.d/magitrickle restart")
 	return err

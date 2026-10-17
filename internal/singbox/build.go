@@ -24,7 +24,14 @@ type PoolSpec struct {
 	// WG - конфиги WireGuard/Amnezia пула: едут wireguard-эндпоинтами
 	// sing-box (в т.ч. AWG 3.x, который нативные интерфейсы не поднимут).
 	WG        []wgconf.Config
-	GroupMode string // "urltest" (по умолчанию) | "selector"
+	GroupMode string // "urltest" (по умолчанию) | "selector" | "rotate" (selector + таймер mawg)
+	// Selected - текущий узел группы (живой выбор до пересборки):
+	// selector не должен сбрасываться на первый узел при горячем
+	// применении (слово владельца 2026-10-17: выбирался сломанный первый)
+	Selected string
+	// RotateSec - интервал ротации для GroupMode="rotate" (управляет mawg,
+	// в конфиг движка не пишется)
+	RotateSec int
 	// Detour - тег группы другого пула: туннель этого пула заводится
 	// через неё (каскад движка, detour в sing-box).
 	Detour string
@@ -153,7 +160,7 @@ func EligibleNodes(nodes []links.Node, lx bool) (ok []links.Node, reasons []stri
 func nodeOutbound(poolTag string, n links.Node, lx bool) (map[string]any, bool, string) {
 	skip := func(reason string) (map[string]any, bool, string) { return nil, false, reason }
 	switch n.Type {
-	case "vless", "trojan":
+	case "vless", "trojan", "vmess":
 	default:
 		return skip(fmt.Sprintf("%s: тип %s идёт нативным пулом", n.Tag, n.Type))
 	}
@@ -177,6 +184,16 @@ func nodeOutbound(poolTag string, n links.Node, lx bool) (map[string]any, bool, 
 		out["packet_encoding"] = "xudp"
 		if n.Flow != "" && n.Transport == "" {
 			out["flow"] = n.Flow
+		}
+	}
+	if n.Type == "vmess" {
+		security := n.Security
+		if security == "" {
+			security = "auto"
+		}
+		out["security"] = security
+		if n.AlterId > 0 {
+			out["alter_id"] = n.AlterId
 		}
 	}
 	if t := n.TLS; t != nil {
@@ -211,6 +228,15 @@ func nodeOutbound(poolTag string, n links.Node, lx bool) (map[string]any, bool, 
 		out["transport"] = tr
 	case "grpc":
 		out["transport"] = map[string]any{"type": "grpc", "service_name": n.ServiceName}
+	case "http":
+		tr := map[string]any{"type": "http"}
+		if n.Path != "" {
+			tr["path"] = n.Path
+		}
+		if n.HeaderHost != "" {
+			tr["host"] = []string{n.HeaderHost}
+		}
+		out["transport"] = tr
 	case "xhttp":
 		if !lx {
 			return skip(fmt.Sprintf("%s: транспорт xhttp требует движок lx", n.Tag))
@@ -279,9 +305,19 @@ func BuildConfig(pools []PoolSpec, p Params) ([]byte, []string, error) {
 			skipped = append(skipped, fmt.Sprintf("пул %s: ни один узел не подходит движку, tun не создан", spec.Name))
 			continue
 		}
-		if spec.GroupMode == "selector" {
+		if spec.GroupMode == "selector" || spec.GroupMode == "rotate" {
+			// rotate - тоже selector: переключает сам mawg по таймеру,
+			// строго на узлы, ответившие замеру (слово владельца
+			// 2026-10-17: ротация каждые N секунд/минут на рабочие)
+			def := tags[0]
+			for _, t := range tags {
+				if t == spec.Selected {
+					def = t
+					break
+				}
+			}
 			outbounds = append(outbounds, map[string]any{
-				"type": "selector", "tag": groupTag, "outbounds": tags, "default": tags[0],
+				"type": "selector", "tag": groupTag, "outbounds": tags, "default": def,
 			})
 		} else {
 			interval := spec.CheckIntervalSec
@@ -291,7 +327,9 @@ func BuildConfig(pools []PoolSpec, p Params) ([]byte, []string, error) {
 			outbounds = append(outbounds, map[string]any{
 				"type": "urltest", "tag": groupTag, "outbounds": tags,
 				"url": spec.ProbeTarget, "interval": fmt.Sprintf("%ds", interval),
-				"tolerance": 50,
+				// 50мс держали заметно худший узел (86 вместо 63) - владелец
+				// ждёт «по пингу»; 10мс - ближе к правде без флапа
+				"tolerance": 10,
 			})
 		}
 		routeRules = append(routeRules,

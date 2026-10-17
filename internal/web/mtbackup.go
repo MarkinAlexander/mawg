@@ -1,10 +1,15 @@
 package web
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -16,17 +21,29 @@ import (
 // каждой массовой записью (magitrickle.PreSave -> Engine.BackupMagitrickleState)
 // и вручную из панели; отсюда их можно скачать и восстановить правила
 // обратно в рантайм. Инцидент 2026-10-10 показал цену отсутствия верёвки.
+// Рядом лежит mawg-full-*.tar.gz - полный бэкап панели (настройки, пулы,
+// каскады, shadow, журнал, конфиг MT), собирается Go-архиватором; рестор -
+// распаковка и рестарт панели; делается вручную из панели.
 
 type mtBackupInfo struct {
 	Name     string `json:"name"`
-	Kind     string `json:"kind"` // shadow | config
+	Kind     string `json:"kind"` // shadow | config | full
 	Size     int    `json:"size"`
 	Modified string `json:"modified"`
 }
 
 // имя файла бэкапа строго нашего формата - никаких traversal и чужих
 // путей; -NN - суффикс двух записей в одну секунду
-var mtBackupNameRe = regexp.MustCompile(`^mt-(shadow|config)-\d{8}-\d{6}(-\d{2})?\.conf$`)
+var mtBackupNameRe = regexp.MustCompile(`^(mt-(shadow|config)|mawg-full)-\d{8}-\d{6}(-\d{2})?\.(conf|tar\.gz)$`)
+
+// mawgServiceScript - init-скрипт панели; var ради тестов (на Windows
+// его нет - рестор настроек проверяется до записи файла).
+var mawgServiceScript = func(keenetic bool) string {
+	if keenetic {
+		return "/opt/etc/init.d/S99mawg"
+	}
+	return "/etc/init.d/mawg"
+}
 
 func writeErrCode(w http.ResponseWriter, code int, err error) {
 	writeJSON(w, code, map[string]string{"error": err.Error()})
@@ -38,7 +55,11 @@ func (s *Server) backupPath(file string) string {
 
 func (s *Server) mtBackupNow(w http.ResponseWriter, r *http.Request) {
 	s.engine.BackupMagitrickleState()
-	s.store.LogEvent("magitrickle", "backup", "ручной бэкап конфига MT и shadow из панели")
+	if err := s.engine.BackupFull(); err != nil {
+		writeErrCode(w, http.StatusInternalServerError, err)
+		return
+	}
+	s.store.LogEvent("magitrickle", "backup", "ручной бэкап: конфиг MT, shadow и полный архив панели")
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -59,8 +80,11 @@ func (s *Server) mtBackupList(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		kind := "shadow"
-		if strings.HasPrefix(name, "mt-config-") {
+		switch {
+		case strings.HasPrefix(name, "mt-config-"):
 			kind = "config"
+		case strings.HasPrefix(name, "mawg-full-"):
+			kind = "full"
 		}
 		out = append(out, mtBackupInfo{
 			Name:     name,
@@ -158,9 +182,98 @@ func (s *Server) mtRestore(w http.ResponseWriter, r *http.Request) {
 		}
 		s.store.LogEvent("magitrickle", "restore", "конфиг MT восстановлен из "+req.File+", демон перезапущен")
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	case strings.HasPrefix(req.File, "mawg-full-"):
+		// полный бэкап: распаковка tar.gz в base (+ конфиг MT на его место)
+		// и рестарт панели (порт/доступ применяются на старте). Скрипт
+		// сервиса проверяем ДО записи - нет его, состояние не трогаем.
+		if err := restartPanel(s); err != nil {
+			writeErrCode(w, http.StatusBadRequest, err)
+			return
+		}
+		files, err := unpackFullBackup(data, s)
+		if err != nil {
+			writeErrCode(w, http.StatusBadRequest, err)
+			return
+		}
+		for _, f := range files {
+			tmp := f.path + ".mawg-restore.tmp"
+			if err := os.WriteFile(tmp, f.data, 0o600); err != nil {
+				writeErrCode(w, http.StatusInternalServerError, err)
+				return
+			}
+			if err := os.Rename(tmp, f.path); err != nil {
+				os.Remove(tmp)
+				writeErrCode(w, http.StatusInternalServerError, err)
+				return
+			}
+		}
+		s.store.LogEvent("settings", "restore", "полное восстановление из "+req.File+": файлов "+fmt.Sprint(len(files))+", панель перезапускается")
+		writeJSON(w, http.StatusOK, map[string]string{"ok": "restarting"})
 	default:
 		writeErrCode(w, http.StatusBadRequest, fmt.Errorf("неизвестный вид бэкапа"))
 	}
+}
+
+// unpackFullBackup разбирает tar.gz полного бэкапа: mawg/* -> base,
+// mt/* -> на путь конфига MT. Валидация до записи: config.json обязан
+// быть и парситься; чужие пути и backups/ внутрь не проходят.
+func unpackFullBackup(data []byte, s *Server) ([]struct {
+	path string
+	data []byte
+}, error) {
+	gz, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("бэкап не tar.gz: %w", err)
+	}
+	tr := tar.NewReader(gz)
+	var files []struct {
+		path string
+		data []byte
+	}
+	sawConfig := false
+	mtPath := s.backend.MTConfigPath()
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("битый архив: %w", err)
+		}
+		name := path.Clean(hdr.Name)
+		var dest string
+		switch {
+		case strings.HasPrefix(name, "mawg/"):
+			rel := strings.TrimPrefix(name, "mawg/")
+			if rel == "" || strings.HasPrefix(rel, "backups/") || !filepath.IsLocal(rel) {
+				continue
+			}
+			dest = filepath.Join(s.store.Base(), rel)
+		case strings.HasPrefix(name, "mt/") && mtPath != "":
+			dest = mtPath
+		default:
+			continue
+		}
+		data, err := io.ReadAll(tr)
+		if err != nil {
+			return nil, fmt.Errorf("не дочитался %s: %w", name, err)
+		}
+		if name == filepath.ToSlash(filepath.Join("mawg", "config.json")) {
+			var sanity map[string]any
+			if json.Unmarshal(data, &sanity) != nil {
+				return nil, fmt.Errorf("в архиве не настройки панели (config.json не JSON-объект)")
+			}
+			sawConfig = true
+		}
+		files = append(files, struct {
+			path string
+			data []byte
+		}{dest, data})
+	}
+	if !sawConfig {
+		return nil, fmt.Errorf("в архиве нет config.json - это не полный бэкап панели")
+	}
+	return files, nil
 }
 
 // импорт групп из файла (нативный config.mtrickle, наша тень или бэкап

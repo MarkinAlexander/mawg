@@ -472,6 +472,15 @@ func InstallLXCore(ctx context.Context, opts LXInstallOptions) (LXInstallResult,
 				step("места в ПЗУ мало (свободно %s): старая наша сборка снята до копирования, при сбое просто повторите установку", mb(free))
 				free = diskFree(binDir)
 			}
+		} else if prevVer != "" && !keepOld {
+			// чужое ядро, от копии которого пользователь отказался (на
+			// тесных дисках галка сохранения и так недоступна): снимаем
+			// его до копирования - отказ от сохранения = согласие
+			// потерять старое ядро; вернётся повторной установкой
+			if rmErr := os.Remove(opts.Target.Bin); rmErr == nil {
+				step("места в ПЗУ мало (свободно %s): чужое ядро снято до копирования (сохранение копии отклонено), при сбое установите его заново из апстрима", mb(free))
+				free = diskFree(binDir)
+			}
 		}
 		if free < need {
 			res.Log = log.String()

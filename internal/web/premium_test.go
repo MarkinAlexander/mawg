@@ -197,23 +197,19 @@ func TestPremiumHTTPImportSwitchAndSanitizedStatus(t *testing.T) {
 	if code != 200 || !strings.Contains(body, `"imported":true`) || strings.Contains(body, "synthetic-web-secret") {
 		t.Fatal("Premium view failed")
 	}
-	code, body = request("GET", "/app/panel.js", nil)
-	for _, snippet := range []string{"premium-key", "premium-country", "/premium/country", "upgradeSelect(q('.premium-country'))", "/pools/amnezia-free", "$('#pModeFree').onclick"} {
-		if code != 200 || !strings.Contains(body, snippet) {
-			t.Fatalf("missing active Vue script behavior: %s", snippet)
-		}
-	}
 	code, body = request("GET", "/app/app.js", nil)
-	for _, snippet := range []string{"pModeFree", "pFreeHint", "pSourceRow"} {
+	for _, snippet := range []string{"premium/country", "from-source", "Amnezia Free"} {
 		if code != 200 || !strings.Contains(body, snippet) {
 			t.Fatalf("missing active Vue template behavior: %s", snippet)
 		}
 	}
-	// классическая панель переехала с / на /legacy/ (корень редиректит на /app/)
+	// легаси удалена в Ф3.9: ни panel.js в /app/, ни страницы /legacy/
+	code, body = request("GET", "/app/panel.js", nil)
+	if code != 404 {
+		t.Fatalf("legacy panel.js still served: HTTP %d", code)
+	}
 	code, body = request("GET", "/legacy/", nil)
-	for _, snippet := range []string{"premium-key", "premium-country", "/premium/country", "type=\"password\"", "keyInput.value = ''", "!isEng && !p.disabled && !premium.imported", "upgradeSelect(q('.premium-country'))"} {
-		if code != 200 || !strings.Contains(body, snippet) {
-			t.Fatalf("missing UI import/switch behavior: %s", snippet)
-		}
+	if code != 404 {
+		t.Fatalf("legacy page still served: HTTP %d", code)
 	}
 }

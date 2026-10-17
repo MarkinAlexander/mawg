@@ -1,10 +1,55 @@
 package store
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"mawg/internal/wgconf"
 )
+
+// журнал живёт в tmpfs (слово владельца 2026-10-17): база на флеше
+// событий не получает вовсе; легаси-файл из базы читается при старте
+func TestEventsOnTmpfs(t *testing.T) {
+	cleanTmpJournal(t)
+	base := t.TempDir()
+	// легаси-журнал на «флеше»: должен быть подхвачен при старте
+	legacy := filepath.Join(base, "events.json")
+	legacyLine := `{"time":"2026-10-17T00:00:00Z","pool":"p","kind":"probe","message":"легаси"}` + "\n"
+	if err := os.WriteFile(legacy, []byte(legacyLine), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st, err := Open(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.LogEvent("p", "probe", "новое событие")
+
+	// база: легаси-файл прочитан и УДАЛЕН (мёртвый груз не висит)
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Fatalf("легаси events.json должен быть удалён после чтения")
+	}
+	if _, err := os.Stat(filepath.Join(base, "events.json.old")); !os.IsNotExist(err) {
+		t.Fatalf("events.json.old появился на флешке")
+	}
+	// tmpfs-журнал: новое событие пишется в него (легаси-хвост живёт
+	// в памяти - на флешку после апгрейда не возвращается)
+	data, err := os.ReadFile(st.eventsTmpPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !filepath.IsAbs(st.eventsTmpPath()) {
+		t.Fatalf("tmp-путь не абсолютный: %s", st.eventsTmpPath())
+	}
+	text := string(data)
+	if strings.Contains(text, "легаси") || !strings.Contains(text, "новое событие") {
+		t.Fatalf("tmp-журнал не тот: %s", text)
+	}
+	if evs := st.Events(); len(evs) != 2 || evs[0].Message != "легаси" || evs[1].Message != "новое событие" {
+		t.Fatalf("в памяти %d событий, want легаси+новое: %+v", len(evs), evs)
+	}
+}
 
 func seedConfigs(t *testing.T, st *Store) {
 	t.Helper()

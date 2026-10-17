@@ -133,6 +133,8 @@ func transportBadgeOf(n links.Node) string {
 		return "/xhttp"
 	case "httpupgrade":
 		return "/httpupgrade"
+	case "http":
+		return "/h2"
 	default:
 		return "/" + n.Transport
 	}
@@ -162,8 +164,11 @@ func (s *Server) getPoolMembers(w http.ResponseWriter, r *http.Request) {
 			if n.Port > 0 {
 				ep = fmt.Sprintf("%s:%d", n.Host, n.Port)
 			}
+			// имя - чистое (без «host|» префикса тега источника): адрес
+			// и так есть в endpoint, а тег с адресом просачивался мимо
+			// приватного режима (слово владельца 2026-10-17)
 			members = append(members, memberView{
-				Name: n.Tag, Proto: strings.ToUpper(n.Type),
+				Name: n.ConfName(), Proto: strings.ToUpper(n.Type),
 				Detail: strings.TrimPrefix(transportBadgeOf(n), "/"), Endpoint: ep,
 				Active: false, Enabled: true,
 			})

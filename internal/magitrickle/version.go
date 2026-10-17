@@ -36,6 +36,24 @@ func SourcesSupported(version string) bool {
 	return err == nil && n >= sourcesRevMin
 }
 
+// dnsUpstreamsRevMin - первая ревизия форка с API
+// /api/v1/dns/upstreams: состояние каскада апстримов dns-proxy и его
+// правка без рестарта демона (0.8.2-rev8).
+const dnsUpstreamsRevMin = 8
+
+// DnsUpstreamsSupported говорит, умеет ли MT отдавать живой стейт
+// каскада апстримов и принимать правку списка (rev8+). На старых
+// ревизиях панель показывает апстримы из дискового config.yaml и честно
+// сообщает, что статус/редактор требуют обновления MT.
+func DnsUpstreamsSupported(version string) bool {
+	m := revRe.FindStringSubmatch(version)
+	if m == nil {
+		return false
+	}
+	n, err := strconv.Atoi(m[1])
+	return err == nil && n >= dnsUpstreamsRevMin
+}
+
 var configVersionRe = regexp.MustCompile(`(?m)^\s*configVersion:\s*"?([^"\s"]+)`)
 
 // ConfigVersion вытаскивает configVersion из дискового config.yaml MT:
