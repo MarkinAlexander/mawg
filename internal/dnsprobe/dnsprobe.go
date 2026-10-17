@@ -475,6 +475,9 @@ func exchangeDoH(urlStr, ip, domain string, timeout time.Duration) ([]string, er
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/dns-message")
+	// RFC 8484: без Accept dns.google отвечает FORMERR на валидный запрос
+	// (живой кейс 0.42: форк-каскад с Accept чист, зонд без него - noanswer)
+	req.Header.Set("Accept", "application/dns-message")
 	resp, err := cl.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("doh %s: %w", urlStr, err)
