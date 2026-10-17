@@ -260,15 +260,15 @@ describe('SystemView - карточка «Система»', () => {
   });
 
   it('движок sing-box: режим из status, info, кэш-варнинг, «применить» -> confirm -> POST', async () => {
-    statusWithEngine({ available: true, running: true, mode: 'own', fragment: '', cacheFile: '' });
+    statusWithEngine({ available: true, running: true, api: false, mode: 'own', fragment: '', cacheFile: '' });
     const { w, f } = await makeView();
-    expect(w.text()).toContain('ядро работает');
+    expect(w.text()).toContain('ядро запущено, но не отвечает');
     expect(w.find('.uibanner').exists()).toBe(false);
 
     // shared + кэш на флешке -> варнинг с кнопками
     statusWithEngine({ available: true, running: false, mode: 'shared', fragment: 'merge', cacheFile: '/opt/share/cache.db' });
     await nextTick();
-    expect(w.text()).toContain('ядро не отвечает | merge');
+    expect(w.text()).toContain('ядро не запущено | merge');
     const banner = w.find('.uibanner');
     expect(banner.exists()).toBe(true);
     expect(banner.text()).toContain('постоянный износ');

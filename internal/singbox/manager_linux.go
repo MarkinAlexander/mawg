@@ -826,6 +826,7 @@ func (m *Manager) waitClash(timeout time.Duration) error {
 
 type Status struct {
 	Running   bool   `json:"running"`
+	API       bool   `json:"api"` // clash-эндпоинт отвечает (слово владельца 2026-10-17: отличать «не запущено» от «не отвечает»)
 	PID       int    `json:"pid,omitempty"`
 	Version   string `json:"version,omitempty"`
 	LX        bool   `json:"lx"`
@@ -848,6 +849,15 @@ func (m *Manager) Status() Status {
 		st.Running = m.alive()
 		if st.Running {
 			st.PID = m.pid
+		}
+	}
+	// жив ли clash-эндпоинт: «процесс есть, но не отвечает» и «не
+	// запущено» - разные диагнозы для пользователя
+	if st.Running {
+		cl := &http.Client{Timeout: 750 * time.Millisecond}
+		if resp, err := cl.Get(fmt.Sprintf("http://127.0.0.1:%d/version", m.clashBase())); err == nil {
+			resp.Body.Close()
+			st.API = resp.StatusCode == http.StatusOK
 		}
 	}
 	return st
