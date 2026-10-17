@@ -6,7 +6,8 @@ import { usePoolActions } from '../../stores/pools'
 import { useCaptcha } from '../../stores/captcha'
 import { useToast } from '../../stores/toast'
 import type { LinkInspect, SourcePlan } from '../../api/types'
-import { inspectLine, planView, slotGate, slotOptions } from './poolsLogic'
+import { inspectLine, planView, protoGate, slotGate, slotOptions } from './poolsLogic'
+import LxInstallDialog from './LxInstallDialog.vue'
 import { G } from '../glossary'
 
 // Диалог создания пула (легаси dlgPool/setPoolMode 404-805). Режимы:
@@ -14,7 +15,7 @@ import { G } from '../glossary'
 // протокол - только OpenWrt. Капча Free - встроенной фазой диалога.
 const open = defineModel<boolean>('open', { default: false });
 
-const { state: status } = useStatus();
+const { state: status, refresh: refreshStatus } = useStatus();
 const a = usePoolActions();
 const { push } = useToast();
 
@@ -75,6 +76,15 @@ const gate = computed(() => {
   return slotGate(mode.value, inspectRes.value, !!picked?.busy);
 });
 const showInspect = computed(() => mode.value === 'link' && (!!source.value.trim() || inspecting.value));
+// селект «Протокол (OpenWrt)» ведёт разбор ссылки: движковые узлы идут в
+// tun без вопроса, WG/AWG-вопрос - только настоящим WG/AWG-узлам
+const pg = computed(() => protoGate(mode.value, inspectRes.value));
+watch(
+  () => pg.value.proto,
+  (p) => {
+    if (p) proto.value = p;
+  },
+);
 
 let inspectTimer: ReturnType<typeof setTimeout> | null = null;
 let inspectSeq = 0;
@@ -111,6 +121,29 @@ const inspectText = computed(() => {
   return inspectLine(inspectRes.value!);
 });
 const isAmneziaKey = computed(() => !!inspectRes.value?.amnezia);
+
+// --- предложение установить движок прямо в потоке (слово владельца
+// 2026-10-17): узлы требуют sing-box, а его на роутере нет ---
+const lxOpen = ref(false);
+const engineMissing = computed(() => !status.data?.engine?.available);
+const engineWanted = computed(() => {
+  if (mode.value === 'free') return true;
+  if (mode.value !== 'link' || !inspectRes.value || inspectRes.value.error) return false;
+  const ins = inspectRes.value;
+  if (ins.amnezia) return ins.amnezia.serviceProtocol === 'vless';
+  return ins.engine > 0;
+});
+const offerInstall = computed(() => engineWanted.value && engineMissing.value);
+const offerText = computed(() => {
+  const n = mode.value === 'link' && inspectRes.value && !inspectRes.value.amnezia ? inspectRes.value.engine : 0;
+  return n > 0
+    ? `Для ${n} ${n === 1 ? 'узла' : 'узлов'} нужен движок sing-box, на роутере его нет. Можно поставить сейчас (ядро sing-box-lx, ~30-90 МБ, до пары минут) и продолжить - пул создаётся и до установки.`
+    : 'Для этого пула нужен движок sing-box, на роутере его нет. Можно поставить сейчас (ядро sing-box-lx, ~30-90 МБ, до пары минут) и продолжить - пул создаётся и до установки.';
+});
+function onInstalled(): void {
+  push('Ядро sing-box-lx установлено - движок поднимается, узлы заработают после применения');
+  void refreshStatus();
+}
 
 async function loadSlots(): Promise<void> {
   if (platform.value !== 'keenetic') return;
@@ -315,6 +348,18 @@ const fallbackOptions: UiSelectOption[] = [
               variant="warn"
             />
           </div>
+          <UiBanner
+            v-if="engineMissing"
+            kind="warn"
+            text="Движок sing-box не установлен - узлы не заработают. Можно поставить сейчас."
+          >
+            <UiButton
+              variant="primary"
+              @click="lxOpen = true"
+            >
+              Установить ядро sing-box-lx
+            </UiButton>
+          </UiBanner>
         </template>
         <div
           v-if="plan?.warnings && plan.warnings.length"
@@ -376,11 +421,10 @@ const fallbackOptions: UiSelectOption[] = [
         :text="slotsErr"
       />
       <UiSelect
-        v-if="platform === 'openwrt'"
+        v-if="platform === 'openwrt' && mode === 'cfg'"
         v-model="proto"
         :options="protoOptions"
         label="Протокол (OpenWrt)"
-        :disabled="mode === 'free'"
       />
       <div class="hrow">
         <UiSelect
@@ -408,6 +452,27 @@ const fallbackOptions: UiSelectOption[] = [
           />
           <UiHelp :text="G.source" />
         </div>
+        <UiSelect
+          v-if="platform === 'openwrt' && pg.show"
+          v-model="proto"
+          :options="protoOptions"
+          label="Протокол (OpenWrt)"
+          :hint="mode === 'link' && inspectRes && inspectRes.native > 0 && inspectRes.engine > 0
+            ? 'Прокси-узлы пойдут в tun-интерфейс движка - протокол нужен только WG/AWG-конфигам.'
+            : undefined"
+        />
+        <UiBanner
+          v-if="offerInstall"
+          kind="warn"
+          :text="offerText"
+        >
+          <UiButton
+            variant="primary"
+            @click="lxOpen = true"
+          >
+            Установить ядро sing-box-lx
+          </UiButton>
+        </UiBanner>
         <div
           v-if="isAmneziaKey"
           class="amn"
@@ -455,6 +520,10 @@ const fallbackOptions: UiSelectOption[] = [
       </template>
     </template>
   </UiDialog>
+  <LxInstallDialog
+    v-model:open="lxOpen"
+    @installed="onInstalled"
+  />
 </template>
 
 <style scoped>
