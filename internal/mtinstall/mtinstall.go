@@ -25,6 +25,9 @@ const (
 	minPackage = 200_000 // sanity размера скачанного пакета
 
 	cmdTimeout = 180 * time.Second
+
+	// opkgPackage - имя пакета в базе opkg (для снятия битой записи).
+	opkgPackage = "magitrickle"
 )
 
 // Asset - файл релиза (magitrickle_<ver>_<PLATFORM>_<TARGET>.ipk/.apk).
@@ -323,6 +326,16 @@ func Install(ctx context.Context, opts Options) (Result, error) {
 	if err == nil && mgr == "opkg" && strings.Contains(strings.ToLower(string(out)), "up to date") {
 		step("opkg пропустил установку (up to date) - переустанавливаю принудительно")
 		out, err = installPackage(run, mgr, dest, "--force-reinstall")
+		// битая запись пакета (чужая architecture в базе opkg): scan её
+		// игнорирует, force-reinstall срывается в download из репозиториев
+		// («not available from any configured src», живой кейс
+		// Keenetic-aarch64) - лечится снятием записи и чистой установкой
+		// из файла
+		if err != nil && strings.Contains(strings.ToLower(string(out)), "not available from any configured src") {
+			step("запись пакета битая (чужая архитектура) - снимаю и ставлю заново из файла")
+			_, _ = run("opkg", "remove", opkgPackage)
+			out, err = installPackage(run, mgr, dest)
+		}
 	}
 	if err != nil {
 		// зависимости могли не резолвнуться по пустым спискам - обновляем и
