@@ -145,6 +145,23 @@ describe('SearchDialog', () => {
     w.unmount()
   })
 
+  it('unmount гасит цикл ретраев скролла (витест-флейк teardown)', async () => {
+    const { w, router } = await makeDlg()
+    // якорь НЕ подкладываем - без отмены ретраи жили бы до дедлайна ~1.2с
+    // и продолжение могло бы пережить окружение («document is not defined»
+    // после всех пройденных тестов, RC=1)
+    w.find('input').setValue('wan')
+    await nextTick()
+    w.find('input').trigger('keydown', { key: 'Enter' })
+    await vi.waitFor(() => expect(router.currentRoute.value.path).toBe('/next/interfaces'))
+    const idSpy = vi.spyOn(document, 'getElementById')
+    w.unmount()
+    const atUnmount = idSpy.mock.calls.length
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    expect(idSpy.mock.calls.length).toBe(atUnmount) // после unmount document не трогаем
+    idSpy.mockRestore()
+  })
+
   it('клик по строке - переход (место без скролла не дёргает якорь)', async () => {
     const { w, router } = await makeDlg()
     const anchor = document.createElement('section')
