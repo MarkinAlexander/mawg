@@ -28,24 +28,46 @@ func TestFirstOpkgArch(t *testing.T) {
 }
 
 func TestPickAsset(t *testing.T) {
-	rel := &Release{TagName: "0.8.2-rev9", Assets: []Asset{
-		{Name: "magitrickle_0.8.2-9_openwrt_x86_64.ipk", URL: "u1", Size: 1},
-		{Name: "magitrickle_0.8.2-r9_openwrt_x86_64.apk", URL: "u2", Size: 1},
-		{Name: "magitrickle_0.8.2-9_entware_mipsel-3.4_kn.ipk", URL: "u3", Size: 1},
+	rel := &Release{TagName: "0.8.2-rev12", Assets: []Asset{
+		{Name: "magitrickle_0.8.2-12_openwrt_x86_64.ipk", URL: "u1", Size: 1},
+		{Name: "magitrickle_0.8.2-r12_openwrt_x86_64.apk", URL: "u2", Size: 1},
+		{Name: "magitrickle_0.8.2-12_entware_mipsel-3.4_kn.ipk", URL: "u3", Size: 1},
+		{Name: "magitrickle_0.8.2-12_entware_armv7-3.2.ipk", URL: "u4", Size: 1},
+		{Name: "magitrickle_0.8.2-12_openwrt_aarch64_generic.ipk", URL: "u5", Size: 1},
+		{Name: "magitrickle_0.8.2-12_openwrt_aarch64_cortex-a53.ipk", URL: "u6", Size: 1},
 		{Name: "SHA256SUMS"},
 	}}
-	if a, err := PickAsset(rel, "openwrt", "x86_64", ".ipk"); err != nil || a.Name != "magitrickle_0.8.2-9_openwrt_x86_64.ipk" {
+	if a, err := PickAsset(rel, "openwrt", "x86_64", ".ipk"); err != nil || a.Name != "magitrickle_0.8.2-12_openwrt_x86_64.ipk" {
 		t.Fatalf("ipk: %v %+v", err, a)
 	}
-	if a, err := PickAsset(rel, "openwrt", "x86_64", ".apk"); err != nil || a.Name != "magitrickle_0.8.2-r9_openwrt_x86_64.apk" {
+	if a, err := PickAsset(rel, "openwrt", "x86_64", ".apk"); err != nil || a.Name != "magitrickle_0.8.2-r12_openwrt_x86_64.apk" {
 		t.Fatalf("apk: %v %+v", err, a)
 	}
-	if a, err := PickAsset(rel, "entware", "mipsel-3.4_kn", ".ipk"); err != nil || a.Name != "magitrickle_0.8.2-9_entware_mipsel-3.4_kn.ipk" {
+	// точный _kn-таргет матчится как есть
+	if a, err := PickAsset(rel, "entware", "mipsel-3.4_kn", ".ipk"); err != nil || a.Name != "magitrickle_0.8.2-12_entware_mipsel-3.4_kn.ipk" {
 		t.Fatalf("kn: %v %+v", err, a)
 	}
-	// суффикс без _kn не должен матчить kn-таргет
-	if _, err := PickAsset(rel, "entware", "mipsel-3.4", ".ipk"); err == nil {
-		t.Fatal("mipsel-3.4 без _kn не должен находиться")
+	// голая arch на Entware: _kn-сборка предпочтительна (живой кейс: opkg
+	// Entware печатает aarch64-3.10, а mipsel-3.4 - прежний путь)
+	rel.Assets = append(rel.Assets,
+		Asset{Name: "magitrickle_0.8.2-12_entware_aarch64-3.10.ipk", URL: "u7", Size: 1},
+		Asset{Name: "magitrickle_0.8.2-12_entware_aarch64-3.10_kn.ipk", URL: "u8", Size: 1},
+	)
+	// порядок ассетов в релизе не должен решать: kn первый даже когда plain раньше
+	if a, err := PickAsset(rel, "entware", "aarch64-3.10", ".ipk"); err != nil || a.Name != "magitrickle_0.8.2-12_entware_aarch64-3.10_kn.ipk" {
+		t.Fatalf("entware aarch64-3.10: %v %+v", err, a)
+	}
+	// _kn нет - фолбэк на plain (armv7-3.2 без kn-сборки)
+	if a, err := PickAsset(rel, "entware", "armv7-3.2", ".ipk"); err != nil || a.Name != "magitrickle_0.8.2-12_entware_armv7-3.2.ipk" {
+		t.Fatalf("armv7-3.2 plain: %v %+v", err, a)
+	}
+	// голый aarch64 на OpenWrt: фолбэк на _generic (живой кейс товарища)
+	if a, err := PickAsset(rel, "openwrt", "aarch64", ".ipk"); err != nil || a.Name != "magitrickle_0.8.2-12_openwrt_aarch64_generic.ipk" {
+		t.Fatalf("aarch64 generic: %v %+v", err, a)
+	}
+	// сабтаргет матчится точно, generic-фолбэк не перебивает
+	if a, err := PickAsset(rel, "openwrt", "aarch64_cortex-a53", ".ipk"); err != nil || a.Name != "magitrickle_0.8.2-12_openwrt_aarch64_cortex-a53.ipk" {
+		t.Fatalf("aarch64_cortex-a53: %v %+v", err, a)
 	}
 	_, err := PickAsset(rel, "openwrt", "riscv64_generic", ".ipk")
 	if err == nil || !strings.Contains(err.Error(), "есть magitrickle_") {
@@ -161,7 +183,7 @@ func TestInstallKeeneticKnSuffix(t *testing.T) {
 	}}
 	res, err := Install(context.Background(), Options{
 		Platform: "keenetic",
-		Detect:   func() (string, string, error) { return "mipsel-3.4_kn", "opkg+_kn", nil },
+		Detect:   func() (string, string, error) { return "mipsel-3.4", "opkg print-architecture (Entware)", nil },
 		Latest:   func(context.Context) (*Release, error) { return rel, nil },
 		Fetch:    fetchFake(300_000),
 		Run:      run.run,
@@ -175,6 +197,34 @@ func TestInstallKeeneticKnSuffix(t *testing.T) {
 	}
 	if res.Bin != "/opt/bin/magitrickled" {
 		t.Fatalf("bin: %s", res.Bin)
+	}
+	if !run.saw("/opt/etc/init.d/S99magitrickle start") {
+		t.Errorf("нет старта S99; вызовы: %v", run.calls)
+	}
+}
+
+// живой кейс: Кинетик на aarch64-Entware раньше отказывался целиком
+// («неожиданная архитектура Entware»), теперь ставится из _kn-сборки
+func TestInstallKeeneticAarch64(t *testing.T) {
+	dir := t.TempDir()
+	run := &fakeRun{}
+	rel := &Release{TagName: "0.8.2-rev12", Assets: []Asset{
+		{Name: "magitrickle_0.8.2-12_entware_aarch64-3.10.ipk", URL: "http://x/1"},
+		{Name: "magitrickle_0.8.2-12_entware_aarch64-3.10_kn.ipk", URL: "http://x/2", Size: 8 << 20},
+	}}
+	res, err := Install(context.Background(), Options{
+		Platform: "keenetic",
+		Detect:   func() (string, string, error) { return "aarch64-3.10", "opkg print-architecture (Entware)", nil },
+		Latest:   func(context.Context) (*Release, error) { return rel, nil },
+		Fetch:    fetchFake(300_000),
+		Run:      run.run,
+		TmpDir:   dir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Asset != "magitrickle_0.8.2-12_entware_aarch64-3.10_kn.ipk" {
+		t.Fatalf("взят не kn-таргет: %s", res.Asset)
 	}
 	if !run.saw("/opt/etc/init.d/S99magitrickle start") {
 		t.Errorf("нет старта S99; вызовы: %v", run.calls)

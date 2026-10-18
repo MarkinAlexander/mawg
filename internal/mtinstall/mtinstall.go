@@ -62,10 +62,11 @@ type Options struct {
 }
 
 // DetectTarget определяет PLATFORM/TARGET в терминах ассетов релиза форка:
-// keenetic -> entware mipsel-3.4_kn (opkg Entware знает порядок байт,
-// _kn - суффикс таргетов Кинетика), openwrt -> opkg print-architecture
-// (24.10 и старше, печатает ровно целевые имена вида x86_64/i386_pentium-mmx/
-// mipsel_24kc) либо apk --print-arch (25+).
+// keenetic -> сырая архитектура Entware из opkg print-architecture (Кинетики
+// бывают не только mipsel: живой кейс - новые модели с Entware aarch64-3.10),
+// openwrt -> opkg print-architecture (24.10 и старше, печатает ровно целевые
+// имена вида x86_64/i386_pentium-mmx/mipsel_24kc) либо apk --print-arch (25+).
+// Выбор конкретного пакета (приоритет _kn, фолбэк _generic) - в PickAsset.
 func DetectTarget(platform string) (target, detail string, err error) {
 	switch platform {
 	case "keenetic":
@@ -77,10 +78,7 @@ func DetectTarget(platform string) (target, detail string, err error) {
 		if a == "" {
 			return "", "", fmt.Errorf("не удалось разобрать вывод opkg: %q", strings.TrimSpace(string(out)))
 		}
-		if !strings.Contains(a, "mipsel") && !strings.Contains(a, "mipsle") {
-			return "", "", fmt.Errorf("неожиданная архитектура Entware %q: таргеты Кинетика - mipsel", a)
-		}
-		return a + "_kn", "opkg print-architecture + _kn (Keenetic)", nil
+		return a, "opkg print-architecture (Entware)", nil
 	case "openwrt":
 		if out, e := exec.Command("opkg", "print-architecture").Output(); e == nil {
 			if a := FirstOpkgArch(string(out)); a != "" {
@@ -125,27 +123,55 @@ func PackageManager(platform string) (mgr, ext string) {
 	return "opkg", ".ipk"
 }
 
-// PickAsset выбирает пакет релиза под платформу/таргет/менеджер пакетов;
-// чего нет - честный отказ со списком имеющихся пакетов.
+// PickAsset выбирает пакет релиза под платформу/таргет/менеджер пакетов.
+// Приоритеты (assetCandidates): Entware (Кинетик) - сборка _kn, фолбэк plain
+// (есть не для всех таргетов: у armv7-3.2 _kn-сборки нет); OpenWrt - точный
+// таргет, а для голой архитектуры без сабтаргета (живой кейс: opkg печатает
+// ровно aarch64) - фолбэк <arch>_generic. Чего нет - честный отказ со
+// списком имеющихся пакетов.
 func PickAsset(rel *Release, platform, target, ext string) (*Asset, error) {
-	suffix := "_" + platform + "_" + target + ext
-	var have []string
+	candidates := assetCandidates(platform, target, ext)
+	var pkgs []*Asset
 	for i := range rel.Assets {
-		a := &rel.Assets[i]
-		name := a.Name
-		if !strings.HasSuffix(name, ".ipk") && !strings.HasSuffix(name, ".apk") {
-			continue
-		}
-		have = append(have, name)
-		if strings.HasSuffix(name, suffix) {
-			return a, nil
+		n := rel.Assets[i].Name
+		if strings.HasSuffix(n, ".ipk") || strings.HasSuffix(n, ".apk") {
+			pkgs = append(pkgs, &rel.Assets[i])
 		}
 	}
-	if len(have) == 0 {
+	if len(pkgs) == 0 {
 		return nil, fmt.Errorf("в релизе %s нет пакетов", rel.TagName)
 	}
+	for _, suffix := range candidates {
+		for _, a := range pkgs {
+			if strings.HasSuffix(a.Name, suffix) {
+				return a, nil
+			}
+		}
+	}
 	return nil, fmt.Errorf("в релизе %s нет пакета для %s/%s: есть %s",
-		rel.TagName, platform, target, strings.Join(have, ", "))
+		rel.TagName, platform, target, assetNames(pkgs))
+}
+
+// assetCandidates - суффиксы имён ассетов в порядке приоритета.
+func assetCandidates(platform, target, ext string) []string {
+	p := "_" + platform + "_" + target + ext
+	if platform == "entware" {
+		// _kn (сборка с тегами entware,entware_kn) предпочтительна, plain -
+		// фолбэк; если target уже с _kn, первый кандидат просто не сматчится
+		return []string{strings.TrimSuffix(p, ext) + "_kn" + ext, p}
+	}
+	if !strings.Contains(target, "_") {
+		return []string{p, "_" + platform + "_" + target + "_generic" + ext}
+	}
+	return []string{p}
+}
+
+func assetNames(pkgs []*Asset) string {
+	names := make([]string, 0, len(pkgs))
+	for _, a := range pkgs {
+		names = append(names, a.Name)
+	}
+	return strings.Join(names, ", ")
 }
 
 // assetPlatform переводит имя бекенда в PLATFORM ассетов: Keenetic ставится
