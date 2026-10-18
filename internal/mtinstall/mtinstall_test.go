@@ -481,6 +481,51 @@ func TestInstallApkArchOverride(t *testing.T) {
 	}
 }
 
+// лечение iptables должно происходить ДО остановки MT (сеть жива) -
+// предполётный чек, живой кейс Keenetic-aarch64
+func TestInstallIptablesPreflight(t *testing.T) {
+	oldAlive, oldDelay := procAlive, postStartDelay
+	defer func() { procAlive, postStartDelay = oldAlive, oldDelay }()
+	procAlive = func() bool { return true }
+	postStartDelay = 0
+
+	dir := t.TempDir()
+	run := &fakeRun{script: map[string]resp{
+		"iptables-save|": {
+			out: "iptables-save v1.4.21: Can't find library for match 'ndmmark'",
+			err: errors.New("exit status 1"),
+		},
+		"/opt/sbin/iptables-save|": {
+			out: "iptables-save v1.4.21: Can't find library for match 'ndmmark'",
+			err: errors.New("exit status 1"),
+		},
+	}}
+	_, _ = Install(context.Background(), Options{
+		Platform: "keenetic",
+		Detect:   func() (string, string, error) { return "aarch64-3.10", "opkg print-architecture (Entware)", nil },
+		Latest: func(context.Context) (*Release, error) {
+			return &Release{TagName: "0.8.2-rev12", Assets: []Asset{
+				{Name: "magitrickle_0.8.2-12_entware_aarch64-3.10_kn.ipk", URL: "http://x/kn", Size: 9 << 20},
+			}}, nil
+		},
+		Fetch: fetchFake(300_000),
+		Run:   run.run,
+		TmpDir: dir,
+	})
+	stopIdx, healIdx := -1, -1
+	for i, c := range run.calls {
+		if c == "/opt/etc/init.d/S99magitrickle stop" && stopIdx == -1 {
+			stopIdx = i
+		}
+		if c == "opkg install iptables" && healIdx == -1 {
+			healIdx = i
+		}
+	}
+	if stopIdx == -1 || healIdx == -1 || healIdx > stopIdx {
+		t.Errorf("лечение iptables не сделано до остановки MT: stop=%d heal=%d; вызовы: %v", stopIdx, healIdx, run.calls)
+	}
+}
+
 // iptablesNdmmarkBroken - живой вывод пользователя Keenetic-aarch64
 // (plain entware-iptables без ndm-расширений).
 func TestIptablesNdmmarkBroken(t *testing.T) {
