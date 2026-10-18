@@ -316,6 +316,14 @@ func Install(ctx context.Context, opts Options) (Result, error) {
 	_ = os.Remove(socket)
 
 	out, err := installPackage(run, mgr, dest)
+	// opkg молча пропускает установку при совпавшей версии («is up to
+	// date») - на диске может остаться чужой/старый бинарь (живой кейс:
+	// ручная подмена бинаря без переключения базы opkg, тест владельца
+	// на 0.42). Переустанавливаем принудительно.
+	if err == nil && mgr == "opkg" && strings.Contains(strings.ToLower(string(out)), "up to date") {
+		step("opkg пропустил установку (up to date) - переустанавливаю принудительно")
+		out, err = installPackage(run, mgr, dest, "--force-reinstall")
+	}
 	if err != nil {
 		// зависимости могли не резолвнуться по пустым спискам - обновляем и
 		// повторяем раз; после неудачи MT остаётся остановленным - лучше
@@ -376,7 +384,8 @@ func installPackage(run func(string, ...string) ([]byte, error), mgr, dest strin
 		args := append([]string{"add", "--allow-untrusted"}, extraArgs...)
 		return run("apk", append(args, dest)...)
 	}
-	return run("opkg", "install", dest)
+	args := append([]string{"install"}, extraArgs...)
+	return run("opkg", append(args, dest)...)
 }
 
 // assetArch - arch-часть имени пакета релиза (magitrickle_<ver>_<platform>_
