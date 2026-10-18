@@ -403,6 +403,37 @@ func (s *Server) putDnsPolicy(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "composed": composed})
 }
 
+// policyProbeLevels - уровни политики как ноги зонда (L1-L5, подписи
+// карточки политики): общие для POST /dns/policy/probe и для карточки
+// «Проверка DNS и сети» при включённой политике.
+func policyProbeLevels(p store.DnsCascadePolicy) []dnsprobe.Level {
+	var levels []dnsprobe.Level
+	appendLevel := func(name, addr string) {
+		if l, ok := policyProbeLevel(name, addr); ok {
+			levels = append(levels, l)
+		}
+	}
+	for _, raw := range p.Primary {
+		name := "L1 напрямую"
+		if p.Tunnel != "" {
+			name = "L2 туннель " + p.Tunnel
+		}
+		appendLevel(name, raw)
+	}
+	for _, raw := range p.Fallback {
+		appendLevel("L3 запасной", raw)
+	}
+	if p.Yandex {
+		levels = append(levels, dnsprobe.Level{Level: "L4 Яндекс: 77.88.8.8:53", Kind: "udp", Server: "77.88.8.8:53"})
+	}
+	if p.Provider {
+		if up := dnsprobe.UpstreamFromResolv(); up != "" {
+			appendLevel("L5 провайдер", up)
+		}
+	}
+	return levels
+}
+
 // policyProbeLevel - уровень политики как нога зонда: вид транспорта
 // берётся из схемы адреса (tls:// -> DoT, https:// -> DoH, иначе UDP).
 // Адрес сначала канонизируется: https://dns.google БЕЗ пути - валидный
@@ -441,30 +472,7 @@ func (s *Server) postDnsPolicyProbe(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "политика не задана"})
 		return
 	}
-	var levels []dnsprobe.Level
-	appendLevel := func(name, addr string) {
-		if l, ok := policyProbeLevel(name, addr); ok {
-			levels = append(levels, l)
-		}
-	}
-	for _, raw := range p.Primary {
-		name := "L1 напрямую"
-		if p.Tunnel != "" {
-			name = "L2 туннель " + p.Tunnel
-		}
-		appendLevel(name, raw)
-	}
-	for _, raw := range p.Fallback {
-		appendLevel("L3 запасной", raw)
-	}
-	if p.Yandex {
-		levels = append(levels, dnsprobe.Level{Level: "L4 Яндекс: 77.88.8.8:53", Kind: "udp", Server: "77.88.8.8:53"})
-	}
-	if p.Provider {
-		if up := dnsprobe.UpstreamFromResolv(); up != "" {
-			appendLevel("L5 провайдер", up)
-		}
-	}
+	levels := policyProbeLevels(*p)
 	if len(levels) == 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "в политике нет ни одного уровня"})
 		return
