@@ -416,6 +416,33 @@ func Install(ctx context.Context, opts Options) (Result, error) {
 		return res, fmt.Errorf("служба MT не стартовала (%s start): %v: %s", initScript, e, firstLine(string(out)))
 	}
 	step("служба запущена: %s start", initScript)
+
+	// старт-скрипт проверяет живость мгновенно - демон может умереть сразу
+	// после (живой кейс Keenetic-aarch64: plain entware-iptables без
+	// ndm-расширений, демон падает на iptables-save «Can't find library
+	// for match 'ndmmark'», а скрипт уже отчитался done). Перепроверка и
+	// самолечение известного случая: apt-аналог - поставить keenetic-_kn
+	// сборку iptables из keenetic-фида (её версия выше plain).
+	if procAlive() {
+		time.Sleep(postStartDelay)
+		if len(magitricklePids()) == 0 {
+			out, perr := probeIptablesSave(run, opts.Platform)
+			if perr != nil && iptablesNdmmarkBroken(string(out)) {
+				step("демон умер: iptables без ndm-расширений Keenetic - обновляю iptables до keenetic-сборки и стартую заново")
+				_ = updateLists(run, "opkg")
+				if iout, ie := run("opkg", "install", "iptables"); ie != nil {
+					step("обновить iptables не вышло: %s", firstLine(string(iout)))
+				}
+				_, _ = run(initScript, "start")
+				time.Sleep(postStartDelay)
+			}
+			if len(magitricklePids()) == 0 {
+				res.Log = log.String()
+				return res, fmt.Errorf("демон завершился сразу после старта - смотрите вывод iptables-save и журнал роутера (частая причина: зависимости/конфиг)")
+			}
+			step("демон жив после перепроверки")
+		}
+	}
 	res.Log = log.String()
 	return res, nil
 }
@@ -527,6 +554,16 @@ func ensureOpkgArch(path, arch string, prio int) bool {
 // procDir - каталог процессов для magitricklePids (подмена в тестах).
 var procDir = "/proc"
 
+// procAlive - есть ли у процесса mawg /proc (Linux-роутер - да, Windows -
+// нет); подмена в тестах через TestMain.
+var procAlive = func() bool {
+	_, err := os.Stat(filepath.Join(procDir, "self"))
+	return err == nil
+}
+
+// postStartDelay - пауза перед перепроверкой живости демона (подмена в тестах).
+var postStartDelay = 3 * time.Second
+
 // magitricklePids - живые процессы magitrickled: pid -> путь бинаря.
 // Чужие установки ставят MT мимо пакета, гасить их нечем (init-скрипта
 // нет) - новый MT не поднимется на занятых портах.
@@ -553,6 +590,24 @@ func magitricklePids() map[int]string {
 		pids[pid] = exe
 	}
 	return pids
+}
+
+// probeIptablesSave - iptables-save; на Кинетике entware-бинарь живёт в
+// /opt/sbin и может не попасть в PATH процесса mawg - фолбэк полным путём.
+func probeIptablesSave(run func(string, ...string) ([]byte, error), platform string) ([]byte, error) {
+	out, err := run("iptables-save")
+	if err == nil || platform != "keenetic" {
+		return out, err
+	}
+	return run("/opt/sbin/iptables-save")
+}
+
+// iptablesNdmmarkBroken - вывод iptables-save означает «стоит plain
+// entware-iptables без ndm-расширений»: правила прошивки Keenetic
+// используют ndmmark, демон MT умирает на чистке правил при старте.
+func iptablesNdmmarkBroken(out string) bool {
+	s := strings.ToLower(out)
+	return strings.Contains(s, "ndmmark") || strings.Contains(s, "can't find library")
 }
 
 // fetchTo - скачивание в файл (http/https, редиректы GitHub обрабатывает

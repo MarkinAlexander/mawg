@@ -9,6 +9,13 @@ import (
 	"testing"
 )
 
+func TestMain(m *testing.M) {
+	// послестартовая перепроверка живости в тестах глушится (нет /proc
+	// с живым magitrickled); тесты самого лечения включают её явно
+	procAlive = func() bool { return false }
+	os.Exit(m.Run())
+}
+
 func TestFirstOpkgArch(t *testing.T) {
 	cases := []struct {
 		out  string
@@ -471,6 +478,96 @@ func TestInstallApkArchOverride(t *testing.T) {
 	}
 	if !strings.Contains(res.Log, "скачано 293 КБ") {
 		t.Errorf("размер скачивания должен быть в КБ/МБ: %s", res.Log)
+	}
+}
+
+// iptablesNdmmarkBroken - живой вывод пользователя Keenetic-aarch64
+// (plain entware-iptables без ndm-расширений).
+func TestIptablesNdmmarkBroken(t *testing.T) {
+	live := `failed to clear iptables: listing chains error: iptables-save failed: exit status 1: ` +
+		`Can't find library for match 'ndmmark'`
+	if !iptablesNdmmarkBroken(live) {
+		t.Error("живой вывод ndmmark не распознан")
+	}
+	if iptablesNdmmarkBroken("") || iptablesNdmmarkBroken("Generating dump") {
+		t.Error("чистый вывод не должен считаться битым")
+	}
+}
+
+// живой кейс: пакет встал, start отчитался done, но демон умер сразу
+// (plain iptables без ndmmark) - mtinstall сам обновляет iptables до
+// keenetic-сборки и стартует заново; не вышло - честная ошибка
+func TestInstallPostStartDeathIptablesHeal(t *testing.T) {
+	oldAlive, oldDelay := procAlive, postStartDelay
+	defer func() { procAlive, postStartDelay = oldAlive, oldDelay }()
+	procAlive = func() bool { return true }
+	postStartDelay = 0
+
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "magitrickle_0.8.2-12_entware_aarch64-3.10_kn.ipk")
+	run := &fakeRun{script: map[string]resp{
+		"iptables-save|": {
+			out: "iptables-save v1.4.21: Can't find library for match 'ndmmark'",
+			err: errors.New("exit status 1"),
+		},
+		"/opt/sbin/iptables-save|": {
+			out: "iptables-save v1.4.21: Can't find library for match 'ndmmark'",
+			err: errors.New("exit status 1"),
+		},
+	}}
+	_, err := Install(context.Background(), Options{
+		Platform: "keenetic",
+		Detect:   func() (string, string, error) { return "aarch64-3.10", "opkg print-architecture (Entware)", nil },
+		Latest: func(context.Context) (*Release, error) {
+			return &Release{TagName: "0.8.2-rev12", Assets: []Asset{
+				{Name: "magitrickle_0.8.2-12_entware_aarch64-3.10_kn.ipk", URL: "http://x/kn", Size: 9 << 20},
+			}}, nil
+		},
+		Fetch: fetchFake(300_000),
+		Run:   run.run,
+		TmpDir: dir,
+	})
+	if err == nil || !strings.Contains(err.Error(), "сразу после старта") {
+		t.Fatalf("жду честную ошибку о смерти демона: %v", err)
+	}
+	for _, want := range []string{
+		"opkg update",
+		"opkg install iptables",
+		"/opt/sbin/iptables-save", // фолбэк полным путём после отказа PATH-вызова
+	} {
+		if !run.saw(want) {
+			t.Errorf("нет шага лечения %q; вызовы: %v", want, run.calls)
+		}
+	}
+	if n := len(run.calls); n < 1 || run.calls[n-1] != "/opt/etc/init.d/S99magitrickle start" {
+		t.Errorf("после лечения не было повторного старта; хвост: %v", run.calls[max(0, n-3):])
+	}
+	_ = dest
+}
+
+// демон умер, но iptables чист - лечение не должно дёргать opkg,
+// ошибка честная
+func TestInstallPostStartDeathNoHeal(t *testing.T) {
+	oldAlive, oldDelay := procAlive, postStartDelay
+	defer func() { procAlive, postStartDelay = oldAlive, oldDelay }()
+	procAlive = func() bool { return true }
+	postStartDelay = 0
+
+	dir := t.TempDir()
+	run := &fakeRun{}
+	_, err := Install(context.Background(), Options{
+		Platform: "openwrt",
+		Detect:   func() (string, string, error) { return "x86_64", "opkg", nil },
+		Latest:   func(context.Context) (*Release, error) { return testRelease(), nil },
+		Fetch:    fetchFake(300_000),
+		Run:      run.run,
+		TmpDir:   dir,
+	})
+	if err == nil || !strings.Contains(err.Error(), "сразу после старта") {
+		t.Fatalf("жду честную ошибку о смерти демона: %v", err)
+	}
+	if run.saw("opkg install iptables") {
+		t.Errorf("лечение не должно запускаться при чистом iptables-save; вызовы: %v", run.calls)
 	}
 }
 
