@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { UiBadge, UiButton, UiCard, UiHelp, UiHint } from '../../components/ui'
+import { UiBadge, UiButton, UiCard, UiHelp, UiHint, UiInput } from '../../components/ui'
 import { api } from '../../api/client'
 import { useStatus, usePools, type MtState } from '../../stores/status'
 import { useGroups } from '../../stores/groups'
@@ -8,6 +8,7 @@ import { useIfaces } from '../../stores/ifaces'
 import { useBundles } from '../../stores/bundles'
 import { useToast } from '../../stores/toast'
 import type { DnsProbeRow } from '../../api/types'
+import type { DnsProbeServer } from '../../api/types'
 
 // Обзор (44-дока §6) - короткая выжимка: состояние MT и плитки-счётчики
 // со ссылками на вкладки. Пулы живут на «Интерфейсах» (49-док), LAN-клиенты
@@ -28,6 +29,7 @@ onMounted(() => {
   ifaces.start();
   bundles.start();
   void groups.loadBackups();
+  void loadCustomServers();
 });
 onBeforeUnmount(() => {
   groups.stop();
@@ -74,6 +76,51 @@ async function runDnsProbe(): Promise<void> {
     push(e instanceof Error ? e.message : String(e), true);
   }
   probeBusy.value = false;
+}
+
+// --- свои серверы для проверки (слово владельца: «свои списки для
+// проверок, dot, doh, udp, но чтобы пользователь чётко понимал что куда
+// он добавляет») ---
+interface ProbeServerDraft { name: string; kind: string; server: string }
+const customServers = ref<ProbeServerDraft[]>([]);
+const customBusy = ref(false);
+const customPlaceholder: Record<string, string> = {
+  udp: '8.8.8.8 или 8.8.8.8:5353',
+  dot: 'tls://dns.adguard.com',
+  doh: 'https://dns.google/dns-query',
+};
+
+async function loadCustomServers(): Promise<void> {
+  try {
+    const r = await api<{ servers: DnsProbeServer[] }>('GET', '/dns/probe/servers');
+    customServers.value = (r.servers || []).map((x) => ({ name: x.name, kind: x.kind, server: x.server }));
+  } catch {
+    customServers.value = [];
+  }
+}
+
+function addCustomServer(): void {
+  customServers.value.push({ name: '', kind: 'udp', server: '' });
+}
+
+function removeCustomServer(i: number): void {
+  customServers.value.splice(i, 1);
+}
+
+async function saveCustomServers(): Promise<void> {
+  if (customBusy.value) return;
+  const servers = customServers.value
+    .map((x) => ({ name: x.name.trim(), kind: x.kind, server: x.server.trim() }))
+    .filter((x) => x.server !== '');
+  customBusy.value = true;
+  try {
+    const r = await api<{ servers: DnsProbeServer[] }>('PUT', '/dns/probe/servers', { servers });
+    customServers.value = (r.servers || []).map((x) => ({ name: x.name, kind: x.kind, server: x.server }));
+    push('список серверов для проверки сохранён');
+  } catch (e) {
+    push(e instanceof Error ? e.message : String(e), true);
+  }
+  customBusy.value = false;
 }
 
 function verdictText(r: DnsProbeRow): string {
@@ -246,6 +293,51 @@ const tiles = computed(() => {
           </span>
         </template>
       </div>
+
+      <details class="customs">
+        <summary>Свои серверы для проверки{{ customServers.length ? ' (' + customServers.length + ')' : '' }}</summary>
+        <UiHint text="Добавляйте свои DNS-серверы - кнопка «Проверить» прогонит их через контрольный запрос вместе со штатными уровнями. Типы: UDP - обычный DNS-запрос, как у домашнего роутера (порт 53 можно не указывать); DoT - DNS поверх TLS (порт 853 можно не указывать); DoH - DNS поверх HTTPS (путь /dns-query допишется сам). Имя можно не заполнять - подставится адрес. Проверка идёт напрямую, мимо перехвата MT: вердикт показывает, что сервер реально отвечает на вашей сети - «работает», «ПОДМЕНА» или «нет ответа»." />
+        <div
+          v-for="(x, i) in customServers"
+          :key="i"
+          class="customrow"
+        >
+          <UiInput
+            v-model="x.name"
+            bare
+            placeholder="имя (необязательно)"
+          />
+          <select
+            v-model="x.kind"
+            class="kindsel"
+          >
+            <option value="udp">UDP</option>
+            <option value="dot">DoT</option>
+            <option value="doh">DoH</option>
+          </select>
+          <UiInput
+            v-model="x.server"
+            bare
+            mono
+            class="customaddr"
+            :placeholder="customPlaceholder[x.kind] || 'адрес'"
+          />
+          <UiButton @click="removeCustomServer(i)">
+            ✕
+          </UiButton>
+        </div>
+        <div class="custombar">
+          <UiButton @click="addCustomServer">
+            Добавить сервер
+          </UiButton>
+          <UiButton
+            :busy="customBusy"
+            @click="saveCustomServers"
+          >
+            Сохранить список
+          </UiButton>
+        </div>
+      </details>
     </UiCard>
 
     <UiHint text="Журнал событий - вкладка «Система». Доступ и LAN-клиенты - «Настройки». В планах - мастер по настройкам на этом месте; как и что он должен предлагать - ещё не придумано, идеи приветствуются." />
@@ -253,6 +345,41 @@ const tiles = computed(() => {
 </template>
 
 <style scoped>
+.customs {
+  margin-top: 12px;
+}
+.customs summary {
+  cursor: pointer;
+  color: var(--dim, #8b909a);
+}
+.customrow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+}
+.customrow > :first-child {
+  width: 180px;
+  flex-shrink: 0;
+}
+.customaddr {
+  flex: 1;
+  min-width: 0;
+}
+.kindsel {
+  background: var(--panel2, #23262e);
+  color: inherit;
+  border: 1px solid var(--border, #32363f);
+  border-radius: 6px;
+  padding: 4px 6px;
+  flex-shrink: 0;
+}
+.custombar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
+}
 .mtrow {
   display: flex;
   gap: 10px;

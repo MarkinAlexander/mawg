@@ -76,6 +76,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/v1/ifaces/{device}/probe", s.setIfaceProbe)
 	mux.HandleFunc("GET /api/v1/wanprobe", s.getWANProbe)
 	mux.HandleFunc("GET /api/v1/dns/probe", s.dnsProbe)
+	mux.HandleFunc("GET /api/v1/dns/probe/servers", s.dnsProbeServersGet)
+	mux.HandleFunc("PUT /api/v1/dns/probe/servers", s.dnsProbeServersSet)
 	mux.HandleFunc("GET /api/v1/dns/keenetic/own", s.dnsKeeneticOwn)
 	mux.HandleFunc("GET /api/v1/dns/state", s.dnsState)
 	mux.HandleFunc("POST /api/v1/dns/dnsmasq", s.dnsDnsmasq)
@@ -887,6 +889,13 @@ func (s *Server) putWANProbe(w http.ResponseWriter, r *http.Request) {
 // ?kind=udp&server=host:port[&sni=...] - один уровень (отладка/тесты).
 func (s *Server) dnsProbe(w http.ResponseWriter, r *http.Request) {
 	levels := dnsprobe.Defaults()
+	// свои серверы пользователя (слово владельца: «свои списки для
+	// проверок, dot, doh, udp») - наравне со штатными уровнями
+	for _, cs := range s.store.DNSProbeServers() {
+		if l, err := convertProbeServer(cs); err == nil {
+			levels = append(levels, l)
+		}
+	}
 	kind, server := r.URL.Query().Get("kind"), r.URL.Query().Get("server")
 	if kind != "" && server != "" {
 		levels = []dnsprobe.Level{{Level: server, Kind: kind, Server: server, SNI: r.URL.Query().Get("sni")}}

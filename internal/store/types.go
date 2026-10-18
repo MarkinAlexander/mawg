@@ -334,6 +334,19 @@ type Settings struct {
 	// апстримов dns-proxy MT (один PUT в форк); гистерезис переключений
 	// K/M/restoreGap живёт в форке.
 	DNSCascade *DnsCascadePolicy `json:"dnsCascade,omitempty"`
+	// DNSProbe - свои серверы в карточке «Проверка DNS и сети» (слово
+	// владельца 2026-10-18): пользователь добавляет udp/dot/doh - зонд
+	// проверяет их канарейкой наравне со штатными уровнями.
+	DNSProbe []DnsProbeServer `json:"dnsProbe,omitempty"`
+}
+
+// DnsProbeServer - свой сервер пробы: Kind udp|dot|doh, Server - адрес
+// в каноническом виде (udp: host:port; dot: tls://host[:853];
+// doh: https://host[:443]/dns-query). Заполняется панелью с валидацией.
+type DnsProbeServer struct {
+	Name   string `json:"name"`
+	Kind   string `json:"kind"`
+	Server string `json:"server"`
 }
 
 // DnsCascadePolicy - уровни каскада: L1 основные (напрямую или L2 через
