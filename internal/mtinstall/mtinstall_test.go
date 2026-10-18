@@ -487,3 +487,181 @@ func TestAssetPlatformAndPaths(t *testing.T) {
 		t.Fatalf("openwrt: %s %s %s", i, s, b)
 	}
 }
+
+// opkgArchRefused - все живые формулировки отказа «архитектуры нет в
+// opkg.conf» (кейсы пользователя Keenetic-aarch64, Entware с одной
+// arch-строкой в конфиге).
+func TestOpkgArchRefused(t *testing.T) {
+	for _, s := range []string{
+		"Package magitrickle version 0.8.2-12 has no valid architecture, ignoring.",
+		"opkg_download_pkg: Package magitrickle is not available from any configured src.",
+		"pkg_hash_fetch_best_installation_candidate: Packages for magitrickle found, but incompatible with the architectures configured",
+		"Unknown package 'magitrickle'.",
+	} {
+		if !opkgArchRefused(s) {
+			t.Errorf("opkgArchRefused(%q) = false", s)
+		}
+	}
+	if opkgArchRefused("md5 sum mismatch") || opkgArchRefused("Successfully installed") {
+		t.Error("opkgArchRefused не должен срабатывать на посторонних ошибках")
+	}
+}
+
+func TestEnsureOpkgArch(t *testing.T) {
+	dir := t.TempDir()
+	conf := filepath.Join(dir, "opkg.conf")
+	if err := os.WriteFile(conf, []byte("arch aarch64-3.10 300\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// отсутствующий arch добавляется, занятый приоритет сдвигается
+	if !ensureOpkgArch(conf, "all", 50) {
+		t.Fatal("arch all не добавлен")
+	}
+	if !ensureOpkgArch(conf, "aarch64-3.10_kn", 300) {
+		t.Fatal("kn-arch не добавлен")
+	}
+	data, err := os.ReadFile(conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "arch aarch64-3.10 300\narch all 50\narch aarch64-3.10_kn 310\n"
+	if string(data) != want {
+		t.Fatalf("conf = %q, хочу %q", string(data), want)
+	}
+	// повторный вызов - изменений нет
+	if ensureOpkgArch(conf, "aarch64-3.10_kn", 300) {
+		t.Fatal("повторная добавка при уже существующей строке")
+	}
+	if ensureOpkgArch(filepath.Join(dir, "нет-такого"), "all", 50) {
+		t.Fatal("отсутствующий файл должен молча пропускаться")
+	}
+	if ensureOpkgArch(conf, "", 50) {
+		t.Fatal("пустая архитектура не должна добавляться")
+	}
+}
+
+func TestMagitricklePids(t *testing.T) {
+	old := procDir
+	defer func() { procDir = old }()
+	dir := t.TempDir()
+	procDir = dir
+	mk := func(pid, comm string) {
+		d := filepath.Join(dir, pid)
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(d, "comm"), []byte(comm+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("42", "magitrickled")
+	mk("43", "mawg")
+	mk("не-число", "magitrickled")
+	if err := os.WriteFile(filepath.Join(dir, "notapid"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pids := magitricklePids()
+	if len(pids) != 1 {
+		t.Fatalf("pids = %v, жду только 42", pids)
+	}
+	if _, ok := pids[42]; !ok {
+		t.Fatalf("pids = %v, нет 42", pids)
+	}
+}
+
+// живой кейс: чужая установка - init-скрипта нет (stop отказом), но
+// процесс magitrickled жив - он гасится kill'ом до замены файлов
+func TestInstallKillsForeignMT(t *testing.T) {
+	old := procDir
+	defer func() { procDir = old }()
+	dir := t.TempDir()
+	procDir = dir
+	mtd := filepath.Join(dir, "4242")
+	if err := os.MkdirAll(mtd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mtd, "comm"), []byte("magitrickled\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run := &fakeRun{script: map[string]resp{
+		"/etc/init.d/magitrickle|stop": {out: "not found", err: errors.New("exit 127")},
+	}}
+	res, err := Install(context.Background(), Options{
+		Platform: "openwrt",
+		Detect:   func() (string, string, error) { return "x86_64", "opkg", nil },
+		Latest:   func(context.Context) (*Release, error) { return testRelease(), nil },
+		Fetch:    fetchFake(300_000),
+		Run:      run.run,
+		TmpDir:   t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !run.saw("kill -9 4242") {
+		t.Errorf("чужой MT не погашен; вызовы: %v", run.calls)
+	}
+	if !strings.Contains(res.Log, "мимо пакета") {
+		t.Errorf("в логе должно быть честное предупреждение о чужом MT: %s", res.Log)
+	}
+}
+
+// живой кейс Keenetic-aarch64 (WBR3000UAX): opkg.conf без arch-строк -
+// «Packages for magitrickle found, but incompatible with the architectures
+// configured» + «Unknown package»; лечение: дописать arch all и arch пакета,
+// снять битую запись, поставить из файла
+func TestInstallOpkgArchHeal(t *testing.T) {
+	dir := t.TempDir()
+	conf := filepath.Join(dir, "opkg.conf")
+	if err := os.WriteFile(conf, []byte("arch aarch64-3.10 300\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(dir, "magitrickle_0.8.2-12_entware_aarch64-3.10_kn.ipk")
+	run := &fakeRun{failOnce: map[string]resp{
+		"opkg|install " + dest: {
+			out: "Unknown package 'magitrickle'.\nCollected errors:\n" +
+				" * pkg_hash_fetch_best_installation_candidate: Packages for magitrickle found, but incompatible with the architectures configured\n" +
+				" * opkg_install_cmd: Cannot install package magitrickle.",
+			err: errors.New("exit status 255"),
+		},
+	}}
+	if _, err := Install(context.Background(), Options{
+		Platform: "keenetic",
+		Detect:   func() (string, string, error) { return "aarch64-3.10", "opkg print-architecture (Entware)", nil },
+		Latest: func(context.Context) (*Release, error) {
+			return &Release{TagName: "0.8.2-rev12", Assets: []Asset{
+				{Name: "magitrickle_0.8.2-12_entware_aarch64-3.10_kn.ipk", URL: "http://x/kn", Size: 9 << 20},
+			}}, nil
+		},
+		Fetch:    fetchFake(300_000),
+		Run:      run.run,
+		OpkgConf: conf,
+		TmpDir:   dir,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"arch all 50\n", "arch aarch64-3.10_kn 310\n"} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("в opkg.conf нет %q: %q", want, string(data))
+		}
+	}
+	if !run.saw("opkg remove magitrickle") {
+		t.Errorf("битая запись не снята; вызовы: %v", run.calls)
+	}
+	// чистая установка из файла после лечения (второй вызов install)
+	n := 0
+	for _, c := range run.calls {
+		if c == "opkg install "+dest {
+			n++
+		}
+	}
+	if n != 2 {
+		t.Errorf("ожидался повтор install из файла (2 вызова), было %d; вызовы: %v", n, run.calls)
+	}
+	if !run.saw("/opt/etc/init.d/S99magitrickle start") {
+		t.Error("нет старта службы")
+	}
+}
