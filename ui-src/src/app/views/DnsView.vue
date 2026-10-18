@@ -153,8 +153,19 @@ const dnsmasqText = computed(() => {
   const d = state.value?.dnsmasq;
   if (!d) return '';
   if (d.inMT) return d.servers.length > 1 ? `через MT + ещё (${d.servers.length})` : 'через MT (127.0.0.1#3553)';
-  if (d.servers.length) return `свои серверы: ${d.servers.join(', ')}`;
+  // чип не растёт вместе с длиной списка (слово владельца: десятки серверов
+  // вылезали за карточку) - полный список рядом, по клику [?]
+  if (d.servers.length === 1) return `свой сервер: ${d.servers[0]}`;
+  if (d.servers.length) return `свои серверы: ${d.servers.length}`;
   return 'напрямую (серверы провайдера)';
+});
+
+// полный список своих серверов для [?] у чипа (UiHelp: pre-line + свой
+// скролл, длинный список не ломает вёрстку)
+const dnsmasqServersHelp = computed(() => {
+  const d = state.value?.dnsmasq;
+  if (!d || !d.servers.length) return '';
+  return 'Свои серверы dnsmasq (заданы вручную):\n' + d.servers.map((s) => '· ' + s).join('\n');
 });
 
 const upstreamsText = computed(() => {
@@ -416,6 +427,10 @@ async function probePolicy(): Promise<void> {
             <UiBadge
               :text="dnsmasqText"
               :variant="state.dnsmasq.inMT ? 'ok' : (state.dnsmasq.servers.length ? 'warn' : 'muted')"
+            />
+            <UiHelp
+              v-if="dnsmasqServersHelp"
+              :text="dnsmasqServersHelp"
             />
             <UiBadge
               v-if="state.dnsmasq.strict"

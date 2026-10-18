@@ -133,6 +133,35 @@ describe('DnsView - состояние DNS (OpenWrt)', () => {
     w.unmount()
   })
 
+  it('много своих серверов: чип компактный (счётчик), полный список - по клику [?]', async () => {
+    // слово владельца: чип с десятками серверов разросся и вылез за карточку
+    const many: DnsState = {
+      platform: 'openwrt',
+      dnsmasq: { servers: ['127.0.0.1#5054', '10.14.103.1', '8.8.4.4'], inMT: false, noresolv: false, cacheSize: 1500, strict: false },
+      mt: { upstream: '127.0.0.1:53', remap53: true },
+    }
+    vi.stubGlobal('fetch', apiStub(many, { capable: false }))
+    const w = mount(DnsView)
+    await waitState(w)
+
+    const text = w.find('#card-dns').text()
+    expect(text).toContain('свои серверы: 3')
+    expect(text).not.toContain('10.14.103.1') // список не растёт в чипе
+    // [?] рядом с чипом (сосед-бейдж): в поповере весь список
+    const mine = w.findAll('#card-dns .uihelp-wrap').find(
+      (x) => (x.element.previousElementSibling as HTMLElement | null)?.classList.contains('uibadge'),
+    )
+    expect(mine).toBeTruthy()
+    await mine!.find('button.uihelp').trigger('click')
+    await nextTick()
+    const pop = w.find('.uihelp-pop')
+    expect(pop.exists()).toBe(true)
+    expect(pop.text()).toContain('Свои серверы dnsmasq')
+    expect(pop.text()).toContain('· 10.14.103.1')
+    expect(pop.text()).toContain('· 8.8.4.4')
+    w.unmount()
+  })
+
   it('платформа без DNS-менеджера - честная заглушка', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'платформа пока без DNS-менеджера (срез OpenWrt)' }), { status: 501 })))
     const w = mount(DnsView)
