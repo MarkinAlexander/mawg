@@ -89,9 +89,26 @@ func Defaults() []Level {
 		{Level: "DNS через MT", Kind: "udp", Server: "127.0.0.1:3553"},
 	}
 	if up := UpstreamFromResolv(); up != "" {
-		levels = append(levels, Level{Level: "DNS провайдера", Kind: "udp", Server: up})
+		name := "DNS провайдера"
+		if host, _, err := net.SplitHostPort(up); err == nil {
+			if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+				// Entware-Кинетик: /etc/resolv.conf -> 127.0.0.1 (ndm) -
+				// это не провайдер, зовём честно (слово владельца
+				// 2026-10-18: «может он за DNS провайдера посчитал
+				// роутер?» - да, он)
+				name = "Системный резолвер"
+			}
+		}
+		levels = append(levels, Level{Level: name, Kind: "udp", Server: up})
 	}
+	// прямые UDP к публичным - примитивный DNS-чекер (слово владельца
+	// 2026-10-18): по канарейке честно видно «работает / ПОДМЕНА / нет
+	// ответа» для каждого сервера на этой сети; с fwmark проба идёт
+	// напрямую, мимо перехвата
 	return append(levels,
+		Level{Level: "UDP Google 8.8.8.8", Kind: "udp", Server: "8.8.8.8:53"},
+		Level{Level: "UDP Cloudflare 1.1.1.1", Kind: "udp", Server: "1.1.1.1:53"},
+		Level{Level: "UDP Яндекс 77.88.8.8", Kind: "udp", Server: "77.88.8.8:53"},
 		// Ноги сервисов - из списка блокировки 63-док (Фаза E: Google выжил
 		// на 8.8.4.4 при мёртвом 8.8.8.8; перебор ног делает вердикт уровня
 		// независимым от порядка A-записей)
@@ -389,7 +406,12 @@ var testDotRoots func() *x509.CertPool
 func exchangeUDP(server, domain string, timeout time.Duration) ([]string, error) {
 	id := randomID()
 	q := buildQuery(domain, id)
-	conn, err := net.DialTimeout("udp", server, timeout)
+	// fwmark «Magi»: перехват MT_DNSOR пропускает помеченные пакеты -
+	// UDP-проба меряет реальный сервер, а не цепочку MT (DoT/DoH не
+	// метим: их порты перехват :53 не задевает, а вмешиваться в
+	// групповое маркирование туннеля не хотим)
+	d := net.Dialer{Timeout: timeout, Control: dialControl}
+	conn, err := d.Dial("udp", server)
 	if err != nil {
 		return nil, fmt.Errorf("dial udp %s: %w", server, err)
 	}
