@@ -469,5 +469,40 @@ func (s *Server) postDnsPolicyProbe(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "в политике нет ни одного уровня"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"results": dnsprobe.Run(levels, 3*time.Second)})
+	// два прогона: первый греет туннель и цепочку MT (handshake warp и
+	// холодные апстримы сразу после применения политики дают таймауты на
+	// всём туннельном уровне, через минуту те же уровни живы - живой кейс
+	// владельца на Кинетике: «недоступен ~3000мс» при рабочем варпе),
+	// в результат идёт лучший из двух по каждому уровню
+	first := dnsprobe.Run(levels, 3*time.Second)
+	time.Sleep(2 * time.Second)
+	writeJSON(w, http.StatusOK, map[string]any{"results": bestOfPasses(first, dnsprobe.Run(levels, 3*time.Second))})
+}
+
+// verdictRank - чем меньше, тем лучше (clean - сервер работает, error -
+// транспорта не было вовсе).
+func verdictRank(v string) int {
+	switch v {
+	case dnsprobe.VerdictClean:
+		return 0
+	case dnsprobe.VerdictSpoof:
+		return 1
+	case dnsprobe.VerdictNoAnswer:
+		return 2
+	}
+	return 3
+}
+
+// bestOfPasses - лучший из двух прогонов по каждому уровню (уровни
+// выровнены по индексу: Run сохраняет порядок levels); при равном
+// вердикте берётся второй прогон - он теплее и точнее в замере.
+func bestOfPasses(first, second []dnsprobe.Result) []dnsprobe.Result {
+	out := make([]dnsprobe.Result, len(second))
+	for i := range second {
+		out[i] = second[i]
+		if i < len(first) && verdictRank(first[i].Verdict) < verdictRank(second[i].Verdict) {
+			out[i] = first[i]
+		}
+	}
+	return out
 }
