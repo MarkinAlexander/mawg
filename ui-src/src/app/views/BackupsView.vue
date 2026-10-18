@@ -33,6 +33,14 @@ function kindLabel(b: BackupInfo): string {
   return backupKind(b.name).label;
 }
 
+// размер по-человечески (слово владельца: голые байты нечитаемы) -
+// килобайты, крупнее - мегабайты с десятыми
+function humanSize(b: number): string {
+  if (b >= 1048576) return (b / 1048576).toFixed(1) + ' МБ';
+  if (b >= 1024) return Math.round(b / 1024) + ' КБ';
+  return b + ' Б';
+}
+
 async function download(b: BackupInfo): Promise<void> {
   window.location.href = '/api/v1/mt/backups/' + encodeURIComponent(b.name);
 }
@@ -246,7 +254,7 @@ async function impGo(): Promise<void> {
     >
       <span class="bkname">
         <b>{{ kindLabel(b) }}</b>
-        <span class="muted">{{ b.name }} · {{ b.size }} Б · {{ b.modified }}</span>
+        <span class="muted">{{ b.name }} · {{ humanSize(b.size) }} · {{ b.modified }}</span>
       </span>
       <span class="sp" />
       <UiButton @click="download(b)">
