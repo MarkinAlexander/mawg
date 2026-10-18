@@ -311,7 +311,11 @@ func ParseMTUpstreams(data string) (legacy string, list []string) {
 			}
 		case inProxy && sub == "upstreams" && indent > 4:
 			if p, ok := cutKey(body, "port:"); ok && len(list) > 0 {
-				list[len(list)-1] += ":" + p
+				// у схемных адресов (https://host:443/..., tls://host:853)
+				// порт уже в URI - поле port MT хранит для plain-хостов
+				if !strings.Contains(list[len(list)-1], "://") {
+					list[len(list)-1] += ":" + p
+				}
 			}
 		case inProxy && indent == 4 && body == "upstream:":
 			sub, cur = "upstream", ""
@@ -324,7 +328,11 @@ func ParseMTUpstreams(data string) (legacy string, list []string) {
 				cur = h
 			}
 			if p, ok := cutKey(body, "port:"); ok && cur != "" {
-				legacy = cur + ":" + p
+				if strings.Contains(cur, "://") {
+					legacy = cur // порт уже в URI
+				} else {
+					legacy = cur + ":" + p
+				}
 			}
 		}
 	}

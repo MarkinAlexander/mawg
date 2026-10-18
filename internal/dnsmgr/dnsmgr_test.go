@@ -66,6 +66,12 @@ func TestParseMTUpstreams(t *testing.T) {
 	if legacy3, list3 := ParseMTUpstreams("app:\n  dnsProxy:\n    upstream:\n      address: 127.0.0.1\n      port: 53\n"); legacy3 != "127.0.0.1:53" || len(list3) != 0 {
 		t.Fatalf("legacy-only: %q %v", legacy3, list3)
 	}
+	// схемные адреса: поле port у них шум (порт уже в URI) - не дублируем
+	scheme := "app:\n  dnsProxy:\n    upstreams:\n      - address: https://dns.google:443/dns-query\n        port: 443\n      - address: tls://8.8.8.8:853\n        port: 853\n      - address: 77.88.8.8\n        port: 53\n"
+	_, list4 := ParseMTUpstreams(scheme)
+	if !reflect.DeepEqual(list4, []string{"https://dns.google:443/dns-query", "tls://8.8.8.8:853", "77.88.8.8:53"}) {
+		t.Fatalf("схемные адреса: %v", list4)
+	}
 }
 
 func TestParseUCIValues(t *testing.T) {
