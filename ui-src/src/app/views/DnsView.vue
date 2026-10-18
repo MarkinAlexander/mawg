@@ -214,6 +214,30 @@ const edit = ref<string[] | null>(null);
 const newAddr = ref('');
 const editList = computed(() => edit.value ?? []);
 
+// петлезащита (openwrt, dnsmasq.inMT): 127.0.0.1:53/свой IP:53 - это
+// dnsmasq, который сам кормится от MT - петля уронит DNS. На Кинетике
+// 127.0.0.1:53 легален (системный резолвер) - правило платформенное.
+const loopGuard = computed(() => !!state.value && state.value.platform !== 'keenetic' && state.value.dnsmasq.inMT);
+
+function loopRisk(a: string): boolean {
+  if (!loopGuard.value) return false;
+  const t = a.trim();
+  if (!t || t.startsWith('tls://') || t.startsWith('https://')) return false;
+  let host = t;
+  let port = '53';
+  const idx = t.lastIndexOf(':');
+  if (idx > 0) {
+    host = t.slice(0, idx);
+    port = t.slice(idx + 1);
+  }
+  host = host.replace(/^\[/, '').replace(/\]$/, '');
+  if (port !== '53') return false;
+  if (/^127\./.test(host) || host === '::1' || host === 'localhost') return true;
+  return (state.value?.self || []).includes(host);
+}
+
+const editRisky = computed(() => (edit.value ?? []).filter(loopRisk));
+
 const editDirty = computed(() => {
   if (edit.value === null) return false;
   return JSON.stringify(edit.value) !== JSON.stringify(ups.value.map((u) => u.address));
@@ -259,15 +283,18 @@ function addAddr(): void {
 
 async function saveEdit(): Promise<void> {
   if (!edit.value || !editValid.value || busy.value) return;
+  const risky = editRisky.value;
   const ok = await confirm({
     title: 'Резервные серверы MT',
-    text: 'Новый список будет записан в настройки MT и заработает без перезапуска. Первым используется верхний доступный сервер.',
-    okLabel: 'Сохранить',
+    text: risky.length
+      ? `Осторожно: ${risky.join(', ')} - это служба DNS самого роутера (dnsmasq), а она сейчас направлена в MT. Такой адрес замыкает петлю (dnsmasq → MT → dnsmasq) и уронит DNS. Ставить только если точно понимаете, зачем. ` + 'Остальной список будет записан в настройки MT и заработает без перезапуска.'
+      : 'Новый список будет записан в настройки MT и заработает без перезапуска. Первым используется верхний доступный сервер.',
+    okLabel: risky.length ? 'Всё равно применить' : 'Сохранить',
   });
   if (!ok) return;
   busy.value = true;
   try {
-    await api('PUT', '/dns/upstreams', { upstreams: edit.value });
+    await api('PUT', '/dns/upstreams', { upstreams: edit.value, confirm: risky.length > 0 });
     push('список серверов сохранён');
     edit.value = null;
     await Promise.all([load(), loadCascade()]);
@@ -345,6 +372,9 @@ const polDirty = computed(() => {
     || polProvider.value !== !!p.provider;
 });
 
+// рискованные адреса политики: те же уровни петли (L1+L3; L4/L5 - свои)
+const polRisky = computed(() => [...linesOf(polPrimary.value), ...linesOf(polFallback.value)].filter(loopRisk));
+
 async function applyPolicy(): Promise<void> {
   const body = {
     enabled: polEnabled.value,
@@ -353,6 +383,7 @@ async function applyPolicy(): Promise<void> {
     fallback: linesOf(polFallback.value),
     yandex: polYandex.value,
     provider: polProvider.value,
+    confirm: polRisky.value.length > 0,
   };
   if (body.enabled && body.primary.length === 0 && body.fallback.length === 0 && !body.yandex && !body.provider) {
     push('включённая политика требует хотя бы один уровень', true);
@@ -632,6 +663,12 @@ async function probePolicy(): Promise<void> {
                 :class="{ bad: addrErr(a) !== null }"
                 :title="addrErr(a) ?? ''"
               >{{ a }}</code>
+              <UiBadge
+                v-if="loopRisk(a)"
+                variant="warn"
+                text="петля?"
+                tooltip="Это адрес службы DNS самого роутера (dnsmasq), а она сейчас направлена в MT: такой адрес замкнёт петлю и уронит DNS. На Кинетике такой адрес легален, на OpenWrt - нет."
+              />
               <span class="rowbtns">
                 <UiButton
                   :disabled="i === 0"
@@ -686,6 +723,12 @@ async function probePolicy(): Promise<void> {
               v-if="!editValid"
               variant="err"
               text="исправьте адреса (порт 1-65535)"
+            />
+            <UiBadge
+              v-if="editRisky.length"
+              variant="warn"
+              text="есть адрес dnsmasq - при сохранении спросит подтверждение"
+              tooltip="Адрес службы DNS роутера при dnsmasq «в MT» замыкает петлю. Поставить можно только осознанно."
             />
           </div>
         </template>
@@ -820,6 +863,12 @@ async function probePolicy(): Promise<void> {
           <span class="muted">настроен через {{ policy.tunnelGroup.interface }}</span>
         </template>
       </div>
+
+      <UiBanner
+        v-if="polRisky.length"
+        kind="warn"
+        text="В уровнях есть адрес службы DNS самого роутера (dnsmasq), а она сейчас направлена в MT - такой адрес замкнёт петлю и уронит DNS. Сохранить можно только осознанно: панель спросит подтверждение."
+      />
 
       <div class="dnsactions">
         <UiButton

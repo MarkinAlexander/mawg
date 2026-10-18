@@ -338,15 +338,32 @@ func (s *Server) getDnsPolicy(w http.ResponseWriter, r *http.Request) {
 // в комплекте), затем один PUT порядка в форк. Выключенная политика
 // только сохраняется (текущие апстримы не трогаем).
 func (s *Server) putDnsPolicy(w http.ResponseWriter, r *http.Request) {
-	var p store.DnsCascadePolicy
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16384)).Decode(&p); err != nil {
+	var req struct {
+		store.DnsCascadePolicy
+		Confirm bool `json:"confirm"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16384)).Decode(&req); err != nil {
 		writeErr(w, fmt.Errorf("кривой запрос"))
 		return
 	}
+	p := req.DnsCascadePolicy
 	composed, err := composeCascadePolicy(p)
 	if err != nil {
 		writeErr(w, err)
 		return
+	}
+	// петлезащита (та же, что в PUT /dns/upstreams): адрес dnsmasq в
+	// списке при dnsmasq.inMT замыкает петлю - предупреждение + confirm
+	risky := s.loopRiskUpstreams(composed)
+	if len(risky) > 0 && !req.Confirm {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error":    "замкнёт петлю: dnsmasq сейчас направлен в MT, а среди уровней есть его адрес (" + strings.Join(risky, ", ") + ")",
+			"loopRisk": risky,
+		})
+		return
+	}
+	if len(risky) > 0 {
+		s.store.LogEvent("dns", "policy", "петлевой риск подтверждён вручную: "+strings.Join(risky, ", "))
 	}
 	if p.Enabled && !s.mtDnsUpstreamsCapable(r.Context()) {
 		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "применение политики требует MagiTrickle 0.8.2-rev8+"})
