@@ -216,6 +216,7 @@ describe('SystemView - карточка «Система»', () => {
       ]),
       '/system/install': () => ({ ok: true, output: 'готово: wireguard up' }),
     });
+    useStatus().state.data = { version: 'v9.9', platform: 'openwrt', backendName: 'openwrt', authEnabled: false, nativeAWG3: false, mtSources: true, pools: [] } as Status;
     await btn(w, 'Поставить')[0].trigger('click');
     // openInstall перечитывает /system/check до показа confirm - ждём
     const dlg = await vi.waitFor(() => {
@@ -231,6 +232,7 @@ describe('SystemView - карточка «Система»', () => {
       expect(JSON.parse(post![1]!.body as string)).toEqual({ id: 'wg' });
     });
     await vi.waitFor(() => expect(w.text()).toContain('Установлено'));
+    expect(w.text()).toContain('v9.9 · openwrt'); // платформа/версия - первой строкой
     expect(w.text()).toContain('готово: wireguard up');
     w.unmount();
   });

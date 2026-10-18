@@ -111,6 +111,17 @@ const ownAdvice = computed(() => {
   return { encrypted, udpCount, spoofSeen };
 });
 
+// шифрованные (DoH/DoT) - всегда в кадре; простые по подключениям -
+// свёрнуты: лежачие туннели дают честные «недоступен» на каждую запись
+// и захламляют список (слово владельца: не вводить в заблуждение)
+const ownEncryptedRows = computed(() =>
+  ownRows.value.filter(
+    (e) => e.kind === 'doh' || e.kind === 'dot' || e.key === 'empty-doh' || e.key === 'empty-dot',
+  ),
+);
+const ownPlainRows = computed(() => ownRows.value.filter((e) => e.kind === 'udp' || e.key === 'empty-udp'));
+const ownPlainReal = computed(() => ownPlainRows.value.filter((e) => e.kind === 'udp'));
+
 async function probeOwn(): Promise<void> {
   if (ownProbing.value) return;
   ownProbing.value = true;
@@ -464,31 +475,35 @@ async function probePolicy(): Promise<void> {
         v-if="ownAdvice && (ownAdvice.encrypted || ownAdvice.udpCount)"
         id="card-dns-advice"
         class="dnscard"
-        title="Усилить DNS на самом Keenetic"
-        subtitle="что уже настроено и что можно добавить своими руками - панель эти записи не меняет"
+        title="DNS на самом Keenetic"
+        subtitle="панель эти записи не меняет - показывает и проверяет"
       >
-        <UiBanner
-          v-if="!ownAdvice.encrypted"
-          kind="warn"
-          text="Сейчас прописаны только простые UDP-серверы: такие запросы не шифруются - ответы можно подменить или подсмотреть (проверка выше помечает это как «ПОДМЕНА»). Сам Keenetic умеет шифрованный DNS - DoH и DoT: добавьте такой сервер в веб-интерфейсе Keenetic (раздел DNS / Интернет-безопасность - названия немного отличаются в разных прошивках)."
-        />
-        <UiBanner
-          v-else
-          kind="info"
-          text="Шифрованный DNS (DoH/DoT) уже настроен - ответы по нему подменить нельзя, это правильная основа. Keenetic умеет держать DoH, DoT и простые серверы одновременно; шифрованным можно пользоваться постоянно."
-        />
-        <UiBanner
-          v-if="ownAdvice.udpCount"
-          kind="warn"
-          text="Простые UDP-серверы отвечают быстрее шифрованных, но их ответы не защищены: при перехвате или подмене пользователи получат неверные адреса. Держите простые серверы только если уверены, что на вашей сети подмены нет, - либо включите антиподмену DNS, например проект zator (добавляет zapret2). Учтите: антиподмена работает не на всех сетях - результат зависит от настроек ТСПУ и требует ручной настройки."
-          :link="{ href: 'https://github.com/AloofLibra/zator', label: 'github.com/AloofLibra/zator' }"
-        />
+        <UiHint text="Зоны ответственности: записи Keenetic - ваши (список ниже), панель ими не управляет. Панель ведёт только резервные серверы MagiTrickle - они ниже и обновляются автоматически." />
+        <ul class="advice">
+          <li v-if="ownAdvice.encrypted">
+            Шифрованный DNS (DoH/DoT) настроен - ответы по нему подменить нельзя, это основа. Keenetic умеет держать DoH, DoT и простые серверы одновременно.
+          </li>
+          <template v-if="ownAdvice.udpCount">
+            <li>
+              Простые UDP отвечают быстрее, но не защищены: держите их, только если уверены, что на вашей сети подмены нет.
+            </li>
+            <li>
+              На сетях с подменой простым серверам нужна антиподмена DNS -
+              например
+              <a
+                href="https://github.com/AloofLibra/zator"
+                target="_blank"
+                rel="noopener"
+              >zator</a> (добавляет zapret2).
+              Антиподмена работает не на всех сетях: результат зависит от настроек ТСПУ и требует ручной настройки.
+            </li>
+          </template>
+        </ul>
         <UiBanner
           v-if="ownAdvice.spoofSeen"
           kind="err"
-          text="Проверка увидела подмену ответов на простых UDP-серверах. Шифрованный DNS (DoH/DoT) решает эту проблему - при такой сети простые серверы будут отдавать неверные адреса."
+          text="Проверка увидела подмену ответов на простых UDP-серверах - при такой сети простые серверы отдают неверные адреса, полагаться на них нельзя."
         />
-        <UiHint text="Свои записи смотрите и проверяйте в списке «Собственные серверы Keenetic» выше. Если захотите вести DNS целиком через панель - резервные серверы MagiTrickle ниже уже делают это автоматически." />
       </UiCard>
 
       <template v-if="state && isKeen">
@@ -503,7 +518,7 @@ async function probePolicy(): Promise<void> {
         </div>
         <div class="kv">
           <template
-            v-for="e in ownRows"
+            v-for="e in ownEncryptedRows"
             :key="e.key"
           >
             <b :class="{ muted: !e.kind }">{{ e.label }}<UiHelp
@@ -523,7 +538,38 @@ async function probePolicy(): Promise<void> {
               >{{ e.sub }}</span>
             </span>
           </template>
+          <template v-if="ownPlainReal.length === 0 && ownPlainRows.length">
+            <b class="muted">Простые (UDP)</b>
+            <span class="muted">записей не найдено</span>
+          </template>
         </div>
+        <details
+          v-if="ownPlainReal.length"
+          class="plainmore"
+        >
+          <summary>Простые серверы по подключениям ({{ ownPlainReal.length }})</summary>
+          <div class="kv">
+            <template
+              v-for="e in ownPlainRows"
+              :key="e.key"
+            >
+              <b>{{ e.label }}</b>
+              <span>
+                <UiBadge
+                  v-if="ownVerdicts[e.key]"
+                  :text="verdictRu[ownVerdicts[e.key].verdict] || ownVerdicts[e.key].verdict"
+                  :variant="verdictVariant(ownVerdicts[e.key].verdict)"
+                  :tooltip="ownVerdicts[e.key].detail || ''"
+                />
+                <span
+                  v-if="e.sub"
+                  class="muted"
+                >{{ e.sub }}</span>
+              </span>
+            </template>
+          </div>
+          <UiHint text="Записи привязаны к подключениям Keenetic: если туннель лежит, проверка его сервера честно покажет «недоступен». Панель эти записи не меняет." />
+        </details>
       </template>
 
       <!-- резервные серверы MT: живой статус (форк rev8+) -->

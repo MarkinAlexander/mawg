@@ -135,7 +135,10 @@ async function runInstall(payload: { id: string; flavor?: string; backup?: boole
 }
 
 function showResult(ok: boolean, output: string, errText: string): void {
-  result.value = { open: true, ok, out: (errText ? errText + '\n\n' : '') + output.trim() };
+  // платформа и версия mawg - обязательно первой строкой (слово владельца:
+  // пользователи присылают ошибки без указания, где они произошли)
+  const meta = [status.data?.version, status.data?.backendName].filter(Boolean).join(' · ');
+  result.value = { open: true, ok, out: (meta ? meta + '\n' : '') + (errText ? errText + '\n\n' : '') + output.trim() };
   void sys.refresh(); // легаси: после установки перечитываем системную проверку
 }
 const result = ref<{ open: boolean; ok: boolean; out: string } | null>(null);
