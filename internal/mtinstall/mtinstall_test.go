@@ -351,6 +351,44 @@ func TestInstallOpkgUpToDateForced(t *testing.T) {
 	}
 }
 
+// битая запись пакета в базе opkg (чужая архитектура): «up to date» ->
+// force-reinstall срывается в download - лечится remove + чистая установка
+// из файла (живой кейс Keenetic-aarch64, Entware с чужой записью 0.8.2-12)
+func TestInstallOpkgBrokenRecordRemoveReinstall(t *testing.T) {
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "magitrickle_0.8.2-12_entware_aarch64-3.10_kn.ipk")
+	run := &fakeRun{script: map[string]resp{
+		"opkg|install " + dest: {out: "Package magitrickle (0.8.2-12) installed in root is up to date."},
+		"opkg|install --force-reinstall " + dest: {
+			out:  "Collected errors:\n * opkg_download_pkg: Package magitrickle is not available from any configured src.",
+			err:  errors.New("exit status 255"),
+		},
+	}}
+	if _, err := Install(context.Background(), Options{
+		Platform: "keenetic",
+		Detect:   func() (string, string, error) { return "aarch64-3.10", "opkg print-architecture (Entware)", nil },
+		Latest: func(context.Context) (*Release, error) {
+			return &Release{TagName: "0.8.2-rev12", Assets: []Asset{
+				{Name: "magitrickle_0.8.2-12_entware_aarch64-3.10_kn.ipk", URL: "http://x/kn", Size: 9 << 20},
+			}}, nil
+		},
+		Fetch: fetchFake(300_000),
+		Run:   run.run,
+		TmpDir: dir,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !run.saw("opkg remove magitrickle") {
+		t.Errorf("up-to-date forced reinstall ne srabotal; calls: %v", run.calls)
+	}
+	if !run.saw("opkg install " + dest) {
+		t.Errorf("net chistoy ustanovki iz fayla; calls: %v", run.calls)
+	}
+	if !run.saw("/opt/etc/init.d/S99magitrickle start") {
+		t.Error("net starta sluzhby")
+	}
+}
+
 func TestInstallSmallDownloadRejected(t *testing.T) {
 	dir := t.TempDir()
 	_, err := Install(context.Background(), Options{
