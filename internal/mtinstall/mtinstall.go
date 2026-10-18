@@ -313,6 +313,21 @@ func Install(ctx context.Context, opts Options) (Result, error) {
 	initScript, socket, bin := ServicePaths(opts.Platform)
 	res.Bin = bin
 
+	// предполётный чек iptables ДО остановки MT (сеть и резолв ещё живы):
+	// plain entware-iptables без ndm-расширений убьёт демона сразу после
+	// установки (живой кейс Keenetic-aarch64: ndmmark) - лечим заранее,
+	// пока opkg update работает; не вылечилось - повторит после старта
+	if out, err := probeIptablesSave(run, opts.Platform); err != nil && iptablesNdmmarkBroken(string(out)) {
+		step("iptables без ndm-расширений Keenetic - обновляю до keenetic-сборки до установки")
+		_ = updateLists(run, "opkg")
+		if iout, ie := run("opkg", "install", "iptables"); ie != nil {
+			step("обновить iptables не вышло (лечение повторится после старта): %s", firstLine(string(iout)))
+		}
+		if out2, err2 := probeIptablesSave(run, opts.Platform); err2 != nil {
+			step("iptables-save всё ещё падает: %s", firstLine(string(out2)))
+		}
+	}
+
 	// стоп до установки: замена файла работающего бинаря падает ETXTBSY;
 	// на свежей установке службы ещё нет - отказ молча терпим
 	if out, e := run(initScript, "stop"); e != nil {
