@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { UiBadge, UiButton, UiCard, UiHelp, UiHint, UiInput } from '../../components/ui'
+import { UiBadge, UiButton, UiCard, UiHelp, UiHint, UiInput, UiSelect, type UiSelectOption } from '../../components/ui'
 import { api } from '../../api/client'
 import { useStatus, usePools, type MtState } from '../../stores/status'
 import { useGroups } from '../../stores/groups'
@@ -65,13 +65,26 @@ function plural(n: number, one: string, few: string, many: string): string {
 // --- Проверка DNS (канарейка-зонд, 63-док) ---
 const probeRows = ref<DnsProbeRow[]>([]);
 const probeBusy = ref(false);
+// путь проверки (слово владельца: переключатель «напрямую / через MT»):
+// all - уровни политики первыми + прямые, direct - только прямой путь,
+// mt - только цепочка политики
+const probePath = ref<'all' | 'direct' | 'mt'>('all');
+const probePathOptions: UiSelectOption[] = [
+  { value: 'all', label: 'всё (политика + напрямую)' },
+  { value: 'direct', label: 'напрямую' },
+  { value: 'mt', label: 'через MT (политика)' },
+];
 
 async function runDnsProbe(): Promise<void> {
   if (probeBusy.value) return;
   probeBusy.value = true;
   try {
-    const r = await api<{ results: DnsProbeRow[] }>('GET', '/dns/probe');
+    const q = probePath.value === 'all' ? '' : `?path=${probePath.value}`;
+    const r = await api<{ results: DnsProbeRow[] }>('GET', '/dns/probe' + q);
     probeRows.value = r.results || [];
+    if (probePath.value === 'mt' && probeRows.value.length === 0) {
+      push('политика автопереключения выключена - проверять через MT нечего (включите её на странице DNS)', true);
+    }
   } catch (e) {
     push(e instanceof Error ? e.message : String(e), true);
   }
@@ -265,6 +278,13 @@ const tiles = computed(() => {
         >
           Проверить
         </UiButton>
+        <div class="pathsel">
+          <UiSelect
+            v-model="probePath"
+            :options="probePathOptions"
+          />
+          <UiHelp text="«Напрямую» - запросы к серверам мимо роутера: видно, что сервер отвечает сам по себе и не подменён на вашем интернете. «Через MT» - цепочка правил автопереключения: то, как DNS получают устройства сейчас. «Всё» показывает оба пути - сразу видно, помогает MT или нет." />
+        </div>
         <span
           v-if="probeSummary"
           class="probesum"
@@ -311,9 +331,15 @@ const tiles = computed(() => {
             v-model="x.kind"
             class="kindsel"
           >
-            <option value="udp">UDP</option>
-            <option value="dot">DoT</option>
-            <option value="doh">DoH</option>
+            <option value="udp">
+              UDP
+            </option>
+            <option value="dot">
+              DoT
+            </option>
+            <option value="doh">
+              DoH
+            </option>
           </select>
           <UiInput
             v-model="x.server"
@@ -379,6 +405,11 @@ const tiles = computed(() => {
   gap: 8px;
   align-items: center;
   margin-top: 10px;
+}
+.pathsel {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 .mtrow {
   display: flex;

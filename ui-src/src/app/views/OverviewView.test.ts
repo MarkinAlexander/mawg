@@ -172,8 +172,8 @@ describe('OverviewView - Проверка DNS (63-док)', () => {
     await vi.waitFor(() => expect(w.findAll('#card-dnsprobe .uihelp').length).toBeGreaterThanOrEqual(1));
     await w.find('#card-dnsprobe .uibtn').trigger('click');
     await vi.waitFor(() => expect(w.findAll('#card-dnsprobe .uibadge').length).toBe(2));
-    // [?] у заголовка (actions) + у каждой из двух строк уровня
-    expect(w.findAll('#card-dnsprobe .uihelp').length).toBe(3);
+    // [?] у заголовка (actions) + у каждой из двух строк уровня + у переключателя пути
+    expect(w.findAll('#card-dnsprobe .uihelp').length).toBe(4);
     // забытый импорт UiHelp = кастом-элемент без логики (GOTCHAS)
     expect(w.html()).not.toContain('<uihelp');
     // «канарейка» и канонический набор - только в подсказках/комментариях,
