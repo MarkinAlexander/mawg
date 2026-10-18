@@ -324,6 +324,33 @@ func TestInstallLeavesRunningOnFatalError(t *testing.T) {
 	}
 }
 
+// opkg при совпавшей версии молча пропускает установку («up to date») -
+// принудительная переустановка (живой кейс: бинарь подменён вручную,
+// база opkg не переключена - тест владельца на 0.42)
+func TestInstallOpkgUpToDateForced(t *testing.T) {
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "magitrickle_0.8.2-9_openwrt_x86_64.ipk")
+	run := &fakeRun{script: map[string]resp{
+		"opkg|install " + dest: {out: "Package magitrickle (0.8.2-12) installed in root is up to date."},
+	}}
+	if _, err := Install(context.Background(), Options{
+		Platform: "openwrt",
+		Detect:   func() (string, string, error) { return "x86_64", "opkg", nil },
+		Latest:   func(context.Context) (*Release, error) { return testRelease(), nil },
+		Fetch:    fetchFake(300_000),
+		Run:      run.run,
+		TmpDir:   dir,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !run.saw("opkg install --force-reinstall "+dest) {
+		t.Errorf("нет принудительной переустановки; вызовы: %v", run.calls)
+	}
+	if !run.saw("/etc/init.d/magitrickle start") {
+		t.Error("нет старта службы")
+	}
+}
+
 func TestInstallSmallDownloadRejected(t *testing.T) {
 	dir := t.TempDir()
 	_, err := Install(context.Background(), Options{
