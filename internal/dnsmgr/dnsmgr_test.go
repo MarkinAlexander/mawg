@@ -132,6 +132,58 @@ func TestCollect(t *testing.T) {
 	}
 }
 
+// живая правда из сгенерированного конфига: строковая uci-опция server
+// инитом OpenWrt игнорируется - state обязан показывать то, что ест
+// dnsmasq (живой кейс 0.42: в uci «MT», живой dnsmasq кормился от
+// resolvfile и молчал)
+func TestCollectDnsmasqGeneratedConfWins(t *testing.T) {
+	newRunner := func(conf string) Runner {
+		return func(script string, timeout time.Duration) (string, error) {
+			switch {
+			case strings.HasPrefix(script, "cat /var/etc/dnsmasq.conf."):
+				return conf, nil
+			case strings.Contains(script, "dhcp.@dnsmasq[0].server"):
+				return "dhcp.@dnsmasq[0].server='127.0.0.1#3553'\n", nil
+			case strings.Contains(script, "noresolv"):
+				return "0\n", nil
+			case strings.Contains(script, "cachesize"):
+				return "1000\n", nil
+			case strings.Contains(script, "MT_DNSOR"):
+				return "3\n", nil
+			}
+			return "", nil
+		}
+	}
+
+	// десинк: в uci server есть (строкой), живой конфиг - только resolvfile
+	st, err := Collect(newRunner("conf-dir=/tmp/dnsmasq.d\nresolv-file=/tmp/resolv.conf.d/resolv.conf.auto\n"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Dnsmasq.InMT || len(st.Dnsmasq.Servers) != 0 || st.Dnsmasq.NoResolv {
+		t.Fatalf("десинк не виден: %+v", st.Dnsmasq)
+	}
+
+	// живой конфиг в MT-режиме: server= с MTListen + no-resolv
+	st, err = Collect(newRunner("server=127.0.0.1#3553\nno-resolv\nresolv-file=/tmp/x\n"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !st.Dnsmasq.InMT || len(st.Dnsmasq.Servers) != 1 || !st.Dnsmasq.NoResolv || !st.Dnsmasq.Strict {
+		t.Fatalf("живой MT-режим не распознан: %+v", st.Dnsmasq)
+	}
+}
+
+func TestParseDnsmasqConf(t *testing.T) {
+	live := parseDnsmasqConf("server=127.0.0.1#3553\nserver=8.8.8.8\nno-resolv\nresolv-file=/tmp/r\n")
+	if !live.seen || !live.noResolv || len(live.servers) != 2 || live.servers[0] != "127.0.0.1#3553" {
+		t.Fatalf("parse: %+v", live)
+	}
+	if live := parseDnsmasqConf(""); live.seen {
+		t.Fatalf("пустой вывод не должен считаться конфигом: %+v", live)
+	}
+}
+
 // переключения: в MT - бэкап прядевого списка; обратно - рестор и чистка
 // keenetic (71-док): только перехват MT_DNSOR + апстримы из конфига,
 // dnsmasq-блок нулевой, платформа проставлена
