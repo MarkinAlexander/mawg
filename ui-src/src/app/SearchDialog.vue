@@ -65,6 +65,11 @@ function onResize() {
   place()
 }
 
+// поколение скролла: новый go/unmount гасит текущий цикл повторов -
+// иначе ретраи живут дольше тестового окружения (витест-флейк teardown:
+// «document is not defined» ПОСЛЕ всех пройденных тестов, RC=1)
+let scrollGen = 0
+
 // при открытии - позиция, чистый запрос и фокус в инпут
 watch(
   () => props.open,
@@ -82,7 +87,10 @@ watch(
   },
 )
 
-onBeforeUnmount(() => window.removeEventListener('resize', onResize))
+onBeforeUnmount(() => {
+  scrollGen++
+  window.removeEventListener('resize', onResize)
+})
 
 // запрос меняется - выбор к первой строке
 watch(q, () => {
@@ -108,12 +116,17 @@ function onKeydown(e: KeyboardEvent) {
   }
 }
 
-async function go(place: SearchPlace | undefined) {
+function go(place: SearchPlace | undefined) {
   if (!place) return
+  scrollGen++ // прошлый скролл (если ещё крутится) гасим
   emit('update:open', false)
-  // закрывающийся диалог снимает свою запись истории (history.back);
-  // router.push поверх этой записи откатывался бы его back() - ждём
-  // очистки тега, потом навигируемся (живая приёмка на VM)
+  void doGo(place)
+}
+
+// закрывающийся диалог снимает свою запись истории (history.back);
+// router.push поверх этой записи откатывался бы его back() - ждём
+// очистки тега, потом навигируемся (живая приёмка на VM)
+async function doGo(place: SearchPlace): Promise<void> {
   await dialogBackWaitClean()
   await router.push(place.route)
   if (place.anchor) await scrollToAnchor(place.anchor)
@@ -125,18 +138,24 @@ async function go(place: SearchPlace | undefined) {
 // smooth и window.scrollTo({smooth}) - нет). Поэтому скроллим INSTANT и
 // повторяем, пока якорь реально не придёт к верху вьюпорта (в jsdom
 // getBoundingClientRect нулевой - top<120 сходится с первого вызова),
-// максимум ~1.2с, потом тихо сдаться (переход уже случился).
+// максимум ~1.2с, потом тихо сдаться (переход уже случился). После
+// каждого сна - проверка поколения: цикл не трогает document, если его
+// погасили (unmount/новый go).
 async function scrollToAnchor(anchor: string): Promise<void> {
+  const gen = ++scrollGen
   const deadline = Date.now() + 1200
   for (;;) {
+    if (gen !== scrollGen) return
     const el = document.getElementById(anchor)
     if (!el) {
       if (Date.now() >= deadline) return
       await new Promise((resolve) => setTimeout(resolve, 50))
+      if (gen !== scrollGen) return
       continue
     }
     el.scrollIntoView({ behavior: 'auto', block: 'start' })
     await new Promise((resolve) => setTimeout(resolve, 100))
+    if (gen !== scrollGen) return
     // топ<120 - якорь у краю; страница у нижнего предела - ближе физически
     // нельзя (последняя карточка короче вьюпорта)
     const maxScroll = document.documentElement.scrollHeight - window.innerHeight
