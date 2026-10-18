@@ -38,7 +38,7 @@ const (
 )
 
 type Dnsmasq struct {
-	Servers   []string `json:"servers"` // dhcp.@dnsmasq[0].server; пусто = из resolvfile
+	Servers   []string `json:"servers"` // живые server= сгенерированного конфига (фолбэк - uci); пусто = из resolvfile
 	InMT      bool     `json:"inMT"`    // среди серверов есть MTListen
 	NoResolv  bool     `json:"noresolv"`
 	CacheSize *int     `json:"cacheSize,omitempty"`
@@ -60,13 +60,24 @@ func Collect(r Runner, mtConfigPath string) (State, error) {
 
 	srvOut, _ := r(`uci -q show dhcp.@dnsmasq[0].server`, 10*time.Second)
 	st.Dnsmasq.Servers = parseUCIValues(srvOut)
+	if v, err := r(`uci -q get dhcp.@dnsmasq[0].noresolv`, 10*time.Second); err == nil {
+		st.Dnsmasq.NoResolv = strings.TrimSpace(v) == "1"
+	}
+	// Живая правда - сгенерированный конфиг dnsmasq: строковая uci-опция
+	// server (наследие ручных настроек) интом OpenWrt игнорируется, и
+	// dnsmasq молча кормится от resolvfile, пока state по uci показывает
+	// MT (живой кейс 0.42: «в uci MT», живой dnsmasq - провайдер).
+	// Файла нет/пусто - остаёмся на uci (свежий старт, тесты).
+	if conf, err := r(`cat /var/etc/dnsmasq.conf.* 2>/dev/null`, 10*time.Second); err == nil {
+		if live := parseDnsmasqConf(conf); live.seen {
+			st.Dnsmasq.Servers = live.servers
+			st.Dnsmasq.NoResolv = live.noResolv
+		}
+	}
 	for _, s := range st.Dnsmasq.Servers {
 		if s == MTListen {
 			st.Dnsmasq.InMT = true
 		}
-	}
-	if v, err := r(`uci -q get dhcp.@dnsmasq[0].noresolv`, 10*time.Second); err == nil {
-		st.Dnsmasq.NoResolv = strings.TrimSpace(v) == "1"
 	}
 	if v, err := r(`uci -q get dhcp.@dnsmasq[0].cachesize`, 10*time.Second); err == nil {
 		if n, perr := strconv.Atoi(strings.TrimSpace(v)); perr == nil {
@@ -218,6 +229,35 @@ func CollectKeeneticOwn(r Runner) (KeeneticOwn, error) {
 		return KeeneticOwn{}, fmt.Errorf("running-config: %w", err)
 	}
 	return ParseKeeneticOwn(out), nil
+}
+
+// dnsmasqLive - живые директивы из сгенерированного конфига dnsmasq.
+type dnsmasqLive struct {
+	servers  []string
+	noResolv bool
+	seen     bool // конфиг прочитан и содержит знакомые директивы
+}
+
+// parseDnsmasqConf разбирает /var/etc/dnsmasq.conf.* (сгенерированный инитом
+// OpenWrt - то, что dnsmasq РЕАЛЬНО ест): server=..., no-resolv, resolv-file.
+func parseDnsmasqConf(out string) dnsmasqLive {
+	var live dnsmasqLive
+	for _, raw := range strings.Split(out, "\n") {
+		line := strings.TrimSpace(raw)
+		switch {
+		case strings.HasPrefix(line, "server="):
+			if v := strings.TrimPrefix(line, "server="); v != "" {
+				live.servers = append(live.servers, v)
+				live.seen = true
+			}
+		case line == "no-resolv":
+			live.noResolv = true
+			live.seen = true
+		case strings.HasPrefix(line, "resolv-file="):
+			live.seen = true
+		}
+	}
+	return live
 }
 
 // parseUCIValues - значения uci-листа из вывода `uci show`: строки вида
