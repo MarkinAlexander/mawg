@@ -241,9 +241,39 @@ describe('DnsView - резервные серверы MT (форк rev8+)', () =
 
     await btn('Сохранить')!.trigger('click')
     await vi.waitFor(() => {
-      expect(capture.put).toEqual({ upstreams: ['1.1.1.1', '77.88.8.8:53'] })
+      expect(capture.put).toEqual({ upstreams: ['1.1.1.1', '77.88.8.8:53'], confirm: false })
     })
     await vi.waitFor(() => expect(w.find('#card-dns').text()).toContain('Редактировать список'))
+    w.unmount()
+  })
+
+  // петлезащита (openwrt, dnsmasq.inMT): адрес dnsmasq в списке -
+  // подсветка «петля?» и PUT с подтверждением (предупреждение, слово
+  // владельца 2026-10-18)
+  it('петлезащита: 127.0.0.1:53 в списке подсвечен, PUT уходит с confirm:true', async () => {
+    const capture: { put?: unknown } = {}
+    vi.stubGlobal('fetch', apiStub(statePayload, cascadePayload, capture))
+    const w = mount(DnsView)
+    const btn = (label: string) => w.findAll('#card-dns .uibtn').find((b) => b.text().includes(label))
+
+    await vi.waitFor(() => expect(btn('Редактировать список')).toBeTruthy())
+    await btn('Редактировать список')!.trigger('click')
+    await vi.waitFor(() => expect(w.findAll('#card-dns .editrow').length).toBe(2))
+
+    await w.find('#card-dns input').setValue('127.0.0.1:53')
+    await btn('Добавить')!.trigger('click')
+    await vi.waitFor(() => expect(w.findAll('#card-dns .editrow').length).toBe(3))
+
+    // строка подсвечена честным «петля?»
+    const rows = () => w.findAll('#card-dns .editrow')
+    expect(rows()[2].text()).toContain('петля')
+    // кнопка сохранения доступна, но рядом предупреждение
+    await vi.waitFor(() => expect(w.find('#card-dns').text()).toContain('спросит подтверждение'))
+
+    await btn('Сохранить')!.trigger('click')
+    await vi.waitFor(() => {
+      expect(capture.put).toEqual({ upstreams: ['8.8.8.8:53', '77.88.8.8:53', '127.0.0.1:53'], confirm: true })
+    })
     w.unmount()
   })
 })
@@ -332,6 +362,7 @@ describe('DnsView - правила автопереключения L1-L5', () =
         fallback: ['9.9.9.9', '149.112.112.112'],
         yandex: true,
         provider: false,
+        confirm: false,
       });
     });
     w.unmount();

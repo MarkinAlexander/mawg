@@ -289,6 +289,9 @@ export interface DnsState {
     upstreams?: string[]
     remap53: boolean
   }
+  // собственные IPv4 роутера (петлезащита upstream: адрес dnsmasq
+  // на собственном IP при dnsmasq.inMT замыкает петлю)
+  self?: string[]
 }
 
 // GET /dns/upstreams: живой стейт каскада апстримов dns-proxy MT

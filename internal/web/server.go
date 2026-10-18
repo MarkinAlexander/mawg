@@ -1012,10 +1012,26 @@ func (s *Server) dnsUpstreamsSet(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		Upstreams []string `json:"upstreams"`
+		Confirm   bool     `json:"confirm"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
 		writeErr(w, fmt.Errorf("кривой запрос"))
 		return
+	}
+	// петлезащита: dnsmasq направлен в MT, а в списке адрес dnsmasq
+	// (127.0.0.1:53/свой IP:53) - петля dnsmasq->MT->dnsmasq; без confirm
+	// честный 409 со списком (предупреждение+подтверждение, слово
+	// владельца 2026-10-18)
+	risky := s.loopRiskUpstreams(req.Upstreams)
+	if len(risky) > 0 && !req.Confirm {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error":    "замкнёт петлю: dnsmasq сейчас направлен в MT, а среди адресов есть его адрес (" + strings.Join(risky, ", ") + ")",
+			"loopRisk": risky,
+		})
+		return
+	}
+	if len(risky) > 0 {
+		s.store.LogEvent("dns", "upstreams", "петлевой риск подтверждён вручную: "+strings.Join(risky, ", "))
 	}
 	if err := s.mtClient().SetDnsUpstreams(r.Context(), req.Upstreams); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
