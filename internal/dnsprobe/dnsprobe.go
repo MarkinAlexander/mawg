@@ -34,6 +34,11 @@ import (
 // возвращает целиком (63-док).
 const CanaryDomain = "deb.torproject.org"
 
+// ControlDomain - контрольный домен двойной проверки UDP: RU-домен,
+// который резолвится всегда (63-док): если он отвечает, а канарейка
+// подавлена - на пути выборочная подмена, а не мёртвый сервер.
+const ControlDomain = "ya.ru"
+
 var CanaryIPs = map[string]bool{
 	"204.8.99.144":     true,
 	"204.8.99.146":     true,
@@ -193,6 +198,22 @@ func Check(l Level, timeout time.Duration) (res Result) {
 		return res
 	case "udp", "dot", "doh":
 		res.IP, res.Verdict, res.Canonical, res.Total, res.Detail = probeLegs(l, timeout)
+		// двойная проверка UDP (слово владельца: «две проверки до ya.ru и
+		// deb.torproject.org»): канарейка подавлена, а контрольный домен
+		// этот же сервер отвечает - выборочная подмена, а не мёртвый
+		// сервер; не отвечает и контрольный - честное «нет ответа».
+		// Только UDP: подмена на пути бывает у простых запросов
+		if l.Kind == "udp" && res.Verdict == VerdictNoAnswer {
+			leg := ""
+			if len(l.IPs) > 0 {
+				leg = l.IPs[0]
+			}
+			if ips, err := exchangeUDP(legAddr(l.Server, leg, "53"), ControlDomain, timeout/2); err == nil && len(ips) > 0 {
+				res.Verdict = VerdictSpoof
+				res.Total = len(ips)
+				res.Detail = "канарейка " + CanaryDomain + " подавлена, контрольный " + ControlDomain + " этот же сервер отвечает - выборочная подмена"
+			}
+		}
 		return res
 	default:
 		res.Verdict = VerdictError
