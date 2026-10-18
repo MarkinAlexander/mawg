@@ -514,7 +514,7 @@ describe('DnsView - keenetic: собственные серверы (71-док �
 });
 
 describe('DnsView - keenetic: совет «Усилить DNS» (71-док §3.2)', () => {
-  it('с DoH/DoT - подтверждение и запасной UDP', async () => {
+  it('с DoH/DoT - подтверждение основы, простой UDP только с оговоркой (дизайн-слово владельца)', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       if (url.endsWith('/dns/state')) {
         return new Response(JSON.stringify({
@@ -539,7 +539,12 @@ describe('DnsView - keenetic: совет «Усилить DNS» (71-док §3.2
     await vi.waitFor(() => expect(w.find('#card-dns-advice').exists()).toBe(true));
     const advice = w.find('#card-dns-advice').text();
     expect(advice).toContain('Шифрованный DNS (DoH/DoT) уже настроен');
-    expect(advice).toContain('запасным');
+    expect(advice).not.toContain('запасным'); // вредный совет убран (слово владельца)
+    expect(advice).toContain('Держите простые серверы только если уверены');
+    // ссылка на антиподмену zator - живая
+    const z = w.find('#card-dns-advice a[href*="github.com/AloofLibra/zator"]');
+    expect(z.exists()).toBe(true);
+    expect(z.text()).toContain('zator');
     w.unmount();
   });
 
@@ -564,7 +569,8 @@ describe('DnsView - keenetic: совет «Усилить DNS» (71-док §3.2
     await vi.waitFor(() => expect(w.find('#card-dns-advice').exists()).toBe(true));
     const advice = w.find('#card-dns-advice').text();
     expect(advice).toContain('Сейчас прописаны только простые UDP-серверы');
-    expect(advice).toContain('добавьте сервер DoH или DoT');
+    expect(advice).toContain('добавьте такой сервер в веб-интерфейсе Keenetic');
+    expect(advice).toContain('Держите простые серверы только если уверены');
     w.unmount();
   });
 });
