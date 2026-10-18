@@ -888,7 +888,16 @@ func (s *Server) putWANProbe(w http.ResponseWriter, r *http.Request) {
 // По умолчанию - стандартный набор (dnsmasq/MT/апстрим/DoH/DoT);
 // ?kind=udp&server=host:port[&sni=...] - один уровень (отладка/тесты).
 func (s *Server) dnsProbe(w http.ResponseWriter, r *http.Request) {
-	levels := dnsprobe.Defaults()
+	var levels []dnsprobe.Level
+	// включённая политика - уровни цепочки ПЕРВЫМИ: это путь, по которому
+	// устройства реально получают DNS (туннельные адреса маршрутизируются
+	// в пул), «рабочий уровень» отвечает про него; прямые проверки ниже -
+	// диагностика «сервер сам по себе» (слово владельца: прямой путь и
+	// через MT, чтобы было видно, помогает или нет)
+	if p := s.store.DNSCascade(); p != nil && p.Enabled {
+		levels = append(levels, policyProbeLevels(*p)...)
+	}
+	levels = append(levels, dnsprobe.Defaults()...)
 	// свои серверы пользователя (слово владельца: «свои списки для
 	// проверок, dot, doh, udp») - наравне со штатными уровнями
 	for _, cs := range s.store.DNSProbeServers() {

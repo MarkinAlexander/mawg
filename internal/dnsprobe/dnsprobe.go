@@ -406,12 +406,12 @@ var testDotRoots func() *x509.CertPool
 func exchangeUDP(server, domain string, timeout time.Duration) ([]string, error) {
 	id := randomID()
 	q := buildQuery(domain, id)
-	// fwmark «Magi»: перехват MT_DNSOR пропускает помеченные пакеты -
-	// UDP-проба меряет реальный сервер, а не цепочку MT (DoT/DoH не
-	// метим: их порты перехват :53 не задевает, а вмешиваться в
-	// групповое маркирование туннеля не хотим)
-	d := net.Dialer{Timeout: timeout, Control: dialControl}
-	conn, err := d.Dial("udp", server)
+	// намеренно БЕЗ fwmark: проба должна идти обычным клиентским путём
+	// (живой кейс владельца 2026-10-18: помеченная "Magi" проба уходит по
+	// ip rule в таблицу 1298229097 и показывает честный 8.8.8.8, а
+	// немаркированная на той же сети получает NXDOMAIN-подмену - карточка
+	// обязана показывать вторую правду, иначе подмену не увидеть)
+	conn, err := net.DialTimeout("udp", server, timeout)
 	if err != nil {
 		return nil, fmt.Errorf("dial udp %s: %w", server, err)
 	}
