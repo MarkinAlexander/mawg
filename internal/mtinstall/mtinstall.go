@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -65,6 +66,10 @@ type Options struct {
 
 	// PackageManagerFn - подмена менеджера пакетов (тесты: apk на раннере без apk).
 	PackageManagerFn func() (mgr, ext string)
+
+	// OpkgConf - подмена пути opkg.conf (тесты); пусто - стандартный путь
+	// платформы (/opt/etc/opkg.conf на Кинетике, /etc/opkg.conf на OpenWrt).
+	OpkgConf string
 }
 
 // DetectTarget определяет PLATFORM/TARGET в терминах ассетов релиза форка:
@@ -312,6 +317,14 @@ func Install(ctx context.Context, opts Options) (Result, error) {
 	// на свежей установке службы ещё нет - отказ молча терпим
 	if out, e := run(initScript, "stop"); e != nil {
 		step("стоп %s пропущен (службы нет?): %s", initScript, firstLine(string(out)))
+		// чужая установка: MT жив из путей мимо пакета, гасить его нечем
+		// (init-скрипта нет) - новый MT тогда не поднимется на его портах.
+		if pids := magitricklePids(); len(pids) > 0 {
+			for pid, exe := range pids {
+				step("живой MT мимо пакета (pid %d, %s) - гашу", pid, exe)
+				_, _ = run("kill", "-9", strconv.Itoa(pid))
+			}
+		}
 	} else {
 		step("остановлен %s", initScript)
 	}
@@ -326,16 +339,31 @@ func Install(ctx context.Context, opts Options) (Result, error) {
 	if err == nil && mgr == "opkg" && strings.Contains(strings.ToLower(string(out)), "up to date") {
 		step("opkg пропустил установку (up to date) - переустанавливаю принудительно")
 		out, err = installPackage(run, mgr, dest, "--force-reinstall")
-		// битая запись пакета (чужая architecture в базе opkg): scan её
-		// игнорирует, force-reinstall срывается в download из репозиториев
-		// («not available from any configured src», живой кейс
-		// Keenetic-aarch64) - лечится снятием записи и чистой установкой
-		// из файла
-		if err != nil && strings.Contains(strings.ToLower(string(out)), "not available from any configured src") {
-			step("запись пакета битая (чужая архитектура) - снимаю и ставлю заново из файла")
-			_, _ = run("opkg", "remove", opkgPackage)
-			out, err = installPackage(run, mgr, dest)
+	}
+	// opkg не берёт файл пакета, когда его архитектуры нет в opkg.conf:
+	// файл молча игнорируется («has no valid architecture»), установка
+	// срывается в download из фидов («not available from any configured
+	// src», «incompatible with the architectures configured»), а в базе
+	// может оставаться битая запись с той же чужой архитектурой (живой
+	// кейс Keenetic-aarch64: в opkg.conf только «arch aarch64-3.10», нет
+	// ни «arch all», ни «aarch64-3.10_kn»). Лечение: дописать
+	// недостающие arch-строки, снять битую запись, поставить из файла.
+	if err != nil && mgr == "opkg" && opkgArchRefused(string(out)) {
+		step("opkg не взял пакет (его архитектуры нет в opkg.conf / битая запись) - дополняю конфиг и ставлю из файла")
+		conf := opts.OpkgConf
+		if conf == "" {
+			conf = defaultOpkgConf(opts.Platform)
 		}
+		if conf != "" {
+			if ensureOpkgArch(conf, "all", 50) {
+				step("opkg.conf: добавлена строка arch all 50")
+			}
+			if arch := assetArch(asset.Name, ext); arch != "" && ensureOpkgArch(conf, arch, 300) {
+				step("opkg.conf: добавлена строка arch %s", arch)
+			}
+		}
+		_, _ = run("opkg", "remove", opkgPackage)
+		out, err = installPackage(run, mgr, dest)
 	}
 	if err != nil {
 		// зависимости могли не резолвнуться по пустым спискам - обновляем и
@@ -436,6 +464,95 @@ func depRetry(mgr, out string) bool {
 		return true
 	}
 	return false
+}
+
+// opkgArchRefused - вывод opkg означает «пакет есть, но его архитектура
+// не в arch-списке opkg.conf»: локальный файл игнорируется, установка
+// уходит в download из фидов.
+func opkgArchRefused(out string) bool {
+	s := strings.ToLower(out)
+	switch {
+	case strings.Contains(s, "has no valid architecture"),
+		strings.Contains(s, "not available from any configured src"),
+		strings.Contains(s, "incompatible with the architectures"),
+		strings.Contains(s, "unknown package"):
+		return true
+	}
+	return false
+}
+
+// defaultOpkgConf - путь opkg.conf платформы (пусто - права/файла нет).
+func defaultOpkgConf(platform string) string {
+	if platform == "keenetic" {
+		return "/opt/etc/opkg.conf"
+	}
+	return "/etc/opkg.conf"
+}
+
+// ensureOpkgArch дописывает «arch <имя> <приоритет>» в opkg.conf, если
+// такой архитектуры там ещё нет (приоритет сдвигается вверх, чтобы не
+// совпасть с занятым). Возвращает true, если файл изменён.
+func ensureOpkgArch(path, arch string, prio int) bool {
+	if arch == "" {
+		return false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	want := "arch " + arch
+	used := map[int]bool{}
+	for _, line := range lines {
+		f := strings.Fields(line)
+		if len(f) < 2 || f[0] != "arch" {
+			continue
+		}
+		if f[1] == arch {
+			return false
+		}
+		if len(f) >= 3 {
+			if n, e := strconv.Atoi(f[2]); e == nil {
+				used[n] = true
+			}
+		}
+	}
+	for used[prio] {
+		prio += 10
+	}
+	out := strings.Join(lines, "\n") + "\n" + want + " " + strconv.Itoa(prio) + "\n"
+	return os.WriteFile(path, []byte(out), 0o644) == nil
+}
+
+// procDir - каталог процессов для magitricklePids (подмена в тестах).
+var procDir = "/proc"
+
+// magitricklePids - живые процессы magitrickled: pid -> путь бинаря.
+// Чужие установки ставят MT мимо пакета, гасить их нечем (init-скрипта
+// нет) - новый MT не поднимется на занятых портах.
+func magitricklePids() map[int]string {
+	pids := map[int]string{}
+	entries, err := os.ReadDir(procDir)
+	if err != nil {
+		return pids
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if !e.IsDir() {
+			continue
+		}
+		pid, err := strconv.Atoi(name)
+		if err != nil {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(procDir, name, "comm"))
+		if err != nil || strings.TrimSpace(string(b)) != "magitrickled" {
+			continue
+		}
+		exe, _ := os.Readlink(filepath.Join(procDir, name, "exe"))
+		pids[pid] = exe
+	}
+	return pids
 }
 
 // fetchTo - скачивание в файл (http/https, редиректы GitHub обрабатывает

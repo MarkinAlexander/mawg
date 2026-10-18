@@ -8,6 +8,7 @@ package dnsmgr
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -29,6 +30,9 @@ type State struct {
 	Platform string  `json:"platform"`
 	Dnsmasq  Dnsmasq `json:"dnsmasq"`
 	MT       MTProxy `json:"mt"`
+	// Self - собственные IPv4 роутера: петлезащита upstream (dnsmasq.inMT
+	// + upstream на собственный IP:53 = петля dnsmasq->MT->dnsmasq).
+	Self []string `json:"self,omitempty"`
 }
 
 // Платформы DNS-стека (значения совпадают с store.Platform*).
@@ -94,7 +98,38 @@ func Collect(r Runner, mtConfigPath string) (State, error) {
 			st.MT.Upstream, st.MT.Upstreams = ParseMTUpstreams(string(data))
 		}
 	}
+	st.Self = selfIPs()
 	return st, nil
+}
+
+// selfIPs - собственные IPv4 адреса роутера (mawg живёт на нём же):
+// без шела, из интерфейсов процесса. Loopback не входит - он и так в
+// петлезащите отдельно.
+func selfIPs() []string {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, ifc := range ifaces {
+		if ifc.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := ifc.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			ipn, ok := a.(*net.IPNet)
+			if !ok {
+				continue
+			}
+			if ip := ipn.IP.To4(); ip != nil {
+				out = append(out, ip.String())
+			}
+		}
+	}
+	return out
 }
 
 // CollectKeenetic - состояние DNS-стека Keenetic (71-док, дизайн-слово
