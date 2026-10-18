@@ -52,13 +52,16 @@ type Options struct {
 	// с суффиксом _kn и путями /opt, openwrt = таргет из opkg/apk и /usr.
 	Platform string
 
-	// Detect/Latest/Fetch/Run - подмены для тестов.
+	// Detect/Latest/Fetch/Run/PackageManagerFn/TmpDir/MinSize - подмены для тестов.
 	Detect  func() (target, detail string, err error)
 	Latest  func(ctx context.Context) (*Release, error)
 	Fetch   func(ctx context.Context, url, dest string) (int64, error)
 	Run     func(argv0 string, args ...string) ([]byte, error)
 	TmpDir  string
 	MinSize int64
+
+	// PackageManagerFn - подмена менеджера пакетов (тесты: apk на раннере без apk).
+	PackageManagerFn func() (mgr, ext string)
 }
 
 // DetectTarget определяет PLATFORM/TARGET в терминах ассетов релиза форка:
@@ -83,6 +86,15 @@ func DetectTarget(platform string) (target, detail string, err error) {
 		if out, e := exec.Command("opkg", "print-architecture").Output(); e == nil {
 			if a := FirstOpkgArch(string(out)); a != "" {
 				return a, "opkg print-architecture", nil
+			}
+		}
+		// OpenWrt 25 (apk): --print-arch печатает МАШИННЫЙ arch (aarch64),
+		// а пакеты собраны под таргет из /etc/apk/arch (aarch64_cortex-a53
+		// и т.п.) - солвер отказывает на несовпадении (живой кейс
+		// WBR3000UAX, 25.12.5). Сначала файл, фолбэк --print-arch.
+		if out, e := os.ReadFile("/etc/apk/arch"); e == nil {
+			if a := strings.TrimSpace(strings.SplitN(string(out), "\n", 2)[0]); a != "" {
+				return a, "/etc/apk/arch", nil
 			}
 		}
 		if out, e := exec.Command("apk", "--print-arch").Output(); e == nil {
@@ -258,6 +270,9 @@ func Install(ctx context.Context, opts Options) (Result, error) {
 	}
 	platform := assetPlatform(opts.Platform)
 	mgr, ext := PackageManager(opts.Platform)
+	if opts.PackageManagerFn != nil {
+		mgr, ext = opts.PackageManagerFn()
+	}
 	step("таргет %s/%s (%s), менеджер %s", platform, target, detail, mgr)
 
 	rel, err := latest(ctx)
@@ -285,7 +300,7 @@ func Install(ctx context.Context, opts Options) (Result, error) {
 		res.Log = log.String()
 		return res, fmt.Errorf("скачанный файл подозрительно мал (%d байт)", size)
 	}
-	step("скачано %d байт", size)
+	step("скачано %s", humanSize(size))
 
 	initScript, socket, bin := ServicePaths(opts.Platform)
 	res.Bin = bin
@@ -312,9 +327,23 @@ func Install(ctx context.Context, opts Options) (Result, error) {
 		}
 		step("первая попытка упала по зависимостям, обновляю списки и повторяю")
 		if uerr := updateLists(run, mgr); uerr != nil {
-			step("opkg update не удался: %v", uerr)
+			step("%s update не удался: %v", mgr, uerr)
 		}
 		out2, err2 := installPackage(run, mgr, dest)
+		// apk-солвер отказывает и при несовпадении arch устройства с arch
+		// пакета (живой кейс: /etc/apk/arch = aarch64, пакет aarch64_generic,
+		// v0.7.3 у пользователя); финальная попытка с --arch <arch пакета>
+		if err2 != nil && mgr == "apk" && strings.Contains(strings.ToLower(string(out2)), "unable to select packages") {
+			if arch := assetArch(asset.Name, ext); arch != "" {
+				step("повторяю с --arch %s", arch)
+				out3, err3 := installPackage(run, mgr, dest, "--arch", arch)
+				if err3 == nil {
+					out, err2 = out3, nil
+				} else {
+					out2, err2 = out3, err3
+				}
+			}
+		}
 		if err2 != nil {
 			_, _ = run(initScript, "start")
 			res.Log = log.String()
@@ -325,8 +354,13 @@ func Install(ctx context.Context, opts Options) (Result, error) {
 	step("пакет установлен: %s", firstLine(string(out)))
 	_ = os.Remove(dest)
 
-	if out, e := run(initScript, "enable"); e != nil {
-		step("enable %s: %s", initScript, firstLine(string(out)))
+	// enable - только OpenWrt (procd): скрипты Entware (S99*) не умеют
+	// enable и отвечают Usage - такой «ошибочный» шаг в логе пугал
+	// (слово владельца 2026-10-18); автозапуск Entware даёт имя S99
+	if opts.Platform != "keenetic" {
+		if out, e := run(initScript, "enable"); e != nil {
+			step("enable %s: %s", initScript, firstLine(string(out)))
+		}
 	}
 	if out, e := run(initScript, "start"); e != nil {
 		res.Log = log.String()
@@ -337,11 +371,25 @@ func Install(ctx context.Context, opts Options) (Result, error) {
 	return res, nil
 }
 
-func installPackage(run func(string, ...string) ([]byte, error), mgr, dest string) ([]byte, error) {
+func installPackage(run func(string, ...string) ([]byte, error), mgr, dest string, extraArgs ...string) ([]byte, error) {
 	if mgr == "apk" {
-		return run("apk", "add", "--allow-untrusted", dest)
+		args := append([]string{"add", "--allow-untrusted"}, extraArgs...)
+		return run("apk", append(args, dest)...)
 	}
 	return run("opkg", "install", dest)
+}
+
+// assetArch - arch-часть имени пакета релиза (magitrickle_<ver>_<platform>_
+// <arch>.ext): apk-солвер сверяет её с /etc/apk/arch устройства, и у части
+// сборок (живой кейс: устройство с arch «aarch64», пакет aarch64_generic)
+// они не совпадают - тогда add отказывает «unable to select packages».
+func assetArch(assetName, ext string) string {
+	s := strings.TrimSuffix(strings.TrimPrefix(assetName, "magitrickle_"), ext)
+	parts := strings.SplitN(s, "_", 3)
+	if len(parts) < 3 {
+		return ""
+	}
+	return parts[2]
 }
 
 func updateLists(run func(string, ...string) ([]byte, error), mgr string) error {
@@ -354,13 +402,14 @@ func updateLists(run func(string, ...string) ([]byte, error), mgr string) error 
 }
 
 // depRetry - стоит ли повторять установку после обновления списков: отказ
-// по зависимостям, а не поломанный пакет.
+// по зависимостям или солверу apk, а не поломанный пакет.
 func depRetry(mgr, out string) bool {
 	s := strings.ToLower(out)
 	switch {
 	case strings.Contains(s, "cannot find package"),
 		strings.Contains(s, "unknown package"),
 		strings.Contains(s, "no satisfiable"),
+		strings.Contains(s, "unable to select packages"),
 		strings.Contains(s, "depend"):
 		return true
 	}
@@ -403,6 +452,15 @@ func firstLine(s string) string {
 		return s[:i]
 	}
 	return s
+}
+
+// humanSize - размер по-человечески (слово владельца: «скачано 2451067
+// байт» нечитаемо): килобайты, от мегабайта - МБ с десятыми.
+func humanSize(n int64) string {
+	if n >= 1<<20 {
+		return fmt.Sprintf("%.1f МБ", float64(n)/(1<<20))
+	}
+	return fmt.Sprintf("%.0f КБ", float64(n)/1024)
 }
 
 func mb(n int64) string {

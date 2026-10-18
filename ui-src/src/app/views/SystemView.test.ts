@@ -4,6 +4,7 @@ import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import SystemView from './SystemView.vue'
 import { ConfirmHost, UiSwitch } from '../../components/ui'
+import { dialogBackReset } from '../../components/ui/dialogBack'
 import { useEvents } from '../../stores/events'
 import { useStatus } from '../../stores/status'
 import { useSystem } from '../../stores/system'
@@ -18,7 +19,7 @@ function apiStub(routes: Record<string, unknown | ((init?: { method?: string; bo
   return vi.fn(async (url: string, init?: { method?: string; body?: string }) => {
     const key = Object.keys(routes).find((k) => url.endsWith(k));
     const v = key ? routes[key] : {};
-    const body = typeof v === 'function' ? (v as (i?: typeof init) => unknown)(init) : v;
+    const body = typeof v === 'function' ? await (v as (i?: typeof init) => unknown)(init) : v;
     return new Response(JSON.stringify(body), { status: 200 });
   });
 }
@@ -57,6 +58,12 @@ const btn = (w: ReturnType<typeof mount>, text: string) =>
 
 beforeEach(() => {
   vi.unstubAllGlobals();
+  // confirm-диалог живёт на history (dialogBack): отложенный back()
+  // предыдущего теста каскадом закрывал следующий confirm (jsdom
+  // доставляет popstate с опозданием) - стабим history целиком
+  vi.spyOn(window.history, 'pushState').mockImplementation(() => {});
+  vi.spyOn(window.history, 'back').mockImplementation(() => {});
+  dialogBackReset();
   useEvents().state.list = [];
   useEvents().stop();
   const sys = useSystem().state;
@@ -225,6 +232,35 @@ describe('SystemView - карточка «Система»', () => {
     });
     await vi.waitFor(() => expect(w.text()).toContain('Установлено'));
     expect(w.text()).toContain('готово: wireguard up');
+    w.unmount();
+  });
+
+  it('пока установка идёт - диалог хода, кнопка заблокирована (молчаливое ожидание пугало)', async () => {
+    let release!: (v: unknown) => void;
+    const pending = new Promise((res) => {
+      release = res;
+    });
+    const { w } = await makeView({
+      '/system/check': sysCheckPayload([
+        { id: 'wg', title: 'WireGuard', installed: false, version: '', action: 'wg', actionLabel: 'Поставить', confirm: 'Точно ставить?' },
+      ]),
+      '/system/install': () => pending,
+    });
+    await btn(w, 'Поставить')[0].trigger('click');
+    // только ОТКРЫТЫЙ диалог: закрытые остаются в DOM с тем же h3 и
+    // сбивали поиск на диалог предыдущего теста
+    await vi.waitFor(() => {
+      expect(w.findAll('dialog').some((x) => x.find('h3').text() === 'Поставить: WireGuard' && (x.element as HTMLDialogElement).open)).toBe(true);
+    });
+    useConfirm().ok(); // ОК подтверждения - через стор (тот же settle(true), что клик)
+    // установка «висит»: диалог хода открыт, кнопка строки заблокирована -
+    // второй клик невозможен (слово владельца: молчаливое ожидание пугало)
+    const rowBtn = () =>
+      w.findAll('button').filter((b) => b.text().trim() === 'Поставить' && !b.element.closest('dialog'))[0];
+    expect(w.text()).toContain('Идёт установка');
+    release({ ok: true, output: 'готово' });
+    await vi.waitFor(() => expect(w.text()).toContain('Установлено'));
+    await vi.waitFor(() => expect((rowBtn().element as HTMLButtonElement).disabled).toBe(false));
     w.unmount();
   });
 

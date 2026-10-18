@@ -94,7 +94,19 @@ async function refreshSystem(): Promise<void> {
 // нужен и в потоке создания пула ---
 const lxOpen = ref(false);
 
+// установка идёт минуты (MagiTrickle качает релиз из GitHub) - молчаливое
+// ожидание пугало: confirm закрывался, результат не приходил, кнопку можно
+// было нажать второй раз (слово владельца 2026-10-18). Держим диалог хода
+// со спиннером до результата, кнопки блокируем.
+const busyId = ref('');
+const busyText = computed(() =>
+  busyId.value === 'magitrickle'
+    ? 'Качаем релиз форка из GitHub и обновляем штатным менеджером пакетов; конфиг и группы сохраняются, служба MagiTrickle перезапустится. Это занимает до пары минут.'
+    : 'Идёт установка. Это может занять до пары минут - не закрывайте панель.',
+);
+
 async function openInstall(item: SystemItem): Promise<void> {
+  if (busyId.value) return;
   // легаси installComp перечитывает /system/check - предмет свежим
   await sys.refresh();
   const fresh = items.value.find((i) => i.id === item.id);
@@ -111,11 +123,14 @@ async function openInstall(item: SystemItem): Promise<void> {
 }
 
 async function runInstall(payload: { id: string; flavor?: string; backup?: boolean }): Promise<void> {
+  busyId.value = payload.id;
   try {
     const r = await sys.install(payload);
     showResult(!!r.ok, r.output || '', r.ok ? '' : r.error || 'неизвестная ошибка');
   } catch (e) {
     showResult(false, '', e instanceof Error ? e.message : String(e));
+  } finally {
+    busyId.value = '';
   }
 }
 
@@ -252,6 +267,8 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
         <UiButton
           v-if="row.action"
           variant="primary"
+          :busy="busyId === row.id"
+          :disabled="!!busyId"
           @click="openInstall(row)"
         >
           {{ row.actionLabel || 'установить' }}
@@ -297,6 +314,18 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
   </UiCard>
 
   <LxInstallDialog v-model:open="lxOpen" />
+
+  <UiDialog
+    :open="!!busyId"
+    title="Идёт установка"
+    width="440px"
+    :locked="true"
+  >
+    <div class="busy">
+      <span class="busy-spin" />
+      <span class="busy-text">{{ busyText }}</span>
+    </div>
+  </UiDialog>
 
   <UiDialog
     v-model:open="resultOpen"
@@ -457,5 +486,28 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
 .k-magitrickle,
 .k-install {
   color: var(--warn);
+}
+.busy {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12.5px;
+}
+.busy-spin {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: busyspin 0.8s linear infinite;
+}
+.busy-text {
+  color: var(--dim);
+}
+@keyframes busyspin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>

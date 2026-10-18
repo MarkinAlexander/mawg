@@ -201,6 +201,13 @@ func TestInstallKeeneticKnSuffix(t *testing.T) {
 	if !run.saw("/opt/etc/init.d/S99magitrickle start") {
 		t.Errorf("нет старта S99; вызовы: %v", run.calls)
 	}
+	// Entware-скрипты не умеют enable - шаг не делаем (шум «Usage» в логе)
+	if run.saw("enable") {
+		t.Errorf("enable не должен вызываться на Кинетике; вызовы: %v", run.calls)
+	}
+	if strings.Contains(res.Log, "байт") || !strings.Contains(res.Log, "КБ") {
+		t.Errorf("размер скачивания должен быть человекочитаемым: %s", res.Log)
+	}
 }
 
 // живой кейс: Кинетик на aarch64-Entware раньше отказывался целиком
@@ -352,13 +359,53 @@ func TestDepRetryPatterns(t *testing.T) {
 		"Collected errors:\nCannot find package iptables-nft",
 		"opkg_install_pkg: Package magitrickle depends on iptables-mod-conntrack-extra",
 		"ERROR: unable to select packages: no satisfiable candidates",
+		"apk install: ERROR: unable to select packages:",
 	} {
-		if !depRetry("opkg", s) {
+		if !depRetry("opkg", s) && !depRetry("apk", s) {
 			t.Errorf("depRetry(%q) = false", s)
 		}
 	}
 	if depRetry("opkg", "md5 sum mismatch") {
 		t.Error("depRetry не должен срабатывать на битый пакет")
+	}
+}
+
+// живой кейс v0.7.3: устройство OpenWrt 25 с /etc/apk/arch = aarch64,
+// пакет aarch64_generic - солвер отказывает «unable to select packages»,
+// лечится повтором с --arch <arch пакета>
+func TestInstallApkArchOverride(t *testing.T) {
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "magitrickle_0.8.2-r12_openwrt_aarch64_generic.apk")
+	run := &fakeRun{script: map[string]resp{
+		"apk|add --allow-untrusted " + dest: {out: "ERROR: unable to select packages:", err: errors.New("exit status 1")},
+	}}
+	res, err := Install(context.Background(), Options{
+		Platform: "openwrt",
+		Detect:   func() (string, string, error) { return "aarch64", "apk --print-arch", nil },
+		Latest: func(context.Context) (*Release, error) {
+			return &Release{TagName: "0.8.2-rev12", Assets: []Asset{
+				{Name: "magitrickle_0.8.2-r12_openwrt_aarch64_generic.apk", URL: "http://x/apk", Size: 9 << 20},
+			}}, nil
+		},
+		Fetch:            fetchFake(300_000),
+		Run:              run.run,
+		PackageManagerFn: func() (string, string) { return "apk", ".apk" },
+		TmpDir:           dir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !run.saw("apk update") {
+		t.Errorf("нет apk update перед повтором; вызовы: %v", run.calls)
+	}
+	if !run.saw("apk add --allow-untrusted --arch aarch64_generic "+dest) {
+		t.Errorf("нет повтора с --arch; вызовы: %v", run.calls)
+	}
+	if !run.saw("/etc/init.d/magitrickle start") {
+		t.Errorf("нет старта службы; вызовы: %v", run.calls)
+	}
+	if !strings.Contains(res.Log, "скачано 293 КБ") {
+		t.Errorf("размер скачивания должен быть в КБ/МБ: %s", res.Log)
 	}
 }
 

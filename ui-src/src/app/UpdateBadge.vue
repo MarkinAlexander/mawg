@@ -115,6 +115,10 @@ async function onClick() {
   margin-left: auto;
   color: var(--dim);
   font-variant-numeric: tabular-nums;
+  /* число и «с» неразрывно (слово владельца: в узкой карточке счётчик
+     рвался вертикально «0 / с») и не сжимается флекс-соседями */
+  white-space: nowrap;
+  flex: none;
 }
 @keyframes uwaitspin {
   to {

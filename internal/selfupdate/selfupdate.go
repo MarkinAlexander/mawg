@@ -67,26 +67,35 @@ func verBase(v string) string {
 	return v
 }
 
+func verParts(s string) []int {
+	var out []int
+	for _, part := range strings.Split(s, ".") {
+		n := 0
+		fmt.Sscanf(part, "%d", &n)
+		out = append(out, n)
+	}
+	return out
+}
+
 func newer(current, latest string) bool {
 	c := verBase(strings.TrimPrefix(strings.TrimSpace(current), "v"))
 	l := verBase(strings.TrimPrefix(strings.TrimSpace(latest), "v"))
 	if c == "" || c == "dev" || l == "" || c == l {
 		return false
 	}
-	var cc, ll [3]int
-	for i, part := range strings.SplitN(c, ".", 3) {
-		if i < 3 {
-			fmt.Sscanf(part, "%d", &cc[i])
+	// N частей (косметические 4-частные релизы вида 0.7.3.1): недостающие
+	// части = 0, сравнение лексикографическое по числам
+	cc, ll := verParts(c), verParts(l)
+	for i := 0; i < len(cc) || i < len(ll); i++ {
+		a, b := 0, 0
+		if i < len(cc) {
+			a = cc[i]
 		}
-	}
-	for i, part := range strings.SplitN(l, ".", 3) {
-		if i < 3 {
-			fmt.Sscanf(part, "%d", &ll[i])
+		if i < len(ll) {
+			b = ll[i]
 		}
-	}
-	for i := 0; i < 3; i++ {
-		if cc[i] != ll[i] {
-			return ll[i] > cc[i]
+		if a != b {
+			return b > a
 		}
 	}
 	return false
