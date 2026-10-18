@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"mawg/internal/dnsprobe"
 	"mawg/internal/magitrickle"
 )
 
@@ -332,5 +333,40 @@ func TestUpstreamHostIPs(t *testing.T) {
 	ips, failed = upstreamHostIPs(context.Background(), []string{"tls://нет-такого-хоста.invalid"})
 	if len(ips) != 0 || len(failed) != 1 {
 		t.Fatalf("failed-имя: ips=%v failed=%v", ips, failed)
+	}
+}
+
+// два прогона пробы: в результат идёт лучший из двух по уровню (первый
+// прогон греет туннель/цепочку MT - живой кейс владельца на Кинетике),
+// при равном вердикте берётся второй
+func TestBestOfPasses(t *testing.T) {
+	first := []dnsprobe.Result{
+		{Level: "L2", Verdict: dnsprobe.VerdictError, MS: 3000},
+		{Level: "L4", Verdict: dnsprobe.VerdictNoAnswer, MS: 5},
+	}
+	second := []dnsprobe.Result{
+		{Level: "L2", Verdict: dnsprobe.VerdictClean, MS: 700},
+		{Level: "L4", Verdict: dnsprobe.VerdictSpoof, MS: 4},
+	}
+	got := bestOfPasses(first, second)
+	if got[0].Verdict != dnsprobe.VerdictClean || got[0].MS != 700 {
+		t.Fatalf("L2: жду clean из второго прогона, got %+v", got[0])
+	}
+	if got[1].Verdict != dnsprobe.VerdictSpoof || got[1].MS != 4 {
+		t.Fatalf("L4: жду spoof из второго (ответ с контентом ценнее noanswer), got %+v", got[1])
+	}
+
+	// равный вердикт - второй прогон (теплее)
+	second[1].Verdict = dnsprobe.VerdictNoAnswer
+	second[1].MS = 2
+	got = bestOfPasses(first, second)
+	if got[1].Verdict != dnsprobe.VerdictNoAnswer || got[1].MS != 2 {
+		t.Fatalf("L4: жду второй прогон при равном вердикте, got %+v", got[1])
+	}
+
+	// порядок уровней сохраняется даже при разной длине прогонов
+	got = bestOfPasses(nil, second)
+	if len(got) != 2 || got[0].Level != "L2" || got[1].Level != "L4" {
+		t.Fatalf("порядок уровней потерян: %+v", got)
 	}
 }
