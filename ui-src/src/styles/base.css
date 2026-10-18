@@ -24,6 +24,14 @@ main { padding: 20px; max-width: 1100px; margin: 0 auto; }
 .kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; font-size: 13px; }
 .kv b { color: var(--dim); font-weight: normal; }
 .kv span { word-break: break-all; }
+/* сворачиваемый блок «простые серверы по подключениям» (DnsView, Keenetic):
+   лежачие туннели дают честные «недоступен» на каждую запись - не мельтешат */
+.plainmore { margin-top: 6px; }
+.plainmore summary { cursor: pointer; color: var(--dim); font-size: 12px; user-select: none; }
+.plainmore[open] summary { margin-bottom: 4px; }
+/* буллеты совета «DNS на самом Keenetic» */
+.advice { margin: 6px 0 0; padding-left: 18px; font-size: 12px; line-height: 1.55; }
+.advice a { color: var(--accent); }
 .badge { padding: 1px 8px; border-radius: 10px; font-size: 11px; border: 1px solid var(--border); }
 .badge.up { color: var(--ok); border-color: var(--ok); }
 .badge.fallback { color: var(--err); border-color: var(--err); }
