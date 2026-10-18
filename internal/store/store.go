@@ -287,6 +287,23 @@ func (s *Store) SetDNSCascade(p *DnsCascadePolicy) error {
 	return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
 }
 
+// DNSProbeServers - свои серверы карточки «Проверка DNS и сети».
+func (s *Store) DNSProbeServers() []DnsProbeServer {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]DnsProbeServer(nil), s.root.Settings.DNSProbe...)
+}
+
+func (s *Store) SetDNSProbeServers(list []DnsProbeServer) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if list == nil {
+		list = []DnsProbeServer{}
+	}
+	s.root.Settings.DNSProbe = list
+	return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
+}
+
 // GroupPolicy - политика поведения группы при отвале интерфейса.
 func (s *Store) GroupPolicy(id string) GroupPolicy {
 	s.mu.Lock()

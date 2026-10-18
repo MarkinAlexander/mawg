@@ -262,6 +262,15 @@ export interface DnsProbeRow {
   detail?: string
 }
 
+// свой сервер карточки «Проверка DNS и сети» (GET/PUT /dns/probe/servers):
+// kind udp - обычный DNS (host:port), dot - tls://host[:853],
+// doh - https://host/dns-query
+export interface DnsProbeServer {
+  name: string
+  kind: 'udp' | 'dot' | 'doh' | string
+  server: string
+}
+
 // GET /dns/keenetic/own: собственные DNS-серверы Keenetic из
 // running-config (только просмотр, 71-док; вердикты - GET /dns/probe)
 export interface KeeneticOwn {
