@@ -469,6 +469,11 @@ func (b *Backend) CreateSlot() (string, error) {
 	if _, err := b.ndmc("interface " + id); err != nil {
 		return "", err
 	}
+	// сброс кэша show-interface (TTL 5с): без этого слот не виден в
+	// списке до второго нажатия «+ слот» - живой кейс владельца
+	b.dumpMu.Lock()
+	b.dump, b.dumpAt = nil, time.Time{}
+	b.dumpMu.Unlock()
 	return id, nil
 }
 
