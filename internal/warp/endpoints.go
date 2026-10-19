@@ -21,12 +21,21 @@ import (
 // warp-generator и LxBox; каждый конфиг после создания проверяется
 // живьём, нерабочие пары видны честно.
 
-// V4Blocks - CIDR-блоки anycast WARP (LxBox v4_cidr).
+// V4Blocks - CIDR-блоки anycast WARP для ГЕНЕРАЦИИ эндпоинтов.
+// 162.159.193.0/24 сюда НЕ входит: по руководству пользователей
+// (help-guide.notion.site Cloudflare-WARP, слово владельца) 162.159.193.*
+// - только Zero Trust WireGuard, 162.159.197.* - только Zero Trust
+// MASQUE; обычная регистрация там не отвечает.
 var V4Blocks = []string{
 	"162.159.192.0/24",
-	"162.159.193.0/24",
 	"162.159.195.0/24",
 	"188.114.96.0/22",
+}
+
+// detectOnlyBlocks - блоки для РАСПОЗНАВАНИЯ варп-пулов (детект), но не
+// для генерации: Zero Trust-сети.
+var detectOnlyBlocks = []string{
+	"162.159.193.0/24",
 }
 
 // shortPrefixes - /24-префиксы warp-generator (адрес = префикс + октет 1-10).
@@ -56,7 +65,6 @@ var Presets = []string{
 	DomainEndpoint + ":1701",
 	DomainEndpoint + ":4500",
 	"162.159.192.1:2408",
-	"162.159.193.1:2408",
 	"188.114.96.1:2408",
 	"162.159.192.192:934",
 }
@@ -166,7 +174,7 @@ func IsWarpEndpointHost(host string) bool {
 		}
 		return false
 	}
-	for _, b := range V4Blocks {
+	for _, b := range append(append([]string{}, V4Blocks...), detectOnlyBlocks...) {
 		if contains(b, ip4) {
 			return true
 		}

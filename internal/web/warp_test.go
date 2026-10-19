@@ -102,10 +102,137 @@ func warpGetBody(resp *http.Response) string {
 	return string(buf[:n])
 }
 
-func TestWarpGenerateCreatesPool(t *testing.T) {
+func TestWarpGenerateDownloadOnly(t *testing.T) {
 	ts, _, st := warpTestServer(t)
 	code, body := warpPost(ts, "/api/v1/warp/generate",
 		`{"count":2,"mode":"fixed","endpoint":"engage.cloudflareclient.com:2408"}`)
+	if code != http.StatusOK {
+		t.Fatalf("generate: %d %s", code, body)
+	}
+	var plan struct {
+		Pool    string `json:"pool"`
+		Added   int    `json:"added"`
+		Configs []struct {
+			Endpoint string `json:"endpoint"`
+			WG       string `json:"wg"`
+			AWG      string `json:"awg"`
+		} `json:"configs"`
+	}
+	if err := json.Unmarshal(body, &plan); err != nil {
+		t.Fatalf("план: %v (%s)", err, body)
+	}
+	if plan.Pool != "" || plan.Added != 2 || len(plan.Configs) != 2 {
+		t.Fatalf("download-режим не должен создавать пул: %+v", plan)
+	}
+	for _, cf := range plan.Configs {
+		if !strings.Contains(cf.WG, "PrivateKey = ") {
+			t.Error("WG-текст без приватного ключа (он нужен для внешнего клиента)")
+		}
+		if !strings.Contains(cf.AWG, "Jc = 4") || !strings.Contains(cf.AWG, "I1 = <b 0x494e56495445") {
+			t.Error("AWG-текст без полей обфускации 2.0")
+		}
+		if strings.Contains(cf.WG, "Jc = 4") {
+			t.Error("чистый WG не должен нести AWG-поля")
+		}
+	}
+	if pools := st.Pools(); len(pools) != 0 {
+		t.Fatalf("download-режим создал пулы: %v", pools)
+	}
+}
+
+func TestWarpGeneratePoolAutoDelete(t *testing.T) {
+	ts, _, st := warpTestServer(t)
+	// пробы НЕ настроены - все конфиги «не отвечают»: автоудаление,
+	// пустой пул не оставляем
+	code, body := warpPost(ts, "/api/v1/warp/generate",
+		`{"count":2,"mode":"random","dest":"pool"}`)
+	if code != http.StatusOK {
+		t.Fatalf("generate: %d %s", code, body)
+	}
+	var plan struct {
+		Pool    string `json:"pool"`
+		Added   int    `json:"added"`
+		Results []struct {
+			Endpoint string `json:"endpoint"`
+			OK       bool   `json:"ok"`
+			Removed  bool   `json:"removed"`
+		} `json:"results"`
+		Warnings []string `json:"warnings"`
+	}
+	if err := json.Unmarshal(body, &plan); err != nil {
+		t.Fatalf("план: %v (%s)", err, body)
+	}
+	if plan.Pool != "" || plan.Added != 0 {
+		t.Fatalf("пул без рабочих конфигов должен быть удалён: %+v", plan)
+	}
+	if len(plan.Results) != 2 {
+		t.Fatalf("ожидали 2 результата: %+v", plan.Results)
+	}
+	for _, res := range plan.Results {
+		if !res.Removed || res.OK {
+			t.Errorf("конфиг должен быть помечен удалённым: %+v", res)
+		}
+	}
+	if pools := st.Pools(); len(pools) != 0 {
+		t.Fatalf("пул не удалён после провала всех конфигов: %v", pools)
+	}
+	joined := strings.Join(plan.Warnings, " ")
+	if !strings.Contains(joined, "удалены") {
+		t.Errorf("в предупреждениях нет автоудаления: %v", plan.Warnings)
+	}
+}
+
+func TestWarpGenerateAddToExistingActivate(t *testing.T) {
+	ts, fb, st := warpTestServer(t)
+	fb.SetProbe("warp", true)
+	fb.StatusMap["warp"] = platform.TunnelStatus{LinkUp: true, Connected: true, HandshakeAgo: 5}
+
+	// первый прогон создаёт пул
+	code, _ := warpPost(ts, "/api/v1/warp/generate", `{"count":1,"mode":"random","dest":"pool"}`)
+	if code != http.StatusOK {
+		t.Fatalf("generate: %d", code)
+	}
+	before := st.State("warp").ActiveFile
+	if before == "" {
+		t.Fatal("пул без активного конфига")
+	}
+
+	// второй - в существующий пул с переключением на новый
+	code, body := warpPost(ts, "/api/v1/warp/generate",
+		`{"count":1,"mode":"random","dest":"pool","pool":"warp","activate":true}`)
+	if code != http.StatusOK {
+		t.Fatalf("add: %d %s", code, body)
+	}
+	var plan struct {
+		Pool   string `json:"pool"`
+		Added  int    `json:"added"`
+		Results []struct {
+			File string `json:"file"`
+			OK   bool   `json:"ok"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(body, &plan); err != nil {
+		t.Fatalf("план: %v (%s)", err, body)
+	}
+	if plan.Pool != "warp" || plan.Added != 1 || !plan.Results[0].OK {
+		t.Fatalf("план: %+v", plan)
+	}
+	after := st.State("warp").ActiveFile
+	if after == before || after != plan.Results[0].File {
+		t.Fatalf("activate не переключил конфиг: было %q, стало %q", before, after)
+	}
+	warpPool, _ := st.Pool("warp")
+	if len(warpPool.Configs) != 2 {
+		t.Fatalf("в пуле %d конфигов, ожидали 2", len(warpPool.Configs))
+	}
+}
+
+func TestWarpGenerateCreatesPool(t *testing.T) {
+	ts, fb, st := warpTestServer(t)
+	fb.SetProbe("warp", true)
+	fb.StatusMap["warp"] = platform.TunnelStatus{LinkUp: true, Connected: true, HandshakeAgo: 5}
+	code, body := warpPost(ts, "/api/v1/warp/generate",
+		`{"count":2,"mode":"fixed","endpoint":"engage.cloudflareclient.com:2408","dest":"pool"}`)
 	if code != http.StatusOK {
 		t.Fatalf("generate: %d %s", code, body)
 	}
@@ -189,7 +316,7 @@ func TestWarpGenerateRandomWorking(t *testing.T) {
 	fb.SetProbe("warp", true)
 	fb.StatusMap["warp"] = platform.TunnelStatus{LinkUp: true, Connected: true, HandshakeAgo: 5}
 
-	code, body := warpPost(ts, "/api/v1/warp/generate", `{"count":2,"mode":"random"}`)
+	code, body := warpPost(ts, "/api/v1/warp/generate", `{"count":2,"mode":"random","dest":"pool"}`)
 	if code != http.StatusOK {
 		t.Fatalf("generate: %d %s", code, body)
 	}
@@ -219,7 +346,7 @@ func TestWarpGenerateRandomWorking(t *testing.T) {
 }
 
 func TestPoolWarpAddRequiresWarpPool(t *testing.T) {
-	ts, _, st := warpTestServer(t)
+	ts, fb, st := warpTestServer(t)
 
 	// Чужой пул (конфиг мимо варповых сетей) - отказ 409.
 	raw := warp.BuildConfig(strings.Repeat("A", 43)+"=", "10.2.0.2",
@@ -240,8 +367,10 @@ func TestPoolWarpAddRequiresWarpPool(t *testing.T) {
 	}
 
 	// Генерируем варп-пул и добавляем конфиг без мастера (пустое тело =
-	// параметры из меты пула).
-	code, body = warpPost(ts, "/api/v1/warp/generate", `{"count":1,"mode":"fixed"}`)
+	// параметры из меты пула). Пробы OK - иначе пул самоудалится.
+	fb.SetProbe("warp", true)
+	fb.StatusMap["warp"] = platform.TunnelStatus{LinkUp: true, Connected: true, HandshakeAgo: 5}
+	code, body = warpPost(ts, "/api/v1/warp/generate", `{"count":1,"mode":"fixed","dest":"pool"}`)
 	if code != http.StatusOK {
 		t.Fatalf("generate: %d %s", code, body)
 	}
@@ -268,8 +397,11 @@ func TestPoolWarpAddRequiresWarpPool(t *testing.T) {
 }
 
 func TestPoolConfigRawAWGVariant(t *testing.T) {
-	ts, _, _ := warpTestServer(t)
-	code, body := warpPost(ts, "/api/v1/warp/generate", `{"count":1,"mode":"fixed"}`)
+	ts, fb, _ := warpTestServer(t)
+	// готовим пул пул-режимом (пробы OK), чтобы файл существовал на диске
+	fb.SetProbe("warp", true)
+	fb.StatusMap["warp"] = platform.TunnelStatus{LinkUp: true, Connected: true, HandshakeAgo: 5}
+	code, body := warpPost(ts, "/api/v1/warp/generate", `{"count":1,"mode":"fixed","dest":"pool"}`)
 	if code != http.StatusOK {
 		t.Fatalf("generate: %d %s", code, body)
 	}
