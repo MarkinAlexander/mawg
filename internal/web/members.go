@@ -12,6 +12,7 @@ import (
 
 	"mawg/internal/links"
 	"mawg/internal/store"
+	"mawg/internal/warp"
 	"mawg/internal/wgconf"
 )
 
@@ -178,7 +179,9 @@ func (s *Server) getPoolMembers(w http.ResponseWriter, r *http.Request) {
 }
 
 // getPoolConfigRaw - выданный конфиг пула как текст: юзер может унести
-// его в официальный клиент или проверить.
+// его в официальный клиент или проверить. variant=awg - тот же конфиг
+// с полями обфускации AmneziaWG (скачивание для внешних AWG-клиентов,
+// генератор WARP).
 func (s *Server) getPoolConfigRaw(w http.ResponseWriter, r *http.Request) {
 	name, file := r.PathValue("name"), r.PathValue("file")
 	p, ok := s.store.Pool(name)
@@ -201,6 +204,9 @@ func (s *Server) getPoolConfigRaw(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, err)
 		return
+	}
+	if r.URL.Query().Get("variant") == "awg" {
+		data = warp.WithAWGFields(data)
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Write(data)
