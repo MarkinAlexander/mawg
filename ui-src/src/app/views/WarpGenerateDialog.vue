@@ -136,12 +136,10 @@ async function run(): Promise<void> {
     body.mode = 'fixed';
     body.endpoint = fixedEndpoint.value;
   }
-  if (dlg.value.dest !== 'download') {
-    body.dest = 'pool';
-    if (dlg.value.dest === 'add') {
-      body.pool = warpPoolName.value;
-      body.activate = dlg.value.activate;
-    }
+  body.dest = dlg.value.dest === 'download' ? 'download' : 'pool';
+  if (dlg.value.dest === 'add') {
+    body.pool = warpPoolName.value;
+    body.activate = dlg.value.activate;
   }
   const plan = await warp.generate(body);
   if (!dlg.value) return;
@@ -156,11 +154,13 @@ async function run(): Promise<void> {
 function resultTitle(): string {
   const plan = dlg.value?.plan;
   if (plan?.pool) return `Пул ${plan.pool} создан: конфигов ${plan.added || 0}`;
+  if (plan?.configs?.length) return `Готово: конфигов ${plan.added || 0}`;
   if (plan?.error) return 'Генерация не удалась';
   return 'Готово';
 }
 function resultOk(): boolean {
-  return !!dlg.value?.plan?.pool;
+  const plan = dlg.value?.plan;
+  return !!plan && !plan.error && (!!plan.pool || !!plan.configs?.length);
 }
 function resLine(res: WarpResultOne): string {
   if (res.removed) return `${res.endpoint} - не прошёл проверку и удалён: ${res.detail || 'проба не прошла'}`;
@@ -178,6 +178,19 @@ function dlFile(text: string, name: string): void {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
   a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+
+// zip-архивы (сервер собирает в памяти, отдаёт base64)
+function dlZip(which: 'wg' | 'awg'): void {
+  const plan = dlg.value?.plan;
+  const b64 = plan && (which === 'wg' ? plan.zipWg : plan.zipAwg);
+  if (!b64) return;
+  const bin = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([bin], { type: 'application/zip' }));
+  a.download = which === 'wg' ? 'warp-wg.zip' : 'warp-awg.zip';
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 }
@@ -353,6 +366,21 @@ function dlHref(res: WarpResultOne, variant: string): string {
                 @click.prevent="dlFile(cf.awg, fileSlug(cf.endpoint) + '.awg.conf')"
               >AWG</a>
             </span>
+          </div>
+          <div
+            v-if="(dlg.plan?.configs?.length || 0) > 1"
+            class="resdl"
+          >
+            <a
+              href="#"
+              @click.prevent="dlZip('wg')"
+            >скачать zip WG</a>
+            ·
+            <a
+              href="#"
+              @click.prevent="dlZip('awg')"
+            >скачать zip AWG</a>
+            <UiHint text="Все конфиги одним архивом: warp-wg.zip / warp-awg.zip." />
           </div>
           <UiHint text="Конфиги существуют только здесь: пул не создавался, туннель на роутере не поднимался - ключ в одном месте. Включайте в клиенте (AmneziaWG/WireGuard)." />
           <UiHint text="AWG-вариант - для клиентов AmneziaWG: обфускация уровня 2.0 (Jc/J/S/H + I1/I2)." />

@@ -42,6 +42,8 @@ export interface WarpPlan {
   added?: number
   results?: WarpResultOne[]
   configs?: WarpConfigFile[] // режим download: полные тексты, роутер не тронут
+  zipWg?: string // base64 zip всех WG-конфигов (>1 конфига)
+  zipAwg?: string // base64 zip всех AWG-конфигов
   warnings?: string[]
   error?: string
   unreachable?: boolean

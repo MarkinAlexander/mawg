@@ -1,11 +1,15 @@
 package web
 
 import (
+	"archive/zip"
+	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"mawg/internal/store"
@@ -74,12 +78,62 @@ type warpConfigFile struct {
 	AWG      string `json:"awg"`
 }
 
+// warpConfigZip - архив конфигов для скачивания одним файлом (base64;
+// собирается в памяти - в режиме download на роутере ничего не хранится).
 type warpPlan struct {
 	Pool     string           `json:"pool,omitempty"`
 	Added    int              `json:"added,omitempty"`
 	Results  []warpResultOne  `json:"results,omitempty"`
 	Configs  []warpConfigFile `json:"configs,omitempty"`
+	ZipWG    string           `json:"zipWg,omitempty"`
+	ZipAWG   string           `json:"zipAwg,omitempty"`
 	Warnings []string         `json:"warnings,omitempty"`
+}
+
+// fileSlug - имя файла конфига из эндпоинта (зеркало fileSlug в
+// WarpGenerateDialog.vue - при изменении там менять и тут).
+func fileSlug(endpoint string) string {
+	var b strings.Builder
+	for _, r := range endpoint {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('-')
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	return "warp-" + strings.ToLower(out)
+}
+
+// configsZip - zip-архив конфигов (base64). awg - имена *.awg.conf.
+func configsZip(cfgs []warpConfigFile, awg bool) (string, error) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	used := map[string]bool{}
+	for _, c := range cfgs {
+		name := fileSlug(c.Endpoint) + ".conf"
+		text := c.WG
+		if awg {
+			name = strings.TrimSuffix(name, ".conf") + ".awg.conf"
+			text = c.AWG
+		}
+		base := strings.TrimSuffix(name, ".conf")
+		for i := 2; used[name]; i++ {
+			name = fmt.Sprintf("%s-%d.conf", base, i)
+		}
+		used[name] = true
+		w, err := zw.Create(name)
+		if err != nil {
+			return "", err
+		}
+		if _, err := w.Write([]byte(text)); err != nil {
+			return "", err
+		}
+	}
+	if err := zw.Close(); err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(buf.Bytes()), nil
 }
 
 // warpPresets - данные для диалога: диапазоны, порты, пресеты пар,
@@ -241,8 +295,18 @@ func (s *Server) warpGenerate(w http.ResponseWriter, r *http.Request) {
 				AWG:      string(nc.Raw),
 			}
 		}
+		plan := warpPlan{Added: len(ncs), Results: results, Configs: configs, Warnings: warnings}
+		if len(configs) > 1 {
+			// кнопки «скачать zip»: владелец: скачать все сразу одним архивом
+			if zg, err := configsZip(configs, false); err == nil {
+				plan.ZipWG = zg
+			}
+			if za, err := configsZip(configs, true); err == nil {
+				plan.ZipAWG = za
+			}
+		}
 		s.store.LogEvent("warp", "generated", fmt.Sprintf("генератор WARP: %d конфигов для скачивания (режим %s), без пула", len(ncs), req.Mode))
-		writeJSON(w, http.StatusOK, warpPlan{Added: len(ncs), Results: results, Configs: configs, Warnings: warnings})
+		writeJSON(w, http.StatusOK, plan)
 		return
 	}
 

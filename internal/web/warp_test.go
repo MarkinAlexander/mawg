@@ -1,6 +1,8 @@
 package web
 
 import (
+	"archive/zip"
+	"bytes"
 	"encoding/base64"
 	"os"
 	"path/filepath"
@@ -119,6 +121,8 @@ func TestWarpGenerateDownloadOnly(t *testing.T) {
 			WG       string `json:"wg"`
 			AWG      string `json:"awg"`
 		} `json:"configs"`
+		ZipWG  string `json:"zipWg"`
+		ZipAWG string `json:"zipAwg"`
 	}
 	if err := json.Unmarshal(body, &plan); err != nil {
 		t.Fatalf("план: %v (%s)", err, body)
@@ -140,6 +144,35 @@ func TestWarpGenerateDownloadOnly(t *testing.T) {
 	if pools := st.Pools(); len(pools) != 0 {
 		t.Fatalf("download-режим создал пулы: %v", pools)
 	}
+	// zip-архивы при >1 конфига: имена уникальны, содержимое на месте
+	if plan.ZipWG == "" || plan.ZipAWG == "" {
+		t.Fatal("zip-архивы не собраны")
+	}
+	wgNames := zipNames(t, plan.ZipWG)
+	if len(wgNames) != 2 || wgNames[0] == wgNames[1] {
+		t.Fatalf("zip WG: %v", wgNames)
+	}
+	awgNames := zipNames(t, plan.ZipAWG)
+	if len(awgNames) != 2 || !strings.HasSuffix(awgNames[0], ".awg.conf") {
+		t.Fatalf("zip AWG: %v", awgNames)
+	}
+}
+
+func zipNames(t *testing.T, b64 string) []string {
+	t.Helper()
+	raw, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		t.Fatalf("zip base64: %v", err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
+	if err != nil {
+		t.Fatalf("zip reader: %v", err)
+	}
+	names := make([]string, 0, len(zr.File))
+	for _, f := range zr.File {
+		names = append(names, f.Name)
+	}
+	return names
 }
 
 func TestWarpGeneratePoolAutoDelete(t *testing.T) {

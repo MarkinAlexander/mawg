@@ -89,7 +89,7 @@ describe('WarpGenerateDialog - генерация', () => {
     await btn(w, 'Сгенерировать')[0].trigger('click');
     await vi.waitFor(() => expect(w.text()).toContain('Пул warp создан'));
     expect(capture.body && JSON.parse(capture.body)).toEqual({
-      count: 3, mode: 'random', sites: [], subnets: [],
+      count: 3, mode: 'random', sites: [], subnets: [], dest: 'download',
     });
     expect(w.text()).toContain('162.159.192.7:2408');
     expect(w.text()).toContain('работает');
@@ -99,6 +99,32 @@ describe('WarpGenerateDialog - генерация', () => {
     expect(links).toContain('/api/v1/pools/warp/configs/w1.conf?variant=awg');
     // приватный ключ наружу не выдаётся никогда
     expect(w.text()).not.toContain('PrivateKey');
+    w.unmount();
+  });
+
+  it('download-режим: зелёный заголовок, blob-ссылки и кнопки zip при >1', async () => {
+    const capture: { body?: string } = {};
+    const w = await openDialog({
+      added: 2,
+      configs: [
+        { endpoint: '162.159.192.7:2408', address: '172.16.0.2', wg: '[Interface]A', awg: '[Interface]A\nJc = 4' },
+        { endpoint: '8.39.204.2:934', address: '172.16.0.3', wg: '[Interface]B', awg: '[Interface]B\nJc = 4' },
+      ],
+      zipWg: 'WlZJUERBVEE=',
+      zipAwg: 'WlZJUERBVEE=',
+      warnings: [],
+    }, capture);
+    await btn(w, 'Сгенерировать')[0].trigger('click');
+    await vi.waitFor(() => expect(w.text()).toContain('Готово: конфигов 2'));
+    // заголовок зелёный (раньше красился err - «Готово» с классом err)
+    expect(w.find('.rstitle').classes()).toContain('ok');
+    // zip-кнопки при >1 конфига
+    const links = w.findAll('a').map((a) => a.text());
+    expect(links).toContain('скачать zip WG');
+    expect(links).toContain('скачать zip AWG');
+    expect(capture.body && JSON.parse(capture.body)).toEqual({
+      count: 3, mode: 'random', sites: [], subnets: [], dest: 'download',
+    });
     w.unmount();
   });
 
