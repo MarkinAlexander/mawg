@@ -2,6 +2,8 @@ package web
 
 import (
 	"encoding/base64"
+	"os"
+	"path/filepath"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -342,6 +344,36 @@ func TestWarpGenerateRandomWorking(t *testing.T) {
 		if !res.OK {
 			t.Errorf("конфиг %s не прошёл живую проверку: %s", res.Endpoint, res.Detail)
 		}
+	}
+}
+
+// TestWarpGeneratePoolForcesFullTunnel - в пуле AllowedIPs всегда
+// 0.0.0.0/0: пресеты/подсети игнорируются (слово владельца - юзер с
+// «одним ютубом» в пуле сам себе чёрная дыра).
+func TestWarpGeneratePoolForcesFullTunnel(t *testing.T) {
+	ts, fb, st := warpTestServer(t)
+	fb.SetProbe("warp", true)
+	fb.StatusMap["warp"] = platform.TunnelStatus{LinkUp: true, Connected: true, HandshakeAgo: 5}
+	code, body := warpPost(ts, "/api/v1/warp/generate",
+		`{"count":1,"mode":"fixed","dest":"pool","sites":["youtube"],"subnets":["203.0.113.0/24"]}`)
+	if code != http.StatusOK {
+		t.Fatalf("generate: %d %s", code, body)
+	}
+	p, _ := st.Pool("warp")
+	stored, err := os.ReadFile(filepath.Join(st.PoolDir("warp"), p.Configs[0].File))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(stored), "AllowedIPs = 0.0.0.0/0\n") || strings.Contains(string(stored), "youtube") {
+		t.Error("пул-режим должен форсировать полный туннель")
+	}
+	var plan struct {
+		Warnings []string `json:"warnings"`
+	}
+	json.Unmarshal(body, &plan)
+	joined := strings.Join(plan.Warnings, " ")
+	if !strings.Contains(joined, "0.0.0.0/0") {
+		t.Errorf("в предупреждениях нет пояснения: %v", plan.Warnings)
 	}
 }
 
