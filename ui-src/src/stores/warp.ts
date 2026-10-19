@@ -17,7 +17,6 @@ export interface WarpPresets {
   ports: number[]
   presets: string[]
   sites: WarpSite[]
-  domainHints: string[]
   limits: { count: number }
 }
 
@@ -46,7 +45,7 @@ export interface WarpGenerateBody {
   mode: 'random' | 'fixed'
   endpoint?: string
   sites?: string[]
-  domains?: string[]
+  subnets?: string[]
 }
 
 import { reactive } from 'vue'

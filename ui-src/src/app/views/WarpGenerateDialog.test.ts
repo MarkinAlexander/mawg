@@ -17,7 +17,6 @@ const presetsPayload = {
     { id: 'youtube', label: 'YouTube', count: 300 },
     { id: 'telegram', label: 'Telegram', count: 50 },
   ],
-  domainHints: ['youtube.com'],
   limits: { count: 16 },
 };
 
@@ -87,7 +86,7 @@ describe('WarpGenerateDialog - генерация', () => {
     await btn(w, 'Сгенерировать')[0].trigger('click');
     await vi.waitFor(() => expect(w.text()).toContain('Пул warp создан'));
     expect(capture.body && JSON.parse(capture.body)).toEqual({
-      count: 3, mode: 'random', sites: [], domains: [],
+      count: 3, mode: 'random', sites: [], subnets: [],
     });
     expect(w.text()).toContain('162.159.192.7:2408');
     expect(w.text()).toContain('работает');

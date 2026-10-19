@@ -37,7 +37,7 @@ type warpGenerateReq struct {
 	Mode         string   `json:"mode"` // "random" | "fixed"; пусто = random
 	Endpoint     string   `json:"endpoint"`
 	Sites        []string `json:"sites"`
-	Domains      []string `json:"domains"`
+	Subnets      []string `json:"subnets"`
 	KeeneticSlot string   `json:"keeneticSlot"`
 	Fallback     string   `json:"fallback"`
 	ProbeHost    string   `json:"probeHost"`
@@ -60,7 +60,7 @@ type warpPlan struct {
 }
 
 // warpPresets - данные для диалога: диапазоны, порты, пресеты пар,
-// сайты маскировки, подсказка доменов, лимиты.
+// разрешённые подсети (AllowedIPs), лимиты.
 func (s *Server) warpPresets(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"domainEndpoint": warp.DomainEndpoint,
@@ -68,7 +68,6 @@ func (s *Server) warpPresets(w http.ResponseWriter, r *http.Request) {
 		"ports":          warp.Ports,
 		"presets":        warp.Presets,
 		"sites":          warp.SitePresets(),
-		"domainHints":    warp.DomainHints,
 		"limits":         map[string]int{"count": warpMaxConfigs},
 	})
 }
@@ -125,7 +124,11 @@ func (s *Server) warpGenerate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cidrs, warnings := warp.AllowedIPs(r.Context(), req.Sites, req.Domains)
+	cidrs, warnings, err := warp.AllowedIPs(req.Sites, req.Subnets)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 
 	endpoints := make([]string, 0, req.Count)
 	if req.Mode == "random" {
@@ -172,7 +175,7 @@ func (s *Server) warpGenerate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	settings.Warp = &store.WarpMeta{Mode: req.Mode, Endpoint: req.Endpoint, Sites: req.Sites, Domains: req.Domains}
+	settings.Warp = &store.WarpMeta{Mode: req.Mode, Endpoint: req.Endpoint, Sites: req.Sites, Subnets: req.Subnets}
 	name := wgconf.UniqueSlug("warp", func(cand string) bool {
 		_, ok := s.store.Pool(cand)
 		return ok
@@ -261,18 +264,22 @@ func (s *Server) poolWarpAdd(w http.ResponseWriter, r *http.Request) {
 	if meta == nil {
 		meta = &store.WarpMeta{Mode: "random"}
 	}
-	sites, domains := meta.Sites, meta.Domains
-	if len(req.Sites) > 0 || len(req.Domains) > 0 {
-		sites, domains = req.Sites, req.Domains
+	sites, subnets := meta.Sites, meta.Subnets
+	if len(req.Sites) > 0 || len(req.Subnets) > 0 {
+		sites, subnets = req.Sites, req.Subnets
 	}
 	if req.Count != 1 && req.Count != 0 {
 		writeErr(w, errors.New("в существующий пул добавляется один конфиг - используйте count=1"))
 		return
 	}
 	settings := p.Settings
-	settings.Warp = &store.WarpMeta{Mode: meta.Mode, Endpoint: meta.Endpoint, Sites: sites, Domains: domains}
+	settings.Warp = &store.WarpMeta{Mode: meta.Mode, Endpoint: meta.Endpoint, Sites: sites, Subnets: subnets}
 
-	cidrs, warnings := warp.AllowedIPs(r.Context(), sites, domains)
+	cidrs, warnings, err := warp.AllowedIPs(sites, subnets)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	endpoint := ""
 	if meta.Mode == "fixed" && meta.Endpoint != "" {
 		endpoint = meta.Endpoint

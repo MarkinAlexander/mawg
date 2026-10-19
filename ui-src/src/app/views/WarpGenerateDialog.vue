@@ -24,7 +24,7 @@ const dlg = ref<{
   preset: string
   custom: string
   sites: string[]
-  domains: string
+  subnets: string
   plan: WarpPlan | null
 } | null>(null);
 
@@ -44,7 +44,7 @@ watch(open, async (v) => {
     preset: warp.state.presets?.presets[0] || '',
     custom: '',
     sites: [],
-    domains: '',
+    subnets: '',
     plan: null,
   };
 });
@@ -67,20 +67,36 @@ const fixedErr = computed(() => {
   if (!ep) return 'укажите эндпоинт';
   return /^[a-z0-9.[\]:]+$/i.test(ep) && /:\d+$/.test(ep) ? null : 'эндпоинт в форме host:порт';
 });
-const canGo = computed(() => !!dlg.value && !countErr.value && !fixedErr.value);
+const canGo = computed(() => !!dlg.value && !countErr.value && !fixedErr.value && !subnetErr.value);
 
 const siteList = computed(() => warp.state.presets?.sites || []);
-const domainHint = computed(() => {
-  const hints = warp.state.presets?.domainHints || [];
-  return hints.length ? 'например: ' + hints.join(', ') : '';
-});
+const IPV4_RE = /^(\d{1,3})(\.(\d{1,3})){3}(\/(\d{1,2}))?$/;
 
-function domainList(): string[] {
-  return (dlg.value?.domains || '')
+// подсеть или голый IP (v4 - строгая проверка октетов/префикса, v6 - по
+// форме); финальный гейт - на сервере (NormalizeSubnet)
+function subnetOk(tok: string): boolean {
+  const m = IPV4_RE.exec(tok);
+  if (m) {
+    for (const part of tok.split('/')[0].split('.')) {
+      if (Number(part) > 255) return false;
+    }
+    if (m[5] !== undefined && Number(m[5]) > 32) return false;
+    return true;
+  }
+  return /^[0-9a-fA-F:]+\/\d{1,3}$/.test(tok) || /^[0-9a-fA-F:]+:[0-9a-fA-F]*$/.test(tok);
+}
+
+function subnetList(): string[] {
+  return (dlg.value?.subnets || '')
     .split(/[\s,;]+/)
     .map((d) => d.trim())
     .filter(Boolean);
 }
+
+const subnetErr = computed(() => {
+  const bad = subnetList().filter((t) => !subnetOk(t));
+  return bad.length ? `не подсети (ждём IP или a.b.c.d/nn): ${bad.join(', ')}` : null;
+});
 
 async function run(): Promise<void> {
   if (!dlg.value || !canGo.value) return;
@@ -89,7 +105,7 @@ async function run(): Promise<void> {
     count: Number(dlg.value.count) || 0,
     mode: 'random',
     sites: dlg.value.sites,
-    domains: domainList(),
+    subnets: subnetList(),
   };
   if (dlg.value.mode !== 'random') {
     body.mode = 'fixed';
@@ -172,7 +188,7 @@ function dlHref(res: WarpResultOne, variant: string): string {
           class="sites"
           open
         >
-          <summary>Маскировочные сайты (что пойдёт через туннель)</summary>
+          <summary>Разрешённые подсети (AllowedIPs) - что пойдёт через туннель в AmneziaWG и подобных клиентах</summary>
           <div class="sitelist">
             <UiCheckbox
               v-for="s in siteList"
@@ -183,16 +199,17 @@ function dlHref(res: WarpResultOne, variant: string): string {
             />
           </div>
           <UiTextarea
-            v-model="dlg.domains"
-            label="Свои домены"
-            :placeholder="domainHint"
+            v-model="dlg.subnets"
+            label="Свои подсети"
+            placeholder="например: 203.0.113.0/24, 198.51.100.7"
+            :validator="() => subnetErr"
           />
           <UiHint
-            v-if="!dlg.sites.length && !dlg.domains.trim()"
+            v-if="!dlg.sites.length && !dlg.subnets.trim()"
             text="Ничего не выбрано - туннель на весь интернет (0.0.0.0/0)."
           />
         </details>
-        <UiHint text="Подход генерации и списки сайтов - открытый проект warp-generator: там же можно сгенерировать конфиг вручную - https://warp-generation.github.io/" />
+        <UiHint text="Подход генерации и списки подсетей - открытый проект warp-generator: там же можно сгенерировать конфиг вручную - https://warp-generation.github.io/" />
       </template>
       <div
         v-else-if="dlg.phase === 'progress'"
@@ -278,7 +295,7 @@ function dlHref(res: WarpResultOne, variant: string): string {
             {{ w }}
           </div>
           <UiHint text="AWG-вариант - для внешних клиентов AmneziaWG: тот же конфиг с полями обфускации уровня 2.0. Нативные интерфейсы Кинетиков его не понимают." />
-          <UiHint text="Подход и списки сайтов - проект warp-generator: https://warp-generation.github.io/" />
+          <UiHint text="Подход и списки подсетей - проект warp-generator: https://warp-generation.github.io/" />
         </template>
       </template>
     </template>
