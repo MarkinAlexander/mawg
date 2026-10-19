@@ -235,12 +235,17 @@ function dlHref(res: WarpResultOne, variant: string): string {
           open
         >
           <summary>Разрешённые подсети (AllowedIPs) - что пойдёт через туннель в AmneziaWG и подобных клиентах</summary>
+          <UiHint
+            v-if="dlg.dest !== 'download'"
+            text="Для пула на роутере - только полный туннель (0.0.0.0/0): выбор подсетей недоступен. Пресеты нужны для скачиваемых конфигов (AmneziaWG-клиенты) - пул с «одним ютубом» стал бы чёрной дырой для всего остального трафика."
+          />
           <div class="sitelist">
             <UiCheckbox
               v-for="s in siteList"
               :key="s.id"
               :model-value="dlg.sites.includes(s.id)"
               :label="`${s.label} (${s.count})`"
+              :disabled="dlg.dest !== 'download'"
               @update:model-value="(v: boolean) => { if (v) dlg?.sites.push(s.id); else { const i = dlg?.sites.indexOf(s.id); if (i !== undefined && i >= 0) dlg?.sites.splice(i, 1) } }"
             />
           </div>
@@ -248,10 +253,11 @@ function dlHref(res: WarpResultOne, variant: string): string {
             v-model="dlg.subnets"
             label="Свои подсети"
             placeholder="например: 203.0.113.0/24, 198.51.100.7"
+            :disabled="dlg.dest !== 'download'"
             :validator="() => subnetErr"
           />
           <UiHint
-            v-if="!dlg.sites.length && !dlg.subnets.trim()"
+            v-if="dlg.dest === 'download' && !dlg.sites.length && !dlg.subnets.trim()"
             text="Ничего не выбрано - туннель на весь интернет (0.0.0.0/0)."
           />
         </details>

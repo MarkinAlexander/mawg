@@ -165,10 +165,21 @@ func (s *Server) warpGenerate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	cidrs, warnings, err := warp.AllowedIPs(req.Sites, req.Subnets)
-	if err != nil {
-		writeErr(w, err)
-		return
+	var cidrs []string
+	var warnings []string
+	// Слово владельца: в ПУЛ на роутере - только полный туннель. Пресеты
+	// подсетей/свои подсети - для скачиваемых конфигов (внешние клиенты):
+	// юзер, добавивший в пул «один ютуб», сам себе чёрная дыра.
+	if dest == "pool" {
+		cidrs = []string{"0.0.0.0/0"}
+		warnings = append(warnings, "для пула AllowedIPs принудительно 0.0.0.0/0 - пресеты подсетей игнорируются (они для скачиваемых конфигов)")
+	} else {
+		var err error
+		cidrs, warnings, err = warp.AllowedIPs(req.Sites, req.Subnets)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
 	}
 
 	endpoints := make([]string, 0, req.Count)
@@ -237,7 +248,7 @@ func (s *Server) warpGenerate(w http.ResponseWriter, r *http.Request) {
 
 	// Режим "pool": в пул с живой проверкой каждого конфига; непрошедшие
 	// удаляются сразу (автоудаление после проверки - слово владельца).
-	settings.Warp = &store.WarpMeta{Mode: req.Mode, Endpoint: req.Endpoint, Sites: req.Sites, Subnets: req.Subnets}
+	settings.Warp = &store.WarpMeta{Mode: req.Mode, Endpoint: req.Endpoint}
 	addMode := false
 	name := req.Pool
 	if name != "" {
@@ -375,22 +386,17 @@ func (s *Server) poolWarpAdd(w http.ResponseWriter, r *http.Request) {
 	if meta == nil {
 		meta = &store.WarpMeta{Mode: "random"}
 	}
-	sites, subnets := meta.Sites, meta.Subnets
-	if len(req.Sites) > 0 || len(req.Subnets) > 0 {
-		sites, subnets = req.Sites, req.Subnets
-	}
 	if req.Count != 1 && req.Count != 0 {
 		writeErr(w, errors.New("в существующий пул добавляется один конфиг - используйте count=1"))
 		return
 	}
 	settings := p.Settings
-	settings.Warp = &store.WarpMeta{Mode: meta.Mode, Endpoint: meta.Endpoint, Sites: sites, Subnets: subnets}
+	settings.Warp = &store.WarpMeta{Mode: meta.Mode, Endpoint: meta.Endpoint}
 
-	cidrs, warnings, err := warp.AllowedIPs(sites, subnets)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
+	// Слово владельца: в пуле - только полный туннель (AllowedIPs-пресеты
+	// - для скачиваемых конфигов, на роутере они ломают маршрутизацию).
+	cidrs := []string{"0.0.0.0/0"}
+	var warnings []string
 	endpoint := ""
 	if meta.Mode == "fixed" && meta.Endpoint != "" {
 		endpoint = meta.Endpoint
