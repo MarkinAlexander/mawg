@@ -178,8 +178,14 @@ func TestGenerateOneRetry429(t *testing.T) {
 	if nc.Config.Peer.PublicKey != validKey(0) || nc.Config.MTU != DefaultMTU {
 		t.Errorf("пир/MTU: %+v", nc.Config)
 	}
-	if nc.Config.AWG.Present() {
-		t.Error("простой конфиг не должен нести AWG-поля")
+	if !nc.Config.AWG.Present() {
+		t.Fatal("конфиг пула должен нести поля обфускации AWG 2.0 (слово владельца)")
+	}
+	if nc.Config.AWG.AWG3() {
+		t.Error("уровень должен быть 2.0, без 3.x-полей")
+	}
+	if *nc.Config.AWG.Jc != "4" || *nc.Config.AWG.H1 != "1" {
+		t.Errorf("значения обфускации: Jc=%s H1=%s", *nc.Config.AWG.Jc, *nc.Config.AWG.H1)
 	}
 	if f.calls != 2 {
 		t.Errorf("ожидали 2 вызова (429 + ретрай), было %d", f.calls)

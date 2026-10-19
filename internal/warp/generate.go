@@ -44,7 +44,11 @@ func GenerateOne(ctx context.Context, c *Client, endpoint string, allowedIPs []s
 	if err := ValidEndpoint(ep); err != nil {
 		return wgconf.NamedConfig{}, nil, fmt.Errorf("эндпоинт %q не годится: %v", ep, err)
 	}
-	raw := BuildConfig(private, dev.AddressV4, dev.PeerPublic, ep, allowedIPs)
+	// Слово владельца (2026-10-19, финальное): «суть в обфускации, чтобы
+	// там было АВГ» - конфиг в пуле сразу с полями AWG 2.0 (уровень
+	// awg2): прозрачная обфускация warp-generator/LxBox + I1/I2 SIP-пара.
+	// Чистый WG-вариант для скачивания выводится StripAWGParams'ом.
+	raw := WithAWGFields(BuildConfig(private, dev.AddressV4, dev.PeerPublic, ep, allowedIPs))
 	cfg, err := wgconf.Parse(raw)
 	if err != nil {
 		return wgconf.NamedConfig{}, nil, fmt.Errorf("собранный конфиг не прошёл разбор: %v", err)
