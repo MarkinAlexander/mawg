@@ -286,7 +286,8 @@ func TestPoolConfigRawAWGVariant(t *testing.T) {
 		t.Error("простой вариант не должен нести AWG-поля")
 	}
 	awgText := warpGetBody(mustGet(t, ts.URL+"/api/v1/pools/warp/configs/"+file+"?variant=awg"))
-	for _, field := range []string{"Jc = 4", "Jmin = 40", "Jmax = 70", "S1 = 0", "H1 = 1", "H4 = 4"} {
+	for _, field := range []string{"Jc = 4", "Jmin = 40", "Jmax = 70", "S1 = 0", "H1 = 1", "H4 = 4",
+		"I1 = <b 0x494e56495445", "I2 = <b 0x5349502f"} {
 		if !strings.Contains(awgText, field) {
 			t.Errorf("AWG-вариант без %q", field)
 		}
