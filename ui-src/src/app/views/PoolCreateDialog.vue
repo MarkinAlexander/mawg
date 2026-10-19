@@ -168,11 +168,23 @@ async function addSlot(): Promise<void> {
   await withBusy(async () => {
     try {
       const s = await a.createSlot();
-      await loadSlots();
-      if (s && slotList.value.some((o) => o.value === s)) {
+      // ndm применяет создание асинхронно, а дамп интерфейсов на роутере
+      // кэшируется - добираем список с ретраями, пока слот не появится
+      let found = false;
+      for (let i = 0; i < 4 && !found; i++) {
+        await loadSlots();
+        found = !!s && slotList.value.some((o) => o.value === s);
+        if (!found && i < 3) await new Promise((r) => setTimeout(r, 600));
+      }
+      if (s && !found) {
+        // слот на роутере создан - показываем сразу, не заставляя жать ещё раз
+        slotList.value = [...slotList.value, { value: s, label: s + ' - свободен', busy: false }];
+        found = true;
+      }
+      if (s && found) {
         slot.value = s;
         push('Создан слот ' + s + ' и выбран для нового пула');
-      } else {
+      } else if (s) {
         push('Создан слот ' + s);
       }
     } catch (e) {

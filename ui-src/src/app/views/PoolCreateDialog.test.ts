@@ -125,6 +125,39 @@ describe('PoolCreateDialog', () => {
     dlg.unmount();
   });
 
+  it('+ слот: ndm отдаёт слот не сразу - ретраи добирают и выбирают', async () => {
+    let created = 0;
+    let getsAfterCreate = 0;
+    const { dlg } = await makeDialog({
+      '/slots/create': () => { created++; return { slot: 'Wireguard2', device: 'nwg2' }; },
+      '/slots': () => {
+        if (!created) return { slots: [{ id: 'nwg1', device: 'nwg1', description: '', linkUp: false, connected: false, managed: false }] };
+        getsAfterCreate++;
+        const list = [{ id: 'nwg1', device: 'nwg1', description: '', linkUp: false, connected: false, managed: false }];
+        // ndm применяет создание асинхронно: первый перезапрос ещё без слота
+        if (getsAfterCreate >= 2) list.push({ id: 'Wireguard2', device: 'nwg2', description: '', linkUp: false, connected: false, managed: true });
+        return { slots: list };
+      },
+    });
+    await vi.waitFor(() => expect(dlg.find('.psel-btn').text()).toContain('nwg1'));
+    await btn(dlg, '+ слот')[0].trigger('click');
+    await vi.waitFor(() => expect(dlg.find('.psel-btn').text()).toContain('Wireguard2'), { timeout: 4000 });
+    await vi.waitFor(() => expect(useToast().toasts.list.some((t) => t.text.includes('и выбран для нового пула'))).toBe(true));
+    dlg.unmount();
+  });
+
+  it('+ слот: список так и не обновился - слот показывается сразу (оптимистично)', async () => {
+    const { dlg } = await makeDialog({
+      '/slots/create': () => ({ slot: 'Wireguard2', device: 'nwg2' }),
+      '/slots': { slots: [{ id: 'nwg1', device: 'nwg1', description: '', linkUp: false, connected: false, managed: false }] },
+    });
+    await vi.waitFor(() => expect(dlg.find('.psel-btn').text()).toContain('nwg1'));
+    await btn(dlg, '+ слот')[0].trigger('click');
+    await vi.waitFor(() => expect(dlg.find('.psel-btn').text()).toContain('Wireguard2'), { timeout: 4000 });
+    await vi.waitFor(() => expect(useToast().toasts.list.some((t) => t.text.includes('и выбран для нового пула'))).toBe(true));
+    dlg.unmount();
+  });
+
   it('занятый слот в конфиг-режиме: подтверждение перед созданием', async () => {
     const { dlg } = await makeDialog({
       '/slots': { slots: [{ id: 'nwg1', device: 'nwg1', description: 'провайдер', linkUp: true, connected: true, managed: false }] },
