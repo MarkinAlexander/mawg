@@ -558,24 +558,33 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
           <span class="cfgctl">
             <!-- явный выбор активного конфига (слово владельца): бэкенд-эндпоинт
                  /activate был, UI не выставлял; конфликт адресов валидирует сервер -->
-            <!-- скачивание для внешнего клиента - по уровню конфига
-                 (слово владельца): голому - AWG (добавить поля),
-                 обфусцированному 2.0 - WG (антиобфускация, комментарии
-                 остаются), 3.x - никаких преобразований -->
+            <!-- скачивание для внешнего клиента - по уровню конфига (слово
+                 владельца, третья правка): голый WG - только он сам
+                 (ничего не накидываем; AWG-вариант - возможно в будущем,
+                 другим цветом с пометкой «наша обфускация»); 2.0 - обе:
+                 WG = антиобфускация (снять поля, комментарии остаются),
+                 AWG = как есть со своими полями; 3.x - никаких -->
             <a
               v-if="c.awg === 'plain'"
               class="cfgdl"
-              :href="`/api/v1/pools/${encodeURIComponent(pool.name)}/configs/${encodeURIComponent(c.file)}?variant=awg`"
-              :download="c.file.replace(/\.conf$/, '.awg.conf')"
-              title="скачать с полями обфускации (AmneziaWG)"
-            >AWG</a>
-            <a
-              v-else-if="c.awg === 'awg2'"
-              class="cfgdl"
-              :href="`/api/v1/pools/${encodeURIComponent(pool.name)}/configs/${encodeURIComponent(c.file)}?variant=plain`"
+              :href="`/api/v1/pools/${encodeURIComponent(pool.name)}/configs/${encodeURIComponent(c.file)}`"
               :download="c.file"
-              title="антиобфускация: снять поля AmneziaWG (голый WireGuard, комментарии остаются)"
+              title="голый WireGuard - скачивается как есть"
             >WG</a>
+            <template v-if="c.awg === 'awg2'">
+              <a
+                class="cfgdl"
+                :href="`/api/v1/pools/${encodeURIComponent(pool.name)}/configs/${encodeURIComponent(c.file)}?variant=plain`"
+                :download="c.file"
+                title="антиобфускация: снять поля AmneziaWG (голый WireGuard, комментарии остаются)"
+              >WG</a>
+              <a
+                class="cfgdl"
+                :href="`/api/v1/pools/${encodeURIComponent(pool.name)}/configs/${encodeURIComponent(c.file)}`"
+                :download="c.file"
+                title="скачать как есть (поля обфускации уже в конфиге)"
+              >AWG</a>
+            </template>
             <UiButton
               variant="icon"
               tooltip="сделать активным: переключить интерфейс на этот конфиг"
