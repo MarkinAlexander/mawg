@@ -558,19 +558,24 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
           <span class="cfgctl">
             <!-- явный выбор активного конфига (слово владельца): бэкенд-эндпоинт
                  /activate был, UI не выставлял; конфликт адресов валидирует сервер -->
-            <!-- скачать конфиг для внешнего клиента (WG-текст или AWG с обфускацией) -->
+            <!-- скачивание для внешнего клиента - по уровню конфига
+                 (слово владельца): голому - AWG (добавить поля),
+                 обфусцированному 2.0 - WG (антиобфускация, комментарии
+                 остаются), 3.x - никаких преобразований -->
             <a
-              class="cfgdl"
-              :href="`/api/v1/pools/${encodeURIComponent(pool.name)}/configs/${encodeURIComponent(c.file)}`"
-              :download="c.file"
-              title="скачать конфиг (чистый WireGuard)"
-            >WG</a>
-            <a
+              v-if="c.awg === 'plain'"
               class="cfgdl"
               :href="`/api/v1/pools/${encodeURIComponent(pool.name)}/configs/${encodeURIComponent(c.file)}?variant=awg`"
               :download="c.file.replace(/\.conf$/, '.awg.conf')"
               title="скачать с полями обфускации (AmneziaWG)"
             >AWG</a>
+            <a
+              v-else-if="c.awg === 'awg2'"
+              class="cfgdl"
+              :href="`/api/v1/pools/${encodeURIComponent(pool.name)}/configs/${encodeURIComponent(c.file)}?variant=plain`"
+              :download="c.file"
+              title="антиобфускация: снять поля AmneziaWG (голый WireGuard, комментарии остаются)"
+            >WG</a>
             <UiButton
               variant="icon"
               tooltip="сделать активным: переключить интерфейс на этот конфиг"
