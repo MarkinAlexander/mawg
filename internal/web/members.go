@@ -208,6 +208,16 @@ func (s *Server) getPoolConfigRaw(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("variant") == "awg" {
 		data = warp.WithAWGFields(data)
 	}
+	// attachment с именем файла: без этого браузеры при сохранении
+	// подставляют .txt по Content-Type text/plain (живой кейс владельца:
+	// обычный WG сохранялся .conf по имени из URL, а AWG-вариант с
+	// ?variant=awg - .txt). AWG-варианту - имя *.awg.conf, чтобы пары
+	// «обычный + AWG» при сохранении не затирали друг друга.
+	dlName := file
+	if r.URL.Query().Get("variant") == "awg" {
+		dlName = strings.TrimSuffix(file, ".conf") + ".awg.conf"
+	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+dlName+"\"")
 	w.Write(data)
 }
