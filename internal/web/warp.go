@@ -38,6 +38,15 @@ type warpGenerateReq struct {
 	Endpoint     string   `json:"endpoint"`
 	Sites        []string `json:"sites"`
 	Subnets      []string `json:"subnets"`
+	// Dest - куда девать конфиги: "download" (по умолчанию) - только
+	// отдать пользователю, роутер не трогаем; "pool" - в пул с живой
+	// проверкой. Слово владельца: генерация не должна сама создавать
+	// подключение - ключ WARP не должен жить в двух местах сразу.
+	Dest         string   `json:"dest"`
+	// Pool - существующий варп-пул для dest=pool (пусто = создать новый).
+	Pool         string   `json:"pool"`
+	// Activate - pool: переключиться на новый конфиг после проверки.
+	Activate     bool     `json:"activate"`
 	KeeneticSlot string   `json:"keeneticSlot"`
 	Fallback     string   `json:"fallback"`
 	ProbeHost    string   `json:"probeHost"`
@@ -50,13 +59,27 @@ type warpResultOne struct {
 	OK       bool   `json:"ok"`
 	Detail   string `json:"detail,omitempty"`
 	Error    string `json:"error,omitempty"`
+	// Removed - конфиг не прошёл живую проверку и УДАЛЁН из пула
+	// (автоудаление после проверки - слово владельца).
+	Removed bool `json:"removed,omitempty"`
+}
+
+// warpConfigFile - конфиг для режима "download": полный текст обоих
+// вариантов; приватные ключи уезжают только авторизованному юзеру в
+// браузер и на роутер НЕ попадают (ключ живёт в одном месте).
+type warpConfigFile struct {
+	Endpoint string `json:"endpoint"`
+	Address  string `json:"address,omitempty"`
+	WG       string `json:"wg"`
+	AWG      string `json:"awg"`
 }
 
 type warpPlan struct {
-	Pool     string          `json:"pool,omitempty"`
-	Added    int             `json:"added,omitempty"`
-	Results  []warpResultOne `json:"results,omitempty"`
-	Warnings []string        `json:"warnings,omitempty"`
+	Pool     string           `json:"pool,omitempty"`
+	Added    int              `json:"added,omitempty"`
+	Results  []warpResultOne  `json:"results,omitempty"`
+	Configs  []warpConfigFile `json:"configs,omitempty"`
+	Warnings []string         `json:"warnings,omitempty"`
 }
 
 // warpPresets - данные для диалога: диапазоны, порты, пресеты пар,
@@ -112,16 +135,28 @@ func (s *Server) warpGenerate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := s.validFallback("warp", req.Fallback); err != nil {
-		writeErr(w, err)
+	dest := req.Dest
+	if dest == "" {
+		dest = "download"
+	}
+	if dest != "download" && dest != "pool" {
+		writeErr(w, errors.New("dest - download или pool"))
 		return
 	}
-	settings, err := s.poolSettingsFromReq(poolSourceReq{
-		Name: "warp", KeeneticSlot: req.KeeneticSlot, Fallback: req.Fallback, ProbeHost: req.ProbeHost,
-	})
-	if err != nil {
-		writeErr(w, err)
-		return
+	var settings store.PoolSettings
+	if dest == "pool" {
+		if err := s.validFallback("warp", req.Fallback); err != nil {
+			writeErr(w, err)
+			return
+		}
+		var err error
+		settings, err = s.poolSettingsFromReq(poolSourceReq{
+			Name: "warp", KeeneticSlot: req.KeeneticSlot, Fallback: req.Fallback, ProbeHost: req.ProbeHost,
+		})
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
 	}
 
 	cidrs, warnings, err := warp.AllowedIPs(req.Sites, req.Subnets)
@@ -132,6 +167,7 @@ func (s *Server) warpGenerate(w http.ResponseWriter, r *http.Request) {
 
 	endpoints := make([]string, 0, req.Count)
 	if req.Mode == "random" {
+		var err error
 		endpoints, err = warp.RandomPairs(req.Count, nil)
 		if err != nil {
 			writeErr(w, err)
@@ -175,68 +211,137 @@ func (s *Server) warpGenerate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	settings.Warp = &store.WarpMeta{Mode: req.Mode, Endpoint: req.Endpoint, Sites: req.Sites, Subnets: req.Subnets}
-	name := wgconf.UniqueSlug("warp", func(cand string) bool {
-		_, ok := s.store.Pool(cand)
-		return ok
-	})
-	pool, err := s.store.CreatePool(name, settings)
-	if err != nil {
-		writeErr(w, err)
+	// Режим "download": конфиги уходят пользователю текстом, роутер не
+	// трогаем вообще - ни пула, ни проверок, ни подключения (слово
+	// владельца: ключ WARP не должен жить в двух местах сразу).
+	if dest == "download" {
+		configs := make([]warpConfigFile, len(ncs))
+		for i, nc := range ncs {
+			configs[i] = warpConfigFile{
+				Endpoint: nc.Config.Endpoint(),
+				Address:  nc.Config.FirstIPv4(),
+				WG:       string(nc.Raw),
+				AWG:      string(warp.WithAWGFields(nc.Raw)),
+			}
+		}
+		s.store.LogEvent("warp", "generated", fmt.Sprintf("генератор WARP: %d конфигов для скачивания (режим %s), без пула", len(ncs), req.Mode))
+		writeJSON(w, http.StatusOK, warpPlan{Added: len(ncs), Results: results, Configs: configs, Warnings: warnings})
 		return
 	}
-	added, _, err := s.store.AddConfigs(pool.Name, ncs)
-	if err != nil {
-		_ = s.store.DeletePool(pool.Name)
-		writeErr(w, err)
-		return
+
+	// Режим "pool": в пул с живой проверкой каждого конфига; непрошедшие
+	// удаляются сразу (автоудаление после проверки - слово владельца).
+	settings.Warp = &store.WarpMeta{Mode: req.Mode, Endpoint: req.Endpoint, Sites: req.Sites, Subnets: req.Subnets}
+	addMode := false
+	name := req.Pool
+	if name != "" {
+		p, ok := s.store.Pool(name)
+		if !ok {
+			writeErr(w, fmt.Errorf("пул %q не найден", name))
+			return
+		}
+		if !isWarpPool(p) {
+			writeJSON(w, http.StatusConflict, map[string]string{
+				"error": "пул " + name + " не похож на WARP: ни один конфиг не указывает на сети Cloudflare",
+			})
+			return
+		}
+		addMode = true
+	} else {
+		name = wgconf.UniqueSlug("warp", func(cand string) bool {
+			_, ok := s.store.Pool(cand)
+			return ok
+		})
+	}
+	if !addMode {
+		if _, err := s.store.CreatePool(name, settings); err != nil {
+			writeErr(w, err)
+			return
+		}
 	}
 	for _, dev := range devs {
 		_ = s.store.AddWarpDevice(store.WarpDevice{
-			ID: dev.ID, Token: dev.Token, Pool: pool.Name,
+			ID: dev.ID, Token: dev.Token, Pool: name,
 			Endpoint: dev.PeerEndpoint, AddressV4: dev.AddressV4, CreatedAt: time.Now(),
 		})
 	}
-	p, ok := s.store.Pool(pool.Name)
-	if !ok || len(p.Configs) != len(results) {
-		writeErr(w, errors.New("пул создан, но состав конфигов не сверился"))
+	added, _, err := s.store.AddConfigs(name, ncs)
+	if err != nil {
+		if !addMode {
+			_ = s.store.DeletePool(name)
+		}
+		writeErr(w, err)
+		return
+	}
+	p, ok := s.store.Pool(name)
+	if !ok || len(p.Configs) < len(results) {
+		writeErr(w, errors.New("конфиги добавлены, но состав пула не сверился"))
 		return
 	}
 	for i := range results {
-		results[i].File = p.Configs[i].File
+		results[i].File = p.Configs[len(p.Configs)-len(results)+i].File
 	}
 
-	// Живая самопроверка каждого конфига (слово владельца: «надо
-	// проверять самостоятельно все варианты»). Активным остаётся первый
-	// рабочий; если рабочих нет - первый (честно видно в карточке).
+	// Живая проверка нового; непрошедшие - RemoveConfig тут же.
+	prevActive := ""
+	if addMode {
+		prevActive = s.store.State(name).ActiveFile
+	}
 	firstOK := ""
 	okCount := 0
-	for i := range p.Configs {
-		good, detail, err := s.engine.ProbeConfigNow(p.Name, p.Configs[i].File)
+	removedCount := 0
+	for i := range results {
+		file := results[i].File
+		good, detail, checkErr := s.engine.ProbeConfigNow(name, file)
 		results[i].Detail = detail
-		if err != nil {
-			results[i].Error = err.Error()
-			continue
+		if checkErr != nil {
+			results[i].Error = checkErr.Error()
+		} else {
+			results[i].OK = good
 		}
-		results[i].OK = good
 		if good {
 			okCount++
 			if firstOK == "" {
-				firstOK = p.Configs[i].File
+				firstOK = file
 			}
+			continue
+		}
+		if err := s.store.RemoveConfig(name, file); err == nil {
+			results[i].Removed = true
+			removedCount++
 		}
 	}
-	if firstOK == "" {
-		firstOK = p.Configs[0].File
-		warnings = append(warnings, "ни один конфиг не прошёл живую проверку - проверьте пул позже кнопкой «Проверить»")
+	kept := okCount
+	switch {
+	case !addMode && kept == 0:
+		// новый пул без единого рабочего конфига не оставляем
+		_ = s.store.DeletePool(name)
+		warnings = append(warnings, "ни один конфиг не прошёл живую проверку - все удалены, пул не создан")
+		s.store.LogEvent("warp", "applied", fmt.Sprintf("генератор WARP: %d конфигов не прошли проверку - пул не создан", added))
+		writeJSON(w, http.StatusOK, warpPlan{Added: 0, Results: results, Warnings: warnings})
+		return
+	case addMode && req.Activate && firstOK != "":
+		if err := s.engine.SetActive(name, firstOK); err != nil {
+			warnings = append(warnings, "переключиться на новый конфиг не удалось: "+err.Error())
+		}
+	case addMode && prevActive != "":
+		// ProbeConfigNow применял проверяемые конфиги: возвращаем прежний
+		if _, ok := s.store.Pool(name); ok {
+			if _, ok := p.ConfigByFile(prevActive); ok {
+				_ = s.engine.SetActive(name, prevActive)
+			}
+		}
+	case !addMode:
+		if err := s.engine.SetActive(name, firstOK); err != nil {
+			warnings = append(warnings, "активный конфиг не установлен: "+err.Error())
+		}
 	}
-	if err := s.engine.SetActive(p.Name, firstOK); err != nil {
-		warnings = append(warnings, "активный конфиг не установлен: "+err.Error())
+	if removedCount > 0 {
+		warnings = append(warnings, fmt.Sprintf("не прошли живую проверку и удалены: %d", removedCount))
 	}
-
-	s.store.LogEvent(p.Name, "applied", fmt.Sprintf("генератор WARP: %d конфигов (режим %s), рабочих %d из %d",
-		added, req.Mode, okCount, added))
-	writeJSON(w, http.StatusOK, warpPlan{Pool: p.Name, Added: added, Results: results, Warnings: warnings})
+	s.store.LogEvent(name, "applied", fmt.Sprintf("генератор WARP: +%d конфигов в %s (режим %s), рабочих %d, удалено %d",
+		kept, name, req.Mode, okCount, removedCount))
+	writeJSON(w, http.StatusOK, warpPlan{Pool: name, Added: kept, Results: results, Warnings: warnings})
 }
 
 // poolWarpAdd - «Генерация нового конфига» в карточке живого варп-пула:
@@ -322,9 +427,19 @@ func (s *Server) poolWarpAdd(w http.ResponseWriter, r *http.Request) {
 		res.OK = good
 		res.Detail = detail
 	}
+	// Автоудаление после проверки (слово владельца): не отвечает -
+	// не оставляем мёртвый конфиг в пуле.
+	if !res.OK && res.Error == "" {
+		if rmErr := s.store.RemoveConfig(name, last.File); rmErr == nil {
+			res.Removed = true
+		}
+	}
 	// ProbeConfigNow применяет проверяемый конфиг: возвращаем прежний
-	// активный (ротация сама уйдёт на новый, если прежний ляжет).
-	if prevActive != "" && prevActive != last.File {
+	// активный - или остаёмся на новом, если попросили переключиться
+	// и он жив.
+	if req.Activate && res.OK {
+		_ = s.engine.SetActive(name, last.File)
+	} else if prevActive != "" && prevActive != last.File {
 		if _, ok := fresh.ConfigByFile(prevActive); ok {
 			_ = s.engine.SetActive(name, prevActive)
 		}
@@ -338,6 +453,8 @@ func (s *Server) poolWarpAdd(w http.ResponseWriter, r *http.Request) {
 
 func verdictRU(res warpResultOne) string {
 	switch {
+	case res.Removed:
+		return "удалён: не ответил"
 	case res.Error != "":
 		return "ошибка проверки"
 	case res.OK:

@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { UiBadge, UiBanner, UiButton, UiCheckbox, UiDialog, UiHint, UiInput, UiSelect, UiTextarea, type UiSelectOption } from '../../components/ui'
+import { UiBadge, UiBanner, UiButton, UiCheckbox, UiDialog, UiHint, UiInput, UiSelect, UiSwitch, UiTextarea, type UiSelectOption } from '../../components/ui'
 import { useWarp, type WarpGenerateBody, type WarpPlan, type WarpResultOne } from '../../stores/warp'
-import { useStatus } from '../../stores/status'
+import { usePools, useStatus } from '../../stores/status'
 import { addrSecretIn } from '../secrets'
+import { isWarpPool } from './poolsLogic'
 
 // Диалог генератора WARP (77-док): N регистраций устройств Cloudflare ->
 // пул с готовыми конфигами, каждый конфиг проверяется живьём. Ключи
@@ -15,6 +16,7 @@ const open = defineModel<boolean>('open', { default: false });
 const emit = defineEmits<{ created: [] }>();
 
 const warp = useWarp();
+const { pools } = usePools();
 const { refresh: refreshStatus } = useStatus();
 
 const dlg = ref<{
@@ -25,6 +27,8 @@ const dlg = ref<{
   custom: string
   sites: string[]
   subnets: string
+  dest: 'download' | 'add' | 'new'
+  activate: boolean
   plan: WarpPlan | null
 } | null>(null);
 
@@ -45,6 +49,8 @@ watch(open, async (v) => {
     custom: '',
     sites: [],
     subnets: '',
+    dest: 'download',
+    activate: false,
     plan: null,
   };
 });
@@ -70,6 +76,25 @@ const fixedErr = computed(() => {
 const canGo = computed(() => !!dlg.value && !countErr.value && !fixedErr.value && !subnetErr.value);
 
 const siteList = computed(() => warp.state.presets?.sites || []);
+
+// существующий варп-пул (для «добавить в пул») - владелец: генерация не
+// должна плодить новые пулы, если варп уже есть
+const warpPoolName = computed(() => {
+  for (const p of pools.value || []) {
+    if (isWarpPool(p)) return p.name;
+  }
+  return '';
+});
+const destOptions = computed<UiSelectOption[]>(() => {
+  const opts: UiSelectOption[] = [
+    { value: 'download', label: 'Только скачать (роутер не трогаем)' },
+  ];
+  if (warpPoolName.value) {
+    opts.push({ value: 'add', label: 'Добавить в пул ' + warpPoolName.value + ' (с проверкой)' });
+  }
+  opts.push({ value: 'new', label: 'Создать тестовый пул (с проверкой)' });
+  return opts;
+});
 const IPV4_RE = /^(\d{1,3})(\.(\d{1,3})){3}(\/(\d{1,2}))?$/;
 
 // подсеть или голый IP (v4 - строгая проверка октетов/префикса, v6 - по
@@ -111,6 +136,13 @@ async function run(): Promise<void> {
     body.mode = 'fixed';
     body.endpoint = fixedEndpoint.value;
   }
+  if (dlg.value.dest !== 'download') {
+    body.dest = 'pool';
+    if (dlg.value.dest === 'add') {
+      body.pool = warpPoolName.value;
+      body.activate = dlg.value.activate;
+    }
+  }
   const plan = await warp.generate(body);
   if (!dlg.value) return;
   dlg.value.plan = plan;
@@ -131,9 +163,23 @@ function resultOk(): boolean {
   return !!dlg.value?.plan?.pool;
 }
 function resLine(res: WarpResultOne): string {
+  if (res.removed) return `${res.endpoint} - не прошёл проверку и удалён: ${res.detail || 'проба не прошла'}`;
   if (res.error) return `${res.endpoint} - ошибка: ${res.error}`;
   if (!res.ok) return `${res.endpoint} - не отвечает: ${res.detail || 'проба не прошла'}`;
   return `${res.endpoint}${res.address ? ' - адрес ' + res.address : ''} - работает: ${res.detail || 'проба прошла'}`;
+}
+
+// скачивание в режиме download: файлы собираются в браузере из текстов
+// ответа (на сервере их нет - пул не создавался)
+function fileSlug(endpoint: string): string {
+  return ('warp-' + endpoint.replace(/[^a-zA-Z0-9]+/g, '-')).replace(/-+$/, '').toLowerCase();
+}
+function dlFile(text: string, name: string): void {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 }
 function dlHref(res: WarpResultOne, variant: string): string {
   const pool = dlg.value?.plan?.pool || '';
@@ -209,14 +255,31 @@ function dlHref(res: WarpResultOne, variant: string): string {
             text="Ничего не выбрано - туннель на весь интернет (0.0.0.0/0)."
           />
         </details>
+        <UiSelect
+          v-model="dlg.dest"
+          :options="destOptions"
+          label="Куда"
+        />
+        <UiSwitch
+          v-if="dlg.dest === 'add'"
+          :model-value="dlg.activate"
+          label="переключиться на новый конфиг после проверки"
+          tight
+          @update:model-value="(v: boolean) => dlg && (dlg.activate = v)"
+        />
+        <UiHint
+          v-if="dlg.dest !== 'download'"
+          text="Непрошедшие живую проверку конфиги удаляются из пула сразу."
+        />
         <UiHint text="Подход генерации и списки подсетей - открытый проект warp-generator: там же можно сгенерировать конфиг вручную - https://warp-generation.github.io/" />
       </template>
       <div
         v-else-if="dlg.phase === 'progress'"
         class="progress"
       >
-        Регистрируем устройства в Cloudflare и проверяем каждый конфиг живой пробой.
-        До минуты на конфиг, не закрывайте панель.
+        {{ dlg.dest === 'download'
+          ? 'Регистрируем устройства в Cloudflare и собираем конфиги. Роутер не трогаем, до ~10 секунд на конфиг.'
+          : 'Регистрируем устройства в Cloudflare и проверяем каждый конфиг живой пробой. До минуты на конфиг, не закрывайте панель.' }}
       </div>
       <template v-else>
         <div
@@ -257,6 +320,38 @@ function dlHref(res: WarpResultOne, variant: string): string {
             </ul>
           </UiBanner>
         </template>
+        <template v-else-if="dlg.plan?.configs?.length">
+          <div
+            v-for="(cf, i) in dlg.plan?.configs || []"
+            :key="'c' + i"
+            class="resrow"
+          >
+            <UiBadge
+              variant="info"
+              text="готов"
+            />
+            <span
+              class="restext"
+              :class="{ secret: addrSecretIn(cf.address) }"
+            >{{ cf.endpoint }}{{ cf.address ? ' - адрес ' + cf.address : '' }} - на роутер не попал</span>
+            <span class="resdl">
+              <a
+                href="#"
+                :download="fileSlug(cf.endpoint) + '.conf'"
+                @click.prevent="dlFile(cf.wg, fileSlug(cf.endpoint) + '.conf')"
+              >WG</a>
+              ·
+              <a
+                href="#"
+                :download="fileSlug(cf.endpoint) + '.awg.conf'"
+                @click.prevent="dlFile(cf.awg, fileSlug(cf.endpoint) + '.awg.conf')"
+              >AWG</a>
+            </span>
+          </div>
+          <UiHint text="Конфиги существуют только здесь: пул не создавался, туннель на роутере не поднимался - ключ в одном месте. Включайте в клиенте (AmneziaWG/WireGuard)." />
+          <UiHint text="AWG-вариант - для клиентов AmneziaWG: обфускация уровня 2.0 (Jc/J/S/H + I1/I2)." />
+          <UiHint text="Подход и списки подсетей - проект warp-generator: https://warp-generation.github.io/" />
+        </template>
         <template v-else>
           <div
             v-for="(res, i) in dlg.plan?.results || []"
@@ -264,8 +359,8 @@ function dlHref(res: WarpResultOne, variant: string): string {
             class="resrow"
           >
             <UiBadge
-              :variant="res.error ? 'err' : res.ok ? 'ok' : 'warn'"
-              :text="res.error ? 'ошибка' : res.ok ? 'работает' : 'не отвечает'"
+              :variant="res.removed || res.error ? 'err' : res.ok ? 'ok' : 'warn'"
+              :text="res.removed ? 'удалён' : res.error ? 'ошибка' : res.ok ? 'работает' : 'не отвечает'"
             />
             <span
               class="restext"

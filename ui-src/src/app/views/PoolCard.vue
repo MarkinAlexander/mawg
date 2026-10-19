@@ -558,6 +558,19 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
           <span class="cfgctl">
             <!-- явный выбор активного конфига (слово владельца): бэкенд-эндпоинт
                  /activate был, UI не выставлял; конфликт адресов валидирует сервер -->
+            <!-- скачать конфиг для внешнего клиента (WG-текст или AWG с обфускацией) -->
+            <a
+              class="cfgdl"
+              :href="`/api/v1/pools/${encodeURIComponent(pool.name)}/configs/${encodeURIComponent(c.file)}`"
+              :download="c.file"
+              title="скачать конфиг (чистый WireGuard)"
+            >WG</a>
+            <a
+              class="cfgdl"
+              :href="`/api/v1/pools/${encodeURIComponent(pool.name)}/configs/${encodeURIComponent(c.file)}?variant=awg`"
+              :download="c.file.replace(/\.conf$/, '.awg.conf')"
+              title="скачать с полями обфускации (AmneziaWG)"
+            >AWG</a>
             <UiButton
               variant="icon"
               tooltip="сделать активным: переключить интерфейс на этот конфиг"
@@ -725,5 +738,14 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
 .drop.hover {
   border-color: var(--accent);
   color: var(--accent);
+}
+.cfgdl {
+  color: var(--accent);
+  font: 600 10.5px/1 system-ui, sans-serif;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 5px;
+  text-decoration: none;
+  white-space: nowrap;
 }
 </style>

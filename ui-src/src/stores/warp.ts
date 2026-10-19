@@ -27,12 +27,21 @@ export interface WarpResultOne {
   ok?: boolean
   detail?: string
   error?: string
+  removed?: boolean // не прошёл живую проверку и удалён из пула
+}
+
+export interface WarpConfigFile {
+  endpoint: string
+  address?: string
+  wg: string
+  awg: string
 }
 
 export interface WarpPlan {
   pool?: string
   added?: number
   results?: WarpResultOne[]
+  configs?: WarpConfigFile[] // режим download: полные тексты, роутер не тронут
   warnings?: string[]
   error?: string
   unreachable?: boolean
@@ -46,6 +55,9 @@ export interface WarpGenerateBody {
   endpoint?: string
   sites?: string[]
   subnets?: string[]
+  dest?: 'download' | 'pool' // download (по умолчанию) - роутер не трогаем
+  pool?: string // dest=pool: добавить в существующий варп-пул
+  activate?: boolean // dest=pool: переключиться на новый конфиг
 }
 
 import { reactive } from 'vue'

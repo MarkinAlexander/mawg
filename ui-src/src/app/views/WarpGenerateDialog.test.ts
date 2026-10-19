@@ -69,6 +69,9 @@ describe('WarpGenerateDialog - форма', () => {
     await vi.waitFor(() => expect(w.text()).toContain('YouTube (300)'));
     expect(w.text()).toContain('Telegram (50)');
     expect(w.text()).toContain('warp-generation.github.io');
+    // назначение по умолчанию - «только скачать», роутер не трогаем
+    // (селект закрыт - видна только выбранная опция)
+    expect(w.text()).toContain('Только скачать (роутер не трогаем)');
     w.unmount();
   });
 });
