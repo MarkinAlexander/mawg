@@ -193,6 +193,7 @@ export interface ConfigView {
   enabled: boolean
   coolForSec?: number
   conflict?: string
+  awg?: string // plain | awg2 | awg3 - какие кнопки скачивания показывать
 }
 
 export interface PremiumCountry {

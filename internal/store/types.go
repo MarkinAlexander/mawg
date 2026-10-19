@@ -169,6 +169,11 @@ type ManagedConfig struct {
 	PublicKey string   `json:"publicKey"`
 	Enabled   bool     `json:"enabled"`
 	Addresses []string `json:"addresses,omitempty"`
+	// Awg - уровень обфускации: plain | awg2 | awg3 (wgconf.AwgLevelOf).
+	// Панель по нему решает, какие кнопки скачивания показывать: голому
+	// конфигу - AWG-вариант, obfuscation 2.0 - снутый вариант, 3.x -
+	// никаких преобразований (слово владельца: «до ВГ смысла нет»).
+	Awg string `json:"awg,omitempty"`
 }
 
 type Pool struct {

@@ -61,6 +61,15 @@ const warpInit2 = "I2 = <b 0x5349502f322e302031303020547279696e670d0a5669613a205
 // Вставка сразу после MTU (его конфиг всегда несёт); без MTU - после
 // Address; конфиг не нашего формата - без изменений (не ломаем чужое).
 func WithAWGFields(conf []byte) []byte {
+	// Конфиг уже несёт обфускацию (ручной импорт warp-конфига) -
+	// отдаём как есть: никаких дублей полей, ничего не выдумываем
+	// (вопрос владельца: «ровно тот, что загружен, лишнего ничего?»).
+	for _, ln := range strings.Split(string(conf), "\n") {
+		t := strings.TrimSpace(ln)
+		if strings.HasPrefix(t, "Jc = ") || strings.HasPrefix(t, "I1 = ") {
+			return conf
+		}
+	}
 	lines := strings.Split(string(conf), "\n")
 	out := make([]string, 0, len(lines)+len(awgFields))
 	inserted := false

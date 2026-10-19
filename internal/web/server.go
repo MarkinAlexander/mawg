@@ -541,7 +541,7 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 		}
 		now := time.Now().Unix()
 		for _, c := range p.Configs {
-			cv := configView{File: c.File, Original: c.Original, Endpoint: c.Endpoint, Enabled: c.Enabled}
+			cv := configView{File: c.File, Original: c.Original, Endpoint: c.Endpoint, Enabled: c.Enabled, Awg: c.Awg}
 			if until, ok := st.Cooldowns[c.File]; ok {
 				cv.CoolFor = until - now
 			}
@@ -592,6 +592,9 @@ type configView struct {
 	Enabled  bool   `json:"enabled"`
 	CoolFor  int64  `json:"coolForSec,omitempty"`
 	Conflict string `json:"conflict,omitempty"`
+	// Awg - уровень обфускации (plain/awg2/awg3): панель по нему
+	// показывает кнопки скачивания WG/AWG.
+	Awg string `json:"awg,omitempty"`
 }
 
 // configConflict: первый занятый адрес конфига (не считая собственного
