@@ -111,6 +111,18 @@ type PoolSettings struct {
 	// UpdateIntervalH - интервал автообновления источника в часах;
 	// 0 = из заголовка подписки Profile-Update-Interval, без него сутки.
 	UpdateIntervalH float64 `json:"updateIntervalH,omitempty"`
+	// Warp - параметры генератора WARP у пулов, созданных им (режим
+	// эндпоинтов, сайты маскировки): кнопка «Генерация нового конфига»
+	// в карточке добавляет конфиг с теми же параметрами, без мастера.
+	Warp *WarpMeta `json:"warp,omitempty"`
+}
+
+// WarpMeta - параметры пула генератора WARP (см. PoolSettings.Warp).
+type WarpMeta struct {
+	Mode     string   `json:"mode"` // "random" | "fixed"
+	Endpoint string   `json:"endpoint,omitempty"`
+	Sites    []string `json:"sites,omitempty"`
+	Domains  []string `json:"domains,omitempty"`
 }
 
 // AmneziaMeta - состояние выдачи gateway Амнезии для пула из vpn://-ключа:

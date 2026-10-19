@@ -29,6 +29,7 @@ import (
 	"mawg/internal/rotator"
 	"mawg/internal/selfupdate"
 	"mawg/internal/store"
+	"mawg/internal/warp"
 	"mawg/internal/wgconf"
 )
 
@@ -48,6 +49,9 @@ type Server struct {
 	ifaceCache respCache
 	sysCache   respCache
 	IPGate     *auth.IPGate
+	// warpReg - регистратор Cloudflare WARP (генератор конфигов);
+	// nil = штатный клиент, подменяется в тестах.
+	warpReg *warp.Client
 	// фактически забинденные адрес/порт демона: UI отличает
 	// "сохранено, но не перезапущено" от "уже применяется"
 	BindAddr string
@@ -95,6 +99,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/pools/amnezia-free", s.createFreePool)
 	mux.HandleFunc("POST /api/v1/pools/amnezia-free/captcha", s.answerFreeCaptcha)
 	mux.HandleFunc("POST /api/v1/pools/{name}/free/reissue", s.reissueFreePool)
+	mux.HandleFunc("GET /api/v1/warp/presets", s.warpPresets)
+	mux.HandleFunc("POST /api/v1/warp/generate", s.warpGenerate)
+	mux.HandleFunc("POST /api/v1/pools/{name}/warp", s.poolWarpAdd)
 	mux.HandleFunc("POST /api/v1/pools/from-source", s.createPoolFromSource)
 	mux.HandleFunc("POST /api/v1/links/inspect", s.inspectSource)
 	mux.HandleFunc("POST /api/v1/singbox/mode", s.postSingboxMode)

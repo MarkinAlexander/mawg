@@ -23,6 +23,7 @@ type Store struct {
 	lastStateJSON string
 	premium       PremiumSubscription
 	free          FreeInstallation
+	warp          []WarpDevice
 }
 
 const (
@@ -48,6 +49,9 @@ func Open(base string) (*Store, error) {
 	}
 	if err := s.load(filepath.Join(base, "free.json"), &s.free); err != nil {
 		return nil, errors.New("не удалось загрузить данные Amnezia Free")
+	}
+	if err := s.load(filepath.Join(base, "warp.json"), &s.warp); err != nil {
+		return nil, errors.New("не удалось загрузить реестр WARP")
 	}
 	if s.state.Pools == nil {
 		s.state.Pools = map[string]*PoolState{}
