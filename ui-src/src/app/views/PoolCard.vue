@@ -5,9 +5,11 @@ import { useConfirm } from '../../stores/confirm'
 import { useStatus } from '../../stores/status'
 import { usePoolActions, type PoolAct } from '../../stores/pools'
 import { useToast } from '../../stores/toast'
+import { useWarp } from '../../stores/warp'
 import { useSecrets } from '../secrets'
 import { G } from '../glossary'
 import { probeHuman } from './groupsLogic'
+import { isWarpPool } from './poolsLogic'
 import type { ConfigView, PoolEngine, PoolView } from '../../api/types'
 
 // Карточка пула (легаси ensureCard/updateCard 67-265). Данные приходят из
@@ -85,6 +87,29 @@ async function delPool(): Promise<void> {
   });
   if (!ok) return;
   void run(`${props.pool.name}:del`, () => a.del(props.pool.name));
+}
+
+// --- генератор WARP (77-док): +1 конфиг в живой варп-пул ---
+const warpStore = useWarp();
+// пул варповый: создан генератором или конфиги смотрят в сети Cloudflare
+const isWarp = computed(() => isWarpPool(props.pool));
+function genWarp(): void {
+  void run(`${props.pool.name}:warpgen`, async () => {
+    const plan = await warpStore.addToPool(props.pool.name, {});
+    void refreshStatus();
+    if (plan.error) {
+      push(plan.error, true);
+      return;
+    }
+    const res = plan.results && plan.results[0];
+    if (res && res.ok) {
+      push(`Конфиг добавлен (${res.endpoint}), проба прошла`);
+    } else if (res) {
+      push(`Конфиг добавлен (${res.endpoint}), но проба не прошла: ${res.detail || res.error || 'нет ответа'}`, true);
+    } else {
+      push('Конфиг добавлен');
+    }
+  });
 }
 
 // --- строка карточки (легаси updateCard 174) ---
@@ -422,6 +447,14 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
           @click="checkNow"
         >
           Проверить
+        </UiButton>
+        <UiButton
+          v-if="isWarp"
+          :busy="busy === `${pool.name}:warpgen`"
+          tooltip="ещё одна регистрация WARP с теми же настройками маскировки, новый адрес:порт"
+          @click="genWarp"
+        >
+          Генерация нового конфига
         </UiButton>
       </template>
       <UiButton

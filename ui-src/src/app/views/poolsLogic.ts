@@ -150,3 +150,41 @@ export function fallbackHint(
     ? `Группы будут переведены на ${ifaceLabel(dev)} при провале всех конфигов и вернутся, когда пул оживет.`
     : `Внимание: у интерфейса ${ifaceLabel(dev)} нет проверки здоровья. Задайте её в разделе Интерфейсы роутера, иначе момент отката и возврата будет определяться неточно.`;
 }
+
+// --- Генератор WARP (77-док) ---
+
+// Сети датацентров WARP: anycast-блоки LxBox (warp_endpoints.json) +
+// /24-префиксы warp-generator. Сверено с internal/warp/endpoints.go -
+// при изменении там менять и тут.
+const WARP_V4_PREFIXES = [
+  '162.159.192.', '162.159.193.', '162.159.195.',
+  '188.114.96.', '188.114.97.', '188.114.98.', '188.114.99.',
+  '8.6.112.', '8.34.70.', '8.34.146.', '8.35.211.',
+  '8.39.125.', '8.39.204.', '8.39.214.', '8.47.69.',
+];
+
+// hostOf - адресная часть "host:port" (IPv6 в скобках не режется).
+export function hostOf(endpoint: string): string {
+  if (endpoint.startsWith('[')) {
+    const i = endpoint.indexOf(']');
+    return i > 0 ? endpoint.slice(1, i) : endpoint;
+  }
+  const c = endpoint.lastIndexOf(':');
+  return c > 0 ? endpoint.slice(0, c) : endpoint;
+}
+
+// isWarpEndpoint - эндпоинт указывает на датацентры Cloudflare WARP.
+export function isWarpEndpoint(endpoint?: string): boolean {
+  if (!endpoint) return false;
+  const h = hostOf(endpoint).toLowerCase();
+  if (h === 'engage.cloudflareclient.com') return true;
+  if (h.startsWith('2606:4700:d0:') || h.startsWith('2606:4700:d1:')) return true;
+  return WARP_V4_PREFIXES.some((p) => h.startsWith(p));
+}
+
+// isWarpPool - пул варповый: создан генератором (мета) или хотя бы один
+// конфиг смотрит в сети Cloudflare (владелец: узнать и чужой пул).
+export function isWarpPool(p: { settings?: { warp?: unknown }; configs?: { endpoint?: string }[] }): boolean {
+  if (p.settings?.warp) return true;
+  return (p.configs || []).some((c) => isWarpEndpoint(c.endpoint));
+}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SlotInfo } from '../../api/types'
-import { fallbackHint, inspectLine, planView, protoGate, slotGate, slotOptions } from './poolsLogic'
+import { fallbackHint, inspectLine, isWarpEndpoint, isWarpPool, planView, protoGate, slotGate, slotOptions } from './poolsLogic'
 import { probeHuman } from './groupsLogic'
 
 const slot = (over: Partial<SlotInfo>): SlotInfo => ({
@@ -139,5 +139,37 @@ describe('probeHuman (словарь проб rotator.go)', () => {
     expect(probeHuman('applied, settling')).toContain('стабилизация');
     expect(probeHuman('probe 1.2.3.4 failed')).toContain('ошибка проверки');
     expect(probeHuman('ok (handshake 1s ago, icmp lossy)')).toContain('ok (handshake 1s ago, icmp lossy)');
+  });
+});
+
+// --- Генератор WARP (77-док) ---
+
+describe('warp - isWarpEndpoint', () => {
+  it('recognizes WARP datacenter endpoints', () => {
+    expect(isWarpEndpoint('162.159.192.1:2408')).toBe(true);
+    expect(isWarpEndpoint('188.114.99.7:500')).toBe(true);
+    expect(isWarpEndpoint('8.39.125.3:1701')).toBe(true);
+    expect(isWarpEndpoint('engage.cloudflareclient.com:2408')).toBe(true);
+    expect(isWarpEndpoint('[2606:4700:d0::1]:2408')).toBe(true);
+  });
+  it('rejects non-WARP endpoints', () => {
+    expect(isWarpEndpoint('217.23.3.76:51820')).toBe(false);
+    expect(isWarpEndpoint('8.8.8.8:53')).toBe(false);
+    expect(isWarpEndpoint('example.com:51820')).toBe(false);
+    expect(isWarpEndpoint('')).toBe(false);
+    expect(isWarpEndpoint(undefined)).toBe(false);
+  });
+});
+
+describe('warp - isWarpPool', () => {
+  it('detects by settings meta', () => {
+    expect(isWarpPool({ settings: { warp: { mode: 'random' } }, configs: [] })).toBe(true);
+  });
+  it('detects by endpoint networks (чужой пул)', () => {
+    expect(isWarpPool({ configs: [{ endpoint: '162.159.193.1:2408' }] })).toBe(true);
+  });
+  it('rejects plain pools', () => {
+    expect(isWarpPool({ configs: [{ endpoint: '217.23.3.76:51820' }] })).toBe(false);
+    expect(isWarpPool({ configs: [] })).toBe(false);
   });
 });

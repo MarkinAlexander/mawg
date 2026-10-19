@@ -24,6 +24,12 @@ export const SEARCH_PLACES: SearchPlace[] = [
     route: '/next/interfaces',
   },
   {
+    title: 'Генератор WARP-конфигов (Cloudflare)',
+    keywords: ['warp', 'варп', 'cloudflare', 'клаудфлер', 'генератор', 'генерация', 'конфиги'],
+    route: '/next/interfaces',
+    anchor: 'card-warp',
+  },
+  {
     title: 'Наборы интерфейсов (ротация)',
     keywords: ['наборы', 'бандлы', 'ротация', 'bundles', 'порядок интерфейсов'],
     route: '/next/interfaces',

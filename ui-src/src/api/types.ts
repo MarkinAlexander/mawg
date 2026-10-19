@@ -176,6 +176,14 @@ export interface PoolSettings {
     country?: string
     countries?: { code: string; name?: string; protocols?: string[] }[]
   }
+  // генератор WARP (77-док): параметры пула - кнопка «Генерация нового
+  // конфига» в карточке добавляет конфиг с теми же параметрами
+  warp?: {
+    mode: string // random | fixed
+    endpoint?: string
+    sites?: string[]
+    domains?: string[]
+  }
 }
 
 export interface ConfigView {
