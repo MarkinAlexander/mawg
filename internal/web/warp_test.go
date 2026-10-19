@@ -413,9 +413,17 @@ func TestPoolConfigRawAWGVariant(t *testing.T) {
 	json.Unmarshal(body, &plan)
 	file := plan.Results[0].File
 
-	plainText := warpGetBody(mustGet(t, ts.URL+"/api/v1/pools/warp/configs/"+file))
+	// конфиг в пуле теперь сразу awg2 (слово владельца: «суть в обфускации»)
+	rawText := warpGetBody(mustGet(t, ts.URL+"/api/v1/pools/warp/configs/"+file))
+	if !strings.Contains(rawText, "Jc = 4") {
+		t.Error("конфиг пула должен нести AWG-поля")
+	}
+	plainText := warpGetBody(mustGet(t, ts.URL+"/api/v1/pools/warp/configs/"+file+"?variant=plain"))
 	if strings.Contains(plainText, "Jc = 4") {
-		t.Error("простой вариант не должен нести AWG-поля")
+		t.Error("WG-вариант (variant=plain) должен снимать AWG-поля")
+	}
+	if _, err := wgconf.Parse([]byte(plainText)); err != nil {
+		t.Errorf("снутый конфиг не разбирается: %v", err)
 	}
 	awgText := warpGetBody(mustGet(t, ts.URL+"/api/v1/pools/warp/configs/"+file+"?variant=awg"))
 	for _, field := range []string{"Jc = 4", "Jmin = 40", "Jmax = 70", "S1 = 0", "H1 = 1", "H4 = 4",

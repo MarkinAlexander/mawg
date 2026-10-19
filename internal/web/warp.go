@@ -157,6 +157,12 @@ func (s *Server) warpGenerate(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, err)
 			return
 		}
+		// Конфиги генератора несут поля обфускации AWG 2.0: на OpenWrt
+		// такой пул поднимается только proto amneziawg (на Кинетике поля
+		// применяются нативными ASC-аргументами).
+		if s.backend.Name() == store.PlatformOpenwrt {
+			settings.OpenwrtProto = "amneziawg"
+		}
 	}
 
 	cidrs, warnings, err := warp.AllowedIPs(req.Sites, req.Subnets)
@@ -220,8 +226,8 @@ func (s *Server) warpGenerate(w http.ResponseWriter, r *http.Request) {
 			configs[i] = warpConfigFile{
 				Endpoint: nc.Config.Endpoint(),
 				Address:  nc.Config.FirstIPv4(),
-				WG:       string(nc.Raw),
-				AWG:      string(warp.WithAWGFields(nc.Raw)),
+				WG:       string(wgconf.StripAWGParams(nc.Raw)),
+				AWG:      string(nc.Raw),
 			}
 		}
 		s.store.LogEvent("warp", "generated", fmt.Sprintf("генератор WARP: %d конфигов для скачивания (режим %s), без пула", len(ncs), req.Mode))
