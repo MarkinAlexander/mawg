@@ -451,7 +451,7 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
         <UiButton
           v-if="isWarp"
           :busy="busy === `${pool.name}:warpgen`"
-          tooltip="ещё одна регистрация WARP с теми же настройками маскировки, новый адрес:порт"
+          tooltip="ещё одна регистрация WARP с теми же разрешёнными подсетями, новый адрес:порт"
           @click="genWarp"
         >
           Генерация нового конфига

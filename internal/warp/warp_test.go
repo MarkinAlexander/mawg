@@ -271,33 +271,31 @@ func TestBuildConfigAWGVariant(t *testing.T) {
 	}
 }
 
-// TestAllowedIPsSitesAndIP - пресеты дают CIDR, «свой ввод» в форме IP
-// превращается в /32, пусто - полный туннель.
-func TestAllowedIPsSitesAndIP(t *testing.T) {
-	cidrs, warns := AllowedIPs(context.Background(), []string{"rutracker"}, nil)
-	if len(warns) != 0 {
-		t.Fatalf("предупреждения: %v", warns)
+// TestAllowedIPsSitesAndSubnets - пресеты дают CIDR, свой ввод - только
+// подсети (слово владельца: WireGuard в AllowedIPs домены не понимает),
+// голый IP -> /32, не-подсеть -> ошибка, пусто - полный туннель.
+func TestAllowedIPsSitesAndSubnets(t *testing.T) {
+	cidrs, warns, err := AllowedIPs([]string{"rutracker"}, nil)
+	if err != nil || len(warns) != 0 {
+		t.Fatalf("err=%v warns=%v", err, warns)
 	}
 	if len(cidrs) < 2 || !containsStr(cidrs, "185.81.128.0/23") {
 		t.Errorf("пресет rutracker не лёг в AllowedIPs: %v", cidrs)
 	}
-	cidrs2, _ := AllowedIPs(context.Background(), nil, []string{"192.0.2.10"})
-	if !containsStr(cidrs2, "192.0.2.10/32") {
-		t.Errorf("IP-домен не превратился в /32: %v", cidrs2)
+	cidrs2, _, err := AllowedIPs(nil, []string{"192.0.2.10", "203.0.113.0/24"})
+	if err != nil {
+		t.Fatalf("валидные подсети отклонены: %v", err)
 	}
-	cidrs3, _ := AllowedIPs(context.Background(), nil, nil)
-	if len(cidrs3) != 1 || cidrs3[0] != "0.0.0.0/0" {
-		t.Errorf("дефолт должен быть полным туннелем: %v", cidrs3)
+	if !containsStr(cidrs2, "192.0.2.10/32") || !containsStr(cidrs2, "203.0.113.0/24") {
+		t.Errorf("подсети не легли в AllowedIPs: %v", cidrs2)
 	}
-	// Отменённый контекст - резолв домена падает детерминированно:
-	// предупреждение, не ошибка (на живой сети NXDOMAIN бывает
-	// перехвачен провайдером - домены тут не использовать).
-	ctxCanceled, cancel := context.WithCancel(context.Background())
-	cancel()
-	_, warns = AllowedIPs(ctxCanceled, nil, []string{"example.com"})
-	t.Logf("warns=%v", warns)
-	if len(warns) == 0 {
-		t.Error("ожидали предупреждение о нерешённом домене")
+	cidrs3, _, err := AllowedIPs(nil, nil)
+	if err != nil || len(cidrs3) != 1 || cidrs3[0] != "0.0.0.0/0" {
+		t.Errorf("дефолт должен быть полным туннелем: %v (err=%v)", cidrs3, err)
+	}
+	if _, _, err := AllowedIPs(nil, []string{"youtube.com", "192.0.2.1"}); err == nil ||
+		!strings.Contains(err.Error(), "youtube.com") {
+		t.Errorf("домен должен быть отвергнут с именем в ошибке: %v", err)
 	}
 }
 

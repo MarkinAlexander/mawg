@@ -122,7 +122,7 @@ type WarpMeta struct {
 	Mode     string   `json:"mode"` // "random" | "fixed"
 	Endpoint string   `json:"endpoint,omitempty"`
 	Sites    []string `json:"sites,omitempty"`
-	Domains  []string `json:"domains,omitempty"`
+	Subnets  []string `json:"subnets,omitempty"` // разрешённые подсети (AllowedIPs), не домены
 }
 
 // AmneziaMeta - состояние выдачи gateway Амнезии для пула из vpn://-ключа:

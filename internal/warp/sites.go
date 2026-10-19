@@ -1,31 +1,26 @@
 package warp
 
 import (
-	"context"
+	"errors"
 	"fmt"
 	"net"
 	"sort"
 	"strings"
-	"time"
 )
 
-// Пресеты маскировочных сайтов (split-tunnel AllowedIPs). Данные - из
+// Пресеты подсетей для AllowedIPs (split-tunnel). Данные - из
 // warp-generator (sites_data.go, генерируются экстрактором), реализация
-// своя; RU-домены для подсказки «своих доменов» - из списков маскировки
-// LxBox (loc.ru sni_pool).
+// своя. Слово владельца: это НЕ «маскировочные сайты», а РАЗРЕШЁННЫЕ
+// ПОДСЕТИ - что пойдёт через туннель, если конфиг использовать в
+// AmneziaWG и подобных клиентах. Свои подсети юзер вводит CIDR'ом:
+// WireGuard в AllowedIPs понимает только подсети (домен - это снапшот
+// резолва, у CDN неполный и устаревает - не делаем).
 
-// SitePreset - один сервис: сколько CIDR-префиксов входит.
+// SitePreset - один пресет: сколько CIDR-префиксов входит.
 type SitePreset struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
 	Count int    `json:"count"`
-}
-
-// DomainHints - подсказка поля «свои домены»: подо что маскируются
-// российские пользователи (список LxBox).
-var DomainHints = []string{
-	"youtube.com", "x.com", "instagram.com", "facebook.com", "discord.com",
-	"telegram.org", "whatsapp.com", "rutracker.org", "viber.com",
 }
 
 // SitePresets - все пресеты в стабильном порядке (как в источнике).
@@ -37,11 +32,33 @@ func SitePresets() []SitePreset {
 	return out
 }
 
+// NormalizeSubnet - пользовательский ввод -> CIDR: голый IP превращается
+// в /32 (v4) или /128 (v6), CIDR проверяется и нормализуется. Не подсеть -
+// ошибка с человеческим текстом (слово владельца: «проверять что именно
+// там подсети»).
+func NormalizeSubnet(s string) (string, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "", errors.New("пустая подсеть")
+	}
+	if ip := net.ParseIP(s); ip != nil {
+		if ip.To4() != nil {
+			return ip.String() + "/32", nil
+		}
+		return ip.String() + "/128", nil
+	}
+	_, ipnet, err := net.ParseCIDR(s)
+	if err != nil {
+		return "", fmt.Errorf("%q - не IP и не подсеть (ждём a.b.c.d или a.b.c.d/nn)", s)
+	}
+	_ = ipnet
+	return s, nil
+}
+
 // AllowedIPs - сборка списка AllowedIPs: CIDR выбранных пресетов +
-// резолв пользовательских доменов (/32 по A-записям; нерешённые -
-// предупреждением, не ошибкой). Без выбранного и решённого - полный
-// туннель 0.0.0.0/0 (как на сайте warp-generator).
-func AllowedIPs(ctx context.Context, sites, domains []string) (cidrs []string, warnings []string) {
+// пользовательские подсети (строгая валидация). Без выбранного и
+// введённого - полный туннель 0.0.0.0/0 (как на сайте warp-generator).
+func AllowedIPs(sites, subnets []string) (cidrs []string, warnings []string, err error) {
 	chosen := map[string]bool{}
 	byID := map[string]string{}
 	for _, s := range sitePresetsData {
@@ -50,7 +67,7 @@ func AllowedIPs(ctx context.Context, sites, domains []string) (cidrs []string, w
 	for _, id := range sites {
 		raw, ok := byID[strings.TrimSpace(id)]
 		if !ok {
-			warnings = append(warnings, "неизвестный пресет сайта: "+id)
+			warnings = append(warnings, "неизвестный пресет подсетей: "+id)
 			continue
 		}
 		for _, c := range strings.Split(raw, ",") {
@@ -59,32 +76,18 @@ func AllowedIPs(ctx context.Context, sites, domains []string) (cidrs []string, w
 			}
 		}
 	}
-	for _, d := range domains {
-		d = strings.ToLower(strings.TrimSpace(d))
-		if d == "" {
+	var bad []string
+	for _, s := range subnets {
+		n, err := NormalizeSubnet(s)
+		if err != nil {
+			bad = append(bad, strings.TrimSpace(s))
 			continue
 		}
-		if net.ParseIP(d) != nil {
-			chosen[d+"/32"] = true
-			continue
-		}
-		rctx, cancel := context.WithTimeout(ctx, 4*time.Second)
-		ips, err := net.DefaultResolver.LookupIPAddr(rctx, d)
-		cancel()
-		if err != nil || len(ips) == 0 {
-			warnings = append(warnings, fmt.Sprintf("домен %s не решился - в AllowedIPs не попал", d))
-			continue
-		}
-		var added int
-		for _, ipa := range ips {
-			if ip4 := ipa.IP.To4(); ip4 != nil {
-				chosen[ip4.String()+"/32"] = true
-				added++
-			}
-		}
-		if added == 0 {
-			warnings = append(warnings, fmt.Sprintf("у домена %s нет A-записей - в AllowedIPs не попал", d))
-		}
+		chosen[n] = true
+	}
+	if len(bad) > 0 {
+		return nil, nil, fmt.Errorf("это не подсети (ждём IP или CIDR вида a.b.c.d/nn): %s",
+			strings.Join(bad, ", "))
 	}
 	for c := range chosen {
 		cidrs = append(cidrs, c)
@@ -93,7 +96,5 @@ func AllowedIPs(ctx context.Context, sites, domains []string) (cidrs []string, w
 	if len(cidrs) == 0 {
 		cidrs = []string{"0.0.0.0/0"}
 	}
-	// Предупреждения (нерешённые домены) отдаются и при дефолтном
-	// полном туннеле - иначе юзер не узнает, что ввод потерялся.
-	return cidrs, warnings
+	return cidrs, warnings, nil
 }

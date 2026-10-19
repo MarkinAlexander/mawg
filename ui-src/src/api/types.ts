@@ -182,7 +182,7 @@ export interface PoolSettings {
     mode: string // random | fixed
     endpoint?: string
     sites?: string[]
-    domains?: string[]
+    subnets?: string[] // разрешённые подсети (AllowedIPs), не домены
   }
 }
 
