@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+function tlog(v: unknown) { console.log('CFGDL:', v) }
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import PoolCard from './PoolCard.vue'
@@ -548,14 +549,18 @@ describe('PoolCard - скачивание по уровню конфига (ан
     ],
   };
 
-  it('plain -> только AWG, awg2 -> только WG (снять поля), awg3 -> ничего', () => {
+  it('голый WG - только он сам; awg2 - WG (снять) + AWG (как есть); awg3 - никаких', () => {
     const w = makeCard(levelsPool);
     const html = w.html();
-    expect(html.match(/variant=awg/g)?.length).toBe(1);
-    expect(html).toContain('configs/a.conf?variant=awg');
-    expect(html.match(/variant=plain/g)?.length).toBe(1);
+    // plain (голый WG): только как есть, ничего не накидываем
+    expect(html).toContain('configs/a.conf"');
+    expect(html).not.toContain('configs/a.conf?variant=awg');
+    // awg2: WG антиобфускация + AWG как есть (свои поля)
     expect(html).toContain('configs/b.conf?variant=plain');
+    expect(html).toContain('configs/b.conf"');
+    // awg3: преобразований не предлагаем
     expect(html).not.toContain('c.conf?variant');
+    tlog(html.match(/href="[^"]*configs[^"]*"/g));
     w.unmount();
   });
 });
