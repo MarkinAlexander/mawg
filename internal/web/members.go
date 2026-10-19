@@ -205,18 +205,30 @@ func (s *Server) getPoolConfigRaw(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	if r.URL.Query().Get("variant") == "awg" {
+	// Варианты скачивания (кнопки - по уровню конфига, configView.Awg):
+	//  - variant=awg: добавить поля обфускации 2.0 (только голому);
+	//  - variant=plain: АНТИОБФУСКАЦИЯ - снять поля AmneziaWG, комментарии
+	//    сохраняются. AWG 3.x не приводим (слово владельца: «до ВГ
+	//    смысла нет, скорее всего не заведётся»).
+	dlName := file
+	switch v := r.URL.Query().Get("variant"); v {
+	case "awg":
 		data = warp.WithAWGFields(data)
+		dlName = strings.TrimSuffix(file, ".conf") + ".awg.conf"
+	case "plain":
+		if wgconf.AwgLevelOf(data) == wgconf.Awg3 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"error": "конфиг AmneziaWG 3.x - до чистого WireGuard не приводим: 3.x-поля критичны, голым он не заведётся",
+			})
+			return
+		}
+		data = wgconf.StripAWGParams(data)
 	}
 	// attachment с именем файла: без этого браузеры при сохранении
 	// подставляют .txt по Content-Type text/plain (живой кейс владельца:
 	// обычный WG сохранялся .conf по имени из URL, а AWG-вариант с
 	// ?variant=awg - .txt). AWG-варианту - имя *.awg.conf, чтобы пары
 	// «обычный + AWG» при сохранении не затирали друг друга.
-	dlName := file
-	if r.URL.Query().Get("variant") == "awg" {
-		dlName = strings.TrimSuffix(file, ".conf") + ".awg.conf"
-	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Content-Disposition", "attachment; filename=\""+dlName+"\"")
 	w.Write(data)

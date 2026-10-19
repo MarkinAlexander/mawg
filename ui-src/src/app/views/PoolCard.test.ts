@@ -536,3 +536,26 @@ describe('PoolCard - генератор WARP (77-док)', () => {
     w.unmount();
   });
 });
+
+describe('PoolCard - скачивание по уровню конфига (антиобфускация)', () => {
+  const levelsPool: PoolView = {
+    ...nativePool,
+    name: 'mix',
+    configs: [
+      { file: 'a.conf', endpoint: '1.2.3.4:51820', enabled: true, awg: 'plain' },
+      { file: 'b.conf', endpoint: '5.6.7.8:51820', enabled: true, awg: 'awg2' },
+      { file: 'c.conf', endpoint: '9.9.9.9:51820', enabled: true, awg: 'awg3' },
+    ],
+  };
+
+  it('plain -> только AWG, awg2 -> только WG (снять поля), awg3 -> ничего', () => {
+    const w = makeCard(levelsPool);
+    const html = w.html();
+    expect(html.match(/variant=awg/g)?.length).toBe(1);
+    expect(html).toContain('configs/a.conf?variant=awg');
+    expect(html.match(/variant=plain/g)?.length).toBe(1);
+    expect(html).toContain('configs/b.conf?variant=plain');
+    expect(html).not.toContain('c.conf?variant');
+    w.unmount();
+  });
+});

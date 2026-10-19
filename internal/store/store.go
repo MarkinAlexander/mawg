@@ -57,11 +57,28 @@ func Open(base string) (*Store, error) {
 		s.state.Pools = map[string]*PoolState{}
 	}
 	s.loadEvents()
+	migratedAwg := false
 	for i := range s.root.Pools {
 		s.root.Pools[i].Settings = s.root.Pools[i].Settings.WithDefaults()
 		if s.state.Pools[s.root.Pools[i].Name] == nil {
 			s.state.Pools[s.root.Pools[i].Name] = NewPoolState()
 		}
+		// миграция: у конфигов, добавленных до появления поля Awg,
+		// уровень обфускации считается один раз при старте
+		for j := range s.root.Pools[i].Configs {
+			if s.root.Pools[i].Configs[j].Awg != "" {
+				continue
+			}
+			raw, err := os.ReadFile(filepath.Join(s.PoolDir(s.root.Pools[i].Name), s.root.Pools[i].Configs[j].File))
+			if err != nil {
+				continue
+			}
+			s.root.Pools[i].Configs[j].Awg = wgconf.AwgLevelOf(raw)
+			migratedAwg = true
+		}
+	}
+	if migratedAwg {
+		_ = s.saveLocked(filepath.Join(base, "config.json"), s.root)
 	}
 	s.root.Settings = s.root.Settings.WithDefaults()
 	if data, err := json.Marshal(&s.state); err == nil {
@@ -599,7 +616,7 @@ func (s *Store) createPool(name string, settings PoolSettings, freeConfig *wgcon
 			os.Remove(path)
 			return Pool{}, errors.New("не удалось сохранить конфиг Amnezia Free")
 		}
-		pool.Configs = []ManagedConfig{{File: file, Original: "Amnezia Free", Endpoint: cfg.Endpoint(), PublicKey: cfg.Peer.PublicKey, Addresses: cfg.Addresses, Enabled: true}}
+		pool.Configs = []ManagedConfig{{File: file, Original: "Amnezia Free", Endpoint: cfg.Endpoint(), PublicKey: cfg.Peer.PublicKey, Addresses: cfg.Addresses, Enabled: true, Awg: freeConfig.Config.AwgLevel()}}
 	}
 	root := s.root
 	root.Pools = append(append([]Pool{}, s.root.Pools...), pool)
@@ -707,6 +724,7 @@ func (s *Store) AddConfigs(pool string, configs []wgconf.NamedConfig) (added int
 			PublicKey: nc.Config.Peer.PublicKey,
 			Enabled:   true,
 			Addresses: nc.Config.Addresses,
+			Awg:       nc.Config.AwgLevel(),
 		})
 		added++
 	}
