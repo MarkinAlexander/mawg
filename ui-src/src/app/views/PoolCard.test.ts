@@ -482,3 +482,57 @@ describe('PoolCard - узлы движкового пула (60-док)', () => 
     w.unmount();
   });
 });
+
+describe('PoolCard - генератор WARP (77-док)', () => {
+  const warpPool: PoolView = {
+    ...nativePool,
+    name: 'warp',
+    activeEndpoint: '162.159.192.7:2408',
+    settings: { ...nativePool.settings, warp: { mode: 'random' } },
+    configs: [{ file: 'w1.conf', original: 'w1', endpoint: '162.159.192.7:2408', enabled: true }],
+  };
+
+  it('у варп-пула есть кнопка «Генерация нового конфига», у обычного нет', () => {
+    const w = makeCard(warpPool);
+    expect(btn(w, 'Генерация нового конфига').length).toBe(1);
+    w.unmount();
+    const w2 = makeCard(nativePool);
+    expect(btn(w2, 'Генерация нового конфига').length).toBe(0);
+    w2.unmount();
+  });
+
+  it('чужой варп-пул (конфиг в сетях Cloudflare, без меты) тоже узнаётся', () => {
+    const w = makeCard({
+      ...warpPool,
+      settings: { ...nativePool.settings },
+    });
+    expect(btn(w, 'Генерация нового конфига').length).toBe(1);
+    w.unmount();
+  });
+
+  it('клик шлёт POST /pools/{name}/warp и тостит вердикт пробы', async () => {
+    const captured: { url?: string; body?: string } = {};
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: { method?: string; body?: unknown }) => {
+      const u = url as string;
+      if (u.endsWith('/status')) {
+        return new Response(JSON.stringify(statusFor()), { status: 200 });
+      }
+      if (u.endsWith('/pools/warp/warp')) {
+        captured.url = u;
+        captured.body = typeof init?.body === 'string' ? init.body : '';
+        return new Response(JSON.stringify({
+          pool: 'warp', added: 1,
+          results: [{ file: 'w2.conf', endpoint: '8.39.204.2:934', ok: true, detail: 'ok' }],
+        }), { status: 200 });
+      }
+      return new Response('{"ok":true}', { status: 200 });
+    }));
+    const w = makeCard(warpPool);
+    await btn(w, 'Генерация нового конфига')[0].trigger('click');
+    await vi.waitFor(() => expect(captured.url).toBeTruthy());
+    expect(captured.body).toBe('{}');
+    await vi.waitFor(() =>
+      expect(useToast().toasts.list.some((t) => t.text.includes('проба прошла'))).toBe(true));
+    w.unmount();
+  });
+});

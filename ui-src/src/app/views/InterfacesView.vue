@@ -17,6 +17,7 @@ import CaptchaHost from './CaptchaHost.vue'
 import PoolCard from './PoolCard.vue'
 import PoolCreateDialog from './PoolCreateDialog.vue'
 import PoolSettingsDialog from './PoolSettingsDialog.vue'
+import WarpGenerateDialog from './WarpGenerateDialog.vue'
 
 // Фаза 3.4 «Интерфейсы + WAN-probe» + Фаза 3.5 «Пулы» (44-дока §5.4-5.5).
 // WAN-блок в легаси живёт в карточке Системы, пулы - в шапке; по слову
@@ -30,6 +31,7 @@ const { confirm } = useConfirm();
 
 const createOpen = ref(false);
 const settingsFor = ref('');
+const warpOpen = ref(false);
 const bundles = useBundles();
 const bundleDlgOpen = ref(false);
 const bundleEditing = ref<BundleView | null>(null);
@@ -244,6 +246,27 @@ async function saveWan(): Promise<void> {
     :key="p.name"
     :pool="p"
     @settings="settingsFor = p.name"
+  />
+
+  <!-- id - якорь поиска (search.ts): генератор WARP, 77-док -->
+  <UiCard
+    id="card-warp"
+    title="Генератор WARP"
+    subtitle="Новые конфиги Cloudflare WARP: регистрация прямо с роутера, ключи генерируются локально, каждый конфиг проверяется живой пробой."
+  >
+    <div class="toolbar">
+      <UiButton
+        variant="primary"
+        @click="warpOpen = true"
+      >
+        Сгенерировать конфиги
+      </UiButton>
+    </div>
+    <UiHint text="Можно сделать несколько конфигов на разных адресах:портах - если провайдер придавит один, выживут остальные. Подход и списки маскировки - открытый проект warp-generator." />
+  </UiCard>
+  <WarpGenerateDialog
+    v-model:open="warpOpen"
+    @created="() => push('Пул WARP создан')"
   />
   <PoolCreateDialog v-model:open="createOpen" />
   <PoolSettingsDialog

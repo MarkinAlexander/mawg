@@ -1,0 +1,385 @@
+<script setup lang="ts">
+import { computed, ref, watch } from 'vue'
+import { UiBadge, UiBanner, UiButton, UiCheckbox, UiDialog, UiHint, UiInput, UiSelect, UiTextarea, type UiSelectOption } from '../../components/ui'
+import { useWarp, type WarpGenerateBody, type WarpPlan, type WarpResultOne } from '../../stores/warp'
+import { useStatus } from '../../stores/status'
+import { addrSecretIn } from '../secrets'
+
+// Диалог генератора WARP (77-док): N регистраций устройств Cloudflare ->
+// пул с готовыми конфигами, каждый конфиг проверяется живьём. Ключи
+// генерируются локально на роутере, наружу уходит только pubkey. Фазы
+// как в LxInstallDialog: форма -> прогресс (locked) -> результат.
+// Атрибуция обязательна (слово владельца): подход и списки сайтов -
+// warp-generator, ссылка в форме и в совете.
+const open = defineModel<boolean>('open', { default: false });
+const emit = defineEmits<{ created: [] }>();
+
+const warp = useWarp();
+const { refresh: refreshStatus } = useStatus();
+
+const dlg = ref<{
+  phase: 'form' | 'progress' | 'result'
+  count: string
+  mode: 'random' | 'preset' | 'custom'
+  preset: string
+  custom: string
+  sites: string[]
+  domains: string
+  plan: WarpPlan | null
+} | null>(null);
+
+const modeOptions: UiSelectOption[] = [
+  { value: 'random', label: 'Случайно: у каждого конфига свой адрес:порт' },
+  { value: 'preset', label: 'Из проверенного списка' },
+  { value: 'custom', label: 'Свой эндпоинт' },
+];
+
+watch(open, async (v) => {
+  if (!v) return;
+  if (!warp.state.loaded) void warp.refresh();
+  dlg.value = {
+    phase: 'form',
+    count: '3',
+    mode: 'random',
+    preset: warp.state.presets?.presets[0] || '',
+    custom: '',
+    sites: [],
+    domains: '',
+    plan: null,
+  };
+});
+
+const maxCount = computed(() => warp.state.presets?.limits.count || 16);
+const countErr = computed(() => {
+  const n = Number(dlg.value?.count || 0);
+  return Number.isInteger(n) && n >= 1 && n <= maxCount.value
+    ? null
+    : `количество конфигов - от 1 до ${maxCount.value}`;
+});
+const fixedEndpoint = computed(() => {
+  if (dlg.value?.mode === 'preset') return dlg.value.preset;
+  if (dlg.value?.mode === 'custom') return dlg.value.custom.trim();
+  return '';
+});
+const fixedErr = computed(() => {
+  if (dlg.value?.mode === 'random') return null;
+  const ep = fixedEndpoint.value;
+  if (!ep) return 'укажите эндпоинт';
+  return /^[a-z0-9.[\]:]+$/i.test(ep) && /:\d+$/.test(ep) ? null : 'эндпоинт в форме host:порт';
+});
+const canGo = computed(() => !!dlg.value && !countErr.value && !fixedErr.value);
+
+const siteList = computed(() => warp.state.presets?.sites || []);
+const domainHint = computed(() => {
+  const hints = warp.state.presets?.domainHints || [];
+  return hints.length ? 'например: ' + hints.join(', ') : '';
+});
+
+function domainList(): string[] {
+  return (dlg.value?.domains || '')
+    .split(/[\s,;]+/)
+    .map((d) => d.trim())
+    .filter(Boolean);
+}
+
+async function run(): Promise<void> {
+  if (!dlg.value || !canGo.value) return;
+  dlg.value.phase = 'progress';
+  const body: WarpGenerateBody = {
+    count: Number(dlg.value.count) || 0,
+    mode: 'random',
+    sites: dlg.value.sites,
+    domains: domainList(),
+  };
+  if (dlg.value.mode !== 'random') {
+    body.mode = 'fixed';
+    body.endpoint = fixedEndpoint.value;
+  }
+  const plan = await warp.generate(body);
+  if (!dlg.value) return;
+  dlg.value.plan = plan;
+  dlg.value.phase = 'result';
+  if (plan.pool) {
+    emit('created');
+  }
+  void refreshStatus();
+}
+
+function resultTitle(): string {
+  const plan = dlg.value?.plan;
+  if (plan?.pool) return `Пул ${plan.pool} создан: конфигов ${plan.added || 0}`;
+  if (plan?.error) return 'Генерация не удалась';
+  return 'Готово';
+}
+function resultOk(): boolean {
+  return !!dlg.value?.plan?.pool;
+}
+function resLine(res: WarpResultOne): string {
+  if (res.error) return `${res.endpoint} - ошибка: ${res.error}`;
+  if (!res.ok) return `${res.endpoint} - не отвечает: ${res.detail || 'проба не прошла'}`;
+  return `${res.endpoint}${res.address ? ' - адрес ' + res.address : ''} - работает: ${res.detail || 'проба прошла'}`;
+}
+function dlHref(res: WarpResultOne, variant: string): string {
+  const pool = dlg.value?.plan?.pool || '';
+  return `/api/v1/pools/${encodeURIComponent(pool)}/configs/${encodeURIComponent(res.file || '')}` +
+    (variant ? '?variant=' + variant : '');
+}
+</script>
+
+<template>
+  <UiDialog
+    v-model:open="open"
+    title="Генератор WARP"
+    :busy="dlg?.phase === 'progress'"
+    :locked="dlg?.phase === 'progress'"
+    width="520px"
+  >
+    <template v-if="dlg">
+      <template v-if="dlg.phase === 'form'">
+        <div class="wtext">
+          Регистрируем устройства Cloudflare WARP прямо с роутера и собираем пул.
+          Ключи генерируются локально - наружу уходит только публичный.
+        </div>
+        <UiInput
+          v-model="dlg.count"
+          type="number"
+          label="Сколько конфигов"
+          :validator="() => countErr"
+        />
+        <UiSelect
+          v-model="dlg.mode"
+          :options="modeOptions"
+          label="Эндпоинты"
+        />
+        <UiSelect
+          v-if="dlg.mode === 'preset'"
+          v-model="dlg.preset"
+          :options="(warp.state.presets?.presets || []).map((p) => ({ value: p, label: p }))"
+          label="Проверенная пара"
+        />
+        <UiInput
+          v-if="dlg.mode === 'custom'"
+          v-model="dlg.custom"
+          label="Эндпоинт"
+          placeholder="162.159.192.1:2408"
+          :validator="() => fixedErr"
+        />
+        <UiHint
+          v-if="dlg.mode === 'random'"
+          :text="'Случайные пары из сетей WARP: ' + (warp.state.presets?.v4Blocks || []).join(', ') + ' и порты ' + (warp.state.presets?.ports || []).slice(0, 6).join(', ') + '... Если провайдер придавит один адрес:порт - выживут остальные.'"
+        />
+        <details
+          class="sites"
+          open
+        >
+          <summary>Маскировочные сайты (что пойдёт через туннель)</summary>
+          <div class="sitelist">
+            <UiCheckbox
+              v-for="s in siteList"
+              :key="s.id"
+              :model-value="dlg.sites.includes(s.id)"
+              :label="`${s.label} (${s.count})`"
+              @update:model-value="(v: boolean) => { if (v) dlg?.sites.push(s.id); else { const i = dlg?.sites.indexOf(s.id); if (i !== undefined && i >= 0) dlg?.sites.splice(i, 1) } }"
+            />
+          </div>
+          <UiTextarea
+            v-model="dlg.domains"
+            label="Свои домены"
+            :placeholder="domainHint"
+          />
+          <UiHint
+            v-if="!dlg.sites.length && !dlg.domains.trim()"
+            text="Ничего не выбрано - туннель на весь интернет (0.0.0.0/0)."
+          />
+        </details>
+        <UiHint text="Подход генерации и списки сайтов - открытый проект warp-generator: там же можно сгенерировать конфиг вручную - https://warp-generation.github.io/" />
+      </template>
+      <div
+        v-else-if="dlg.phase === 'progress'"
+        class="progress"
+      >
+        Регистрируем устройства в Cloudflare и проверяем каждый конфиг живой пробой.
+        До минуты на конфиг, не закрывайте панель.
+      </div>
+      <template v-else>
+        <div
+          class="rstitle"
+          :class="resultOk() ? 'ok' : 'err'"
+        >
+          {{ resultTitle() }}
+        </div>
+        <template v-if="dlg.plan?.error && !dlg.plan?.pool">
+          <div class="rsout">
+            {{ dlg.plan.error }}
+          </div>
+          <UiBanner
+            v-if="dlg.plan.unreachable"
+            kind="warn"
+            text="Оба адреса Cloudflare недоступны с вашей сети. Без анти-DPI пробиться обычно нечем - как с DNS."
+          >
+            <ul class="advice">
+              <li>
+                Анти-DPI для роутеров:
+                <a
+                  href="https://github.com/AloofLibra/zator"
+                  target="_blank"
+                  rel="noopener"
+                >zator</a>
+                (обвязка оригинального zapret2 от bol-van). Работает не на всех сетях:
+                результат зависит от настроек ТСПУ и требует ручной настройки.
+              </li>
+              <li>
+                Можно сгенерировать конфиг на сайте
+                <a
+                  href="https://warp-generation.github.io/"
+                  target="_blank"
+                  rel="noopener"
+                >warp-generation.github.io</a>
+                и вставить его в панель как конфиг AmneziaWG (сайт генерирует сразу с обфускацией).
+              </li>
+            </ul>
+          </UiBanner>
+        </template>
+        <template v-else>
+          <div
+            v-for="(res, i) in dlg.plan?.results || []"
+            :key="i"
+            class="resrow"
+          >
+            <UiBadge
+              :variant="res.error ? 'err' : res.ok ? 'ok' : 'warn'"
+              :text="res.error ? 'ошибка' : res.ok ? 'работает' : 'не отвечает'"
+            />
+            <span
+              class="restext"
+              :class="{ secret: addrSecretIn(res.address) }"
+            >{{ resLine(res) }}</span>
+            <span
+              v-if="res.file"
+              class="resdl"
+            >
+              <a
+                :href="dlHref(res, '')"
+                download
+              >WG</a>
+              ·
+              <a
+                :href="dlHref(res, 'awg')"
+                download
+                title="с полями обфускации для клиентов AmneziaWG (Windows и др.)"
+              >AWG</a>
+            </span>
+          </div>
+          <div
+            v-for="(w, i) in dlg.plan?.warnings || []"
+            :key="'w' + i"
+            class="warnline"
+          >
+            {{ w }}
+          </div>
+          <UiHint text="AWG-вариант - для внешних клиентов AmneziaWG: тот же конфиг с полями обфускации уровня 2.0. Нативные интерфейсы Кинетиков его не понимают." />
+          <UiHint text="Подход и списки сайтов - проект warp-generator: https://warp-generation.github.io/" />
+        </template>
+      </template>
+    </template>
+    <template #footer>
+      <template v-if="dlg?.phase === 'form'">
+        <UiButton @click="open = false">
+          Отмена
+        </UiButton>
+        <UiButton
+          variant="primary"
+          :disabled="!canGo"
+          @click="run"
+        >
+          Сгенерировать
+        </UiButton>
+      </template>
+      <UiButton
+        v-else-if="dlg?.phase === 'result'"
+        variant="primary"
+        @click="open = false"
+      >
+        Закрыть
+      </UiButton>
+    </template>
+  </UiDialog>
+</template>
+
+<style scoped>
+.wtext {
+  font-size: 13px;
+  line-height: 1.5;
+  margin-bottom: 4px;
+}
+.sites {
+  margin: 6px 0;
+}
+.sites summary {
+  cursor: pointer;
+  font-size: 12.5px;
+  color: var(--dim);
+}
+.sitelist {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 2px 10px;
+  margin: 6px 0;
+}
+.progress {
+  display: flex;
+  align-items: center;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.rstitle {
+  font-weight: 600;
+}
+.rstitle.ok {
+  color: var(--ok);
+}
+.rstitle.err {
+  color: var(--err);
+}
+.rsout {
+  font: 11.5px/1.5 ui-monospace, monospace;
+  color: var(--dim);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 40vh;
+  overflow: auto;
+  margin: 6px 0;
+}
+.resrow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+.restext {
+  flex: 1;
+  min-width: 0;
+  word-break: break-word;
+}
+.resdl a {
+  color: var(--accent);
+}
+.warnline {
+  font-size: 12px;
+  color: var(--dim);
+}
+.advice {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.advice a {
+  color: var(--accent);
+}
+</style>
