@@ -26,6 +26,9 @@ func TestFirstOpkgArch(t *testing.T) {
 		{"arch noarch 1\narch all 1\n", ""},
 		{"", ""},
 		{"мусор без полей\n", ""},
+		// живой вывод пользователя (Keenetic aarch64, Entware + keendev):
+		// all пропускается, берётся первая неслужебная архитектура
+		{"arch all 100\narch aarch64-3.10 150\narch aarch64-3.10_kn 200\n", "aarch64-3.10"},
 	}
 	for _, c := range cases {
 		if got := FirstOpkgArch(c.out); got != c.want {
