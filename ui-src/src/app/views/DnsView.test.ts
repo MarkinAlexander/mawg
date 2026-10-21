@@ -684,7 +684,9 @@ describe('DnsView - зонные DNS (форк rev13)', () => {
     // открываем селект ОДНИМ кликом (клик внутри waitFor тогглит open/close)
     const trigger = dlg.findAll('button').find((b) => b.text().includes('напрямую'));
     await trigger!.trigger('click');
-    await nextTick();
+    // готовые интерфейсы грузятся запросом при открытии диалога - на медленном
+    // раннере CI их ещё нет сразу (гонка воркфлоу v0.7.6, 83-док)
+    await vi.waitFor(() => expect(dlg.text()).toContain('wg9 - ручной WG'));
     const snap = dlg.text();
     // пулы по одному разу
     expect(snap.match(/proton/g)?.length).toBe(1);
