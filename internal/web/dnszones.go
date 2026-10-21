@@ -218,17 +218,6 @@ func (s *Server) applyDnsZones(ctx context.Context, zones []store.DnsZone) (warn
 	return warnings, nil
 }
 
-// mtSystemInterfaces - GET /api/v1/mt/system-interfaces: netlink-интерфейсы,
-// видимые MT (в т.ч. настроенные руками, мимо пулов mawg) - выбор пути зоны.
-func (s *Server) mtSystemInterfaces(w http.ResponseWriter, r *http.Request) {
-	ifaces, err := s.mtClient().SystemInterfaces(r.Context())
-	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"interfaces": ifaces})
-}
-
 // getDnsZones - GET /api/v1/dns/zones: сохранённая таблица + capability +
 // живой стейт зон из форка (alive/active по серверам каждой зоны).
 func (s *Server) getDnsZones(w http.ResponseWriter, r *http.Request) {

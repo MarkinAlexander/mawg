@@ -81,21 +81,3 @@ func (c *Client) SetDnsZones(ctx context.Context, zones []DnsZoneSpec) error {
 	return &statusError{method: http.MethodPut, path: "/api/v1/dns/zones", code: resp.StatusCode}
 }
 
-// SystemIface - интерфейс из netlink-списка MT (форк, /api/v1/system/interfaces):
-// id - имя устройства для группы (wg0/nwg2/eth5...), name - человекочитаемое.
-type SystemIface struct {
-	ID   string `json:"id"`
-	Name string `json:"name,omitempty"`
-}
-
-// SystemInterfaces - netlink-интерфейсы, видимые MT (в т.ч. настроенные
-// руками, мимо пулов mawg); для зонного DNS - выбор пути зоны.
-func (c *Client) SystemInterfaces(ctx context.Context) ([]SystemIface, error) {
-	var out struct {
-		Interfaces []SystemIface `json:"interfaces"`
-	}
-	if err := c.call(ctx, http.MethodGet, "/api/v1/system/interfaces", nil, &out); err != nil {
-		return nil, err
-	}
-	return out.Interfaces, nil
-}
