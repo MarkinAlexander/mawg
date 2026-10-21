@@ -489,6 +489,14 @@ describe('DnsView - зонные DNS (форк rev13)', () => {
       if (url.endsWith('/status')) {
         return new Response(JSON.stringify({ pools: [{ name: 'proton' }, { name: 'warp' }] }), { status: 200 });
       }
+      if (url.endsWith('/mt/interfaces')) {
+        return new Response(JSON.stringify({ interfaces: [
+          { device: 'proton', title: 'пул proton' },   // дублирует пул
+          { device: 'tun1', title: 'warp' },            // движковый пул - дублирует
+          { device: 'work', title: '' },                // device = имя пула
+          { device: 'wg9', title: 'ручной WG' },        // уникальный - остаётся
+        ] }), { status: 200 });
+      }
       return new Response(JSON.stringify({}), { status: 200 });
     });
   }
@@ -570,6 +578,35 @@ describe('DnsView - зонные DNS (форк rev13)', () => {
     expect((capture.probe || []).some((u) => u.includes('/dns/zones/z1/probe'))).toBe(true);
     // выключенной зоны «Проверить» недоступна (кнопки по одной на зону:
     // первая с таким текстом - у включённой z1)
+    w.unmount();
+  });
+
+  it('дедуп пути: интерфейс, чьё устройство/подпись - имя пула, не дублируется (скрин друга)', async () => {
+    useStatus().state.data = {
+      version: 'v', platform: 'openwrt', backendName: 'openwrt', authEnabled: false,
+      nativeAWG3: false, mtSources: true,
+      pools: [{ name: 'proton' }, { name: 'warp' }, { name: 'work' }] as Status['pools'],
+    } as Status;
+    vi.stubGlobal('fetch', zonesStub());
+    const w = mount(DnsView);
+    const btn = (label: string) => w.findAll('#card-dns-zones button').find((b) => b.text().includes(label));
+    await vi.waitFor(() => expect(btn('+ зона')).toBeTruthy());
+    await btn('+ зона')!.trigger('click');
+    await nextTick();
+    const dlg = w.find('dialog');
+    // открываем селект ОДНИМ кликом (клик внутри waitFor тогглит open/close)
+    const trigger = dlg.findAll('button').find((b) => b.text().includes('напрямую'));
+    await trigger!.trigger('click');
+    await nextTick();
+    const snap = dlg.text();
+    // пулы по одному разу
+    expect(snap.match(/proton/g)?.length).toBe(1);
+    expect(snap.match(/warp/g)?.length).toBe(1);
+    // iface-дубли пула выброшены (proton-девайс, tun1+warp, work-девайс)
+    expect(snap).not.toContain('iface:proton');
+    expect(snap).not.toContain('tun1');
+    // уникальный готовый интерфейс остался
+    expect(snap).toContain('wg9 - ручной WG');
     w.unmount();
   });
 });
