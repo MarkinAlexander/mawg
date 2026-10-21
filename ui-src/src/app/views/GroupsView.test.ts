@@ -546,3 +546,54 @@ describe('GroupsView - массовое включение/выключение 
     w.unmount();
   });
 });
+
+describe('GroupsView - скрытие выключенного (80-док, бонус)', () => {
+  it('по умолчанию всё видно; галка прячет выключенную группу и правила, состояние - в localStorage', async () => {
+    localStorage.removeItem('mawg-hideoff');
+    const { w } = await makeView();
+    expect(block(w, 'g2').exists()).toBe(true); // выключенная группа на месте
+
+    // правила g1: jsdom не тогглит details кликом - open+toggle вручную
+    const det = block(w, 'g1').find('details');
+    (det.element as HTMLDetailsElement).open = true;
+    await det.trigger('toggle');
+    await nextTick();
+    expect(block(w, 'g1').text()).toContain('149.154.160.0/20'); // выключенное правило видно
+
+    const cb = w.find('.srow input[type="checkbox"]');
+    expect(cb.exists()).toBe(true);
+    await cb.setValue(true);
+    await nextTick();
+
+    expect(block(w, 'g2').exists()).toBe(false); // выключенная группа скрыта
+    expect(block(w, 'g1').text()).not.toContain('149.154.160.0/20'); // правило скрыто
+    expect(block(w, 'g1').text()).toContain('t.me'); // включённые остаются
+    expect(localStorage.getItem('mawg-hideoff')).toBe('1');
+    w.unmount();
+  });
+
+  it('галка переживает перезагрузку (localStorage при монтировании)', async () => {
+    localStorage.setItem('mawg-hideoff', '1');
+    const { w } = await makeView();
+    expect(block(w, 'g2').exists()).toBe(false);
+    const cb = w.find('.srow input[type="checkbox"]');
+    expect((cb.element as HTMLInputElement).checked).toBe(true);
+    w.unmount();
+    localStorage.removeItem('mawg-hideoff');
+  });
+
+  it('пустой список под фильтром - честная подсказка', async () => {
+    localStorage.removeItem('mawg-hideoff');
+    const { w } = await makeView();
+    // поиск находит только выключенную группу, галка её прячет - пусто
+    const search = w.find('.srow input[type="text"]');
+    await search.setValue('blackout');
+    await nextTick();
+    expect(block(w, 'g2').exists()).toBe(true);
+    await w.find('.srow input[type="checkbox"]').setValue(true);
+    await nextTick();
+    expect(block(w, 'g2').exists()).toBe(false);
+    expect(w.text()).toContain('не попало ни одной включённой');
+    w.unmount();
+  });
+});

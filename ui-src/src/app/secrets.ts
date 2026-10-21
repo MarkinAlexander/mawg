@@ -24,7 +24,7 @@ export function hostOf(v: string): string {
 export function collectHosts(pools: PoolView[]): Set<string> {
   const out = new Set<string>();
   for (const p of pools) {
-    for (const e of [p.activeEndpoint, ...(p.configs || []).map((c) => c.endpoint || '')]) {
+    for (const e of [p.activeEndpoint || '', ...(p.configs || []).map((c) => c.endpoint || '')]) {
       const h = hostOf(e);
       // 'узлов: 4' и прочие не-адреса отсекаются: у хоста есть точка
       if (h.includes('.')) out.add(h);

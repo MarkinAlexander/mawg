@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import {
-  UiBadge, UiBanner, UiButton, UiCard, UiColor, UiDialog, UiHelp, UiHint, UiIcon,
+  UiBadge, UiBanner, UiButton, UiCard, UiCheckbox, UiColor, UiDialog, UiHelp, UiHint, UiIcon,
   UiInput, UiSelect, type UiSelectOption, UiSwitch, UiTextarea,
 } from '../../components/ui'
 import { dropIndex, isBeforeHalf, reorder } from '../../components/ui/dnd'
@@ -13,9 +13,9 @@ import { G } from '../glossary'
 import type { GroupView, Preset, Rule } from '../../api/types'
 import {
   cyclesValid, degradedText, dupsEntries, groupHasDup, groupMatchCount,
-  groupMatches, hlSegs, IMPORT_TYPE_OPTIONS, normRuleValue, POLICY_SHORT,
-  presetRulesLine, RULE_HINTS, RULE_PLACEHOLDERS, RULE_TYPES, ruleTypeOptions,
-  showAllRules, srcBadge, warnTitle,
+  groupMatches, hideOffGroups, hideOffRules, hlSegs, IMPORT_TYPE_OPTIONS,
+  normRuleValue, POLICY_SHORT, presetRulesLine, RULE_HINTS, RULE_PLACEHOLDERS,
+  RULE_TYPES, ruleTypeOptions, showAllRules, srcBadge, warnTitle,
 } from './groupsLogic'
 import CascadeDialog from './CascadeDialog.vue'
 import GroupDialog from './GroupDialog.vue'
@@ -176,6 +176,26 @@ const searchQ = ref('');
 const savedOpen = ref<Set<string> | null>(null);
 const openMt = ref<Set<string>>(new Set()); // открытые details, переживают перерендер
 
+// --- чекер скрытия выключенного (80-док, бонус): групп много, глазами
+// фильтровать тяжело. Фильтры ОТОбРАЖЕНИЯ: выключенные группы и/или
+// выключенные правила. Состояние - в localStorage по паттерну privacy
+// (переживает перезагрузку, не лезет в настройки сервера).
+const HIDE_OFF_LS = 'mawg-hideoff';
+const hideOff = ref(false);
+try {
+  hideOff.value = localStorage.getItem(HIDE_OFF_LS) === '1';
+} catch {
+  // jsdom/приватный режим без localStorage - просто не переживает ребут
+}
+function setHideOff(v: boolean): void {
+  hideOff.value = v;
+  try {
+    localStorage.setItem(HIDE_OFF_LS, v ? '1' : '0');
+  } catch {
+    // некритично: фильтр живет сессию
+  }
+}
+
 // открытость details в openMt (легаси det.ontoggle 1673)
 function onDetToggle(gid: string, e: Event): void {
   const opened = (e.target as HTMLDetailsElement).open;
@@ -197,16 +217,18 @@ watch(q, (v) => {
 
 const visible = computed(() => {
   const s = searchQ.value;
-  return s ? state.groups.filter((g) => groupMatches(g, s)) : state.groups;
+  const base = s ? state.groups.filter((g) => groupMatches(g, s)) : state.groups;
+  return hideOffGroups(base, hideOff.value);
 });
 
 // при поиске внутри группы - только совпавшие правила, кроме случая
-// «совпало имя, но ни одно правило» (легаси 1680-1684)
+// «совпало имя, но ни одно правило» (легаси 1680-1684); чекбокс
+// «скрывать выключенные» дополнительно убирает правила с enable=false
 function ruleRows(g: GroupView): Rule[] {
   const list = g.rules || [];
   const s = searchQ.value;
-  if (showAllRules(g, s)) return list;
-  return list.filter((rl) => (rl.rule || '').toLowerCase().includes(s) || (rl.name || '').toLowerCase().includes(s));
+  const filtered = showAllRules(g, s) ? list : list.filter((rl) => (rl.rule || '').toLowerCase().includes(s) || (rl.name || '').toLowerCase().includes(s));
+  return hideOffRules(filtered, hideOff.value);
 }
 
 // --- editingLock: фокус в ТЕКСТОВЫХ полях списка (легаси
@@ -246,7 +268,9 @@ function rowKey(scope: string, id: string): string {
   return scope + ':' + id;
 }
 function isDragRow(scope: string, id: string): boolean {
-  return !searchQ.value && armed.value === rowKey(scope, id);
+  // при поиске/скрытии выключенного DnD отключён: фильтрованный список
+  // отправил бы частичный список id
+  return !searchQ.value && !hideOff.value && armed.value === rowKey(scope, id);
 }
 function onDragStart(e: DragEvent, scope: string, id: string): void {
   if (armed.value !== rowKey(scope, id)) {
@@ -647,6 +671,14 @@ onMounted(openFromLink);
         placeholder="поиск: показываются только группы с совпадениями"
         class="sinput"
       />
+      <span class="offfilters">
+        <UiCheckbox
+          :model-value="hideOff"
+          label="скрывать выключенные"
+          tooltip="убирает с экрана выключенные группы и выключенные правила; счётчики в шапке группы считают всё по-прежнему"
+          @update:model-value="setHideOff"
+        />
+      </span>
     </div>
 
     <!-- список групп (легаси renderRules 1591) -->
@@ -663,6 +695,10 @@ onMounted(openFromLink);
       <UiHint
         v-else-if="!state.available"
         text="MagiTrickle недоступен"
+      />
+      <UiHint
+        v-else-if="hideOff && !visible.length"
+        text="Под фильтр «скрывать выключенные» не попало ни одной включённой группы - снимите галку, чтобы увидеть остальные."
       />
       <UiHint
         v-else-if="searchQ && !visible.length"
@@ -1200,10 +1236,17 @@ onMounted(openFromLink);
 .srow {
   display: flex;
   margin-top: 10px;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 .sinput {
   flex: 1;
   min-width: 200px;
+}
+.offfilters {
+  display: flex;
+  align-items: center;
 }
 .mtlist {
   margin-top: 10px;

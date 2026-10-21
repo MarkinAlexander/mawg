@@ -73,6 +73,12 @@ export const SEARCH_PLACES: SearchPlace[] = [
     anchor: 'card-rules',
   },
   {
+    title: 'Зонные DNS: домены зоны - свой DNS через свой туннель',
+    keywords: ['зона', 'зонный', 'домены', 'корпоративный', 'свой dns', 'split', 'corp', 'fail-closed', 'утечка'],
+    route: '/next/dns',
+    anchor: 'card-dns-zones',
+  },
+  {
     title: 'Резервные копии: полный бэкап и восстановление',
     keywords: ['бэкап', 'резерв', 'копия', 'восстановить', 'backup', 'архив', 'tar', 'настройки панели', 'порт'],
     route: '/next/backups',

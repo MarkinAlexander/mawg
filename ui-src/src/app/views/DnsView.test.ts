@@ -340,11 +340,13 @@ describe('DnsView - правила автопереключения L1-L5', () =
     const capture: { put?: unknown; probe?: boolean } = {};
     vi.stubGlobal('fetch', policyStub(capture));
     const w = mount(DnsView);
-    const btn = (label: string) => w.findAll('button').find((b) => b.text().includes(label));
+    // (селектор по карточке политики: у диалога зонных DNS в футере такая
+    // же кнопка - общий поиск по кнопкам ловит её раньше данных)
+    const btn = (label: string) => w.findAll('#card-dns-policy button').find((b) => b.text().includes(label));
     await vi.waitFor(() => expect(btn('Сохранить и применить')).toBeTruthy());
 
     // без правок кнопка недоступна (слово владельца 2026-10-18)
-    const saveBtn = w.findAll('button').find((b) => b.text().includes('Сохранить и применить'))!;
+    const saveBtn = w.findAll('#card-dns-policy button').find((b) => b.text().includes('Сохранить и применить'))!;
     expect(saveBtn.attributes('disabled')).toBeDefined();
 
     const areas = w.findAll('#card-dns-policy textarea');
@@ -436,6 +438,138 @@ describe('DnsView - правила автопереключения L1-L5', () =
     const w = mount(DnsView);
     await vi.waitFor(() => expect(w.find('#card-dns-policy').text()).toContain('нужен MagiTrickle 0.8.2-rev8+'));
     expect(w.find('#card-dns-policy textarea').exists()).toBe(false);
+    w.unmount();
+  });
+});
+
+describe('DnsView - зонные DNS (форк rev13)', () => {
+  const zonesPayload = {
+    capable: true,
+    zones: [
+      { id: 'z1', zone: 'corp.example.com', upstreams: ['10.8.0.1:53', '10.8.0.2:53'], pool: 'proton', enable: true },
+      { id: 'z2', zone: 'lab.corp.example.com', upstreams: ['tls://10.8.1.1:853'], enable: false },
+      { id: 'z3', zone: 'old.example.net', upstreams: ['192.0.2.53:53'], fallbackOpen: true, enable: true },
+    ],
+    live: {
+      available: true,
+      zones: [
+        { zone: 'corp.example.com', fallback: false, upstreams: [
+          { address: '10.8.0.1:53', alive: true, active: true, fails: 0, oks: 9, lastSwap: '0001-01-01T00:00:00Z' },
+          { address: '10.8.0.2:53', alive: false, active: false, fails: 3, oks: 0, lastSwap: '2026-10-20T10:00:00Z', reason: 'dial: i/o timeout' },
+        ] },
+      ],
+    },
+  };
+
+  function zonesStub(capture?: { put?: unknown; probe?: string[] }) {
+    return vi.fn(async (url: string, opts?: RequestInit) => {
+      if (url.endsWith('/dns/zones') && (opts?.method ?? 'GET') === 'PUT') {
+        if (capture) capture.put = JSON.parse(String(opts?.body));
+        const sent = JSON.parse(String(opts?.body));
+        return new Response(JSON.stringify({ ok: true, zones: sent.zones, warnings: [] }), { status: 200 });
+      }
+      if (url.endsWith('/dns/zones')) {
+        return new Response(JSON.stringify(zonesPayload), { status: 200 });
+      }
+      if (url.includes('/dns/zones/') && url.endsWith('/probe')) {
+        if (capture) capture.probe = (capture.probe || []).concat(url);
+        return new Response(JSON.stringify({ results: [
+          { level: 'зона corp.example.com: 10.8.0.1:53', kind: 'udp', server: '10.8.0.1:53', verdict: 'clean', canonical: 5, total: 5, ms: 34 },
+        ] }), { status: 200 });
+      }
+      if (url.endsWith('/dns/state')) {
+        return new Response(JSON.stringify(statePayload), { status: 200 });
+      }
+      if (url.endsWith('/dns/upstreams')) {
+        return new Response(JSON.stringify({ capable: false }), { status: 200 });
+      }
+      if (url.endsWith('/dns/policy')) {
+        return new Response(JSON.stringify({ capable: false, policy: { enabled: false } }), { status: 200 });
+      }
+      if (url.endsWith('/status')) {
+        return new Response(JSON.stringify({ pools: [{ name: 'proton' }, { name: 'warp' }] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+  }
+
+  it('карточка: зоны с бейджами пути/выключена/fallback, живые серверы зоны', async () => {
+    useStatus().state.data = {
+      version: 'v', platform: 'openwrt', backendName: 'openwrt', authEnabled: false,
+      nativeAWG3: false, mtSources: true,
+      pools: [{ name: 'proton' }, { name: 'warp' }] as Status['pools'],
+    } as Status;
+    vi.stubGlobal('fetch', zonesStub());
+    const w = mount(DnsView);
+    await vi.waitFor(() => expect(w.find('#card-dns-zones').text()).toContain('corp.example.com'));
+    const text = w.find('#card-dns-zones').text();
+    expect(text).toContain('lab.corp.example.com');
+    expect(text).toContain('выключена');
+    expect(text).toContain('через proton');
+    expect(text).toContain('fallback');
+    expect(text).toContain('10.8.0.1:53');
+    expect(text).toContain('жив: 10.8.0.1:53');
+    expect(text).toContain('мёртв: 10.8.0.2:53');
+    // мёртвый - с причиной в tooltip
+    const dead = w.findAll('#card-dns-zones .uibadge').find((b) => b.text().includes('мёртв: 10.8.0.2:53'));
+    expect(dead?.attributes('title')).toContain('dial: i/o timeout');
+    expect(w.find('#card-dns-zones').html()).not.toContain('<uibadge');
+    w.unmount();
+  });
+
+  it('rev12 - честный хинт вместо карточки, кнопки нет', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.endsWith('/dns/zones')) {
+        return new Response(JSON.stringify({ capable: false, zones: [] }), { status: 200 });
+      }
+      if (url.endsWith('/dns/state')) return new Response(JSON.stringify(statePayload), { status: 200 });
+      return new Response(JSON.stringify({}), { status: 200 });
+    }));
+    const w = mount(DnsView);
+    await vi.waitFor(() => expect(w.find('#card-dns-zones').text()).toContain('нужен MagiTrickle 0.8.2-rev13+'));
+    expect(w.findAll('#card-dns-zones button').some((b) => b.text().includes('зона'))).toBe(false);
+    w.unmount();
+  });
+
+  it('«+ зона»: диалог -> сохранение -> PUT со всей таблицей (новая запись в конце)', async () => {
+    const capture: { put?: unknown; probe?: string[] } = {};
+    useStatus().state.data = {
+      version: 'v', platform: 'openwrt', backendName: 'openwrt', authEnabled: false,
+      nativeAWG3: false, mtSources: true,
+      pools: [{ name: 'proton' }] as Status['pools'],
+    } as Status;
+    vi.stubGlobal('fetch', zonesStub(capture));
+    const w = mount(DnsView);
+    const btn = (label: string) => w.findAll('#card-dns-zones button').find((b) => b.text().includes(label));
+    await vi.waitFor(() => expect(btn('+ зона')).toBeTruthy());
+    await btn('+ зона')!.trigger('click');
+
+    const dlg = w.find('dialog');
+    expect(dlg.exists()).toBe(true);
+    const inputs = dlg.findAll('input');
+    await inputs[0].setValue('new.corp.example.com.'); // хвостовая точка срежется
+    const areas = dlg.findAll('textarea');
+    await areas[0].setValue('10.9.0.1');
+    await dlg.findAll('button').find((b) => b.text().includes('Сохранить и применить'))!.trigger('click');
+    await vi.waitFor(() => {
+      const put = capture.put as { zones: { zone: string; upstreams: string[]; enable: boolean }[] } | undefined;
+      expect(put?.zones).toHaveLength(4);
+      expect(put?.zones[3]).toMatchObject({ zone: 'new.corp.example.com', upstreams: ['10.9.0.1'], enable: true });
+    });
+    w.unmount();
+  });
+
+  it('«Проверить» по зоне: POST /dns/zones/{id}/probe -> вердикты в карточке зоны', async () => {
+    const capture: { put?: unknown; probe?: string[] } = {};
+    vi.stubGlobal('fetch', zonesStub(capture));
+    const w = mount(DnsView);
+    const btn = (label: string) => w.findAll('#card-dns-zones button').find((b) => b.text().includes(label));
+    await vi.waitFor(() => expect(btn('Проверить')).toBeTruthy());
+    await btn('Проверить')!.trigger('click');
+    await vi.waitFor(() => expect(w.find('#card-dns-zones').text()).toContain('зона corp.example.com: 10.8.0.1:53'));
+    expect((capture.probe || []).some((u) => u.includes('/dns/zones/z1/probe'))).toBe(true);
+    // выключенной зоны «Проверить» недоступна (кнопки по одной на зону:
+    // первая с таким текстом - у включённой z1)
     w.unmount();
   });
 });
