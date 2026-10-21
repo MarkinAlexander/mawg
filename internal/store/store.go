@@ -325,6 +325,23 @@ func (s *Store) SetDNSProbeServers(list []DnsProbeServer) error {
 	return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
 }
 
+// DnsZones - таблица зонного DNS.
+func (s *Store) DnsZones() []DnsZone {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]DnsZone(nil), s.root.Settings.DnsZones...)
+}
+
+func (s *Store) SetDnsZones(list []DnsZone) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if list == nil {
+		list = []DnsZone{}
+	}
+	s.root.Settings.DnsZones = list
+	return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
+}
+
 // GroupPolicy - политика поведения группы при отвале интерфейса.
 func (s *Store) GroupPolicy(id string) GroupPolicy {
 	s.mu.Lock()

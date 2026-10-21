@@ -77,6 +77,27 @@ func (s *Server) mtDohUpstreamsCapable(ctx context.Context) bool {
 	return magitrickle.DohUpstreamsSupported(magitrickle.ConfigVersion(data))
 }
 
+// mtDnsZonesCapable - умеет ли подключённый MT зонный DNS (форк rev13+,
+// GET/PUT /api/v1/dns/zones). Порядок тот же: живой /api/v1/version,
+// фолбэк - configVersion дискового config.yaml.
+func (s *Server) mtDnsZonesCapable(ctx context.Context) bool {
+	if v, err := s.mtClient().GetVersion(ctx); err == nil && v != "" {
+		return magitrickle.DnsZonesSupported(v)
+	}
+	if s.backend == nil {
+		return false
+	}
+	path := s.backend.MTConfigPath()
+	if path == "" {
+		return false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	return magitrickle.DnsZonesSupported(magitrickle.ConfigVersion(data))
+}
+
 // mtRealVersion - версия РАБОТАЮЩЕГО бинаря MagiTrickle, а не opkg-пакета:
 // наш форк ставится поверх апстримного пакета, и «0.8.2-1» ничего не
 // говорит о ревизии. Порядок: живой GET /api/v1/version (форк rev5+),

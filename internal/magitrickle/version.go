@@ -71,6 +71,22 @@ func DohUpstreamsSupported(version string) bool {
 	return err == nil && n >= dohUpstreamsRevMin
 }
 
+// dnsZonesRevMin - первая ревизия форка с зонным DNS: таблица зон
+// dns-proxy (зона -> свои упорядоченные апстримы, fail-closed) и API
+// GET/PUT /api/v1/dns/zones (0.8.2-rev13).
+const dnsZonesRevMin = 13
+
+// DnsZonesSupported говорит, умеет ли MT зонный DNS (rev13+); на старых
+// ревизиях карточка «Зонные DNS» честно скрыта.
+func DnsZonesSupported(version string) bool {
+	m := revRe.FindStringSubmatch(version)
+	if m == nil {
+		return false
+	}
+	n, err := strconv.Atoi(m[1])
+	return err == nil && n >= dnsZonesRevMin
+}
+
 // RevOf - номер ревизии форка из строки версии (0.8.2-rev11-mawg-dev -> 11);
 // 0 = не форк или ревизия не читается.
 func RevOf(version string) int {

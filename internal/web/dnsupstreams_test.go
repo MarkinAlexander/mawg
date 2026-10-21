@@ -2,6 +2,8 @@ package web
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -16,13 +18,17 @@ import (
 
 // fakeMT - фейковый форк MT (rev8): /version, GET/PUT /dns/upstreams,
 // группы (bulk PUT для пресетов); PUT-тела собираются в lastPuts.
+// Зонные эндпоинты (rev13) и DELETE групп - для тестов зонного DNS.
 type fakeMT struct {
-	version    string
-	mu         sync.Mutex
-	lastPuts   []string
-	getCounter int
-	groups     []magitrickle.Group
-	groupPuts  []string // тела bulk/single PUT групп
+	version      string
+	mu           sync.Mutex
+	lastPuts     []string
+	getCounter   int
+	groups       []magitrickle.Group
+	groupSeq     int      // выдача id группам без id (как живой MT)
+	groupPuts    []string // тела bulk/single PUT групп
+	groupsDelete []string // id удалённых групп
+	zonePuts     []string // тела PUT /dns/zones
 }
 
 func (f *fakeMT) snapshot() map[string]any {
@@ -74,6 +80,12 @@ func (f *fakeMT) handler() http.Handler {
 			last := body.Groups[len(body.Groups)-1]
 			f.groupPuts = append(f.groupPuts, "bulk:"+last.Name+"@"+last.Interface)
 		}
+		for i := range body.Groups {
+			if body.Groups[i].ID == "" {
+				f.groupSeq++
+				body.Groups[i].ID = fmt.Sprintf("g%d", f.groupSeq)
+			}
+		}
 		f.groups = body.Groups
 		f.mu.Unlock()
 		json.NewEncoder(w).Encode(map[string]any{"ok": true})
@@ -91,7 +103,44 @@ func (f *fakeMT) handler() http.Handler {
 		f.mu.Unlock()
 		json.NewEncoder(w).Encode(map[string]any{"ok": true})
 	})
+	mux.HandleFunc("DELETE /api/v1/groups/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		f.mu.Lock()
+		f.groupsDelete = append(f.groupsDelete, id)
+		for i := range f.groups {
+			if f.groups[i].ID == id {
+				f.groups = append(f.groups[:i], f.groups[i+1:]...)
+				break
+			}
+		}
+		f.mu.Unlock()
+		json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	})
+	mux.HandleFunc("GET /api/v1/dns/zones", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		json.NewEncoder(w).Encode(map[string]any{"available": true, "zones": []any{}})
+	})
+	mux.HandleFunc("PUT /api/v1/dns/zones", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(io.LimitReader(r.Body, 65536))
+		f.mu.Lock()
+		f.zonePuts = append(f.zonePuts, string(body))
+		f.mu.Unlock()
+		json.NewEncoder(w).Encode(map[string]any{"available": true, "zones": []any{}})
+	})
 	return mux
+}
+
+func (f *fakeMT) zonePutsList() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.zonePuts...)
+}
+
+func (f *fakeMT) deletedGroups() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.groupsDelete...)
 }
 
 func (f *fakeMT) puts() []string {

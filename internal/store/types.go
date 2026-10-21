@@ -355,6 +355,24 @@ type Settings struct {
 	// владельца 2026-10-18): пользователь добавляет udp/dot/doh - зонд
 	// проверяет их канарейкой наравне со штатными уровнями.
 	DNSProbe []DnsProbeServer `json:"dnsProbe,omitempty"`
+	// DnsZones - зонный DNS (80-док, форк rev13): зона -> свои
+	// упорядоченные DNS-серверы, путь до них - через пул (группа
+	// dnszone-*); каскад и health серверов живёт в форке.
+	DnsZones []DnsZone `json:"dnsZones,omitempty"`
+}
+
+// DnsZone - запись зонного DNS: доменная зона (покрывает себя и все
+// поддомены), упорядоченный список DNS-серверов (схемы как у каскада:
+// host:port / tls:// / https://), пул-туннель для пути (пусто - напрямую)
+// и FallbackOpen - разрешить деградацию в общий список при полном отвале
+// серверов зоны (по умолчанию fail-closed: SERVFAIL, имена не утекают).
+type DnsZone struct {
+	ID           string   `json:"id"`
+	Zone         string   `json:"zone"`
+	Upstreams    []string `json:"upstreams"`
+	Pool         string   `json:"pool,omitempty"`
+	FallbackOpen bool     `json:"fallbackOpen,omitempty"`
+	Enable       bool     `json:"enable"`
 }
 
 // DnsProbeServer - свой сервер пробы: Kind udp|dot|doh, Server - адрес
