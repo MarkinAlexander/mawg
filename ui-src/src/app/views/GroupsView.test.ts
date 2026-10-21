@@ -547,11 +547,25 @@ describe('GroupsView - массовое включение/выключение 
   });
 });
 
-describe('GroupsView - скрытие выключенного (80-док, бонус)', () => {
-  it('по умолчанию всё видно; галка прячет выключенную группу и правила, состояние - в localStorage', async () => {
-    localStorage.removeItem('mawg-hideoff');
+describe('GroupsView - скрытие выключенного (80-док, бонус; два тумблера по слову владельца)', () => {
+  it('счётчики «выключено: N» рядом с тумблерами, подписи как у владельца', async () => {
+    localStorage.removeItem('mawg-hideoff-groups');
+    localStorage.removeItem('mawg-hideoff-rules');
     const { w } = await makeView();
-    expect(block(w, 'g2').exists()).toBe(true); // выключенная группа на месте
+    const row = w.find('.offrow');
+    expect(row.text()).toContain('Скрывать выключенные группы');
+    expect(row.text()).toContain('Скрывать выключенные правила');
+    // фикстура: 1 выключенная группа (g2), 1 выключенное правило (r2 в g1)
+    expect(row.find('.offgroups .offcount').text()).toContain('выключено: 1');
+    expect(row.find('.offrules .offcount').text()).toContain('выключено: 1');
+    w.unmount();
+  });
+
+  it('тумблер групп прячет выключенную группу, тумблер правил - выключенные правила, независимо', async () => {
+    localStorage.removeItem('mawg-hideoff-groups');
+    localStorage.removeItem('mawg-hideoff-rules');
+    const { w } = await makeView();
+    expect(block(w, 'g2').exists()).toBe(true);
 
     // правила g1: jsdom не тогглит details кликом - open+toggle вручную
     const det = block(w, 'g1').find('details');
@@ -560,40 +574,65 @@ describe('GroupsView - скрытие выключенного (80-док, бо�
     await nextTick();
     expect(block(w, 'g1').text()).toContain('149.154.160.0/20'); // выключенное правило видно
 
-    const cb = w.find('.offrow input[type="checkbox"]');
-    expect(cb.exists()).toBe(true);
-    await cb.setValue(true);
+    // ТОЛЬКО правила: выключенная группа остаётся видимой
+    await w.find('.offrules input[type="checkbox"]').setValue(true);
     await nextTick();
+    expect(block(w, 'g2').exists()).toBe(true);
+    expect(block(w, 'g1').text()).not.toContain('149.154.160.0/20');
+    expect(block(w, 'g1').text()).toContain('t.me');
+    expect(localStorage.getItem('mawg-hideoff-rules')).toBe('1'); // ключ групп ещё не трогали
 
-    expect(block(w, 'g2').exists()).toBe(false); // выключенная группа скрыта
-    expect(block(w, 'g1').text()).not.toContain('149.154.160.0/20'); // правило скрыто
-    expect(block(w, 'g1').text()).toContain('t.me'); // включённые остаются
-    expect(localStorage.getItem('mawg-hideoff')).toBe('1');
+    // + группы: выключенная группа скрыта
+    await w.find('.offgroups input[type="checkbox"]').setValue(true);
+    await nextTick();
+    expect(block(w, 'g2').exists()).toBe(false);
+    expect(localStorage.getItem('mawg-hideoff-groups')).toBe('1');
     w.unmount();
   });
 
-  it('галка переживает перезагрузку (localStorage при монтировании)', async () => {
-    localStorage.setItem('mawg-hideoff', '1');
+  it('тумблеры переживают перезагрузку (localStorage при монтировании)', async () => {
+    localStorage.setItem('mawg-hideoff-groups', '1');
     const { w } = await makeView();
     expect(block(w, 'g2').exists()).toBe(false);
-    const cb = w.find('.offrow input[type="checkbox"]');
+    const cb = w.find('.offgroups input[type="checkbox"]');
     expect((cb.element as HTMLInputElement).checked).toBe(true);
     w.unmount();
-    localStorage.removeItem('mawg-hideoff');
+    localStorage.removeItem('mawg-hideoff-groups');
   });
 
-  it('пустой список под фильтром - честная подсказка', async () => {
-    localStorage.removeItem('mawg-hideoff');
+  it('пустой список под фильтром групп - честная подсказка', async () => {
+    localStorage.removeItem('mawg-hideoff-groups');
+    localStorage.removeItem('mawg-hideoff-rules');
     const { w } = await makeView();
-    // поиск находит только выключенную группу, галка её прячет - пусто
+    // поиск находит только выключенную группу, тумблер её прячет - пусто
     const search = w.find('.srow input[type="text"]');
     await search.setValue('blackout');
     await nextTick();
     expect(block(w, 'g2').exists()).toBe(true);
-    await w.find('.offrow input[type="checkbox"]').setValue(true);
+    await w.find('.offgroups input[type="checkbox"]').setValue(true);
     await nextTick();
     expect(block(w, 'g2').exists()).toBe(false);
     expect(w.text()).toContain('не попало ни одной включённой');
+    w.unmount();
+  });
+
+  it('все правила группы выключены и скрыты - пометка в деталях', async () => {
+    localStorage.removeItem('mawg-hideoff-groups');
+    localStorage.removeItem('mawg-hideoff-rules');
+    const { w } = await makeView();
+    const det = block(w, 'g1').find('details');
+    (det.element as HTMLDetailsElement).open = true;
+    await det.trigger('toggle');
+    await nextTick();
+    // «выключить все» (r2 и так выключен) - confirm как у владельца
+    const offAll = block(w, 'g1').findAll('button').find((b) => b.text().includes('выключить все'));
+    await offAll!.trigger('click');
+    await nextTick();
+    useConfirm().ok();
+    await vi.waitFor(() => expect(block(w, 'g1').text()).toContain('правил: 2/0'));
+    await w.find('.offrules input[type="checkbox"]').setValue(true);
+    await nextTick();
+    expect(block(w, 'g1').text()).toContain('все правила выключены и скрыты');
     w.unmount();
   });
 });
