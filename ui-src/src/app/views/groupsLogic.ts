@@ -122,16 +122,26 @@ export function showAllRules(g: GroupView, q: string): boolean {
   return nameMatched && !hasRuleMatches;
 }
 
-// чекер скрытия выключенного (80-док, бонус): фильтры отображения -
-// выключенные группы (enable=false) и выключенные правила. Чистые
-// функции - юнит-тесты без DOM; composing с поиском - на стороне вьюхи
-// (сначала поиск, потом скрытие выключенного).
+// чекер скрытия выключенного (80-док, бонус; слово владельца: два
+// РАЗДЕЛЬНЫХ тумблера - можно скрыть неактивные группы, а правила
+// оставить видимыми, чтобы их включать): фильтры отображения выключенных
+// групп и выключенных правил. Чистые функции - юнит-тесты без DOM;
+// composing с поиском - на стороне вьюхи (сначала поиск, потом скрытие).
 export function hideOffGroups(groups: GroupView[], hide: boolean): GroupView[] {
   return hide ? groups.filter((g) => g.enable) : groups;
 }
 
 export function hideOffRules(rules: Rule[], hide: boolean): Rule[] {
   return hide ? rules.filter((rl) => rl.enable) : rules;
+}
+
+// счётчики для тумблеров («выключено: N» рядом с каждым)
+export function offGroupsTotal(groups: GroupView[]): number {
+  return groups.reduce((n, g) => (g.enable ? n : n + 1), 0);
+}
+
+export function offRulesTotal(groups: GroupView[]): number {
+  return groups.reduce((n, g) => n + (g.rules || []).filter((rl) => !rl.enable).length, 0);
 }
 
 // subnet без маски получает /32 (легаси 1349, 1717)

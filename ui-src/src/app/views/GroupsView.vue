@@ -14,6 +14,7 @@ import type { GroupView, Preset, Rule } from '../../api/types'
 import {
   cyclesValid, degradedText, dupsEntries, groupHasDup, groupMatchCount,
   groupMatches, hideOffGroups, hideOffRules, hlSegs, IMPORT_TYPE_OPTIONS,
+  offGroupsTotal, offRulesTotal,
   normRuleValue, POLICY_SHORT, presetRulesLine, RULE_HINTS, RULE_PLACEHOLDERS,
   RULE_TYPES, ruleTypeOptions, showAllRules, srcBadge, warnTitle,
 } from './groupsLogic'
@@ -177,23 +178,30 @@ const savedOpen = ref<Set<string> | null>(null);
 const openMt = ref<Set<string>>(new Set()); // открытые details, переживают перерендер
 
 // --- чекер скрытия выключенного (80-док, бонус): групп много, глазами
-// фильтровать тяжело. Фильтры ОТОбРАЖЕНИЯ: выключенные группы и/или
-// выключенные правила. Состояние - в localStorage по паттерну privacy
-// (переживает перезагрузку, не лезет в настройки сервера).
-const HIDE_OFF_LS = 'mawg-hideoff';
-const hideOff = ref(false);
+// фильтровать тяжело. ДВА РАЗДЕЛЬНЫХ тумблера (слово владельца 2026-10-21:
+// «скрыть совсем не активные группы, но правила видеть, чтобы включать
+// выключать») + счётчики «выключено: N» рядом. Состояние - в localStorage
+// по паттерну privacy (переживает перезагрузку, не лезет в сервер).
+const HIDE_OFF_G_LS = 'mawg-hideoff-groups';
+const HIDE_OFF_R_LS = 'mawg-hideoff-rules';
+const hideOffGroupsFlag = ref(false);
+const hideOffRulesFlag = ref(false);
 try {
-  hideOff.value = localStorage.getItem(HIDE_OFF_LS) === '1';
+  // недолго живший единый ключ - миграция в два раздельных
+  const legacy = localStorage.getItem('mawg-hideoff');
+  hideOffGroupsFlag.value = localStorage.getItem(HIDE_OFF_G_LS) === '1' || legacy === '1';
+  hideOffRulesFlag.value = localStorage.getItem(HIDE_OFF_R_LS) === '1' || legacy === '1';
+  if (legacy !== null) localStorage.removeItem('mawg-hideoff');
 } catch {
   // jsdom/приватный режим без localStorage - просто не переживает ребут
 }
-function setHideOff(v: boolean): void {
-  hideOff.value = v;
-  try {
-    localStorage.setItem(HIDE_OFF_LS, v ? '1' : '0');
-  } catch {
-    // некритично: фильтр живет сессию
-  }
+function setHideOffGroups(v: boolean): void {
+  hideOffGroupsFlag.value = v;
+  try { localStorage.setItem(HIDE_OFF_G_LS, v ? '1' : '0'); } catch { /* сессия */ }
+}
+function setHideOffRules(v: boolean): void {
+  hideOffRulesFlag.value = v;
+  try { localStorage.setItem(HIDE_OFF_R_LS, v ? '1' : '0'); } catch { /* сессия */ }
 }
 
 // открытость details в openMt (легаси det.ontoggle 1673)
@@ -218,17 +226,21 @@ watch(q, (v) => {
 const visible = computed(() => {
   const s = searchQ.value;
   const base = s ? state.groups.filter((g) => groupMatches(g, s)) : state.groups;
-  return hideOffGroups(base, hideOff.value);
+  return hideOffGroups(base, hideOffGroupsFlag.value);
 });
 
+// счётчики «выключено: N» рядом с тумблерами
+const offGroupsCount = computed(() => offGroupsTotal(state.groups));
+const offRulesCount = computed(() => offRulesTotal(state.groups));
+
 // при поиске внутри группы - только совпавшие правила, кроме случая
-// «совпало имя, но ни одно правило» (легаси 1680-1684); чекбокс
-// «скрывать выключенные» дополнительно убирает правила с enable=false
+// «совпало имя, но ни одно правило» (легаси 1680-1684); тумблер
+// «Скрывать выключенные правила» дополнительно убирает enable=false
 function ruleRows(g: GroupView): Rule[] {
   const list = g.rules || [];
   const s = searchQ.value;
   const filtered = showAllRules(g, s) ? list : list.filter((rl) => (rl.rule || '').toLowerCase().includes(s) || (rl.name || '').toLowerCase().includes(s));
-  return hideOffRules(filtered, hideOff.value);
+  return hideOffRules(filtered, hideOffRulesFlag.value);
 }
 
 // --- editingLock: фокус в ТЕКСТОВЫХ полях списка (легаси
@@ -270,7 +282,7 @@ function rowKey(scope: string, id: string): string {
 function isDragRow(scope: string, id: string): boolean {
   // при поиске/скрытии выключенного DnD отключён: фильтрованный список
   // отправил бы частичный список id
-  return !searchQ.value && !hideOff.value && armed.value === rowKey(scope, id);
+  return !searchQ.value && !hideOffGroupsFlag.value && !hideOffRulesFlag.value && armed.value === rowKey(scope, id);
 }
 function onDragStart(e: DragEvent, scope: string, id: string): void {
   if (armed.value !== rowKey(scope, id)) {
@@ -663,14 +675,26 @@ onMounted(openFromLink);
       class="mtnote"
     />
 
-    <!-- фильтр выключенного (80-док, бонус): тумблером, как всё в панели -->
+    <!-- фильтры выключенного (80-док, бонус): два раздельных тумблера со
+         счётчиками (слово владельца: группы скрывать, правила видеть,
+         чтобы их включать/выключать) -->
     <div class="offrow">
-      <UiSwitch
-        :model-value="hideOff"
-        label="скрывать выключенные"
-        tooltip="убирает с экрана выключенные группы и выключенные правила; счётчики в шапке группы считают всё по-прежнему"
-        @update:model-value="setHideOff"
-      />
+      <span class="offitem offgroups">
+        <UiSwitch
+          :model-value="hideOffGroupsFlag"
+          label="Скрывать выключенные группы"
+          @update:model-value="setHideOffGroups"
+        />
+        <span class="muted offcount">выключено: {{ offGroupsCount }}</span>
+      </span>
+      <span class="offitem offrules">
+        <UiSwitch
+          :model-value="hideOffRulesFlag"
+          label="Скрывать выключенные правила"
+          @update:model-value="setHideOffRules"
+        />
+        <span class="muted offcount">выключено: {{ offRulesCount }}</span>
+      </span>
     </div>
 
     <!-- поиск (легаси ruleSearch) -->
@@ -699,8 +723,8 @@ onMounted(openFromLink);
         text="MagiTrickle недоступен"
       />
       <UiHint
-        v-else-if="hideOff && !visible.length"
-        text="Под фильтр «скрывать выключенные» не попало ни одной включённой группы - снимите галку, чтобы увидеть остальные."
+        v-else-if="hideOffGroupsFlag && !visible.length"
+        text="Под фильтр «Скрывать выключенные группы» не попало ни одной включённой группы - выключите тумблер, чтобы увидеть остальные."
       />
       <UiHint
         v-else-if="searchQ && !visible.length"
@@ -836,6 +860,12 @@ onMounted(openFromLink);
             class="muted offnote"
           >
             группа выключена - правила сейчас не работают; тумблеры показывают их собственное состояние
+          </div>
+          <div
+            v-if="hideOffRulesFlag && (g.rules || []).length > 0 && ruleRows(g).length === 0"
+            class="muted offnote"
+          >
+            все правила выключены и скрыты тумблером «Скрывать выключенные правила»
           </div>
           <!-- слово владельца: массовое включение/выключение правил (465
                штук по одному не нащёлкаешь); один PUT группы на бэкенде -->
@@ -1248,7 +1278,17 @@ onMounted(openFromLink);
 }
 .offrow {
   display: flex;
+  gap: 8px 22px;
+  flex-wrap: wrap;
   margin-top: 12px;
+}
+.offitem {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.offcount {
+  font-size: 12px;
 }
 .mtlist {
   margin-top: 10px;
