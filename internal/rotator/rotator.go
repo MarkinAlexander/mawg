@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -26,6 +27,14 @@ import (
 
 const settleSeconds = 15
 const minApplyInterval = 20 * time.Second
+
+// полоса фоновых проб: не больше probeLaneMax одновременно; застрявшую
+// (старше probeForceWait) не ждём - стартуем следующую параллельно.
+// actMu по-прежнему сериализует сами пробы, полоса лишь раздаёт старты,
+// чтобы из-за «стада» due-пулов не складывался минутный залп CPU
+// (замер на прод-Кинетике, 82-док).
+const probeLaneMax = 2
+const probeForceWait = 15 * time.Second
 
 type Engine struct {
 	PremiumClient *premium.Client
@@ -61,6 +70,10 @@ type Engine struct {
 	tickN    int
 	polFails map[string]int
 	polOks   map[string]int
+
+	lane     map[string]time.Time // фоновые пробы в полёте: пул -> старт
+	laneMu   sync.Mutex
+	startDue map[string]time.Time // стартовый разброс первых проб: пул -> не раньше
 }
 
 const probeStatusTTL = 30 * time.Second
@@ -108,6 +121,8 @@ func New(st *store.Store, b platform.Backend, mt *magitrickle.Client) *Engine {
 		tunnelAddrs:   map[string]string{},
 		polFails:      map[string]int{},
 		polOks:        map[string]int{},
+		lane:          map[string]time.Time{},
+		startDue:      map[string]time.Time{},
 	}
 	if mt != nil {
 		e.casc = cascade.New(st, mt)
@@ -223,22 +238,171 @@ func (e *Engine) loop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case pool := <-e.wake:
+			// ручная «проверить сейчас» идёт мимо полосы - как раньше
 			e.checkPool(pool)
 		case <-bundleTicker.C:
-			e.checkBundles()
-			e.refreshProbedExternals()
 			e.tickN++
-			e.checkGroupPolicies()
+			e.runHousework()
 		case <-ticker.C:
-			for _, pool := range e.store.Pools() {
-				st := e.store.State(pool.Name)
-				due := st.LastCheck.IsZero() || e.now().Sub(st.LastCheck) >= time.Duration(pool.Settings.CheckIntervalSec)*time.Second
-				if due {
-					e.checkPool(pool.Name)
-				}
-			}
+			e.tickProbes(e.now())
 		}
 	}
+}
+
+// runHousework - 30-с домашка, разнесённая по чередующимся тикам, чтобы
+// её залпы не складывались в один всплеск CPU: чётные тики - бандлы
+// (monitorMagitrickle внутри) и фоновые пробы внешних интерфейсов,
+// нечётные - сверка OUTPUT-хуков каскадов и политики групп. Каждый шаг
+// выполняется раз в минуту вместо 30с - осознанный размен по слову
+// владельца «пробы по очереди либо с интервалом».
+func (e *Engine) runHousework() {
+	if houseworkBundles(e.tickN) {
+		e.checkBundles()
+		e.refreshProbedExternals()
+		return
+	}
+	e.syncCascadeHooks()
+	e.checkGroupPolicies()
+}
+
+// houseworkBundles - чётные 30-с тики отданы бандлам, нечётные хукам и политикам.
+func houseworkBundles(tickN int) bool { return tickN%2 == 0 }
+
+// houseworkRefreshDNS - пере-резолюция доменов каскадов раз в 300с и
+// только на нечётных (политических) тиках: 5,15,25... - иначе она
+// пропадала бы на чётных после разноса домашки.
+func houseworkRefreshDNS(tickN int) bool { return tickN%10 == 5 }
+
+// syncCascadeHooks - сверка OUTPUT-хуков каскадов (была в каждом 30-с
+// тике): хук - runtime-состояние iptables, его снимают перезагрузка
+// (порядок старта mawg/MagiTrickle не гарантирован), рестарт сети или
+// сторонний iptables-restore. SyncHooks идемпотентен и молчит при
+// недоступном MT - доделает на следующем цикле.
+func (e *Engine) syncCascadeHooks() {
+	if e.casc != nil {
+		e.casc.SyncHooks()
+	}
+}
+
+// tickProbes - один секундный тик полосы проб: стартуем максимум одну
+// фоновую пробу; пока активная моложе probeForceWait - ждём её, старше -
+// стартуем следующую параллельно (actMu разрулит), максимум probeLaneMax
+// в полёте. Раньше все due-пулы прогонялись синхронно подряд в одном
+// тике - 8 пулов давали залп на десятки секунд (рывки CPU, 82-док).
+func (e *Engine) tickProbes(now time.Time) {
+	switch n := e.laneCount(); {
+	case n >= probeLaneMax:
+		return
+	case n == 1 && now.Sub(e.laneOldest()) < probeForceWait:
+		return
+	}
+	name := e.firstDue(now)
+	if name == "" {
+		return
+	}
+	e.laneAdd(name, now)
+	go e.runLaneProbe(name)
+}
+
+func (e *Engine) runLaneProbe(name string) {
+	defer e.laneDone(name)
+	e.checkPool(name)
+}
+
+// firstDue - первый пул (в порядке хранения), чья проба пора. Никогда не
+// проверявшиеся пулы ждут стартового разброса (startDue): LastCheck не
+// персистится (json:"-"), после рестарта без разбора всё «стадо» стреляло
+// бы в первый же тик.
+func (e *Engine) firstDue(now time.Time) string {
+	e.ensureStartSpread(now)
+	for _, p := range e.store.Pools() {
+		if p.Disabled || p.Settings.EngineMode != "" {
+			continue // checkPool всё равно no-op - полосу не занимаем
+		}
+		if e.laneHas(p.Name) {
+			continue
+		}
+		st := e.store.State(p.Name)
+		if st.LastCheck.IsZero() {
+			if at, ok := e.startDue[p.Name]; ok && now.Before(at) {
+				continue
+			}
+			return p.Name
+		}
+		if now.Sub(st.LastCheck) >= time.Duration(p.Settings.CheckIntervalSec)*time.Second {
+			return p.Name
+		}
+	}
+	return ""
+}
+
+// ensureStartSpread назначает момент первой пробы пулам, которые ещё ни
+// разу не проверялись и в карту ещё не попали: по sorted-именам,
+// отсрочка idx*CheckIntervalSec/N раскидывает «стадо» первого тика по
+// всему интервалу. Карта живёт только в горутине loop.
+func (e *Engine) ensureStartSpread(now time.Time) {
+	var fresh []store.Pool
+	pools := e.store.Pools()
+	for _, p := range pools {
+		if _, ok := e.startDue[p.Name]; ok {
+			continue
+		}
+		if e.store.State(p.Name).LastCheck.IsZero() {
+			fresh = append(fresh, p)
+		}
+	}
+	if len(fresh) == 0 {
+		return
+	}
+	sort.Slice(fresh, func(i, j int) bool { return fresh[i].Name < fresh[j].Name })
+	n := len(pools)
+	if n < 1 {
+		n = 1
+	}
+	for _, p := range fresh {
+		interval := p.Settings.CheckIntervalSec
+		if interval <= 0 {
+			interval = 30
+		}
+		e.startDue[p.Name] = now.Add(time.Duration(len(e.startDue)) * time.Duration(interval) * time.Second / time.Duration(n))
+	}
+}
+
+func (e *Engine) laneCount() int {
+	e.laneMu.Lock()
+	defer e.laneMu.Unlock()
+	return len(e.lane)
+}
+
+func (e *Engine) laneOldest() time.Time {
+	e.laneMu.Lock()
+	defer e.laneMu.Unlock()
+	var oldest time.Time
+	for _, at := range e.lane {
+		if oldest.IsZero() || at.Before(oldest) {
+			oldest = at
+		}
+	}
+	return oldest
+}
+
+func (e *Engine) laneHas(name string) bool {
+	e.laneMu.Lock()
+	defer e.laneMu.Unlock()
+	_, ok := e.lane[name]
+	return ok
+}
+
+func (e *Engine) laneAdd(name string, at time.Time) {
+	e.laneMu.Lock()
+	e.lane[name] = at
+	e.laneMu.Unlock()
+}
+
+func (e *Engine) laneDone(name string) {
+	e.laneMu.Lock()
+	delete(e.lane, name)
+	e.laneMu.Unlock()
 }
 
 func (e *Engine) CheckNow(pool string) {
@@ -1462,15 +1626,10 @@ func (e *Engine) checkGroupPolicies() {
 		}
 	}
 
-	if e.casc != nil && e.tickN%10 == 0 {
+	// пере-резолюция доменов каскадов раз в 300с - на нечётных домашних
+	// тиках (в паре с политиками, не с бандлами: houseworkRefreshDNS)
+	if e.casc != nil && houseworkRefreshDNS(e.tickN) {
 		e.casc.RefreshDNS(ctx)
-	}
-	// сверка OUTPUT-хуков каскадов каждый цикл (30с): хук - runtime-состояние
-	// iptables, его снимают перезагрузка (порядок старта mawg/MagiTrickle не
-	// гарантирован), рестарт сети или сторонний iptables-restore. SyncHooks
-	// идемпотентен и молчит при недоступном MT - доделает на следующем цикле
-	if e.casc != nil {
-		e.casc.SyncHooks()
 	}
 
 	groups, err := e.mt.GroupsWithRules(ctx)
