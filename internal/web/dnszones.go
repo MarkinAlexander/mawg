@@ -89,7 +89,14 @@ func (s *Server) validateDnsZones(zones []store.DnsZone) ([]store.DnsZone, error
 		}
 		zone := store.DnsZone{ID: z.ID, Zone: name, Upstreams: ups, FallbackOpen: z.FallbackOpen, Enable: z.Enable}
 		if z.Pool != "" {
-			if !pools[z.Pool] {
+			// путь зоны: имя пула mawg ИЛИ готовый интерфейс (iface:<dev>,
+			// фидбэк пользователя зон: WG настроен руками, мимо mawg)
+			if strings.HasPrefix(z.Pool, "iface:") {
+				dev := strings.TrimPrefix(z.Pool, "iface:")
+				if dev == "" || strings.ContainsAny(dev, " /\\") {
+					return nil, fmt.Errorf("зона %s: кривое имя интерфейса %q", name, dev)
+				}
+			} else if !pools[z.Pool] {
 				if _, ok := s.store.Pool(z.Pool); !ok {
 					return nil, fmt.Errorf("зона %s: пул %q не найден", name, z.Pool)
 				}
@@ -160,10 +167,17 @@ func (s *Server) applyDnsZones(ctx context.Context, zones []store.DnsZone) (warn
 		if z.Pool == "" {
 			continue // путь напрямую - группы не нужно
 		}
-		p, ok := s.store.Pool(z.Pool)
-		if !ok {
-			warnings = append(warnings, fmt.Sprintf("зона %s: пул %q исчез, зона применена без группы пути", z.Zone, z.Pool))
-			continue
+		iface := ""
+		if strings.HasPrefix(z.Pool, "iface:") {
+			// готовый интерфейс (настроен мимо mawg) - устройство как есть
+			iface = strings.TrimPrefix(z.Pool, "iface:")
+		} else {
+			p, ok := s.store.Pool(z.Pool)
+			if !ok {
+				warnings = append(warnings, fmt.Sprintf("зона %s: пул %q исчез, зона применена без группы пути", z.Zone, z.Pool))
+				continue
+			}
+			iface = p.DeviceName()
 		}
 		ips, failed := upstreamHostIPs(ctx, z.Upstreams)
 		for _, h := range failed {
@@ -173,7 +187,6 @@ func (s *Server) applyDnsZones(ctx context.Context, zones []store.DnsZone) (warn
 			warnings = append(warnings, fmt.Sprintf("зона %s: ни один адрес сервера не стал статикой группы пути", z.Zone))
 		}
 		name := dnsZoneGroupName(z.Zone)
-		iface := p.DeviceName()
 		rules := zoneGroupRules(ips)
 		if g, ok := byName[name]; ok {
 			delete(byName, name)
@@ -203,6 +216,17 @@ func (s *Server) applyDnsZones(ctx context.Context, zones []store.DnsZone) (warn
 		return warnings, err
 	}
 	return warnings, nil
+}
+
+// mtSystemInterfaces - GET /api/v1/mt/system-interfaces: netlink-интерфейсы,
+// видимые MT (в т.ч. настроенные руками, мимо пулов mawg) - выбор пути зоны.
+func (s *Server) mtSystemInterfaces(w http.ResponseWriter, r *http.Request) {
+	ifaces, err := s.mtClient().SystemInterfaces(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"interfaces": ifaces})
 }
 
 // getDnsZones - GET /api/v1/dns/zones: сохранённая таблица + capability +

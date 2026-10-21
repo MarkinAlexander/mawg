@@ -462,15 +462,29 @@ const zDlg = ref(false);
 const zForm = ref<{ idx: number; zone: string; servers: string; pool: string; fallbackOpen: boolean; enable: boolean } | null>(null);
 const zErr = ref('');
 
+// готовые интерфейсы (настроенные руками, мимо пулов mawg) - фидбэк
+// пользователя зон: «не даёт выбрать настроенный ранее интерфейс WG»
+const sysIfaces = ref<{ id: string; name?: string }[]>([]);
+async function loadSysIfaces(): Promise<void> {
+  try {
+    const r = await api<{ interfaces: { id: string; name?: string }[] }>('GET', '/mt/system-interfaces');
+    sysIfaces.value = (r.interfaces || []).filter((i) => i.id && i.id !== 'blackhole');
+  } catch {
+    sysIfaces.value = []; // MT не отвечает - останутся только пулы
+  }
+}
+
 const zPoolOptions = computed<UiSelectOption[]>(() => [
   { value: '', label: 'напрямую (без туннеля)' },
   ...(statusState.data?.pools || []).map((p) => ({ value: p.name, label: p.name })),
+  ...sysIfaces.value.map((i) => ({ value: 'iface:' + i.id, label: i.id, hint: i.name && i.name !== i.id ? i.name : 'готовый интерфейс' })),
 ]);
 
 function openZoneNew(): void {
   zForm.value = { idx: -1, zone: '', servers: '', pool: '', fallbackOpen: false, enable: true };
   zErr.value = '';
   zDlg.value = true;
+  void loadSysIfaces();
 }
 
 function openZoneEdit(i: number): void {
@@ -478,6 +492,7 @@ function openZoneEdit(i: number): void {
   zForm.value = { idx: i, zone: z.zone, servers: (z.upstreams || []).join('\n'), pool: z.pool || '', fallbackOpen: !!z.fallbackOpen, enable: !!z.enable };
   zErr.value = '';
   zDlg.value = true;
+  void loadSysIfaces();
 }
 
 function zValidate(): string[] | null {
@@ -1134,8 +1149,10 @@ function a2key(z: DnsZone, i: number): string {
           <UiBadge
             v-if="z.pool"
             variant="info"
-            :text="'через ' + z.pool"
-            tooltip="серверы зоны доступны только внутри туннеля этого пула: путь до них держит служебная группа dnszone-*"
+            :text="'через ' + z.pool.replace(/^iface:/, '')"
+            :tooltip="z.pool.startsWith('iface:')
+              ? 'серверы зоны идут через готовый интерфейс (настроен вне панели): путь держит служебная группа dnszone-*'
+              : 'серверы зоны доступны только внутри туннеля этого пула: путь до них держит служебная группа dnszone-*'"
           />
           <UiBadge
             v-else
@@ -1255,7 +1272,7 @@ function a2key(z: DnsZone, i: number): string {
         :options="zPoolOptions"
         label="Путь к серверам зоны"
       />
-      <UiHint text="Пусто - серверы зоны должны быть доступны напрямую. Выбор пула: адреса серверов заворачиваются в туннель этого пула - при его отвале зона замолчит, не утекая в общий DNS." />
+      <UiHint text="Пусто - серверы зоны должны быть доступны напрямую. Пул: адреса серверов заворачиваются в его туннель. Готовый интерфейс (например WG, настроенный вручную) - путь через него. При отвале пути зона замолчит, не утекая в общий DNS." />
       <UiSwitch
         v-model="zForm.fallbackOpen"
         label="При полном отвале - общий DNS (fallback)"
