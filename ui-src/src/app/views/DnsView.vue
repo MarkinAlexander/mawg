@@ -462,22 +462,27 @@ const zDlg = ref(false);
 const zForm = ref<{ idx: number; zone: string; servers: string; pool: string; fallbackOpen: boolean; enable: boolean } | null>(null);
 const zErr = ref('');
 
-// готовые интерфейсы (настроенные руками, мимо пулов mawg) - фидбэк
-// пользователя зон: «не даёт выбрать настроенный ранее интерфейс WG»
-const sysIfaces = ref<{ id: string; name?: string }[]>([]);
+// готовые интерфейсы - ТОТ ЖЕ список, что в выборе группы у правил
+// (/mt/interfaces: устройства групп и пулов MT с подписями; слово
+// владельца: не показывать всё netlink-подряд), минус blackhole -
+// зонный путь блокировкой не бывает
+const mtIfaces = ref<{ device: string; title?: string }[]>([]);
 async function loadSysIfaces(): Promise<void> {
   try {
-    const r = await api<{ interfaces: { id: string; name?: string }[] }>('GET', '/mt/system-interfaces');
-    sysIfaces.value = (r.interfaces || []).filter((i) => i.id && i.id !== 'blackhole');
+    const r = await api<{ interfaces: { device: string; title?: string }[] }>('GET', '/mt/interfaces');
+    mtIfaces.value = (r.interfaces || []).filter((i) => i.device && i.device !== 'blackhole');
   } catch {
-    sysIfaces.value = []; // MT не отвечает - останутся только пулы
+    mtIfaces.value = []; // MT не отвечает - останутся только пулы
   }
 }
 
 const zPoolOptions = computed<UiSelectOption[]>(() => [
   { value: '', label: 'напрямую (без туннеля)' },
   ...(statusState.data?.pools || []).map((p) => ({ value: p.name, label: p.name })),
-  ...sysIfaces.value.map((i) => ({ value: 'iface:' + i.id, label: i.id, hint: i.name && i.name !== i.id ? i.name : 'готовый интерфейс' })),
+  ...mtIfaces.value.map((i) => ({
+    value: 'iface:' + i.device,
+    label: i.device + (i.title && i.title !== i.device ? ' - ' + i.title : ''),
+  })),
 ]);
 
 function openZoneNew(): void {

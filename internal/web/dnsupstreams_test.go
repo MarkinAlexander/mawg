@@ -116,13 +116,6 @@ func (f *fakeMT) handler() http.Handler {
 		f.mu.Unlock()
 		json.NewEncoder(w).Encode(map[string]any{"ok": true})
 	})
-	mux.HandleFunc("GET /api/v1/system/interfaces", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{"interfaces": []map[string]any{
-			{"id": "blackhole"},
-			{"id": "wg9", "name": "ручной WG товарища"},
-			{"id": "nwg0", "name": "пул proton"},
-		}})
-	})
 	mux.HandleFunc("GET /api/v1/dns/zones", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
