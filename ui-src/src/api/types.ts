@@ -364,6 +364,29 @@ export interface DnsPolicyRes {
   tunnelGroup?: { id?: string; interface?: string }
 }
 
+// Зонный DNS (80-док, форк rev13): доменная зона -> свои упорядоченные
+// DNS-серверы, путь до них - через пул (группа dnszone-*, заводится
+// применением). FallbackOpen=false = fail-closed: все серверы зоны
+// недоступны - зона молчит (SERVFAIL), имена не утекают в общий DNS.
+export interface DnsZone {
+  id: string
+  zone: string
+  upstreams: string[]
+  pool?: string
+  fallbackOpen?: boolean
+  enable: boolean
+}
+
+export interface DnsZonesRes {
+  capable: boolean
+  zones: DnsZone[]
+  live?: {
+    available: boolean
+    zones: { zone: string; fallback: boolean; upstreams: DnsUpstream[] }[]
+  }
+  warnings?: string[]
+}
+
 // --- интерфейсы/слоты/wan-probe ---
 
 // проба здоровья (store.ProbeConfig): цель - публичный IPv4 или http(s) URL;

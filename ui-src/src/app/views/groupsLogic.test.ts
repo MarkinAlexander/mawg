@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import type { GroupView } from '../../api/types'
+import type { GroupView, Rule } from '../../api/types'
 import {
   backupKind, cascadeOptions, cyclesValid, degradedText, dedupImportRules, dupsEntries, exportStamp, groupHasDup, importVerdict,
-  groupMatchCount, groupMatches, hlSegs, normRuleValue, parseSources,
+  groupMatchCount, groupMatches, hideOffGroups, hideOffRules, hlSegs, normRuleValue, parseSources,
   parseImportFile, presetRulesLine, showAllRules, srcBadge, srcListInitial,
   srcModeInitial, warnTitle, wireCascadeSel,
 } from './groupsLogic'
@@ -214,5 +214,38 @@ describe('импорт/выгрузка файлом (Ф3.7в)', () => {
     expect(backupKind('mt-config-2026.conf').label).toBe('MT-конфиг');
     expect(backupKind('mt-config-x.conf').restoreAsk).toContain('MagiTrickle перезапустится');
     expect(backupKind('mt-shadow-x.conf').restoreAsk).toContain('ВСЕ группы будут заменены');
+  });
+});
+
+describe('чекер скрытия выключенного (80-док, бонус)', () => {
+  const rules: Rule[] = [
+    { id: 'r1', type: 'domain', rule: 'a.com', enable: true },
+    { id: 'r2', type: 'domain', rule: 'b.com', enable: false },
+    { id: 'r3', type: 'domain', rule: 'c.com', enable: true },
+  ];
+  const groups = [
+    g({ id: 'on', name: 'включённая', enable: true, rules }),
+    g({ id: 'off', name: 'выключенная', enable: false, rules }),
+  ];
+
+  it('hideOffGroups: hide=true убирает только выключенные, hide=false - как было', () => {
+    expect(hideOffGroups(groups, true).map((x) => x.id)).toEqual(['on']);
+    expect(hideOffGroups(groups, false)).toEqual(groups);
+    expect(hideOffGroups([], true)).toEqual([]);
+  });
+
+  it('hideOffRules: hide=true убирает выключенные правила, порядок сохраняется', () => {
+    expect(hideOffRules(rules, true).map((r) => r.rule)).toEqual(['a.com', 'c.com']);
+    expect(hideOffRules(rules, false)).toEqual(rules);
+    expect(hideOffRules([], true)).toEqual([]);
+  });
+
+  it('композиция с поиском: сначала поиск, потом скрытие выключенного', () => {
+    // как во вьюхе: base = поиск, затем hideOff
+    const base = groups.filter((x) => groupMatches(x, 'включённая'));
+    expect(base.map((x) => x.id)).toEqual(['on']);
+    const baseAll = groups.filter((x) => groupMatches(x, 'выключенная'));
+    expect(baseAll.map((x) => x.id)).toEqual(['off']);
+    expect(hideOffGroups(baseAll, true)).toEqual([]);
   });
 });
