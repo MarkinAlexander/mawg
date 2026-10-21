@@ -278,6 +278,93 @@ describe('DnsView - резервные серверы MT (форк rev8+)', () =
   })
 })
 
+describe('DnsView - политика автопроверки (форк rev14, 82-док)', () => {
+  const rev14 = { ...cascadePayload, healthCapable: true } as DnsUpstreamsRes;
+
+  it('rev14: свитч и поля предзаполнены из health (10s->10, 5m0s->300), правка -> health-only PUT без upstreams', async () => {
+    const capture: { put?: unknown } = {};
+    vi.stubGlobal('fetch', apiStub(statePayload, rev14, capture));
+    const w = mount(DnsView);
+    await vi.waitFor(() => expect(w.find('#card-dns').text()).toContain('Автопроверка серверов'));
+
+    // UiSwitch разрешён компонентом (грабля забытого импорта)
+    expect(w.find('#card-dns .uiswitch').exists()).toBe(true);
+    expect(w.find('#card-dns').html()).not.toContain('<uiswitch');
+
+    const nums = w.findAll('#card-dns input[type="number"]');
+    expect(nums.length).toBe(5);
+    expect((nums[0].element as HTMLInputElement).value).toBe('10');
+    expect((nums[1].element as HTMLInputElement).value).toBe('2');
+    expect((nums[2].element as HTMLInputElement).value).toBe('3');
+    expect((nums[3].element as HTMLInputElement).value).toBe('2');
+    expect((nums[4].element as HTMLInputElement).value).toBe('300');
+
+    const save = w.findAll('#card-dns .uibtn').find((b) => b.text() === 'сохранить')!;
+    expect(save.attributes('disabled')).toBeDefined(); // без правок недоступна
+
+    await nums[0].setValue('30');
+    await nextTick();
+    expect(save.attributes('disabled')).toBeUndefined();
+    await save.trigger('click');
+    await vi.waitFor(() => {
+      expect(capture.put).toEqual({
+        health: { enabled: true, intervalSec: 30, timeoutSec: 2, failCycles: 3, restoreCycles: 2, restoreGapSec: 300 },
+      });
+    });
+    w.unmount();
+  });
+
+  it('выключение свитча и возврат паузы 0 уходят одним PUT (enabled=false доезжает)', async () => {
+    const capture: { put?: unknown } = {};
+    vi.stubGlobal('fetch', apiStub(statePayload, rev14, capture));
+    const w = mount(DnsView);
+    await vi.waitFor(() => expect(w.find('#card-dns').text()).toContain('Автопроверка серверов'));
+
+    // правки при включённом свитче (после выключения поля disabled -
+    // jsdom не доставляет input по задизейбленному инпуту)
+    const nums = w.findAll('#card-dns input[type="number"]');
+    await nums[4].setValue('0');
+    await nextTick();
+    await w.find('#card-dns .uiswitch input').setValue(false);
+    await nextTick();
+    const save = w.findAll('#card-dns .uibtn').find((b) => b.text() === 'сохранить')!;
+    expect(save.attributes('disabled')).toBeUndefined();
+    await save.trigger('click');
+    await vi.waitFor(() => {
+      expect(capture.put).toEqual({
+        health: { enabled: false, intervalSec: 10, timeoutSec: 2, failCycles: 3, restoreCycles: 2, restoreGapSec: 0 },
+      });
+    });
+    w.unmount();
+  });
+
+  it('невалидное значение (интервал 4) - кнопка заблокирована, PUT не уходит', async () => {
+    const capture: { put?: unknown } = {};
+    vi.stubGlobal('fetch', apiStub(statePayload, rev14, capture));
+    const w = mount(DnsView);
+    await vi.waitFor(() => expect(w.find('#card-dns').text()).toContain('Автопроверка серверов'));
+
+    const nums = w.findAll('#card-dns input[type="number"]');
+    await nums[0].setValue('4');
+    await nextTick();
+    const save = w.findAll('#card-dns .uibtn').find((b) => b.text() === 'сохранить')!;
+    expect(save.attributes('disabled')).toBeDefined();
+    await save.trigger('click');
+    await nextTick();
+    expect(capture.put).toBeUndefined();
+    w.unmount();
+  });
+
+  it('rev13 (без healthCapable): настроек нет, список работает как раньше', async () => {
+    vi.stubGlobal('fetch', apiStub(statePayload, cascadePayload));
+    const w = mount(DnsView);
+    await vi.waitFor(() => expect(w.find('#card-dns').text()).toContain('Редактировать список'));
+    expect(w.find('#card-dns').text()).not.toContain('Автопроверка серверов');
+    expect(w.findAll('#card-dns input[type="number"]').length).toBe(0);
+    w.unmount();
+  });
+});
+
 describe('DnsView - правила автопереключения L1-L5', () => {
   const policyPayload: DnsPolicyRes = {
     capable: true,

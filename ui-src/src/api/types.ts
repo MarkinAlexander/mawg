@@ -340,6 +340,9 @@ export interface DnsUpstreamsState {
 
 export interface DnsUpstreamsRes {
   capable: boolean
+  // форк rev14+: можно править политику автопроверки (health) из панели;
+  // отсутствует/ложь - редактор политики скрыт (старый форк)
+  healthCapable?: boolean
   state?: DnsUpstreamsState
 }
 
