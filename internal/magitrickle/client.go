@@ -466,7 +466,12 @@ func (c *Client) transformGroups(ctx context.Context, transform func([]Group) ([
 	if len(check) != len(groups) || checkRules != rules {
 		return fmt.Errorf("magitrickle усёк список: %d групп и %d правил вместо %d и %d, нужен рестарт magitrickle", len(check), checkRules, len(groups), rules)
 	}
-	updateShadowLocked(groups)
+	// тень - из ВЕРИФИЦИРОВАННОГО чтения: у свежесозданных групп id
+	// выдаёт MT на своей стороне, локальный срез его не знает - тень с
+	// безыдейной записью на коротких списках (1-2 группы) превращала
+	// группу в «потерянную» при следующем transformGroups и восстанавливала
+	// её призрака-дубль
+	updateShadowLocked(check)
 	return nil
 }
 
