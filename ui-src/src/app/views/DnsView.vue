@@ -476,14 +476,26 @@ async function loadSysIfaces(): Promise<void> {
   }
 }
 
-const zPoolOptions = computed<UiSelectOption[]>(() => [
-  { value: '', label: 'напрямую (без туннеля)' },
-  ...(statusState.data?.pools || []).map((p) => ({ value: p.name, label: p.name })),
-  ...mtIfaces.value.map((i) => ({
-    value: 'iface:' + i.device,
-    label: i.device + (i.title && i.title !== i.device ? ' - ' + i.title : ''),
-  })),
-]);
+const zPoolOptions = computed<UiSelectOption[]>(() => {
+  const pools = statusState.data?.pools || [];
+  // дедуп (скрин друга): интерфейс, чьё устройство ИЛИ подпись - это имя
+  // пула, и есть тот же туннель (OpenWrt: device = имя пула; движок:
+  // tunN с title = пул; Кинетик: nwgN с title = пул) - пул уже в списке
+  const names = new Set(pools.map((p) => p.name.toLowerCase()));
+  const ifaces = mtIfaces.value.filter((i) => {
+    if (names.has(i.device.toLowerCase())) return false;
+    const title = (i.title || '').toLowerCase();
+    return !names.has(title);
+  });
+  return [
+    { value: '', label: 'напрямую (без туннеля)' },
+    ...pools.map((p) => ({ value: p.name, label: p.name })),
+    ...ifaces.map((i) => ({
+      value: 'iface:' + i.device,
+      label: i.device + (i.title && i.title !== i.device ? ' - ' + i.title : ''),
+    })),
+  ];
+});
 
 function openZoneNew(): void {
   zForm.value = { idx: -1, zone: '', servers: '', pool: '', fallbackOpen: false, enable: true };
