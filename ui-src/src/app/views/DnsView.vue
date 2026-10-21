@@ -3,6 +3,8 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { UiBadge, UiBanner, UiButton, UiCard, UiDialog, UiHelp, UiHint, UiInput, UiSelect, type UiSelectOption, UiSwitch, UiTextarea } from '../../components/ui';
 import { api } from '../../api/client';
 import type { DnsProbeRow, DnsState, DnsPolicyRes, DnsUpstream, DnsUpstreamsRes, DnsZone, DnsZonesRes, KeeneticOwn } from '../../api/types';
+import { durToSec, healthFieldValid } from './dnsLogic';
+import { G } from '../glossary';
 import { useStatus } from '../../stores/status';
 import { useToast } from '../../stores/toast';
 import { useConfirm } from '../../stores/confirm';
@@ -161,6 +163,82 @@ function upTooltip(u: DnsUpstream): string {
   if (u.lastSwap && !u.lastSwap.startsWith('0001-')) bits.push('переключён: ' + new Date(u.lastSwap).toLocaleString());
   bits.push(`сбои подряд: ${u.fails}, успешные подряд: ${u.oks}`);
   return bits.join(' · ');
+}
+
+// --- политика автопроверки серверов (форк rev14+, 82-док): частота,
+// таймаут, гистерезис; правка уходит в MT health-only PUT-ом (список
+// серверов не трогается, петлезащита не спрашивается) ---
+const healthCapable = computed(() => cascade.value?.healthCapable === true);
+
+const hEnabled = ref(true);
+const hInterval = ref('');
+const hTimeout = ref('');
+const hFail = ref('');
+const hRestore = ref('');
+const hGap = ref('');
+const healthSaving = ref(false);
+// черновик ещё не синхронизирован с сервером (первая загрузка / после
+// сохранения): пустые поля - не правка пользователя, а «ещё не заполнено»
+const hSynced = ref(false);
+
+const healthDirty = computed(() => {
+  const h = health.value;
+  if (!h) return false;
+  return (
+    hEnabled.value !== h.enabled ||
+    +hInterval.value !== durToSec(h.interval) ||
+    +hTimeout.value !== durToSec(h.timeout) ||
+    +hFail.value !== h.failCycles ||
+    +hRestore.value !== h.restoreCycles ||
+    +hGap.value !== durToSec(h.restoreGap)
+  );
+});
+
+const healthValid = computed(
+  () =>
+    healthFieldValid(hInterval.value, 5, 300) &&
+    healthFieldValid(hTimeout.value, 1, 10) &&
+    healthFieldValid(hFail.value, 1, 20) &&
+    healthFieldValid(hRestore.value, 1, 20) &&
+    healthFieldValid(hGap.value, 0, 3600),
+);
+
+// сервер -> черновик (первая загрузка и после сохранения); правки
+// пользователя не затираем (каскад перечитывается опросом каждые 10с)
+watch(health, (h) => {
+  if (!h || hSynced.value) return;
+  hSynced.value = true;
+  hEnabled.value = h.enabled;
+  hInterval.value = String(durToSec(h.interval) ?? '');
+  hTimeout.value = String(durToSec(h.timeout) ?? '');
+  hFail.value = String(h.failCycles);
+  hRestore.value = String(h.restoreCycles);
+  hGap.value = String(durToSec(h.restoreGap) ?? '');
+}, { immediate: true });
+
+async function saveHealth(): Promise<void> {
+  if (!healthValid.value || !healthDirty.value || healthSaving.value) return;
+  healthSaving.value = true;
+  busy.value = true;
+  try {
+    await api('PUT', '/dns/upstreams', {
+      health: {
+        enabled: hEnabled.value,
+        intervalSec: +hInterval.value,
+        timeoutSec: +hTimeout.value,
+        failCycles: +hFail.value,
+        restoreCycles: +hRestore.value,
+        restoreGapSec: +hGap.value,
+      },
+    });
+    push('настройки проверки сохранены');
+    hSynced.value = false; // после сохранения черновик заново сверится с сервером
+    await loadCascade();
+  } catch (e) {
+    push(e instanceof Error ? e.message : String(e), true);
+  }
+  healthSaving.value = false;
+  busy.value = false;
 }
 
 const dnsmasqText = computed(() => {
@@ -847,6 +925,85 @@ function a2key(z: DnsZone, i: number): string {
         </div>
         <UiHint text="Автопроверка: контрольный запрос к deb.torproject.org; честный сервер возвращает известный набор адресов, подменённый - виден сразу и помечается «не работает»." />
 
+        <!-- политика автопроверки (форк rev14+, 82-док): частота и
+             гистерезис переключений; каждое поле - с минусами в обе стороны -->
+        <template v-if="healthCapable">
+          <div class="cycles">
+            <UiSwitch
+              v-model="hEnabled"
+              label="Автопроверка серверов"
+              tooltip="контрольный запрос к каждому серверу по очереди. Выключить - процессор свободнее, но упавший сервер никто не заметит: запросы продолжат уходить в мёртвый."
+            />
+            <UiHelp :text="G.dnsHealth" />
+          </div>
+          <div class="cycles">
+            <span class="muted">проверять каждые</span>
+            <UiInput
+              v-model="hInterval"
+              type="number"
+              bare
+              class="cnum"
+              placeholder="10"
+              :disabled="!hEnabled"
+              tooltip="как часто проверять серверы. Чаще - быстрее замечаем смерть сервера, но каждое срабатывание даёт всплеск нагрузки на процессор (проверка шифрованных серверов - это TLS-рукопожатие). Реже - процессор свободнее, но проблемы видны за интервал × циклы."
+            />
+            <span class="muted">сек, ждать ответа</span>
+            <UiInput
+              v-model="hTimeout"
+              type="number"
+              bare
+              class="cnum"
+              placeholder="2"
+              :disabled="!hEnabled"
+              tooltip="сколько ждать ответа сервера. Меньше - быстрее вердикт, но медленный сервер ложно пометится нерабочим (ложные переключения). Больше - надёжный вердикт, но каждая проверка дольше занимает процессор."
+            />
+            <span class="muted">сек, отключать после</span>
+            <UiInput
+              v-model="hFail"
+              type="number"
+              bare
+              class="cnum"
+              placeholder="3"
+              :disabled="!hEnabled"
+              tooltip="сколько провальных проверок подряд считается смертью сервера. Меньше - быстрая реакция, но флап на одной потере; больше - стабильно, но реально мёртвый сервер работает лишние циклы, пока его заметят."
+            />
+            <span class="muted">сбоев, возвращать после</span>
+            <UiInput
+              v-model="hRestore"
+              type="number"
+              bare
+              class="cnum"
+              placeholder="2"
+              :disabled="!hEnabled"
+              tooltip="защита от дёрганья: снова живой сервер возвращается только после N удачных проверок. Меньше - быстрый возврат, но флапающий сервер будет дёргать маршруты; больше - стабильно, но резерв надолго остаётся главным."
+            />
+            <span class="muted">успешных и не чаще раза в</span>
+            <UiInput
+              v-model="hGap"
+              type="number"
+              bare
+              class="cnum"
+              placeholder="300"
+              :disabled="!hEnabled"
+              tooltip="минимальная пауза между переключениями, сек. Меньше (вплоть до 0) - сервер возвращается сразу; больше - стабильно, но упавший основной дольше остаётся главным."
+            />
+            <span class="muted">сек</span>
+            <UiButton
+              :disabled="!healthDirty || !healthValid"
+              :busy="healthSaving"
+              @click="saveHealth"
+            >
+              сохранить
+            </UiButton>
+            <UiBadge
+              v-if="!healthValid"
+              variant="err"
+              text="вне диапазона"
+              tooltip="интервал 5-300 сек, таймаут 1-10 сек, циклы 1-20, пауза возврата 0-3600 сек"
+            />
+          </div>
+        </template>
+
         <!-- редактор: список/порядок/добавление -->
         <div
           v-if="edit === null"
@@ -1428,5 +1585,16 @@ function a2key(z: DnsZone, i: number): string {
 }
 .zonebox .zprobe {
   margin-top: 2px;
+}
+.cycles {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  font-size: 12px;
+}
+.cnum {
+  width: 64px;
 }
 </style>
