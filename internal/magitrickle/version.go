@@ -87,6 +87,23 @@ func DnsZonesSupported(version string) bool {
 	return err == nil && n >= dnsZonesRevMin
 }
 
+// dnsHealthRevMin - первая ревизия форка с правкой политики зондов
+// каскада через API: health-блок в PUT /api/v1/dns/upstreams (enabled,
+// интервал/таймаут/циклы/пауза) и stagger залпа проб (0.8.2-rev14).
+const dnsHealthRevMin = 14
+
+// DnsHealthSupported говорит, умеет ли MT принимать настройку health
+// каскада (rev14+); на старых ревизиях редактор политики зондов в панели
+// честно скрыт - тело со старым форком посылать бессмысленно.
+func DnsHealthSupported(version string) bool {
+	m := revRe.FindStringSubmatch(version)
+	if m == nil {
+		return false
+	}
+	n, err := strconv.Atoi(m[1])
+	return err == nil && n >= dnsHealthRevMin
+}
+
 // RevOf - номер ревизии форка из строки версии (0.8.2-rev11-mawg-dev -> 11);
 // 0 = не форк или ревизия не читается.
 func RevOf(version string) int {

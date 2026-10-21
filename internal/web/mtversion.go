@@ -77,6 +77,27 @@ func (s *Server) mtDohUpstreamsCapable(ctx context.Context) bool {
 	return magitrickle.DohUpstreamsSupported(magitrickle.ConfigVersion(data))
 }
 
+// mtDnsHealthCapable - умеет ли подключённый MT правку политики зондов
+// каскада (форк rev14+, health в PUT /api/v1/dns/upstreams). Порядок тот
+// же: живой /api/v1/version, фолбэк - configVersion дискового config.yaml.
+func (s *Server) mtDnsHealthCapable(ctx context.Context) bool {
+	if v, err := s.mtClient().GetVersion(ctx); err == nil && v != "" {
+		return magitrickle.DnsHealthSupported(v)
+	}
+	if s.backend == nil {
+		return false
+	}
+	path := s.backend.MTConfigPath()
+	if path == "" {
+		return false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	return magitrickle.DnsHealthSupported(magitrickle.ConfigVersion(data))
+}
+
 // mtDnsZonesCapable - умеет ли подключённый MT зонный DNS (форк rev13+,
 // GET/PUT /api/v1/dns/zones). Порядок тот же: живой /api/v1/version,
 // фолбэк - configVersion дискового config.yaml.

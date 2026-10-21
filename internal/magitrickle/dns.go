@@ -48,12 +48,34 @@ func (c *Client) DnsUpstreams(ctx context.Context) (*DnsUpstreamsState, error) {
 	return out, nil
 }
 
+// DnsHealthPatch - правка политики зондов апстримов (форк rev14+,
+// управление нагрузкой проб из панели): nil-поля = «не трогать»,
+// длительности в секундах. Указатели обязательны: enabled=false обязан
+// доезжать (голый bool с omitempty потерял бы false).
+type DnsHealthPatch struct {
+	Enabled       *bool `json:"enabled,omitempty"`
+	IntervalSec   *uint `json:"intervalSec,omitempty"`
+	TimeoutSec    *uint `json:"timeoutSec,omitempty"`
+	FailCycles    *uint `json:"failCycles,omitempty"`
+	RestoreCycles *uint `json:"restoreCycles,omitempty"`
+	RestoreGapSec *uint `json:"restoreGapSec,omitempty"`
+}
+
 // SetDnsUpstreams - замена списка апстримов dns-proxy (порядок =
 // приоритет; форк сам пишет конфиг и горячо подменяет список без
 // рестарта демона). Ошибка форка отдаётся с её текстом ({"error": ...}),
 // чтобы панель показала причину отказа, а не номер статуса.
-func (c *Client) SetDnsUpstreams(ctx context.Context, addrs []string) error {
-	data, err := json.Marshal(map[string]any{"upstreams": addrs})
+// addrs == nil (health-only запись, rev14+) - ключа upstreams в теле
+// нет, MT список не трогает; health != nil правит политику зондов.
+func (c *Client) SetDnsUpstreams(ctx context.Context, addrs []string, health *DnsHealthPatch) error {
+	body := map[string]any{}
+	if addrs != nil {
+		body["upstreams"] = addrs
+	}
+	if health != nil {
+		body["health"] = health
+	}
+	data, err := json.Marshal(body)
 	if err != nil {
 		return err
 	}
@@ -70,11 +92,11 @@ func (c *Client) SetDnsUpstreams(ctx context.Context, addrs []string) error {
 	if resp.StatusCode < 300 {
 		return nil
 	}
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	var ferr struct {
 		Error string `json:"error"`
 	}
-	if json.Unmarshal(body, &ferr) == nil && ferr.Error != "" {
+	if json.Unmarshal(errBody, &ferr) == nil && ferr.Error != "" {
 		return fmt.Errorf("MT: %s", ferr.Error)
 	}
 	return &statusError{method: http.MethodPut, path: "/api/v1/dns/upstreams", code: resp.StatusCode}

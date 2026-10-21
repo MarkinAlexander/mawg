@@ -386,7 +386,7 @@ func (s *Server) putDnsPolicy(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if p.Enabled {
-		if err := s.mtClient().SetDnsUpstreams(r.Context(), composed); err != nil {
+		if err := s.mtClient().SetDnsUpstreams(r.Context(), composed, nil); err != nil {
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 			return
 		}

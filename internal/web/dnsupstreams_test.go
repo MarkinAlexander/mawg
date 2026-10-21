@@ -21,6 +21,7 @@ import (
 // Зонные эндпоинты (rev13) и DELETE групп - для тестов зонного DNS.
 type fakeMT struct {
 	version      string
+	health       map[string]any // текущая политика зондов; rev14 умеет править (частичный патч)
 	mu           sync.Mutex
 	lastPuts     []string
 	getCounter   int
@@ -31,13 +32,21 @@ type fakeMT struct {
 	zonePuts     []string // тела PUT /dns/zones
 }
 
+func defaultFakeHealth() map[string]any {
+	return map[string]any{
+		"enabled": true, "interval": "10s", "timeout": "2s",
+		"failCycles": 3, "restoreCycles": 2, "restoreGap": "5m0s",
+	}
+}
+
 func (f *fakeMT) snapshot() map[string]any {
+	health := f.health
+	if health == nil {
+		health = defaultFakeHealth()
+	}
 	return map[string]any{
 		"available": true,
-		"health": map[string]any{
-			"enabled": true, "interval": "10s", "timeout": "2s",
-			"failCycles": 3, "restoreCycles": 2, "restoreGap": "5m0s",
-		},
+		"health":    health,
 		"upstreams": []map[string]any{
 			{"address": "8.8.8.8:53", "alive": true, "active": true, "fails": 0, "oks": 5, "lastSwap": "0001-01-01T00:00:00Z"},
 			{"address": "77.88.8.8:53", "alive": false, "active": false, "fails": 3, "oks": 0, "lastSwap": "2026-10-16T10:00:00Z", "reason": "подмена: канонических адресов нет"},
@@ -59,10 +68,58 @@ func (f *fakeMT) handler() http.Handler {
 	mux.HandleFunc("PUT /api/v1/dns/upstreams", func(w http.ResponseWriter, r *http.Request) {
 		buf := make([]byte, 4096)
 		n, _ := r.Body.Read(buf)
+		raw := string(buf[:n])
 		f.mu.Lock()
-		f.lastPuts = append(f.lastPuts, string(buf[:n]))
+		f.lastPuts = append(f.lastPuts, raw)
+		// rev14 умеет health: частичный патч (только присланные поля,
+		// секунды -> строки-длительности как в живом снапшоте форка);
+		// старые ревизии неизвестное поле игнорируют - стейт не трогаем
+		if magitrickle.DnsHealthSupported(f.version) {
+			var body struct {
+				Health map[string]json.RawMessage `json:"health"`
+			}
+			if err := json.Unmarshal([]byte(raw), &body); err == nil && body.Health != nil {
+				cur := f.health
+				if cur == nil {
+					cur = defaultFakeHealth()
+				}
+				sec := func(key, dst string) {
+					v, ok := body.Health[key]
+					if !ok {
+						return
+					}
+					var n float64
+					if json.Unmarshal(v, &n) == nil {
+						cur[dst] = fmt.Sprintf("%ds", int(n))
+					}
+				}
+				if v, ok := body.Health["enabled"]; ok {
+					var b bool
+					if json.Unmarshal(v, &b) == nil {
+						cur["enabled"] = b
+					}
+				}
+				sec("intervalSec", "interval")
+				sec("timeoutSec", "timeout")
+				sec("restoreGapSec", "restoreGap")
+				num := func(key string) {
+					v, ok := body.Health[key]
+					if !ok {
+						return
+					}
+					var n float64
+					if json.Unmarshal(v, &n) == nil {
+						cur[key] = int(n)
+					}
+				}
+				num("failCycles")
+				num("restoreCycles")
+				f.health = cur
+			}
+		}
+		snap := f.snapshot()
 		f.mu.Unlock()
-		json.NewEncoder(w).Encode(f.snapshot())
+		json.NewEncoder(w).Encode(snap)
 	})
 	// группы: список, bulk PUT (AddGroup/UpdateGroups), одиночный PUT
 	mux.HandleFunc("GET /api/v1/groups", func(w http.ResponseWriter, r *http.Request) {
@@ -255,5 +312,163 @@ func TestDNSUpstreamsCapable(t *testing.T) {
 	puts := fm.puts()
 	if len(puts) != 1 || !strings.Contains(puts[0], `"77.88.8.8:53"`) || !strings.Contains(puts[0], `"8.8.8.8"`) {
 		t.Fatalf("тело PUT не дошло до форка: %q", puts)
+	}
+}
+
+func dnsPut(t *testing.T, url, payload string) int {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPut, url, strings.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode
+}
+
+// rev14: GET отдаёт healthCapable; health-only PUT (без upstreams) доезжает
+// до форка и применяется частично; невалидный диапазон mawg режет ДО форка
+func TestDNSUpstreamsHealth(t *testing.T) {
+	fm := &fakeMT{version: "0.8.2-rev14-mawg-dev"}
+	mt := httptest.NewServer(fm.handler())
+	defer mt.Close()
+	srv := dnsTestServerMT(t, mt.URL)
+
+	resp, err := http.Get(srv.URL + "/api/v1/dns/upstreams")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body struct {
+		Capable       bool `json:"capable"`
+		HealthCapable bool `json:"healthCapable"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if !body.Capable || !body.HealthCapable {
+		t.Fatalf("ожидались capable+healthCapable: %+v", body)
+	}
+
+	// health-only: в теле форку нет upstreams, поля частичные
+	if code := dnsPut(t, srv.URL+"/api/v1/dns/upstreams", `{"health":{"enabled":false,"intervalSec":30,"restoreGapSec":0}}`); code != http.StatusOK {
+		t.Fatalf("health-only PUT: status=%d", code)
+	}
+	puts := fm.puts()
+	if len(puts) != 1 || strings.Contains(puts[0], `"upstreams"`) || !strings.Contains(puts[0], `"intervalSec":30`) {
+		t.Fatalf("тело health-only PUT: %q", puts)
+	}
+
+	// частичное применение: присланные поля легли, остальные - дефолт
+	resp, err = http.Get(srv.URL + "/api/v1/dns/upstreams")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var after struct {
+		State struct {
+			Health struct {
+				Enabled    bool   `json:"enabled"`
+				Interval   string `json:"interval"`
+				Timeout    string `json:"timeout"`
+				RestoreGap string `json:"restoreGap"`
+			} `json:"health"`
+		} `json:"state"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&after); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	h := after.State.Health
+	if h.Enabled || h.Interval != "30s" || h.RestoreGap != "0s" || h.Timeout != "2s" {
+		t.Fatalf("health после патча: %+v", h)
+	}
+
+	// невалидный диапазон: 400 от mawg, до форка не доходит
+	if code := dnsPut(t, srv.URL+"/api/v1/dns/upstreams", `{"health":{"intervalSec":301}}`); code != http.StatusBadRequest {
+		t.Fatalf("интервал 301: status=%d, хочу 400", code)
+	}
+	if code := dnsPut(t, srv.URL+"/api/v1/dns/upstreams", `{"health":{"restoreCycles":0}}`); code != http.StatusBadRequest {
+		t.Fatalf("restoreCycles 0: status=%d, хочу 400", code)
+	}
+	if len(fm.puts()) != 1 {
+		t.Fatalf("невалидный health дошёл до форка: %q", fm.puts())
+	}
+
+	// пустой запрос (ни списка, ни health) - честная ошибка
+	if code := dnsPut(t, srv.URL+"/api/v1/dns/upstreams", `{}`); code == http.StatusOK {
+		t.Fatal("пустой PUT не должен проходить")
+	}
+}
+
+// rev13: healthCapable=false честно, PUT с health - 501, PUT со списком
+// работает как раньше
+func TestDNSUpstreamsHealthOnRev13(t *testing.T) {
+	fm := &fakeMT{version: "0.8.2-rev13-mawg-dev"}
+	mt := httptest.NewServer(fm.handler())
+	defer mt.Close()
+	srv := dnsTestServerMT(t, mt.URL)
+
+	resp, err := http.Get(srv.URL + "/api/v1/dns/upstreams")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body struct {
+		Capable       bool `json:"capable"`
+		HealthCapable bool `json:"healthCapable"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if !body.Capable || body.HealthCapable {
+		t.Fatalf("rev13: ожидался capable=true, healthCapable=false: %+v", body)
+	}
+
+	if code := dnsPut(t, srv.URL+"/api/v1/dns/upstreams", `{"health":{"intervalSec":30}}`); code != http.StatusNotImplemented {
+		t.Fatalf("health на rev13: status=%d, хочу 501", code)
+	}
+	if code := dnsPut(t, srv.URL+"/api/v1/dns/upstreams", `{"upstreams":["8.8.8.8"]}`); code != http.StatusOK {
+		t.Fatalf("список на rev13: status=%d, хочу 200", code)
+	}
+	if len(fm.puts()) != 1 || strings.Contains(fm.puts()[0], `"health"`) {
+		t.Fatalf("списочный PUT на rev13 испорчен: %q", fm.puts())
+	}
+}
+
+// диапазоны валидатора политики зондов (чистая функция)
+func TestValidateDnsHealthPatch(t *testing.T) {
+	b := func(v bool) *bool { return &v }
+	u := func(v uint) *uint { return &v }
+	if err := validateDnsHealthPatch(nil); err != nil {
+		t.Fatalf("nil-патч валиден: %v", err)
+	}
+	ok := []magitrickle.DnsHealthPatch{
+		{IntervalSec: u(5)}, {IntervalSec: u(300)},
+		{TimeoutSec: u(1)}, {TimeoutSec: u(10)},
+		{FailCycles: u(1)}, {FailCycles: u(20)},
+		{RestoreCycles: u(1)}, {RestoreCycles: u(20)},
+		{RestoreGapSec: u(0)}, {RestoreGapSec: u(3600)},
+		{Enabled: b(false)},
+	}
+	for i := range ok {
+		if err := validateDnsHealthPatch(&ok[i]); err != nil {
+			t.Fatalf("патч %+v должен проходить: %v", ok[i], err)
+		}
+	}
+	bad := []magitrickle.DnsHealthPatch{
+		{IntervalSec: u(4)}, {IntervalSec: u(301)},
+		{TimeoutSec: u(0)}, {TimeoutSec: u(11)},
+		{FailCycles: u(0)}, {FailCycles: u(21)},
+		{RestoreCycles: u(0)}, {RestoreCycles: u(21)},
+		{RestoreGapSec: u(3601)},
+	}
+	for i := range bad {
+		if err := validateDnsHealthPatch(&bad[i]); err == nil {
+			t.Fatalf("патч %+v должен отвергаться", bad[i])
+		}
 	}
 }
