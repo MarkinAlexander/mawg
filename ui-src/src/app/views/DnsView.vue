@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { UiBadge, UiBanner, UiButton, UiCard, UiDialog, UiHelp, UiHint, UiInput, UiSelect, type UiSelectOption, UiSwitch, UiTextarea } from '../../components/ui';
+import { UiBadge, UiBanner, UiButton, UiCard, UiDialog, UiHelp, UiHint, UiIcon, UiInput, UiSelect, type UiSelectOption, UiSwitch, UiTextarea } from '../../components/ui';
 import { api } from '../../api/client';
 import type { DnsProbeRow, DnsState, DnsPolicyRes, DnsUpstream, DnsUpstreamsRes, DnsZone, DnsZonesRes, KeeneticOwn } from '../../api/types';
 import { durToSec, healthFieldValid } from './dnsLogic';
@@ -1311,6 +1311,12 @@ function a2key(z: DnsZone, i: number): string {
         class="zonebox"
       >
         <div class="zrow">
+          <UiSwitch
+            :model-value="z.enable"
+            :disabled="zonesBusy"
+            :tooltip="z.enable ? 'выключить зону' : 'включить зону'"
+            @update:model-value="() => toggleZone(z)"
+          />
           <code
             class="zname"
             :class="{ off: !z.enable }"
@@ -1341,29 +1347,30 @@ function a2key(z: DnsZone, i: number): string {
           />
           <span class="zbtns">
             <UiButton
-              :disabled="zonesBusy"
-              @click="openZoneEdit(i)"
-            >
-              Править
-            </UiButton>
-            <UiButton
+              variant="icon"
               :busy="zoneProbingId === z.id"
               :disabled="!z.enable || !!zoneProbingId"
+              tooltip="проверить зону"
               @click="probeZone(z)"
             >
-              Проверить
+              <UiIcon name="refresh" />
             </UiButton>
             <UiButton
+              variant="icon"
               :disabled="zonesBusy"
-              @click="toggleZone(z)"
+              tooltip="изменить зону"
+              @click="openZoneEdit(i)"
             >
-              {{ z.enable ? 'Выключить' : 'Включить' }}
+              <UiIcon name="pencil" />
             </UiButton>
             <UiButton
+              variant="icon"
+              danger-icon
               :disabled="zonesBusy"
+              tooltip="удалить зону"
               @click="removeZone(i)"
             >
-              ✕
+              <UiIcon name="trash" />
             </UiButton>
           </span>
         </div>
