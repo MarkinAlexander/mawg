@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import {
-  UiBadge, UiBanner, UiButton, UiCard, UiCheckbox, UiColor, UiDialog, UiHelp, UiHint, UiIcon,
+  UiBadge, UiBanner, UiButton, UiCard, UiColor, UiDialog, UiHelp, UiHint, UiIcon,
   UiInput, UiSelect, type UiSelectOption, UiSwitch, UiTextarea,
 } from '../../components/ui'
 import { dropIndex, isBeforeHalf, reorder } from '../../components/ui/dnd'
@@ -663,6 +663,16 @@ onMounted(openFromLink);
       class="mtnote"
     />
 
+    <!-- фильтр выключенного (80-док, бонус): тумблером, как всё в панели -->
+    <div class="offrow">
+      <UiSwitch
+        :model-value="hideOff"
+        label="скрывать выключенные"
+        tooltip="убирает с экрана выключенные группы и выключенные правила; счётчики в шапке группы считают всё по-прежнему"
+        @update:model-value="setHideOff"
+      />
+    </div>
+
     <!-- поиск (легаси ruleSearch) -->
     <div class="srow">
       <UiInput
@@ -671,14 +681,6 @@ onMounted(openFromLink);
         placeholder="поиск: показываются только группы с совпадениями"
         class="sinput"
       />
-      <span class="offfilters">
-        <UiCheckbox
-          :model-value="hideOff"
-          label="скрывать выключенные"
-          tooltip="убирает с экрана выключенные группы и выключенные правила; счётчики в шапке группы считают всё по-прежнему"
-          @update:model-value="setHideOff"
-        />
-      </span>
     </div>
 
     <!-- список групп (легаси renderRules 1591) -->
@@ -1244,9 +1246,9 @@ onMounted(openFromLink);
   flex: 1;
   min-width: 200px;
 }
-.offfilters {
+.offrow {
   display: flex;
-  align-items: center;
+  margin-top: 12px;
 }
 .mtlist {
   margin-top: 10px;

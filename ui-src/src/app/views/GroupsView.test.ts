@@ -560,7 +560,7 @@ describe('GroupsView - скрытие выключенного (80-док, бо�
     await nextTick();
     expect(block(w, 'g1').text()).toContain('149.154.160.0/20'); // выключенное правило видно
 
-    const cb = w.find('.srow input[type="checkbox"]');
+    const cb = w.find('.offrow input[type="checkbox"]');
     expect(cb.exists()).toBe(true);
     await cb.setValue(true);
     await nextTick();
@@ -576,7 +576,7 @@ describe('GroupsView - скрытие выключенного (80-док, бо�
     localStorage.setItem('mawg-hideoff', '1');
     const { w } = await makeView();
     expect(block(w, 'g2').exists()).toBe(false);
-    const cb = w.find('.srow input[type="checkbox"]');
+    const cb = w.find('.offrow input[type="checkbox"]');
     expect((cb.element as HTMLInputElement).checked).toBe(true);
     w.unmount();
     localStorage.removeItem('mawg-hideoff');
@@ -590,7 +590,7 @@ describe('GroupsView - скрытие выключенного (80-док, бо�
     await search.setValue('blackout');
     await nextTick();
     expect(block(w, 'g2').exists()).toBe(true);
-    await w.find('.srow input[type="checkbox"]').setValue(true);
+    await w.find('.offrow input[type="checkbox"]').setValue(true);
     await nextTick();
     expect(block(w, 'g2').exists()).toBe(false);
     expect(w.text()).toContain('не попало ни одной включённой');
