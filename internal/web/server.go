@@ -1034,6 +1034,8 @@ func (s *Server) dnsKeeneticOwn(w http.ResponseWriter, r *http.Request) {
 // 64-док §6): живой стейт менеджера (alive/active/причины) через прокси
 // в MT. MT без rev8 (Кинетик rev4, стенд до апгрейда) - честный
 // {"capable":false}: панель показывает апстримы из config.yaml и хинт.
+// healthCapable (rev14+) - отдельный флаг: редактор политики зондов
+// показывается только там, где форк умеет её принимать.
 func (s *Server) dnsUpstreams(w http.ResponseWriter, r *http.Request) {
 	if !s.mtDnsUpstreamsCapable(r.Context()) {
 		writeJSON(w, http.StatusOK, map[string]any{"capable": false})
@@ -1044,42 +1046,89 @@ func (s *Server) dnsUpstreams(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "MT недоступен: " + err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"capable": true, "state": st})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"capable":       true,
+		"healthCapable": s.mtDnsHealthCapable(r.Context()),
+		"state":         st,
+	})
 }
 
-// dnsUpstreamsSet - правка списка апстримов dns-proxy MT {"upstreams":
-// ["8.8.8.8", "77.88.8.8:5353"]} (порядок = приоритет). Прямую правку
-// config.yaml из mawg не делаем - гонка с записью конфига самим MT;
-// форк-эндпоинт сохраняет конфиг и горячо подменяет список сам.
+// validateDnsHealthPatch - диапазоны полей политики зондов (rev14, те же
+// в форке): интервал 5-300с, таймаут 1-10с, циклы 1-20, пауза 0-3600с.
+func validateDnsHealthPatch(h *magitrickle.DnsHealthPatch) error {
+	if h == nil {
+		return nil
+	}
+	if h.IntervalSec != nil && (*h.IntervalSec < 5 || *h.IntervalSec > 300) {
+		return fmt.Errorf("интервал проверки: %dс - от 5 до 300 секунд", *h.IntervalSec)
+	}
+	if h.TimeoutSec != nil && (*h.TimeoutSec < 1 || *h.TimeoutSec > 10) {
+		return fmt.Errorf("таймаут: %dс - от 1 до 10 секунд", *h.TimeoutSec)
+	}
+	if h.FailCycles != nil && (*h.FailCycles < 1 || *h.FailCycles > 20) {
+		return fmt.Errorf("циклов до отключения: %d - от 1 до 20", *h.FailCycles)
+	}
+	if h.RestoreCycles != nil && (*h.RestoreCycles < 1 || *h.RestoreCycles > 20) {
+		return fmt.Errorf("циклов до возврата: %d - от 1 до 20", *h.RestoreCycles)
+	}
+	if h.RestoreGapSec != nil && *h.RestoreGapSec > 3600 {
+		return fmt.Errorf("пауза возврата: %dс - от 0 до 3600 секунд", *h.RestoreGapSec)
+	}
+	return nil
+}
+
+// dnsUpstreamsSet - правка апстримов {"upstreams": [...]} и/или политики
+// зондов {"health": {...}} dns-proxy MT. Прямую правку config.yaml из
+// mawg не делаем - гонка с записью конфига самим MT; форк-эндпоинт
+// сохраняет конфиг и горячо подменяет сам. Запись только health
+// (upstreams отсутствует, rev14+) список не трогает - потому петлезащита
+// к ней не применяется.
 func (s *Server) dnsUpstreamsSet(w http.ResponseWriter, r *http.Request) {
 	if !s.mtDnsUpstreamsCapable(r.Context()) {
 		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "правка апстримов требует MagiTrickle 0.8.2-rev8+ (обновите MT)"})
 		return
 	}
 	var req struct {
-		Upstreams []string `json:"upstreams"`
-		Confirm   bool     `json:"confirm"`
+		Upstreams []string                    `json:"upstreams"`
+		Health    *magitrickle.DnsHealthPatch `json:"health"`
+		Confirm   bool                        `json:"confirm"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
 		writeErr(w, fmt.Errorf("кривой запрос"))
 		return
 	}
+	if req.Health != nil {
+		if err := validateDnsHealthPatch(req.Health); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if !s.mtDnsHealthCapable(r.Context()) {
+			writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "настройка проверки серверов требует MagiTrickle 0.8.2-rev14+ (обновите MT)"})
+			return
+		}
+	}
+	if req.Upstreams == nil && req.Health == nil {
+		writeErr(w, fmt.Errorf("пустой запрос: нет ни списка серверов, ни настроек проверки"))
+		return
+	}
 	// петлезащита: dnsmasq направлен в MT, а в списке адрес dnsmasq
 	// (127.0.0.1:53/свой IP:53) - петля dnsmasq->MT->dnsmasq; без confirm
 	// честный 409 со списком (предупреждение+подтверждение, слово
-	// владельца 2026-10-18)
-	risky := s.loopRiskUpstreams(req.Upstreams)
-	if len(risky) > 0 && !req.Confirm {
-		writeJSON(w, http.StatusConflict, map[string]any{
-			"error":    "замкнёт петлю: dnsmasq сейчас направлен в MT, а среди адресов есть его адрес (" + strings.Join(risky, ", ") + ")",
-			"loopRisk": risky,
-		})
-		return
+	// владельца 2026-10-18). Health-only запись список не меняет - её не касаемся.
+	if req.Upstreams != nil {
+		risky := s.loopRiskUpstreams(req.Upstreams)
+		if len(risky) > 0 && !req.Confirm {
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error":    "замкнёт петлю: dnsmasq сейчас направлен в MT, а среди адресов есть его адрес (" + strings.Join(risky, ", ") + ")",
+				"loopRisk": risky,
+			})
+			return
+		}
+		if len(risky) > 0 {
+			s.store.LogEvent("dns", "upstreams", "петлевой риск подтверждён вручную: "+strings.Join(risky, ", "))
+		}
 	}
-	if len(risky) > 0 {
-		s.store.LogEvent("dns", "upstreams", "петлевой риск подтверждён вручную: "+strings.Join(risky, ", "))
-	}
-	if err := s.mtClient().SetDnsUpstreams(r.Context(), req.Upstreams); err != nil {
+	if err := s.mtClient().SetDnsUpstreams(r.Context(), req.Upstreams, req.Health); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
 	}
