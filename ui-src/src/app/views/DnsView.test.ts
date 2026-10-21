@@ -654,17 +654,27 @@ describe('DnsView - зонные DNS (форк rev13)', () => {
     w.unmount();
   });
 
-  it('«Проверить» по зоне: POST /dns/zones/{id}/probe -> вердикты в карточке зоны', async () => {
+  it('строки зон: чекер вкл/выкл + иконки (стрелка/карандаш/корзина), «Проверить» у выключенной недоступна', async () => {
     const capture: { put?: unknown; probe?: string[] } = {};
     vi.stubGlobal('fetch', zonesStub(capture));
     const w = mount(DnsView);
-    const btn = (label: string) => w.findAll('#card-dns-zones button').find((b) => b.text().includes(label));
-    await vi.waitFor(() => expect(btn('Проверить')).toBeTruthy());
-    await btn('Проверить')!.trigger('click');
+    const probe = () => w.findAll('#card-dns-zones button[title="проверить зону"]');
+    await vi.waitFor(() => expect(probe().length).toBe(3));
+    // UiIcon разрешён компонентом, не кастом-тегом (грабля забытого импорта)
+    expect(w.find('#card-dns-zones .uiicon').exists()).toBe(true);
+    expect(w.find('#card-dns-zones').html()).not.toContain('<uiicon');
+    // чекер на каждой строке (z1/z3 включены, z2 выключена)
+    const switches = w.findAll('#card-dns-zones .zonebox .uiswitch input');
+    expect(switches.length).toBe(3);
+    expect((switches[0].element as HTMLInputElement).checked).toBe(true);
+    expect((switches[1].element as HTMLInputElement).checked).toBe(false);
+    // «Проверить»: включённой зоне доступна, выключенной - нет
+    expect(probe()[0].attributes('disabled')).toBeUndefined();
+    expect(probe()[1].attributes('disabled')).toBeDefined();
+
+    await probe()[0].trigger('click');
     await vi.waitFor(() => expect(w.find('#card-dns-zones').text()).toContain('зона corp.example.com: 10.8.0.1:53'));
     expect((capture.probe || []).some((u) => u.includes('/dns/zones/z1/probe'))).toBe(true);
-    // выключенной зоны «Проверить» недоступна (кнопки по одной на зону:
-    // первая с таким текстом - у включённой z1)
     w.unmount();
   });
 
