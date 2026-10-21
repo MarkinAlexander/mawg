@@ -93,6 +93,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/dns/zones", s.getDnsZones)
 	mux.HandleFunc("PUT /api/v1/dns/zones", s.putDnsZones)
 	mux.HandleFunc("POST /api/v1/dns/zones/{id}/probe", s.postDnsZonesProbe)
+	mux.HandleFunc("GET /api/v1/mt/system-interfaces", s.mtSystemInterfaces)
 	mux.HandleFunc("PUT /api/v1/wanprobe", s.putWANProbe)
 	mux.HandleFunc("GET /api/v1/rcitoken", s.getRCIToken)
 	mux.HandleFunc("PUT /api/v1/rcitoken", s.putRCIToken)

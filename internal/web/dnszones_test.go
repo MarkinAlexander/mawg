@@ -253,6 +253,38 @@ func TestDnsZonesProbe(t *testing.T) {
 	}
 }
 
+// путь зоны через готовый интерфейс (iface:<dev>, фидбэк пользователя
+// зон: WG настроен руками мимо пулов): валидация без пула, группа пути
+// на устройстве как есть; прямой мусор в имени - 400
+func TestDnsZonesIfacePath(t *testing.T) {
+	srv, fm, _ := zonesServer(t, "0.8.2-rev13-mawg-dev")
+
+	code, out := zonesPut(t, srv.URL+"/api/v1/dns/zones", `{"zones":[
+		{"zone":"corp.example.com","upstreams":["10.0.0.1"],"pool":"iface:wg9","enable":true}]}`)
+	if code != http.StatusOK {
+		t.Fatalf("iface-путь отвергнут: %d %+v", code, out)
+	}
+	fm.mu.Lock()
+	var g *magitrickle.Group
+	for i := range fm.groups {
+		if strings.HasPrefix(fm.groups[i].Name, "dnszone-") {
+			g = &fm.groups[i]
+		}
+	}
+	fm.mu.Unlock()
+	if g == nil || g.Interface != "wg9" {
+		t.Fatalf("группа пути не на iface-устройстве: %+v", g)
+	}
+	if len(fm.zonePutsList()) != 1 || !strings.Contains(fm.zonePutsList()[0], `"zone":"corp.example.com"`) {
+		t.Fatalf("таблица зон не уехала: %v", fm.zonePutsList())
+	}
+
+	code, _ = zonesPut(t, srv.URL+"/api/v1/dns/zones", `{"zones":[{"zone":"x.example.com","upstreams":["10.0.0.1"],"pool":"iface:","enable":true}]}`)
+	if code != http.StatusBadRequest {
+		t.Fatalf("пустое имя устройства должно быть 400: %d", code)
+	}
+}
+
 // normalizeDnsZoneName/dnsZoneGroupName: канонизация и стабильные имена
 // групп без коллизий слага
 func TestDnsZoneNames(t *testing.T) {
