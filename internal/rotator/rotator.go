@@ -52,6 +52,7 @@ type Engine struct {
 	actMu       sync.Mutex
 	lastApply   map[string]time.Time
 	extFails    map[string]int
+	extSamples  map[string]*probeCacheEntry
 	wanCache    wanCacheEntry
 	mtHealAt    time.Time
 	mtEverAlive bool
@@ -61,15 +62,15 @@ type Engine struct {
 	ifaceAt time.Time
 
 	probeMu     sync.Mutex
-	probeCache  map[string]probeCacheEntry
-	probeBusy   map[string]bool
+	probeCache  map[string]*probeCacheEntry
 	tunnelAddrs map[string]string
 	tunnelAt    time.Time
 
-	casc     *cascade.Manager
-	tickN    int
-	polFails map[string]int
-	polOks   map[string]int
+	casc       *cascade.Manager
+	tickN      int
+	polFails   map[string]int
+	polOks     map[string]int
+	polSamples map[string]*probeCacheEntry
 
 	lane     map[string]time.Time // фоновые пробы в полёте: пул -> старт
 	laneMu   sync.Mutex
@@ -79,8 +80,12 @@ type Engine struct {
 const probeStatusTTL = 30 * time.Second
 
 type probeCacheEntry struct {
-	status string
-	at     time.Time
+	cfg  store.ProbeConfig
+	done chan struct{}
+	ok   bool
+	rtt  int
+	err  error
+	at   time.Time
 }
 
 // ifaceTouched отмечает момент нашей операции с интерфейсами: кинетик после
@@ -116,17 +121,28 @@ func New(st *store.Store, b platform.Backend, mt *magitrickle.Client) *Engine {
 		wake:          make(chan string, 32),
 		lastApply:     map[string]time.Time{},
 		extFails:      map[string]int{},
-		probeCache:    map[string]probeCacheEntry{},
-		probeBusy:     map[string]bool{},
+		extSamples:    map[string]*probeCacheEntry{},
+		probeCache:    map[string]*probeCacheEntry{},
 		tunnelAddrs:   map[string]string{},
 		polFails:      map[string]int{},
 		polOks:        map[string]int{},
+		polSamples:    map[string]*probeCacheEntry{},
 		lane:          map[string]time.Time{},
 		startDue:      map[string]time.Time{},
 	}
 	if mt != nil {
 		e.casc = cascade.New(st, mt)
 		e.casc.Retry = e.RetryMTWrite
+		// BeforeWrite - окно мутации на клиенте: фактическая запись групп
+		// (движок, панель, рестор, импорт) снимает OUTPUT-хуки и возвращает
+		// их сразу после записи (AfterMutate -> SyncHooks); no-op-мутация
+		// без PUT хуки не трогает. settle идёт под groupsMu клиента - все
+		// писатели и так сериализуются на нём.
+		mt.BeforeWrite = func() {
+			e.settleAfterIfaceOp()
+			e.casc.BeforeMutate(nil)
+		}
+		mt.AfterWrite = e.casc.AfterMutate
 		// iface-источники каскадов: авторезолв эндпоинтов роутерных WG
 		if ep, ok := b.(platform.Endpointer); ok {
 			e.casc.EP = ep
@@ -411,30 +427,31 @@ func (e *Engine) CheckNow(pool string) {
 
 const extMemberFailThreshold = 2
 
-func (e *Engine) memberDeviceHealth(member string, slots []platform.SlotInfo) (device string, healthy bool, external bool) {
+func (e *Engine) memberDeviceHealth(member string, slots []platform.SlotInfo) (device string, healthy bool, external bool, sample *probeCacheEntry) {
 	if p, ok := e.store.Pool(member); ok {
 		if p.Disabled {
-			return p.DeviceName(), false, false
+			return p.DeviceName(), false, false, nil
 		}
-		return p.DeviceName(), e.store.State(member).Mode == store.ModeUp, false
+		return p.DeviceName(), e.store.State(member).Mode == store.ModeUp, false, nil
 	}
 	for _, sl := range slots {
 		if sl.Device == member {
 			if !sl.LinkUp {
-				return member, false, true
+				return member, false, true, nil
 			}
 			if probe := e.store.IfaceProbe(member); probe != nil {
-				return member, e.deviceProbeOK(member, *probe), true
+				c := e.deviceProbe(member, *probe)
+				return member, c.healthy(), true, c
 			}
 			fresh := sl.Connected
 			if !fresh {
 				hs := e.backend.IfaceHandshake(member)
 				fresh = hs >= 0 && hs < 180
 			}
-			return member, fresh, true
+			return member, fresh, true, nil
 		}
 	}
-	return member, false, true
+	return member, false, true, nil
 }
 
 func (e *Engine) CheckBundlesNow() {
@@ -457,10 +474,13 @@ func (e *Engine) checkBundles() {
 		cur := e.store.BundleState(b.Name).Member
 		sel := ""
 		for _, m := range b.Members {
-			dev, healthy, external := e.memberDeviceHealth(m, slots)
+			dev, healthy, external, sample := e.memberDeviceHealth(m, slots)
 			if external && slotsErr == nil && !healthy {
 				key := b.Name + "/" + m
-				e.extFails[key]++
+				if sample == nil || e.extSamples[key] != sample {
+					e.extFails[key]++
+					e.extSamples[key] = sample
+				}
 				if e.extFails[key] < extMemberFailThreshold {
 					if dev == cur {
 						sel = dev
@@ -469,8 +489,9 @@ func (e *Engine) checkBundles() {
 					continue
 				}
 			}
-			if external {
+			if external && healthy {
 				delete(e.extFails, b.Name+"/"+m)
+				delete(e.extSamples, b.Name+"/"+m)
 			}
 			if healthy {
 				sel = dev
@@ -858,27 +879,64 @@ func pingNoBind(target string) (bool, int) {
 	return true, 0
 }
 
-func (e *Engine) deviceProbeOK(device string, cfg store.ProbeConfig) bool {
-	var ok bool
-	var rtt int
-	if store.IsHTTPProbe(cfg.Target) {
-		ok, rtt, _ = httpProbe(device, cfg.Target, 6*time.Second)
-	} else {
-		ok, rtt = e.backend.ProbeDevice(device, cfg.Target)
+func (c *probeCacheEntry) healthy() bool {
+	return c.ok && (c.cfg.MaxRTTms <= 0 || c.rtt <= c.cfg.MaxRTTms)
+}
+
+func (e *Engine) deviceProbe(device string, cfg store.ProbeConfig) *probeCacheEntry {
+	e.probeMu.Lock()
+	c := e.startDeviceProbe(device, cfg.Normalized())
+	e.probeMu.Unlock()
+	<-c.done
+	return c
+}
+
+func (e *Engine) startDeviceProbe(device string, cfg store.ProbeConfig) *probeCacheEntry {
+	if c := e.probeCache[device]; c != nil && c.cfg == cfg {
+		select {
+		case <-c.done:
+			if e.now().Sub(c.at) < probeStatusTTL {
+				return c
+			}
+		default:
+			return c
+		}
 	}
-	if !ok {
-		return false
-	}
-	return cfg.MaxRTTms <= 0 || rtt <= cfg.MaxRTTms
+	c := &probeCacheEntry{cfg: cfg, done: make(chan struct{}), at: e.now()}
+	e.probeCache[device] = c
+	go func() {
+		if store.IsHTTPProbe(cfg.Target) {
+			c.ok, c.rtt, c.err = httpProbe(device, cfg.Target, 6*time.Second)
+		} else {
+			c.ok, c.rtt = e.backend.ProbeDevice(device, cfg.Target)
+		}
+		close(c.done)
+	}()
+	return c
 }
 
 // статусы проб внешних интерфейсов тяжелые (ping до 2с, http до 5с), поэтому
 // они живут в кэше с TTL и обновляются фоном: /ifaces отвечает мгновенно,
 // а строки проб не мигают из-за того, что чья-то проба не успела в бюджет.
 func (e *Engine) DeviceProbeStatus(device string) string {
+	probe := e.store.IfaceProbe(device)
+	if probe == nil {
+		return ""
+	}
 	e.probeMu.Lock()
 	defer e.probeMu.Unlock()
-	return e.probeCache[device].status
+	c := e.probeCache[device]
+	if c == nil || c.cfg != probe.Normalized() {
+		return ""
+	}
+	select {
+	case <-c.done:
+		if e.now().Sub(c.at) < probeStatusTTL {
+			return c.status()
+		}
+	default:
+	}
+	return ""
 }
 
 func (e *Engine) InvalidateProbeStatus(device string) {
@@ -928,50 +986,26 @@ func (e *Engine) refreshProbedExternals() {
 }
 
 func (e *Engine) refreshProbeStatus(device string) {
-	e.probeMu.Lock()
-	if c, ok := e.probeCache[device]; ok && e.now().Sub(c.at) < probeStatusTTL {
-		e.probeMu.Unlock()
-		return
-	}
-	if e.probeBusy[device] {
-		e.probeMu.Unlock()
-		return
-	}
-	e.probeBusy[device] = true
-	e.probeMu.Unlock()
-	go func() {
-		status := e.probeStatus(device)
-		e.probeMu.Lock()
-		e.probeCache[device] = probeCacheEntry{status: status, at: e.now()}
-		delete(e.probeBusy, device)
-		e.probeMu.Unlock()
-	}()
-}
-
-func (e *Engine) probeStatus(device string) string {
 	probe := e.store.IfaceProbe(device)
 	if probe == nil {
-		return ""
+		return
 	}
-	cfg := probe.Normalized()
-	var ok bool
-	var rtt int
-	var perr error
-	if store.IsHTTPProbe(cfg.Target) {
-		ok, rtt, perr = httpProbe(device, cfg.Target, 5*time.Second)
-	} else {
-		ok, rtt = e.backend.ProbeDevice(device, cfg.Target)
-	}
-	if !ok {
-		if perr != nil {
-			return "проба: нет ответа (" + perr.Error() + ")"
+	e.probeMu.Lock()
+	e.startDeviceProbe(device, probe.Normalized())
+	e.probeMu.Unlock()
+}
+
+func (c *probeCacheEntry) status() string {
+	if !c.ok {
+		if c.err != nil {
+			return "проба: нет ответа (" + c.err.Error() + ")"
 		}
 		return "проба: нет ответа"
 	}
-	if cfg.MaxRTTms > 0 && rtt > cfg.MaxRTTms {
-		return fmt.Sprintf("проба: %dms > порога %dms", rtt, cfg.MaxRTTms)
+	if c.cfg.MaxRTTms > 0 && c.rtt > c.cfg.MaxRTTms {
+		return fmt.Sprintf("проба: %dms > порога %dms", c.rtt, c.cfg.MaxRTTms)
 	}
-	return fmt.Sprintf("проба: ок %dms", rtt)
+	return fmt.Sprintf("проба: ок %dms", c.rtt)
 }
 
 func (e *Engine) eligible(p store.Pool, st *store.PoolState) []store.ManagedConfig {
@@ -1236,7 +1270,6 @@ func (e *Engine) RetryMTWrite(key string, attempt func() error) error {
 // magitrickle 0.8.2: single-group PUT не пересоздаёт iptables-цепочку, если
 // рантайм группы уже выключен; пересборку даёт только массовый PUT списка.
 func (e *Engine) applyGroupChanges(key string, mutate func(groups []magitrickle.Group) bool) error {
-	e.settleAfterIfaceOp()
 	return e.RetryMTWrite(key, func() error {
 		return e.tryApplyGroups(key, mutate)
 	})
@@ -1244,15 +1277,9 @@ func (e *Engine) applyGroupChanges(key string, mutate func(groups []magitrickle.
 
 // tryApplyGroups - одна попытка массовой записи с каскадными хуками.
 func (e *Engine) tryApplyGroups(key string, mutate func(groups []magitrickle.Group) bool) error {
-	if e.casc != nil {
-		e.casc.BeforeMutate(mutate)
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	err := e.mt.MutateGroups(ctx, mutate)
-	if e.casc != nil {
-		e.casc.AfterMutate()
-	}
 	if err == nil {
 		e.mtEverAlive = true
 	}
@@ -1636,19 +1663,36 @@ func (e *Engine) checkGroupPolicies() {
 	if err != nil {
 		return
 	}
+	degraded := e.store.DegradedGroups()
+	relevant := map[string]bool{}
+	for _, g := range groups {
+		if !e.store.GroupPolicy(g.ID).Default() {
+			if dg, ok := degraded[g.ID]; ok {
+				relevant[dg.OrigIface] = true
+			} else {
+				relevant[g.Interface] = true
+			}
+		}
+	}
 	health := map[string]bool{}
+	samples := map[string]*probeCacheEntry{}
 	for _, pool := range e.store.Pools() {
 		health[pool.DeviceName()] = !pool.Disabled && e.store.State(pool.Name).Mode == store.ModeUp
 	}
 	if slots, err := e.backend.Slots(); err == nil {
 		for _, sl := range slots {
+			if !relevant[sl.Device] {
+				continue
+			}
 			if _, ok := health[sl.Device]; ok {
 				continue
 			}
 			ok := sl.LinkUp
 			if ok {
 				if probe := e.store.IfaceProbe(sl.Device); probe != nil {
-					ok = e.deviceProbeOK(sl.Device, *probe)
+					c := e.deviceProbe(sl.Device, *probe)
+					ok = c.healthy()
+					samples[sl.Device] = c
 				} else {
 					ok = sl.Connected
 					if !ok {
@@ -1661,7 +1705,6 @@ func (e *Engine) checkGroupPolicies() {
 		}
 	}
 
-	degraded := e.store.DegradedGroups()
 	cycles := e.store.Settings()
 	pending := map[string]store.DegradedGroup{}
 	type action struct {
@@ -1677,6 +1720,18 @@ func (e *Engine) checkGroupPolicies() {
 			continue
 		}
 		dg, wasDegraded := degraded[g.ID]
+		dev := g.Interface
+		if wasDegraded {
+			dev = dg.OrigIface
+		}
+		if sample := samples[dev]; sample != nil {
+			if e.polSamples[g.ID] == sample && dg.Mode != "direct-pending" {
+				continue
+			}
+			e.polSamples[g.ID] = sample
+		} else {
+			delete(e.polSamples, g.ID)
+		}
 		if wasDegraded {
 			e.polFails[g.ID] = 0
 			if dg.Mode == "direct-pending" {

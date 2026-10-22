@@ -2064,10 +2064,6 @@ func (s *Server) mtCreateGroup(w http.ResponseWriter, r *http.Request) {
 // magitrickle 0.8.2 не пересоздаёт iptables-цепочку при одиночном PUT
 // группы, поэтому все правки идут массовым сохранением всего списка.
 func (s *Server) mtApplyGroups(ctx context.Context, mutate func(groups []magitrickle.Group) bool) error {
-	if c := s.casc(); c != nil {
-		c.BeforeMutate(mutate)
-		defer c.AfterMutate()
-	}
 	// веб-записи через тот же самолечащийся путь, что и движок: 500-й на
 	// bulk-PUT иначе терял группы (кейс владельца с правкой telega)
 	return s.engine.RetryMTWrite("panel", func() error {
