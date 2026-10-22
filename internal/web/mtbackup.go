@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"mawg/internal/magitrickle"
 )
@@ -155,11 +156,20 @@ func (s *Server) mtRestore(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "groups": len(dump.Groups)})
 	case strings.HasPrefix(req.File, "mt-config-"):
 		// сырой рестор дискового конфига MT + рестарт демона (как делали
-		// руками после инцидента усечения)
+		// руками после инцидента усечения). Рестор перезаписывает конфиг
+		// ЦЕЛИКОМ (включая DNS-настройки владельца), поэтому текущее
+		// состояние сначала уходит в авто-бэкап - иначе откат возможен
+		// только на чужой бэкап (кейс Кинетика, 84-док).
 		path := s.backend.MTConfigPath()
 		if path == "" {
 			writeErrCode(w, http.StatusBadRequest, fmt.Errorf("платформа не знает путь конфига MT"))
 			return
+		}
+		if cur, err := os.ReadFile(path); err == nil {
+			name := "mt-config-" + time.Now().Format("20060102-150405") + ".conf"
+			if err := os.WriteFile(s.backupPath(name), cur, 0o600); err != nil {
+				s.store.LogEvent("magitrickle", "restore", "авто-бэкап текущего конфига не удался: "+err.Error())
+			}
 		}
 		tmp := path + ".mawg-restore.tmp"
 		if err := os.WriteFile(tmp, data, 0o600); err != nil {
