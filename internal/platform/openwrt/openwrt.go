@@ -84,7 +84,11 @@ func runShell(script string) (string, error) {
 }
 
 func (b *Backend) Slots() ([]platform.SlotInfo, error) {
-	show, err := run("uci", "-q", "show", "network")
+	return slotsImpl(run)
+}
+
+func slotsImpl(command func(string, ...string) (string, error)) ([]platform.SlotInfo, error) {
+	show, err := command("uci", "-q", "show", "network")
 	if err != nil {
 		return nil, err
 	}
@@ -99,18 +103,73 @@ func (b *Backend) Slots() ([]platform.SlotInfo, error) {
 			protoByName[m[1]] = m[2]
 		}
 	}
+	interfaces := interfaceSnapshot(command)
 	var out []platform.SlotInfo
 	for name, proto := range protoByName {
 		if proto != "wireguard" && proto != "amneziawg" {
 			continue
 		}
 		info := platform.SlotInfo{ID: name, Device: name, Description: proto}
-		linkOut, _ := run("ip", "-o", "link", "show", "dev", name)
-		info.LinkUp = strings.Contains(linkOut, ",UP,") && strings.Contains(linkOut, "LOWER_UP")
-		info.Address = ifaceAddr(name)
+		iface := interfaces[name]
+		info.LinkUp = iface.up && iface.lowerUp
+		info.Address = iface.address
 		out = append(out, info)
 	}
 	return out, nil
+}
+
+type interfaceInfo struct {
+	up      bool
+	lowerUp bool
+	address string
+}
+
+func interfaceSnapshot(command func(string, ...string) (string, error)) map[string]interfaceInfo {
+	links, _ := command("ip", "-o", "link", "show")
+	interfaces := map[string]interfaceInfo{}
+	for _, line := range strings.Split(links, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 || !strings.HasPrefix(fields[2], "<") || !strings.HasSuffix(fields[2], ">") {
+			continue
+		}
+		name := strings.SplitN(strings.TrimSuffix(fields[1], ":"), "@", 2)[0]
+		var info interfaceInfo
+		for _, flag := range strings.Split(strings.Trim(fields[2], "<>"), ",") {
+			switch flag {
+			case "UP":
+				info.up = true
+			case "LOWER_UP":
+				info.lowerUp = true
+			}
+		}
+		interfaces[name] = info
+	}
+	for name, address := range interfaceAddresses(command) {
+		info := interfaces[name]
+		info.address = address
+		interfaces[name] = info
+	}
+	return interfaces
+}
+
+func interfaceAddresses(command func(string, ...string) (string, error)) map[string]string {
+	addresses, err := command("ip", "-4", "-o", "addr", "show")
+	if err != nil {
+		return nil
+	}
+	byName := map[string]string{}
+	for _, line := range strings.Split(addresses, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 4 || fields[2] != "inet" {
+			continue
+		}
+		name := strings.SplitN(strings.TrimSuffix(fields[1], ":"), "@", 2)[0]
+		ip, _, parseErr := net.ParseCIDR(fields[3])
+		if byName[name] == "" && parseErr == nil && ip.To4() != nil {
+			byName[name] = fields[3]
+		}
+	}
+	return byName
 }
 
 func (b *Backend) Apply(pool store.Pool, cfg wgconf.Config) error {
@@ -431,15 +490,16 @@ func (b *Backend) ProbeDevice(device, target string) (bool, int) {
 var sysTunnelRe = regexp.MustCompile(`^(tun|tap|wg|awg)[0-9]+$`)
 
 func (b *Backend) SysTunnels() ([]platform.SlotInfo, error) {
-	return sysTunnelsImpl()
+	return sysTunnelsImpl("/sys/class/net", run)
 }
 
-func sysTunnelsImpl() ([]platform.SlotInfo, error) {
+func sysTunnelsImpl(netDir string, command func(string, ...string) (string, error)) ([]platform.SlotInfo, error) {
 
-	entries, err := os.ReadDir("/sys/class/net")
+	entries, err := os.ReadDir(netDir)
 	if err != nil {
 		return nil, err
 	}
+	addresses := interfaceAddresses(command)
 	var out []platform.SlotInfo
 	for _, e := range entries {
 		name := e.Name()
@@ -447,7 +507,7 @@ func sysTunnelsImpl() ([]platform.SlotInfo, error) {
 			continue
 		}
 		linkUp := false
-		if flags, err := os.ReadFile("/sys/class/net/" + name + "/flags"); err == nil {
+		if flags, err := os.ReadFile(netDir + "/" + name + "/flags"); err == nil {
 			// младший бит IFF_UP: 0x91 = поднят, 0x90 = выключен
 			// (префиксное сравнение путает 0x90/0x91)
 			t := strings.TrimPrefix(strings.TrimSpace(string(flags)), "0x")
@@ -455,7 +515,7 @@ func sysTunnelsImpl() ([]platform.SlotInfo, error) {
 				linkUp = v&1 == 1
 			}
 		}
-		out = append(out, platform.SlotInfo{Device: name, LinkUp: linkUp, Address: ifaceAddr(name)})
+		out = append(out, platform.SlotInfo{Device: name, LinkUp: linkUp, Address: addresses[name]})
 	}
 	return out, nil
 }
@@ -502,17 +562,3 @@ func (b *Backend) MTConfigPath() string { return "/etc/magitrickle/state/config.
 // SaveConfig: mawg коммитит uci сразу в Apply/Up/Down, LuCI видит живое
 // состояние; отдельное сохранение не нужно.
 func (b *Backend) SaveConfig() error { return nil }
-
-// ifaceAddr - первый IPv4 с маской интерфейса (10.2.0.2/32).
-func ifaceAddr(device string) string {
-	out, err := run("ip", "-4", "-o", "addr", "show", "dev", device)
-	if err != nil {
-		return ""
-	}
-	for _, field := range strings.Fields(out) {
-		if net.ParseIP(strings.SplitN(field, "/", 2)[0]) != nil && strings.Contains(field, "/") {
-			return field
-		}
-	}
-	return ""
-}

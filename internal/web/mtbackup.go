@@ -144,10 +144,6 @@ func (s *Server) mtRestore(w http.ResponseWriter, r *http.Request) {
 			writeErrCode(w, http.StatusBadRequest, fmt.Errorf("в бэкапе нет групп - восстанавливать нечего"))
 			return
 		}
-		if c := s.casc(); c != nil {
-			c.BeforeReplace(dump.Groups)
-			defer c.AfterMutate()
-		}
 		// рестор тоже через самолечение: большой bulk-PUT валится чаще всех
 		if err := s.engine.RetryMTWrite("restore", func() error {
 			return s.mtClient().ReplaceGroups(r.Context(), dump.Groups)
@@ -350,12 +346,6 @@ func (s *Server) mtImportGroups(w http.ResponseWriter, r *http.Request) {
 			rules += len(g.Rules)
 		}
 		if len(add) > 0 {
-			if c := s.casc(); c != nil {
-				// хуки снимаются по драфт-мутации: чистое добавление
-				// существующие каскадные группы не трогает - снимать нечего
-				c.BeforeMutate(func([]magitrickle.Group) bool { return false })
-				defer c.AfterMutate()
-			}
 			// тот же самолечащийся путь записи, что и у прочих правок
 			if err := s.engine.RetryMTWrite("panel", func() error {
 				return s.mtClient().AddGroups(r.Context(), add)
@@ -376,10 +366,6 @@ func (s *Server) mtImportGroups(w http.ResponseWriter, r *http.Request) {
 	// replace: полный список выбранными группами - тем же путём, что
 	// рестор shadow-бэкапа (валидация, дедуп и контроль усечения тени
 	// внутри transformGroups)
-	if c := s.casc(); c != nil {
-		c.BeforeReplace(req.Groups)
-		defer c.AfterMutate()
-	}
 	if err := s.engine.RetryMTWrite("import", func() error {
 		return s.mtClient().ReplaceGroups(r.Context(), req.Groups)
 	}); err != nil {

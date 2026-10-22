@@ -775,10 +775,15 @@ func (m *Manager) Delete(ctx context.Context, groupID string) error {
 	if _, ok := m.Store.CascadeByGroup(groupID); !ok {
 		return fmt.Errorf("каскад %s не найден", groupID)
 	}
+	m.beginMutate()
+	defer m.endMutate()
 	if err := m.HookRemove(groupID); err != nil {
 		return err
 	}
 	if err := m.retry("cascade", func() error { return m.MT.EnsureHealthy(ctx) }); err != nil {
+		return err
+	}
+	if err := m.MT.DeleteGroup(ctx, groupID); err != nil {
 		return err
 	}
 	casc := m.Store.Cascades()
@@ -792,9 +797,6 @@ func (m *Manager) Delete(ctx context.Context, groupID string) error {
 		out = append(out, c)
 	}
 	if err := m.Store.SetCascades(out); err != nil {
-		return err
-	}
-	if err := m.MT.DeleteGroup(ctx, groupID); err != nil {
 		return err
 	}
 	m.MT.RefreshShadow(ctx)
