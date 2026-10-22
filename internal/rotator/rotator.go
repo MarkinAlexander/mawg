@@ -133,6 +133,11 @@ func New(st *store.Store, b platform.Backend, mt *magitrickle.Client) *Engine {
 	if mt != nil {
 		e.casc = cascade.New(st, mt)
 		e.casc.Retry = e.RetryMTWrite
+		// BeforeWrite - окно мутации на клиенте: фактическая запись групп
+		// (движок, панель, рестор, импорт) снимает OUTPUT-хуки и возвращает
+		// их сразу после записи (AfterMutate -> SyncHooks); no-op-мутация
+		// без PUT хуки не трогает. settle идёт под groupsMu клиента - все
+		// писатели и так сериализуются на нём.
 		mt.BeforeWrite = func() {
 			e.settleAfterIfaceOp()
 			e.casc.BeforeMutate(nil)
