@@ -34,8 +34,10 @@ type Group struct {
 }
 
 type Client struct {
-	BaseURL string
-	HTTP    *http.Client
+	BaseURL     string
+	HTTP        *http.Client
+	BeforeWrite func()
+	AfterWrite  func()
 }
 
 func New(baseURL string) *Client {
@@ -426,7 +428,13 @@ func (c *Client) ReplaceGroups(ctx context.Context, groups []Group) error {
 
 func (c *Client) transformGroups(ctx context.Context, transform func([]Group) ([]Group, bool)) error {
 	groupsMu.Lock()
-	defer groupsMu.Unlock()
+	var afterWrite func()
+	defer func() {
+		groupsMu.Unlock()
+		if afterWrite != nil {
+			afterWrite()
+		}
+	}()
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 	groups, err := c.GroupsWithRules(ctx)
@@ -444,6 +452,10 @@ func (c *Client) transformGroups(ctx context.Context, transform func([]Group) ([
 	if !changed && !repaired && len(dedupInfo) == 0 {
 		updateShadowLocked(groups)
 		return nil
+	}
+	afterWrite = c.AfterWrite
+	if c.BeforeWrite != nil {
+		c.BeforeWrite()
 	}
 	if PreSave != nil {
 		PreSave()
