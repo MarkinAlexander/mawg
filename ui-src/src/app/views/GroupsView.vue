@@ -106,7 +106,7 @@ const presetIface = ref('');
 const applying = ref(false);
 
 const presetOptions = computed<UiSelectOption[]>(() =>
-  state.presets.list.map((p: Preset) => ({ value: p.id, label: p.title, count: (p.rules || []).length })));
+  state.presets.list.map((p: Preset) => ({ value: p.id, label: p.title, count: (p.rules || []).length, hint: p.note })));
 
 // легаси: первый пресет предвыбран
 watch(() => state.presets.list, (list) => {

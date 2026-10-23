@@ -83,6 +83,7 @@ export interface Preset {
   id: string
   title: string
   source?: string
+  note?: string // предупреждение о составе (общие подсети Meta и т.п.)
   rules: PresetRule[]
 }
 

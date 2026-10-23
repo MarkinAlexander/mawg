@@ -54,6 +54,10 @@ async function makeView(dups: Rec = {}) {
         presets: [{
           id: 'p1', title: 'Telegram', source: 'https://github.com/itdoginfo/allow-domains',
           rules: [{ type: 'domain' }, { type: 'domain' }, { type: 'namespace' }, { type: 'subnet' }, { type: 'subnet' }],
+        }, {
+          id: 'p2', title: 'WhatsApp (домены + подсети IPv4)', source: 'https://github.com/itdoginfo/allow-domains',
+          note: 'подсети WhatsApp общие у всего Meta',
+          rules: [{ type: 'namespace' }, { type: 'subnet' }],
         }],
         sourceUrl: 'https://github.com/itdoginfo/allow-domains',
         sourceNote: 'обновляется ежедневно',
@@ -427,6 +431,18 @@ describe('GroupsView - пресеты и каскады (Ф3.7б)', () => {
     await vi.waitFor(() =>
       expect(useToast().toasts.list.map((t) => t.text)).toContain('Группа создана, правил: 5'));
     await vi.waitFor(() => expect(block(w, 'g9').exists()).toBe(true));
+    w.unmount();
+  });
+
+  it('шаблон с предупреждением (note) показывает его прямо в опции селекта', async () => {
+    const { w } = await makeView();
+    await vi.waitFor(() => expect(useGroups().state.presets.loaded).toBe(true));
+    await nextTick();
+    const card = w.find('.card');
+    await card.find('.psetrow').findAll('.psel-btn')[0].trigger('click');
+    await nextTick();
+    const wa = card.findAll('.psel-item').filter((o) => o.text().includes('WhatsApp'))[0];
+    expect(wa.text()).toContain('подсети WhatsApp общие у всего Meta');
     w.unmount();
   });
 
