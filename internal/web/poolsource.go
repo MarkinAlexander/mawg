@@ -58,7 +58,10 @@ type poolSourceReq struct {
 	Country      string `json:"country"`
 }
 
-func (s *Server) poolSettingsFromReq(req poolSourceReq) (store.PoolSettings, error) {
+// poolSettingsFromReq собирает настройки нового пула из запроса.
+// autoKeeneticSlot - при исчерпании свободных слотов создать новый
+// (генератор WARP); обычное создание пула считает ошибку как раньше.
+func (s *Server) poolSettingsFromReq(req poolSourceReq, autoKeeneticSlot bool) (store.PoolSettings, error) {
 	settings := store.PoolSettings{
 		Platform:     s.backend.Name(),
 		KeeneticSlot: req.KeeneticSlot,
@@ -73,7 +76,13 @@ func (s *Server) poolSettingsFromReq(req poolSourceReq) (store.PoolSettings, err
 		}
 	}
 	if s.backend.Name() == store.PlatformKeenetic {
-		slot, err := s.resolveKeeneticSlot(settings.KeeneticSlot)
+		var slot string
+		var err error
+		if autoKeeneticSlot {
+			slot, err = s.resolveKeeneticSlotAuto(settings.KeeneticSlot)
+		} else {
+			slot, err = s.resolveKeeneticSlot(settings.KeeneticSlot)
+		}
 		if err != nil {
 			return settings, err
 		}
@@ -234,7 +243,7 @@ func (s *Server) createPoolFromNodes(w http.ResponseWriter, r *http.Request, req
 	}
 
 	if len(ncs) > 0 {
-		settings, err := s.poolSettingsFromReq(req)
+		settings, err := s.poolSettingsFromReq(req, false)
 		if err != nil {
 			writeErr(w, err)
 			return

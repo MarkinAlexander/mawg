@@ -4,11 +4,12 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/base64"
-	"os"
-	"path/filepath"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -516,4 +517,86 @@ func mustGet(t *testing.T, url string) *http.Response {
 		t.Fatalf("GET %s: %d", url, resp.StatusCode)
 	}
 	return resp
+}
+
+// fakeKeeneticFull - Кинетик-флейвор фейка: единственный слот занят чужим
+// пулом (Description), CreateSlot выдаёт следующий номер. Для проверки
+// авто-слота генератора WARP (85-док).
+type fakeKeeneticFull struct {
+	*fake.Fake
+	created int
+}
+
+func (f *fakeKeeneticFull) Name() string { return store.PlatformKeenetic }
+func (f *fakeKeeneticFull) Slots() ([]platform.SlotInfo, error) {
+	return []platform.SlotInfo{{ID: "Wireguard2", Device: "nwg2", Description: "чужой пул"}}, nil
+}
+func (f *fakeKeeneticFull) CreateSlot() (string, error) {
+	f.created++
+	return fmt.Sprintf("Wireguard%d", 2+f.created), nil
+}
+
+// warp-пул на Кинетике без свободных слотов: слот создаётся автоматически,
+// пул заводится и получает созданный слот (не ошибка «создайте кнопкой»)
+func TestWarpGenerateKeeneticAutoSlot(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	fb := &fakeKeeneticFull{Fake: fake.New()}
+	engine := rotator.New(st, fb, nil)
+	at := time.Now()
+	engine.Clock = func() time.Time { at = at.Add(3 * time.Second); return at }
+	fb.SetProbe("warp", true)
+	fb.StatusMap["warp"] = platform.TunnelStatus{LinkUp: true, Connected: true, HandshakeAgo: 5}
+	srv := New(st, engine, fb, nil, "test", nil)
+	srv.SetWarpClient(&warp.Client{Hosts: []string{warpCFServer(t).URL}})
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	code, body := warpPost(ts, "/api/v1/warp/generate",
+		`{"count":1,"mode":"fixed","endpoint":"engage.cloudflareclient.com:2408","dest":"pool"}`)
+	if code != http.StatusOK {
+		t.Fatalf("generate: %d %s", code, body)
+	}
+	if fb.created != 1 {
+		t.Fatalf("CreateSlot вызван %d раз, хочу 1", fb.created)
+	}
+	p, ok := st.Pool("warp")
+	if !ok {
+		t.Fatal("пул warp не создан")
+	}
+	if p.Settings.KeeneticSlot != "Wireguard3" {
+		t.Fatalf("слот пула = %q, хочу авто-созданный Wireguard3", p.Settings.KeeneticSlot)
+	}
+	if p.DeviceName() != "nwg3" {
+		t.Fatalf("устройство пула = %q, хочу nwg3", p.DeviceName())
+	}
+}
+
+// авто-слот не срабатывает при явно выбранном несуществующем слоте -
+// честная ошибка как раньше
+func TestWarpGenerateKeeneticAutoSlotExplicit(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	fb := &fakeKeeneticFull{Fake: fake.New()}
+	engine := rotator.New(st, fb, nil)
+	srv := New(st, engine, fb, nil, "test", nil)
+	srv.SetWarpClient(&warp.Client{Hosts: []string{warpCFServer(t).URL}})
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	code, body := warpPost(ts, "/api/v1/warp/generate",
+		`{"count":1,"mode":"fixed","endpoint":"engage.cloudflareclient.com:2408","dest":"pool","keeneticSlot":"Wireguard9"}`)
+	if code == http.StatusOK {
+		t.Fatalf("явно выбранный несуществующий слот должен ошибкой, получен 200: %s", body)
+	}
+	if !strings.Contains(string(body), "не найден") {
+		t.Fatalf("текст ошибки: %s", body)
+	}
+	if fb.created != 0 {
+		t.Fatalf("CreateSlot не должен был вызываться, вызван %d", fb.created)
+	}
 }

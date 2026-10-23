@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -1356,7 +1357,36 @@ func (s *Server) resolveKeeneticSlot(slot string) (string, error) {
 		}
 		return sl.ID, nil
 	}
-	return "", fmt.Errorf("нет свободных слотов WireGuard - создайте новый кнопкой «+ слот» в диалоге пула")
+	return "", fmt.Errorf("%w - создайте новый кнопкой «+ слот» в диалоге пула", errNoFreeKeeneticSlot)
+}
+
+// errNoFreeKeeneticSlot - маркер исчерпания свободных слотов: генератор
+// WARP ловит его и создаёт слот сам, прочие вызывающие показывают текст.
+var errNoFreeKeeneticSlot = errors.New("нет свободных слотов WireGuard")
+
+// resolveKeeneticSlotAuto - как resolveKeeneticSlot, но при исчерпании
+// свободных слотов создаёт новый сама (генератор WARP: первый warp-пул на
+// Кинетике не должен отправлять в диалог пула за кнопкой «+ слот» посреди
+// мастера). Автосоздание - только на «нет свободных» с пустым выбором:
+// занятый/несуществующий слот остаётся честной ошибкой, как раньше.
+func (s *Server) resolveKeeneticSlotAuto(slot string) (string, error) {
+	resolved, err := s.resolveKeeneticSlot(slot)
+	if err == nil || slot != "" || !errors.Is(err, errNoFreeKeeneticSlot) {
+		return resolved, err
+	}
+	kb, ok := s.backend.(platform.SlotCreator)
+	if !ok {
+		return resolved, err
+	}
+	id, cerr := kb.CreateSlot()
+	if cerr != nil {
+		return "", fmt.Errorf("свободных слотов WireGuard нет, создать новый не удалось: %v", cerr)
+	}
+	s.store.LogEvent("slots", "create", "создан слот "+id+" (автоматически для пула WARP)")
+	if serr := s.backend.SaveConfig(); serr != nil {
+		s.store.LogEvent("slots", "create", "конфиг не сохранился: "+serr.Error())
+	}
+	return id, nil
 }
 
 func (s *Server) createPool(w http.ResponseWriter, r *http.Request) {

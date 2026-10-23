@@ -144,3 +144,46 @@ describe('WarpGenerateDialog - генерация', () => {
     w.unmount();
   });
 });
+
+describe('WarpGenerateDialog - пул-режим', () => {
+  // открыть селект «Куда» и выбрать опцию (GOTCHAS: триггер по тексту
+  // текущего значения, опции - .psel-item)
+  async function pickDest(w: ReturnType<typeof mount>, option: string) {
+    const destBtn = w.findAll('.psel-btn').filter((b) => b.text().includes('Только скачать'))[0];
+    await destBtn.trigger('click');
+    await w.findAll('.psel-item').filter((o) => o.text() === option)[0].trigger('click');
+  }
+
+  it('назначение «Создать пул warp» (без «тестовый»)', async () => {
+    const w = await openDialog({ pool: 'warp', added: 1, results: [] });
+    await w.findAll('.psel-btn').filter((b) => b.text().includes('Только скачать'))[0].trigger('click');
+    const opts = w.findAll('.psel-item').map((o) => o.text());
+    expect(opts).toContain('Создать пул warp');
+    expect(opts.join(' ')).not.toContain('тестовый');
+    w.unmount();
+  });
+
+  it('переход в пул сбрасывает пресеты и свои подсети (галочки не висят)', async () => {
+    const capture: { body?: string } = {};
+    const w = await openDialog({ pool: 'warp', added: 1, results: [] }, capture);
+    // download-режим: отметить YouTube и вписать свою подсеть
+    const yt = w.findAll('.sitelist input[type=checkbox]')[0];
+    await yt.setValue(true);
+    expect((yt.element as HTMLInputElement).checked).toBe(true);
+    const ta = w.find('textarea');
+    await ta.setValue('203.0.113.0/24');
+
+    // пул-режим: чекбоксы задизейблены и обязаны визуально сброситься
+    await pickDest(w, 'Создать пул warp');
+    expect((yt.element as HTMLInputElement).checked).toBe(false);
+    expect((yt.attributes('disabled'))).toBeDefined();
+    expect((ta.element as HTMLTextAreaElement).value).toBe('');
+
+    await btn(w, 'Сгенерировать')[0].trigger('click');
+    await vi.waitFor(() => expect(capture.body).toBeTruthy());
+    expect(JSON.parse(capture.body!)).toEqual({
+      count: 3, mode: 'random', sites: [], subnets: [], dest: 'pool',
+    });
+    w.unmount();
+  });
+});

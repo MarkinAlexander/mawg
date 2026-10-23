@@ -23,7 +23,7 @@ func (s *Server) createPremiumPoolFromSource(w http.ResponseWriter, r *http.Requ
 	key := req.Source
 	req.Source = ""
 	req.OpenwrtProto = "amneziawg"
-	settings, err := s.poolSettingsFromReq(req)
+	settings, err := s.poolSettingsFromReq(req, false)
 	if err != nil {
 		writeErr(w, err)
 		return
