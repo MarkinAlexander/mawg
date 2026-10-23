@@ -239,6 +239,7 @@ func (b *Backend) Apply(pool store.Pool, cfg wgconf.Config) error {
 	if out, err := runShell(script); err != nil {
 		return fmt.Errorf("uci: %v: %s", err, out)
 	}
+	reloadNetwork(run)
 	if err := b.ensureZone(name); err != nil {
 		return err
 	}
@@ -263,6 +264,20 @@ while uci -q delete network.@amneziawg_` + name + `[0] 2>/dev/null; do :; done
 uci -q delete network.` + name + `
 uci -q commit network
 `
+}
+
+// reloadNetwork - мягкая перезагрузка сетевой конфигурации после uci commit:
+// netifd перечитывает конфиг и подхватывает новые прото-секции
+// (wireguard/amneziawg). Без неё на роутерах, где WG/AWG никогда не
+// настраивался, ifup новой секции не отрабатывает и интерфейс не виден
+// в LuCI до перезагрузки роутера. ubus reload не рвёт существующие
+// интерфейсы (в отличие от network restart); сбой не фатален - ifup
+// ниже всё равно попытается поднять секцию
+func reloadNetwork(command func(string, ...string) (string, error)) {
+	if _, err := command("ubus", "call", "network", "reload"); err == nil {
+		return
+	}
+	command("/etc/init.d/network", "reload")
 }
 
 func probeRoute(probeHost, name string) []string {

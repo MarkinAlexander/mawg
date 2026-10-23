@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -91,6 +92,33 @@ func TestSlotsImplBatched(t *testing.T) {
 type slotsFields struct {
 	up   bool
 	addr string
+}
+
+// после uci commit нужна мягкая перезагрузка network-конфига: ubus reload
+// (не рвёт интерфейсы), при его отсутствии - фолбэк init.d reload;
+// restart не вызывается ни при каком раскладе
+func TestReloadNetwork(t *testing.T) {
+	var calls []string
+	reloadNetwork(func(name string, args ...string) (string, error) {
+		calls = append(calls, name+" "+strings.Join(args, " "))
+		if name == "ubus" {
+			return "", errors.New("ubus недоступен")
+		}
+		return "", nil
+	})
+	want := []string{"ubus call network reload", "/etc/init.d/network reload"}
+	if len(calls) != 2 || calls[0] != want[0] || calls[1] != want[1] {
+		t.Fatalf("цепочка: %v, хочу %v", calls, want)
+	}
+
+	calls = nil
+	reloadNetwork(func(name string, _ ...string) (string, error) {
+		calls = append(calls, name)
+		return "", nil
+	})
+	if len(calls) != 1 || calls[0] != "ubus" {
+		t.Fatalf("при живом ubus фолбэка быть не должно: %v", calls)
+	}
 }
 
 // системные туннели: адреса из пакетного снимка, флаг IFF_UP из flags

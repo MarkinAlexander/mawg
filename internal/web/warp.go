@@ -203,19 +203,26 @@ func (s *Server) warpGenerate(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, err)
 			return
 		}
-		var err error
-		settings, err = s.poolSettingsFromReq(poolSourceReq{
-			Name: "warp", KeeneticSlot: req.KeeneticSlot, Fallback: req.Fallback, ProbeHost: req.ProbeHost,
-		})
-		if err != nil {
-			writeErr(w, err)
-			return
-		}
-		// Конфиги генератора несут поля обфускации AWG 2.0: на OpenWrt
-		// такой пул поднимается только proto amneziawg (на Кинетике поля
-		// применяются нативными ASC-аргументами).
-		if s.backend.Name() == store.PlatformOpenwrt {
-			settings.OpenwrtProto = "amneziawg"
+		// Слот/проба/фоллбек нужны только НОВОМУ пулу: у существующего они
+		// свои, а лишний поиск свободного слота на заполненном Кинетике
+		// только зря ронял бы добавление конфига. На Кинетике без свободных
+		// слотов новый создаётся автоматически (85-док: мастер WARP не
+		// должен отправлять в диалог пула за кнопкой «+ слот»).
+		if req.Pool == "" {
+			var err error
+			settings, err = s.poolSettingsFromReq(poolSourceReq{
+				Name: "warp", KeeneticSlot: req.KeeneticSlot, Fallback: req.Fallback, ProbeHost: req.ProbeHost,
+			}, true)
+			if err != nil {
+				writeErr(w, err)
+				return
+			}
+			// Конфиги генератора несут поля обфускации AWG 2.0: на OpenWrt
+			// такой пул поднимается только proto amneziawg (на Кинетике поля
+			// применяются нативными ASC-аргументами).
+			if s.backend.Name() == store.PlatformOpenwrt {
+				settings.OpenwrtProto = "amneziawg"
+			}
 		}
 	}
 

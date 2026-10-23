@@ -55,6 +55,17 @@ watch(open, async (v) => {
   };
 });
 
+// при уходе из download-режима пресеты/подсети к пулу не применяются
+// (бэкенд игнорирует: пул = только полный туннель) - сбрасываем и
+// визуально, чтобы задизейбленные галочки не висели отмеченными
+// от download-режима (слово владельца: «чтобы серели все чекбоксы»)
+watch(() => dlg.value?.dest, (dest) => {
+  if (dest && dest !== 'download' && dlg.value) {
+    dlg.value.sites = [];
+    dlg.value.subnets = '';
+  }
+});
+
 const maxCount = computed(() => warp.state.presets?.limits.count || 16);
 const countErr = computed(() => {
   const n = Number(dlg.value?.count || 0);
@@ -92,7 +103,7 @@ const destOptions = computed<UiSelectOption[]>(() => {
   if (warpPoolName.value) {
     opts.push({ value: 'add', label: 'Добавить в пул ' + warpPoolName.value + ' (с проверкой)' });
   }
-  opts.push({ value: 'new', label: 'Создать тестовый пул (с проверкой)' });
+  opts.push({ value: 'new', label: 'Создать пул warp' });
   return opts;
 });
 const IPV4_RE = /^(\d{1,3})(\.(\d{1,3})){3}(\/(\d{1,2}))?$/;

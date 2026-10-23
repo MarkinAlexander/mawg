@@ -60,3 +60,10 @@ type Endpointer interface {
 type ShellRunner interface {
 	RunShell(script string, timeout time.Duration) (string, error)
 }
+
+// SlotCreator - опциональная возможность платформы: создание нового
+// WG-слота (Keenetic). Генератору WARP нужно оно при первом warp-пуле
+// на роутере, где слотов ещё нет (85-док: авто-слот в мастере).
+type SlotCreator interface {
+	CreateSlot() (string, error)
+}
