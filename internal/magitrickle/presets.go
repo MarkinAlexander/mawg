@@ -19,7 +19,10 @@ type Preset struct {
 	ID     string `json:"id"`
 	Title  string `json:"title"`
 	Source string `json:"source,omitempty"`
-	Rules  []Rule `json:"rules"`
+	// Note - предупреждение о составе (tooltip в селекте шаблонов):
+	// например подсети Meta общие для всех сервисов и ловят весь Meta.
+	Note  string `json:"note,omitempty"`
+	Rules []Rule `json:"rules"`
 }
 
 type listManifestInfo struct {
@@ -33,6 +36,7 @@ var listManifest = loadManifest()
 type presetSpec struct {
 	ID       string
 	Title    string
+	Note     string
 	Domains  []string
 	SubnetV4 []string
 	SubnetV6 []string
@@ -48,8 +52,40 @@ var presetSpecs = []presetSpec{
 	},
 	{
 		ID:       "meta",
-		Title:    "Meta: Instagram, Facebook, WhatsApp (домены + IPv4/IPv6)",
+		Title:    "Meta: всё (Instagram, Facebook, WhatsApp, Threads; домены + IPv4/IPv6)",
 		Domains:  []string{"domains/meta.lst"},
+		SubnetV4: []string{"subnets4/meta.lst"},
+		SubnetV6: []string{"subnets6/meta.lst"},
+	},
+	// Сплит Meta по сервисам (85-док): домены режутся честно, подсети -
+	// нет (общие у всего Meta), потому WhatsApp несёт их с предупреждением,
+	// а отдельный meta-subnets - «весь Meta-трафик» без доменов.
+	{
+		ID:       "whatsapp",
+		Title:    "WhatsApp (домены + подсети IPv4)",
+		Note:     "подсети WhatsApp общие у всего Meta: группа поймает трафик ВСЕХ сервисов Meta (Instagram/Facebook/Threads); для доменов есть отдельные шаблоны",
+		Domains:  []string{"domains/whatsapp.lst"},
+		SubnetV4: []string{"subnets4/whatsapp.lst"},
+	},
+	{
+		ID:      "instagram",
+		Title:   "Instagram (домены)",
+		Domains: []string{"domains/instagram.lst"},
+	},
+	{
+		ID:      "facebook",
+		Title:   "Facebook (домены)",
+		Domains: []string{"domains/facebook.lst"},
+	},
+	{
+		ID:      "threads",
+		Title:   "Threads (домены)",
+		Domains: []string{"domains/threads.lst"},
+	},
+	{
+		ID:       "meta-subnets",
+		Title:    "Meta (подсети): весь Meta-трафик без доменов",
+		Note:     "правила только по подсетям Meta IPv4/IPv6 - через группу пойдёт трафик всех сервисов Meta (Instagram, Facebook, WhatsApp, Threads); отдельные доменные шаблоны точнее",
 		SubnetV4: []string{"subnets4/meta.lst"},
 		SubnetV6: []string{"subnets6/meta.lst"},
 	},
@@ -149,7 +185,7 @@ func listLines(rel string) []string {
 }
 
 func buildPreset(spec presetSpec) Preset {
-	p := Preset{ID: spec.ID, Title: spec.Title, Source: AllowDomainsURL}
+	p := Preset{ID: spec.ID, Title: spec.Title, Source: AllowDomainsURL, Note: spec.Note}
 	add := func(files []string, typ string) {
 		for _, f := range files {
 			for _, v := range listLines(f) {
