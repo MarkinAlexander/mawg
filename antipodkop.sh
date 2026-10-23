@@ -43,10 +43,25 @@ run() {
 
 TS=$(date +%Y%m%d-%H%M%S)
 BK="/root/antipodkop-backup-$TS"
-mkdir -p "$BK"
-uci export dhcp > "$BK/dhcp.export" 2>/dev/null
-cp -a /etc/config "$BK/etc-config" 2>/dev/null
-say "бэкап: $BK"
+if [ "$DRY" = "1" ]; then
+    say "dry-run: изменений и бэкапа не будет"
+else
+    if ! mkdir -p "$BK"; then
+        echo "ОШИБКА: не создать каталог бэкапа $BK (флеш полна или read-only) - НИЧЕГО не удаляю"; exit 1
+    fi
+    BKOK=0
+    uci export dhcp > "$BK/dhcp.export" 2>/dev/null && BKOK=1
+    cp -a /etc/config "$BK/etc-config" 2>/dev/null && BKOK=1
+    # покрываем и то, что скрипт удаляет ниже
+    [ -d /etc/sing-box ] && cp -a /etc/sing-box "$BK/etc-sing-box" 2>/dev/null && BKOK=1
+    [ -f /etc/crontabs/root ] && cp -a /etc/crontabs/root "$BK/crontabs-root" 2>/dev/null
+    cp -a /usr/lib/opkg/status "$BK/opkg-status" 2>/dev/null
+    cp -a /usr/lib/opkg/info/sing-box.* "$BK/" 2>/dev/null || true
+    if [ "$BKOK" != "1" ]; then
+        echo "ОШИБКА: ни один бэкап не сохранился - НИЧЕГО не удаляю"; exit 1
+    fi
+    say "бэкап: $BK"
+fi
 
 # ---------------------------------------------------------------- пакеты ---
 
@@ -113,9 +128,7 @@ fi
 if [ "$DRY" = "1" ]; then
     echo "    [dry-run] uci: delete server*; delete noresolv; delete cachesize; add server=$TARGET; commit"
 else
-    while uci -q get dhcp.@dnsmasq[0].server >/dev/null 2>&1; do
-        uci -q delete dhcp.@dnsmasq[0].server
-    done
+    uci -q delete 'dhcp.@dnsmasq[0].server'
     uci -q delete dhcp.@dnsmasq[0].noresolv
     uci -q delete dhcp.@dnsmasq[0].cachesize
     uci add_list dhcp.@dnsmasq[0].server="$TARGET"
@@ -129,8 +142,10 @@ fi
 
 say "удаление nft-таблиц podkop/sing-box"
 if command -v nft >/dev/null 2>&1; then
-    for t in $(nft list tables 2>/dev/null | grep -iE 'podkop|sing-?box'); do
-        run nft delete table "$t"
+    # вывод "table <family> <name>" - читаем построчно, иначе разрыв по словам
+    nft list tables 2>/dev/null | grep -iE 'podkop|sing-?box' | while read -r _ fam name; do
+        [ -n "$name" ] || continue
+        run nft delete table "$fam" "$name"
     done
 fi
 
@@ -143,8 +158,10 @@ if [ "$LX" = "1" ]; then
     # подкоповый config.json бит без своих rule-set'ов - проверяю и чиню
     if [ -f /etc/sing-box/config.json ] && ! /usr/bin/sing-box check -c /etc/sing-box/config.json >/dev/null 2>&1; then
         say "чужой config.json невалиден без подкопа - заменяю на минимальную базу (clash_api 2291)"
-        run mv /etc/sing-box/config.json "$BK/config.json.podkop-backup"
-        cat > /etc/sing-box/config.json <<'EOF'
+        if [ "$DRY" = "1" ]; then
+            echo "    [dry-run] mv /etc/sing-box/config.json -> $BK/config.json.podkop-backup + запись минимальной базы"
+        elif mv /etc/sing-box/config.json "$BK/config.json.podkop-backup"; then
+            cat > /etc/sing-box/config.json.new <<'EOF'
 {
   "log": { "level": "warn", "timestamp": false },
   "experimental": {
@@ -153,17 +170,22 @@ if [ "$LX" = "1" ]; then
   }
 }
 EOF
+            mv /etc/sing-box/config.json.new /etc/sing-box/config.json
+        else
+            warn "старый config.json не сохранился - базу НЕ записываю"
+        fi
     fi
 else
     run rm -rf /etc/sing-box /etc/config/sing-box
 fi
 
 say "чистка cron-строк podkop"
-if [ -f /etc/crontabs/root ] && grep -qiE 'podkop|getdomains' /etc/crontabs/root; then
+if [ "$WITH_GETDOMAINS" = "1" ]; then FILT='podkop|getdomains'; else FILT='podkop'; fi
+if [ -f /etc/crontabs/root ] && grep -qiE "$FILT" /etc/crontabs/root; then
     if [ "$DRY" = "1" ]; then
-        echo "    [dry-run] grep -viE 'podkop|getdomains' /etc/crontabs/root"
+        echo "    [dry-run] убрать из /etc/crontabs/root строки по фильтру: $FILT"
     else
-        grep -viE 'podkop|getdomains' /etc/crontabs/root > /etc/crontabs/root.tmp
+        grep -viE "$FILT" /etc/crontabs/root > /etc/crontabs/root.tmp
         mv /etc/crontabs/root.tmp /etc/crontabs/root
         /etc/init.d/cron restart
     fi
