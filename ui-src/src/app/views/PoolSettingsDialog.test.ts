@@ -320,6 +320,29 @@ describe('PoolSettingsDialog - умный каскад (86-док)', () => {
     dlg.unmount();
   });
 
+  it('ранний триггер: режим «после отказов» с числом уходит в PUT', async () => {
+    const warp: PoolView = { ...pool, name: 'warp', device: 'nwg9', slot: 'nwg9' };
+    const { dlg, f } = await makeDialog({}, [pool, warp]);
+    await vi.waitFor(() => expect(dlg.text()).toContain('Умный каскад'));
+    await switchByLabel(dlg, 'спасать пул')!.setValue(true);
+    await nextTick();
+    // до выбора Via сохранение выключает каскад; выберем warp и режим fails
+    await addVia(dlg, 'warp');
+    const trigSel = dlg.findAll('.psel-btn').filter((b) => b.text().includes('после перебора всех конфигов'))[0];
+    await trigSel.trigger('click');
+    await dlg.findAll('.psel-item').filter((o) => o.text().includes('после отказов подряд'))[0].trigger('click');
+    await nextTick();
+    expect(dlg.text()).toContain('Отказов подряд до каскада');
+    await btn(dlg, 'Сохранить')[0].trigger('click');
+    await vi.waitFor(() => {
+      const put = f.mock.calls.find((c) => (c[0] as string).endsWith('/pools/proton') && c[1]?.method === 'PUT');
+      expect(JSON.parse(put![1]!.body as string)).toMatchObject({
+        smartCascade: { via: ['warp'], triggerMode: 'fails', triggerFails: 3 },
+      });
+    });
+    dlg.unmount();
+  });
+
   it('предзаполнение из настроек: via в списке, порядок правится стрелками, интервал и антифлап', async () => {
     const other: PoolView = { ...pool, name: 'awgfree', device: 'nwg8', slot: 'nwg8' };
     const p: PoolView = {

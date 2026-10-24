@@ -498,3 +498,74 @@ func TestSmartCascadeManualOffDrift(t *testing.T) {
 		t.Fatal("стейт после off")
 	}
 }
+
+// earlyPark: fails-режим - после N отказов активного конфига сразу
+// попытка каскада; порог ротации задран высоко, чтобы ротация сама не
+// мешала проверять именно ранний триггер
+func earlyPark(t *testing.T, heals bool) *smartPark {
+	t.Helper()
+	park := smartSetup(t, "one")
+	p, _ := park.st.Pool("proton")
+	settings := p.Settings
+	settings.SmartCascade.TriggerMode = "fails"
+	settings.SmartCascade.TriggerFails = 2
+	settings.FailThreshold = 10
+	if err := park.st.UpdatePool("proton", settings); err != nil {
+		t.Fatal(err)
+	}
+	park.e.checkPool("warp")
+	park.e.checkPool("proton") // конфиг1 применён
+	park.fb.SetProbe("proton", false)
+	park.cl.Add(20 * time.Second) // грейс
+	if heals {
+		// «через warp туннель ожил»: проба оживёт с созданием каскада
+		park.mt.onGroup = func(id string) {
+			park.ipt.chains["MT_"+id] = true
+			park.fb.SetProbe("proton", true)
+		}
+	}
+	return park
+}
+
+// ранний триггер: 2 отказа конфига1 -> каскад через warp, конфиг1 остаётся
+// активным (ротации НЕ было), пул ModeUp
+func TestSmartCascadeEarlyTriggerRescues(t *testing.T) {
+	park := earlyPark(t, true)
+	park.e.checkPool("proton") // отказ 1
+	park.e.checkPool("proton") // отказ 2 -> ранний триггер -> каскад
+
+	st := park.st.State("proton")
+	if st.Smart == nil || !st.Smart.On || st.Smart.Via != "warp" {
+		t.Fatalf("smart: %+v", st.Smart)
+	}
+	if st.Mode != store.ModeUp {
+		t.Fatalf("mode=%s, хочу up", st.Mode)
+	}
+	if st.ActiveFile != "p1.conf" {
+		t.Fatalf("active=%s - конфиг1 должен остаться (ротации не было)", st.ActiveFile)
+	}
+	// применён только proton p1 + warp w1: конфиг2 не трогали
+	applied := park.fb.Applied()
+	if len(applied) != 2 {
+		t.Fatalf("applied=%v - лишняя ротация", applied)
+	}
+}
+
+// ранний триггер, через warp не ожил: каскад снят, СРАЗУ следующий конфиг
+// напрямую (не ждём порога ротации - слово владельца «идут следующие»)
+func TestSmartCascadeEarlyTriggerRotatesNext(t *testing.T) {
+	park := earlyPark(t, false) // прямой мёртв и через warp не ожил
+	park.e.checkPool("proton") // отказ 1
+	park.e.checkPool("proton") // отказ 2 -> каскад пробован и снят -> конфиг2
+
+	st := park.st.State("proton")
+	if st.Smart != nil && st.Smart.On {
+		t.Fatal("каскад не снят после неудачной верификации")
+	}
+	if st.ActiveFile != "p2.conf" {
+		t.Fatalf("active=%s - конфиг2 должен примениться немедленно", st.ActiveFile)
+	}
+	if park.st.State("proton").ConsecFails != 0 {
+		t.Fatal("ConsecFails не сброшен применением конфига2")
+	}
+}

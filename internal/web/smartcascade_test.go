@@ -205,6 +205,8 @@ func TestSmartCascadeValidation(t *testing.T) {
 		`{"smartCascade":{"via":["warp"],"return":{"mode":"когда-нибудь"}}}`,
 		`{"smartCascade":{"via":["warp"],"return":{"mode":"schedule","timeOfDay":["25:00"]}}}`,
 		`{"smartCascade":{"via":["warp"],"minDwellMin":9999}}`,
+		`{"smartCascade":{"via":["warp"],"triggerMode":"когда-нибудь"}}`,
+		`{"smartCascade":{"via":["warp"],"triggerFails":99}}`,
 	} {
 		code, _ := smartReq(t, http.MethodPut, ts.URL+"/api/v1/pools/proton", bad)
 		if code == http.StatusOK {
