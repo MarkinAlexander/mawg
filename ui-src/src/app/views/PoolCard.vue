@@ -165,6 +165,38 @@ const modeBadge = computed(() => {
   if (props.pool.mode === 'fallback') return { text: 'фоллбек', variant: 'err' as const, tooltip: G.fallback };
   return { text: 'работает', variant: 'ok' as const, tooltip: '' };
 });
+
+// --- умный каскад (86-док): бейдж «через Via», план возврата, кнопки ---
+const smart = computed(() => props.pool.smart || null);
+const smartShown = computed(() =>
+  !!(props.pool.settings.smartCascade?.via?.length || smart.value?.on));
+const smartNext = computed(() => {
+  const t = smart.value?.nextCheck;
+  if (!t) return '';
+  const d = new Date(t);
+  if (Number.isNaN(d.getTime())) return '';
+  const hm = d.toTimeString().slice(0, 5);
+  return d.toDateString() === new Date().toDateString()
+    ? hm
+    : `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')} ${hm}`;
+});
+async function smartAct(kind: 'check-now' | 'on' | 'off'): Promise<void> {
+  const key = `${props.pool.name}:smart-${kind}`;
+  if (busy.value) return;
+  busy.value = key;
+  try {
+    await a.smartCascade(props.pool.name, kind);
+    push(kind === 'on'
+      ? 'Каскад включён вручную'
+      : kind === 'off'
+        ? 'Каскад снят - пул возвращён на прямой путь'
+        : 'Проверка прямого пути выполнена');
+  } catch (e) {
+    push(e instanceof Error ? e.message : String(e), true);
+  } finally {
+    busy.value = '';
+  }
+}
 const sub = computed(() => {
   const p = props.pool;
   if (isEng.value) {
@@ -295,6 +327,12 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
         :variant="modeBadge.variant"
         :tooltip="modeBadge.tooltip"
       />
+      <UiBadge
+        v-if="smart?.on"
+        :text="`через ${smart.via} (каскад)`"
+        variant="warn"
+        :tooltip="G.smartCascade"
+      />
       <!-- вкл/выкл свитчем (слово владельца: единый стиль чекеров, подпись
            состояния рядом; красная кнопка «Выключить» пугала) -->
       <span class="enstate">{{ enabled ? 'включено' : 'отключено' }}</span>
@@ -330,7 +368,16 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
         >{{ pool.lastError }}</span>
       </template>
       <b>ротаций<UiHelp :text="G.rotation" /></b><span>{{ pool.rotations }}</span>
+      <template v-if="smartShown">
+        <b>каскад<UiHelp :text="G.smartCascade" /></b><span>
+          {{ smart?.on ? `через ${smart.via}` : 'настроен, ждёт блокировки' }}<template v-if="smart?.lastDetail"> — {{ smart.lastDetail }}</template><template v-if="smart?.on && smartNext"> · следующая проверка прямого: {{ smartNext }}</template>
+        </span>
+      </template>
     </div>
+    <UiHint
+      v-if="smart?.ensureErr"
+      :text="'Служебная группа каскада не создана (' + smart.ensureErr + ') - панель повторит сама, MagiTrickle недоступен?'"
+    />
 
     <div
       v-if="isEng && (pool.protos || []).length"
@@ -447,6 +494,27 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
           @click="checkNow"
         >
           Проверить
+        </UiButton>
+        <UiButton
+          v-if="smartShown && smart?.on"
+          :busy="busy === `${pool.name}:smart-check-now`"
+          @click="smartAct('check-now')"
+        >
+          Проверить прямой сейчас
+        </UiButton>
+        <UiButton
+          v-if="smartShown && !smart?.on"
+          :busy="busy === `${pool.name}:smart-on`"
+          @click="smartAct('on')"
+        >
+          Завернуть в каскад
+        </UiButton>
+        <UiButton
+          v-if="smart?.on"
+          :busy="busy === `${pool.name}:smart-off`"
+          @click="smartAct('off')"
+        >
+          Вернуть напрямую
         </UiButton>
         <UiButton
           v-if="isWarp"

@@ -101,6 +101,8 @@ describe('PoolSettingsDialog', () => {
         probeHost: 'http://www.gstatic.com/generate_204',
         checkIntervalSec: 45, failThreshold: 4, cooldownMin: 7, keepalive: 21,
         fallback: 'hold', maxRttMs: 350, updateIntervalH: 12,
+        // умный каскад не настроен -> честное «выключено» (86-док)
+        smartCascade: { via: [] },
       });
     });
     dlg.unmount();
@@ -270,6 +272,56 @@ describe('PoolSettingsDialog - режим группы движка (60-док)'
       expect(put).toBeTruthy();
       expect(JSON.parse(put![1]!.body as string)).not.toHaveProperty('groupMode');
     });
+    dlg.unmount();
+  });
+});
+
+describe('PoolSettingsDialog - умный каскад (86-док)', () => {
+  // чекбокс/свитч по тексту подписи (label без текста - берём обёртку)
+  const boxByLabel = (w: ReturnType<typeof mount>, label: string) =>
+    w.findAll('input[type=checkbox]')
+      .find((b) => (b.element as HTMLInputElement).closest('.uiswitch, .uicheckbox')?.textContent?.includes(label));
+
+  it('тумблер + via-чекбоксы + расписание -> PUT smartCascade; выключен -> via: []', async () => {
+    const warp: PoolView = { ...pool, name: 'warp', device: 'nwg9', slot: 'nwg9' };
+    const { dlg, f } = await makeDialog({}, [pool, warp]);
+    await vi.waitFor(() => expect(dlg.text()).toContain('Умный каскад'));
+    // до включения - виа-чекбоксов нет
+    expect(boxByLabel(dlg, 'warp')).toBeUndefined();
+
+    const sw = boxByLabel(dlg, 'спасать пул');
+    expect(sw).toBeTruthy();
+    await sw!.setValue(true);
+    await nextTick();
+    // появился выбор запасного пула (себя нет) и поля расписания
+    const via = boxByLabel(dlg, 'warp');
+    expect(via).toBeTruthy();
+    expect(boxByLabel(dlg, 'proton')).toBeUndefined();
+    expect(dlg.text()).toContain('Время проверки, ЧЧ:ММ');
+    await via!.setValue(true);
+
+    await btn(dlg, 'Сохранить')[0].trigger('click');
+    await vi.waitFor(() => {
+      const put = f.mock.calls.find((c) => (c[0] as string).endsWith('/pools/proton') && c[1]?.method === 'PUT');
+      expect(JSON.parse(put![1]!.body as string)).toMatchObject({
+        smartCascade: { via: ['warp'], return: { mode: 'schedule', timeOfDay: ['03:00'] }, minDwellMin: 10 },
+      });
+    });
+    dlg.unmount();
+  });
+
+  it('предзаполнение из настроек: via отмечен, интервал и антифлап на месте', async () => {
+    const p: PoolView = {
+      ...pool,
+      settings: { ...pool.settings, smartCascade: { via: ['warp'], return: { mode: 'interval', intervalH: 4 }, minDwellMin: 30 } },
+    };
+    const warp: PoolView = { ...pool, name: 'warp', device: 'nwg9', slot: 'nwg9' };
+    const { dlg } = await makeDialog({}, [p, warp]);
+    await vi.waitFor(() => expect(dlg.text()).toContain('Умный каскад'));
+    expect((boxByLabel(dlg, 'warp')!.element as HTMLInputElement).checked).toBe(true);
+    expect(dlg.text()).toContain('Интервал проверки, часов');
+    const inputs = dlg.findAll('input');
+    expect(inputs.map((i) => (i.element as HTMLInputElement).value)).toContain('4');
     dlg.unmount();
   });
 });

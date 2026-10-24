@@ -41,7 +41,8 @@ const KIND_RU: Record<string, string> = {
   rotate: 'ротация', applied: 'применено', fallback: 'фоллбек',
   magitrickle: 'MagiTrickle', install: 'установка', policy: 'политика',
   sources: 'источник', probe: 'проверка', subupdate: 'подписка',
-  restore: 'восстановление',
+  restore: 'восстановление', 'smart-cascade': 'умный каскад',
+  cascade: 'каскад', slots: 'слоты', warp: 'WARP',
 };
 const kindRu = (k: string) => KIND_RU[k] || k;
 const evKindOptions = computed<UiSelectOption[]>(() => [

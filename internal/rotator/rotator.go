@@ -75,6 +75,10 @@ type Engine struct {
 	lane     map[string]time.Time // фоновые пробы в полёте: пул -> старт
 	laneMu   sync.Mutex
 	startDue map[string]time.Time // стартовый разброс первых проб: пул -> не раньше
+
+	// smartPause - пауза между двумя прогонами пробы умного каскада
+	// (хендшейк через Via/напрямую требует секунд; тесты сжимают)
+	smartPause time.Duration
 }
 
 const probeStatusTTL = 30 * time.Second
@@ -129,6 +133,7 @@ func New(st *store.Store, b platform.Backend, mt *magitrickle.Client) *Engine {
 		polSamples:    map[string]*probeCacheEntry{},
 		lane:          map[string]time.Time{},
 		startDue:      map[string]time.Time{},
+		smartPause:    5 * time.Second,
 	}
 	if mt != nil {
 		e.casc = cascade.New(st, mt)
@@ -279,6 +284,7 @@ func (e *Engine) runHousework() {
 	}
 	e.syncCascadeHooks()
 	e.checkGroupPolicies()
+	e.checkSmartCascades()
 }
 
 // houseworkBundles - чётные 30-с тики отданы бандлам, нечётные хукам и политикам.
@@ -1088,6 +1094,11 @@ func (e *Engine) rotate(p store.Pool, st *store.PoolState, failedActive string) 
 			break
 		}
 		if chosen < 0 {
+			// умный каскад (86-док): спасает пул - туннель продолжает
+			// жить через Via-пул, группы остаются при своём IP
+			if e.smartRescue(pool) {
+				return
+			}
 			e.enterFallback(pool, state)
 			return
 		}

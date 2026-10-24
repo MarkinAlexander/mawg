@@ -185,6 +185,30 @@ export interface PoolSettings {
     sites?: string[]
     subnets?: string[] // разрешённые подсети (AllowedIPs), не домены
   }
+  // умный каскад (86-док): при блокировке пула трафик заворачивается
+  // через первый живой пул via, с возвратом по интервалу/расписанию/кнопке
+  smartCascade?: SmartCascadeSettings
+}
+
+export interface SmartCascadeSettings {
+  via?: string[] // пулы запасного пути в порядке приоритета
+  return?: {
+    mode?: string // interval | schedule | manual (пусто = schedule 03:00)
+    intervalH?: number // для interval, 0 = 6
+    timeOfDay?: string[] // для schedule, "HH:MM"
+  }
+  minDwellMin?: number // антифлап: минут в состоянии до авто-возврата, 0 = 10
+}
+
+// зеркало автомата умного каскада (PoolView.smart, /status)
+export interface SmartCascadeState {
+  on?: boolean
+  via?: string // активный запасной пул
+  group?: string // id служебной группы каскада
+  since?: string
+  nextCheck?: string
+  lastDetail?: string
+  ensureErr?: string // служебная группа не создалась (MT недоступен?)
 }
 
 export interface ConfigView {
@@ -231,6 +255,7 @@ export interface PoolView {
   refreshFails?: number
   lastRefreshErr?: string
   subRefreshAt?: string
+  smart?: SmartCascadeState | null
   settings: PoolSettings
   configs: ConfigView[]
   premium: PremiumView

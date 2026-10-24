@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -115,6 +116,61 @@ type PoolSettings struct {
 	// эндпоинтов, сайты маскировки): кнопка «Генерация нового конфига»
 	// в карточке добавляет конфиг с теми же параметрами, без мастера.
 	Warp *WarpMeta `json:"warp,omitempty"`
+	// SmartCascade - умный каскад (86-док): при блокировке пула его
+	// трафик заворачивается через первый живой пул Via штатным каскадом,
+	// с возвратом на прямой путь по интервалу/расписанию/кнопке.
+	SmartCascade *SmartCascadeSettings `json:"smartCascade,omitempty"`
+}
+
+// SmartCascadeSettings - настройки умного каскада пула (86-док).
+type SmartCascadeSettings struct {
+	// Via - пулы запасного пути в порядке приоритета; включается первый
+	// живой (Mode==up, не Disabled).
+	Via []string `json:"via,omitempty"`
+	// Return - стратегия возврата на прямой путь.
+	Return SmartCascadeReturn `json:"return,omitempty"`
+	// MinDwellMin - антифлап: минимум минут в состоянии до АВТОматического
+	// возврата (ручные кнопки гейт минуют). 0 = 10.
+	MinDwellMin int `json:"minDwellMin,omitempty"`
+}
+
+// SmartCascadeReturn - когда пробовать прямой путь обратно.
+type SmartCascadeReturn struct {
+	// Mode: interval (раз в IntervalH), schedule (в TimeOfDay), manual
+	// (только кнопкой). Пусто = schedule 03:00 (слово владельца).
+	Mode      string   `json:"mode,omitempty"`
+	IntervalH int      `json:"intervalH,omitempty"` // 0 = 6
+	TimeOfDay []string `json:"timeOfDay,omitempty"` // "HH:MM"
+}
+
+// SmartCascadeState - рантайм автомата умного каскада (state.json).
+type SmartCascadeState struct {
+	On  bool   `json:"on,omitempty"`
+	Via string `json:"via,omitempty"` // активный запасной пул
+	// Group - id служебной группы каскада, управляемой автоматом (своя
+	// запись; чужие каскады того же пула не трогаем).
+	Group      string    `json:"group,omitempty"`
+	Since      time.Time `json:"since,omitempty"`
+	NextCheck  time.Time `json:"nextCheck,omitempty"`
+	LastDetail string    `json:"lastDetail,omitempty"`
+	// EnsureErr/EnsureAt - служебная группа каскада не создалась при
+	// сохранении настроек (MT недоступен): домашка ретраит раз в 5 минут.
+	EnsureErr string    `json:"ensureErr,omitempty"`
+	EnsureAt  time.Time `json:"ensureAt,omitempty"`
+}
+
+// ParseTimeOfDay - "HH:MM" (00:00..23:59) для расписания возврата.
+func ParseTimeOfDay(s string) (int, int, bool) {
+	parts := strings.SplitN(s, ":", 2)
+	if len(parts) != 2 || len(parts[0]) != 2 || len(parts[1]) != 2 {
+		return 0, 0, false
+	}
+	h, err1 := strconv.Atoi(parts[0])
+	m, err2 := strconv.Atoi(parts[1])
+	if err1 != nil || err2 != nil || h < 0 || h > 23 || m < 0 || m > 59 {
+		return 0, 0, false
+	}
+	return h, m, true
 }
 
 // WarpMeta - параметры пула генератора WARP (см. PoolSettings.Warp).
@@ -158,6 +214,26 @@ func (s PoolSettings) WithDefaults() PoolSettings {
 	}
 	if out.Keepalive <= 0 {
 		out.Keepalive = 25
+	}
+	if out.SmartCascade != nil && len(out.SmartCascade.Via) > 0 {
+		sc := *out.SmartCascade
+		if sc.Return.Mode == "" {
+			sc.Return.Mode = "schedule"
+		}
+		switch sc.Return.Mode {
+		case "interval":
+			if sc.Return.IntervalH <= 0 {
+				sc.Return.IntervalH = 6
+			}
+		case "schedule":
+			if len(sc.Return.TimeOfDay) == 0 {
+				sc.Return.TimeOfDay = []string{"03:00"}
+			}
+		}
+		if sc.MinDwellMin <= 0 {
+			sc.MinDwellMin = 10
+		}
+		out.SmartCascade = &sc
 	}
 	return out
 }
@@ -210,6 +286,11 @@ type PoolState struct {
 	LastFailRefresh time.Time `json:"lastFailRefresh,omitempty"`
 	RefreshFails    int       `json:"refreshFails,omitempty"`
 	LastRefreshErr  string    `json:"lastRefreshErr,omitempty"`
+
+	// Smart - состояние автомата умного каскада (86-док); персистится,
+	// чтобы расписание и флаг переживали рестарт mawg (истина о хуке -
+	// Enable служебной группы в MT, SyncHooks по нему).
+	Smart *SmartCascadeState `json:"smart,omitempty"`
 }
 
 // GroupPolicy - поведение группы магитрикла при отвале её основного

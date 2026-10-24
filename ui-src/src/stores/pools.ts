@@ -5,7 +5,7 @@
 // (легаси setTimeout(refresh, 700)), кроме быстрых конфиг-хвостов - там сразу.
 import { api, apiForm, apiText } from '../api/client'
 import { useStatus } from './status'
-import type { LinkInspect, PoolEngine, PoolMember, SlotInfo } from '../api/types'
+import type { LinkInspect, PoolEngine, PoolMember, SlotInfo, SmartCascadeState } from '../api/types'
 
 export type PoolAct = 'enable' | 'disable' | 'rotate' | 'check';
 
@@ -168,6 +168,14 @@ export function usePoolActions() {
     return r.delays || {};
   }
 
+  // умный каскад (86-док): ручные кнопки - проверить прямой сейчас /
+  // завернуть в каскад / вернуть напрямую; ответ - свежий стейт автомата
+  async function smartCascade(name: string, act: 'check-now' | 'on' | 'off'): Promise<SmartCascadeState | null> {
+    const r = await api<{ smart: SmartCascadeState | null }>('POST', `/pools/${encodeURIComponent(name)}/smart-cascade/${act}`, {});
+    void refresh();
+    return r.smart ?? null;
+  }
+
   async function configText(name: string, file: string): Promise<string> {
     return apiText(`/pools/${encodeURIComponent(name)}/configs/${encodeURIComponent(file)}`);
   }
@@ -175,7 +183,7 @@ export function usePoolActions() {
   return {
     act, del, upload, toggleCfg, moveCfg, delCfg, activateCfg, importPremium, switchPremiumCountry,
     create, createFromSource, requestFree, inspect, slots, createSlot,
-    refreshSource, update, rename, reissueFree, members, configText, engine, engineSelect, engineToggle, engineRetest,
+    refreshSource, update, rename, reissueFree, members, configText, engine, engineSelect, engineToggle, engineRetest, smartCascade,
   };
 }
 
