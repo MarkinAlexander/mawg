@@ -3,6 +3,7 @@ import { h } from 'vue'
 import { mount } from '@vue/test-utils'
 import UiCheckbox from './UiCheckbox.vue'
 import UiField from './UiField.vue'
+import UiOrderList from './UiOrderList.vue'
 import UiInput from './UiInput.vue'
 import UiSelect, { type UiSelectOption } from './UiSelect.vue'
 import UiSwitch from './UiSwitch.vue'
@@ -194,5 +195,55 @@ describe('UiSelect', () => {
     const w = mount(UiSelect, { props: { modelValue: 'proton', options: OPTS, label: 'пул', disabled: true } })
     await w.find('.psel-btn').trigger('click')
     expect(w.find('.psel-list').exists()).toBe(false)
+  })
+})
+
+describe('UiOrderList', () => {
+  const opts: UiSelectOption[] = [
+    { value: 'warp', label: 'warp' },
+    { value: 'proton', label: 'proton' },
+    { value: 'awgfree', label: 'awgfree' },
+  ]
+  const btn = (w: ReturnType<typeof mount>, text: string) =>
+    w.findAll('button').filter((b) => b.text().trim() === text)
+  const pickOpt = async (w: ReturnType<typeof mount>, label: string) => {
+    await w.findAll('.psel-btn').filter((b) => b.text() === label || b.text() === '—')[0].trigger('click')
+    await w.findAll('.psel-item').filter((o) => o.text().includes(label))[0].trigger('click')
+  }
+
+  it('добавление из селекта, порядок правится стрелками, «убрать» удаляет; выбранные скрыты из селекта', async () => {
+    const w = mount(UiOrderList, { props: { modelValue: [], options: opts, emptyHint: 'пусто', orderHint: 'порядок = приоритет' } })
+    expect(w.text()).toContain('пусто')
+    expect(w.text()).toContain('порядок = приоритет')
+    // добавить warp, затем proton
+    await pickOpt(w, 'warp')
+    await btn(w, 'добавить')[0].trigger('click')
+    await w.setProps({ modelValue: ['warp'] }) // v-model round-trip
+    await pickOpt(w, 'proton')
+    await btn(w, 'добавить')[0].trigger('click')
+    let emits = w.emitted('update:modelValue')!
+    expect(emits[emits.length - 1][0]).toEqual(['warp', 'proton'])
+    await w.setProps({ modelValue: ['warp', 'proton'] })
+    // порядок: proton вверх
+    const rows = w.findAll('.row')
+    await rows[1].findAll('button').filter((b) => b.text().trim() === '↑')[0].trigger('click')
+    emits = w.emitted('update:modelValue')!
+    expect(emits[emits.length - 1][0]).toEqual(['proton', 'warp'])
+    await w.setProps({ modelValue: ['proton', 'warp'] })
+    // убрать proton
+    await w.findAll('.row')[0].findAll('button').filter((b) => b.text().trim() === 'убрать')[0].trigger('click')
+    emits = w.emitted('update:modelValue')!
+    expect(emits[emits.length - 1][0]).toEqual(['warp'])
+    // выбранный скрыт из селекта добавления
+    await w.findAll('.psel-btn')[0].trigger('click')
+    const optTexts = w.findAll('.psel-item').map((o) => o.text())
+    expect(optTexts.join(' ')).not.toContain('warp')
+  })
+
+  it('когда свободных нет - селект честно говорит «нет доступных», кнопка выключена', async () => {
+    const w = mount(UiOrderList, { props: { modelValue: ['warp', 'proton', 'awgfree'], options: opts } })
+    await w.findAll('.psel-btn')[0].trigger('click')
+    expect(w.text()).toContain('нет доступных')
+    expect(btn(w, 'добавить')[0].attributes('disabled')).toBeDefined()
   })
 })

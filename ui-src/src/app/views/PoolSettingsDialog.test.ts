@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import PoolSettingsDialog from './PoolSettingsDialog.vue'
+import { UiOrderList } from '../../components/ui'
 import { useCaptcha } from '../../stores/captcha'
 import { useConfirm } from '../../stores/confirm'
 import { useIfaces } from '../../stores/ifaces'
@@ -277,28 +278,37 @@ describe('PoolSettingsDialog - режим группы движка (60-док)'
 });
 
 describe('PoolSettingsDialog - умный каскад (86-док)', () => {
-  // чекбокс/свитч по тексту подписи (label без текста - берём обёртку)
-  const boxByLabel = (w: ReturnType<typeof mount>, label: string) =>
+  // свитч по тексту подписи (label без текста - берём обёртку)
+  const switchByLabel = (w: ReturnType<typeof mount>, label: string) =>
     w.findAll('input[type=checkbox]')
       .find((b) => (b.element as HTMLInputElement).closest('.uiswitch, .uicheckbox')?.textContent?.includes(label));
+  // выбрать в селекте добавления вариант и нажать «добавить»
+  const addVia = async (w: ReturnType<typeof mount>, name: string) => {
+    const sel = w.findAll('.psel-btn').filter((b) => b.text() === '—')[0];
+    await sel.trigger('click');
+    await w.findAll('.psel-item').filter((o) => o.text().includes(name))[0].trigger('click');
+    await w.findAll('button').filter((b) => b.text().trim() === 'добавить')[0].trigger('click');
+  };
 
-  it('тумблер + via-чекбоксы + расписание -> PUT smartCascade; выключен -> via: []', async () => {
+  it('тумблер + добавление via из селекта + расписание -> PUT smartCascade', async () => {
     const warp: PoolView = { ...pool, name: 'warp', device: 'nwg9', slot: 'nwg9' };
     const { dlg, f } = await makeDialog({}, [pool, warp]);
     await vi.waitFor(() => expect(dlg.text()).toContain('Умный каскад'));
-    // до включения - виа-чекбоксов нет
-    expect(boxByLabel(dlg, 'warp')).toBeUndefined();
+    // до включения - списка via нет
+    expect(dlg.text()).not.toContain('добавить запасной пул');
 
-    const sw = boxByLabel(dlg, 'спасать пул');
+    const sw = switchByLabel(dlg, 'спасать пул');
     expect(sw).toBeTruthy();
     await sw!.setValue(true);
     await nextTick();
-    // появился выбор запасного пула (себя нет) и поля расписания
-    const via = boxByLabel(dlg, 'warp');
-    expect(via).toBeTruthy();
-    expect(boxByLabel(dlg, 'proton')).toBeUndefined();
+    // компонент кита разрешён (не <uiorderlist>-кастом)
+    expect(dlg.findComponent(UiOrderList).exists()).toBe(true);
+    expect(dlg.html()).not.toContain('<uiorderlist');
+    expect(dlg.text()).toContain('добавить запасной пул');
+    expect(dlg.text()).toContain('Запасных нет');
     expect(dlg.text()).toContain('Время проверки, ЧЧ:ММ');
-    await via!.setValue(true);
+    await addVia(dlg, 'warp');
+    expect(dlg.text()).toContain('порядок списка = приоритет');
 
     await btn(dlg, 'Сохранить')[0].trigger('click');
     await vi.waitFor(() => {
@@ -310,15 +320,23 @@ describe('PoolSettingsDialog - умный каскад (86-док)', () => {
     dlg.unmount();
   });
 
-  it('предзаполнение из настроек: via отмечен, интервал и антифлап на месте', async () => {
+  it('предзаполнение из настроек: via в списке, порядок правится стрелками, интервал и антифлап', async () => {
+    const other: PoolView = { ...pool, name: 'awgfree', device: 'nwg8', slot: 'nwg8' };
     const p: PoolView = {
       ...pool,
-      settings: { ...pool.settings, smartCascade: { via: ['warp'], return: { mode: 'interval', intervalH: 4 }, minDwellMin: 30 } },
+      settings: { ...pool.settings, smartCascade: { via: ['awgfree', 'warp'], return: { mode: 'interval', intervalH: 4 }, minDwellMin: 30 } },
     };
     const warp: PoolView = { ...pool, name: 'warp', device: 'nwg9', slot: 'nwg9' };
-    const { dlg } = await makeDialog({}, [p, warp]);
+    const { dlg } = await makeDialog({}, [p, warp, other]);
     await vi.waitFor(() => expect(dlg.text()).toContain('Умный каскад'));
-    expect((boxByLabel(dlg, 'warp')!.element as HTMLInputElement).checked).toBe(true);
+    const rows = dlg.findAll('.uorderlist .row');
+    expect(rows.length).toBe(2);
+    expect(rows[0].text()).toContain('awgfree'); // порядок из настроек сохранён
+    expect(rows[1].text()).toContain('warp');
+    // порядок правится: warp выше
+    await rows[1].findAll('button').filter((b) => b.text().trim() === '↑')[0].trigger('click');
+    const moved = dlg.findAll('.uorderlist .row');
+    expect(moved[0].text()).toContain('warp');
     expect(dlg.text()).toContain('Интервал проверки, часов');
     const inputs = dlg.findAll('input');
     expect(inputs.map((i) => (i.element as HTMLInputElement).value)).toContain('4');
