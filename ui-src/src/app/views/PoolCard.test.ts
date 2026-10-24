@@ -564,3 +564,49 @@ describe('PoolCard - скачивание по уровню конфига (ан
     w.unmount();
   });
 });
+
+describe('PoolCard - умный каскад (86-док)', () => {
+  it('настроен, ждёт: строка каскада + кнопка «Завернуть в каскад»; без smart в /status бейджа нет', () => {
+    const p: PoolView = {
+      ...nativePool,
+      settings: { ...nativePool.settings, smartCascade: { via: ['warp'], return: { mode: 'schedule', timeOfDay: ['03:00'] } } },
+    };
+    const w = makeCard(p);
+    expect(w.text()).toContain('настроен, ждёт блокировки');
+    expect(btn(w, 'Завернуть в каскад').length).toBe(1);
+    expect(w.text()).not.toContain('через warp');
+    w.unmount();
+
+    const plain = makeCard(nativePool);
+    expect(plain.text()).not.toContain('каскад');
+    plain.unmount();
+  });
+
+  it('активен: бейдж «через warp (каскад)», план проверки, кнопки «Проверить прямой сейчас»/«Вернуть напрямую» -> POST', async () => {
+    const p: PoolView = {
+      ...nativePool,
+      settings: { ...nativePool.settings, smartCascade: { via: ['warp'] } },
+      smart: {
+        on: true, via: 'warp', group: 'g9',
+        since: '2026-10-24T03:00:00Z', nextCheck: '2026-10-24T09:00:00Z',
+        lastDetail: 'прямой доступ потерян',
+      },
+    };
+    const f = stub();
+    vi.stubGlobal('fetch', f);
+    const w = makeCard(p);
+    expect(w.text()).toContain('через warp (каскад)');
+    expect(w.text()).toContain('через warp — прямой доступ потерян');
+    expect(w.text()).toContain('следующая проверка прямого:');
+    expect(btn(w, 'Проверить прямой сейчас').length).toBe(1);
+    expect(btn(w, 'Вернуть напрямую').length).toBe(1);
+    expect(btn(w, 'Завернуть в каскад').length).toBe(0);
+
+    await btn(w, 'Проверить прямой сейчас')[0].trigger('click');
+    await vi.waitFor(() => {
+      const post = f.mock.calls.find((c) => (c[0] as string).includes('/smart-cascade/check-now'));
+      expect(post).toBeTruthy();
+    });
+    w.unmount();
+  });
+});

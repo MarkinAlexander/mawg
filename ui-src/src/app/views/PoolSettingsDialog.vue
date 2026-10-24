@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { UiBadge, UiButton, UiDialog, UiHelp, UiHint, UiInput, UiSelect, type UiSelectOption, UiSwitch, UiTextarea } from '../../components/ui'
+import { UiBadge, UiButton, UiCheckbox, UiDialog, UiHelp, UiHint, UiInput, UiSelect, type UiSelectOption, UiSwitch, UiTextarea } from '../../components/ui'
 import { useIfaces } from '../../stores/ifaces'
 import { usePoolActions } from '../../stores/pools'
 import { useStatus } from '../../stores/status'
@@ -45,6 +45,13 @@ const cooldown = ref('5');
 const keepalive = ref('25');
 const updateInt = ref('0');
 const fallback = ref('direct');
+// умный каскад (86-док)
+const scOn = ref(false);
+const scVia = ref<Record<string, boolean>>({});
+const scMode = ref('schedule');
+const scInterval = ref('6');
+const scTimes = ref('03:00');
+const scDwell = ref('10');
 const groupMode = ref('urltest');
 const rotateSec = ref('300');
 const engineNodes = ref<{ tag: string; delay: number; off?: boolean }[]>([]);
@@ -142,6 +149,15 @@ const fbOptions = computed<UiSelectOption[]>(() => {
 });
 const probeLocked = computed(() => isFree.value || isEng.value);
 
+// другие пулы - кандидаты запасного пути умного каскада
+const scPoolOptions = computed(() =>
+  (status.data?.pools || []).filter((p) => p.name !== props.poolName && !p.disabled));
+const scModeOptions: UiSelectOption[] = [
+  { value: 'schedule', label: 'по расписанию (в определённое время)' },
+  { value: 'interval', label: 'по интервалу (раз в N часов)' },
+  { value: 'manual', label: 'только кнопкой' },
+];
+
 watch(open, (v) => {
   if (!v) return;
   const p = (status.data?.pools || []).find((x) => x.name === props.poolName);
@@ -167,6 +183,15 @@ watch(open, (v) => {
   if (isEng.value) void loadEngineNodes();
   const fb = p.settings.fallback || 'direct';
   fallback.value = fbOptions.value.some((o) => o.value === fb) ? fb : 'direct';
+  const sc = p.settings.smartCascade;
+  const scRet = sc?.return || {};
+  scOn.value = !!(sc?.via && sc.via.length);
+  scVia.value = {};
+  for (const v of sc?.via || []) scVia.value[v] = true;
+  scMode.value = scRet.mode === 'interval' || scRet.mode === 'manual' ? scRet.mode : 'schedule';
+  scInterval.value = String((scRet.intervalH || 0) > 0 ? (scRet.intervalH as number) : 6);
+  scTimes.value = (scRet.timeOfDay && scRet.timeOfDay.length ? scRet.timeOfDay : ['03:00']).join(', ');
+  scDwell.value = String((sc?.minDwellMin || 0) > 0 ? sc!.minDwellMin! : 10);
   amnCountry.value = p.settings.amnezia?.country || '';
   premCountry.value = p.premium?.country || '';
   void loadMembers();
@@ -288,6 +313,25 @@ async function save(): Promise<void> {
   if (!p) return;
   await withBusy(async () => {
     try {
+      const renamed = newName.value.trim();
+      // умный каскад: полный объект при включении, пустой via = выключить
+      let smartBody: Record<string, unknown> | undefined;
+      if (!isEng.value) {
+        const via = scPoolOptions.value.filter((p) => scVia.value[p.name]).map((p) => p.name);
+        smartBody = scOn.value && via.length
+          ? {
+            smartCascade: {
+              via,
+              return: {
+                mode: scMode.value,
+                ...(scMode.value === 'interval' ? { intervalH: Math.max(1, +scInterval.value || 6) } : {}),
+                ...(scMode.value === 'schedule' ? { timeOfDay: scTimes.value.split(/[,\s]+/).map((t) => t.trim()).filter(Boolean) } : {}),
+              },
+              minDwellMin: Math.max(0, +scDwell.value || 0),
+            },
+          }
+          : { smartCascade: { via: [] } };
+      }
       await a.update(p.name, {
         probeHost: probeHost.value.trim(),
         checkIntervalSec: +interval.value,
@@ -301,8 +345,8 @@ async function save(): Promise<void> {
           groupMode: groupMode.value,
           ...(groupMode.value === 'rotate' ? { rotateSec: Math.max(10, +rotateSec.value || 300) } : {}),
         } : {}),
+        ...smartBody,
       });
-      const renamed = newName.value.trim();
       if (renamed && renamed !== p.name) await a.rename(p.name, renamed);
       open.value = false;
     } catch (e) {
@@ -567,6 +611,62 @@ async function save(): Promise<void> {
         v-if="fbHintText"
         :text="fbHintText"
       />
+      <template v-if="!isEng">
+        <div class="sect">
+          Умный каскад
+        </div>
+        <div class="hrow">
+          <UiSwitch
+            v-model="scOn"
+            label="спасать пул через запасной при блокировке"
+            tooltip="адрес VPN сохраняется: трафик пула идёт внутри туннеля запасного"
+          />
+          <UiHelp :text="G.smartCascade" />
+        </div>
+        <template v-if="scOn">
+          <div class="scvia">
+            <div
+              v-for="p in scPoolOptions"
+              :key="p.name"
+              class="scvia-row"
+            >
+              <UiCheckbox
+                :model-value="!!scVia[p.name]"
+                :label="p.name"
+                @update:model-value="(v: boolean) => scVia[p.name] = v"
+              />
+            </div>
+            <UiHint text="Отметьте запасные пулы; порядок сверху вниз = приоритет. Включается первый живой." />
+          </div>
+          <div class="hrow">
+            <UiSelect
+              v-model="scMode"
+              :options="scModeOptions"
+              label="Когда пробовать прямой путь обратно"
+            />
+            <UiHelp :text="G.smartCascade" />
+          </div>
+          <UiInput
+            v-if="scMode === 'interval'"
+            v-model="scInterval"
+            type="number"
+            label="Интервал проверки, часов"
+          />
+          <UiInput
+            v-if="scMode === 'schedule'"
+            v-model="scTimes"
+            label="Время проверки, ЧЧ:ММ через запятую"
+            tooltip="например: 03:00, 05:30 - в эти моменты панель пробует прямой путь и снимает каскад, если он ожил"
+          />
+          <UiInput
+            v-model="scDwell"
+            type="number"
+            label="Антифлап: минут в состоянии до авто-возврата"
+            tooltip="0 = 10 минут; кнопка «проверить сейчас» гейт минует"
+          />
+          <UiHint text="При срабатывании создаётся выключенная служебная группа «Служебная: этот пул через запасной». Пробы возврата идут в коротком окне без её правила: на секунды трафик пробует прямой путь." />
+        </template>
+      </template>
     </template>
     <template #footer>
       <UiButton @click="open = false">
@@ -598,6 +698,11 @@ async function save(): Promise<void> {
   font-weight: 600;
   font-size: 13px;
   margin: 12px 0 4px;
+}
+.scvia {
+  display: grid;
+  gap: 2px;
+  margin: 4px 0;
 }
 .inrow {
   display: flex;

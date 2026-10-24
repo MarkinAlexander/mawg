@@ -20,12 +20,12 @@ import (
 
 	"mawg/internal/auth"
 	"mawg/internal/cascade"
+	"mawg/internal/dnsmgr"
 	"mawg/internal/dnsprobe"
 	"mawg/internal/magitrickle"
 	"mawg/internal/platform"
 	"mawg/internal/platform/keenetic"
 	"mawg/internal/platform/openwrt"
-	"mawg/internal/dnsmgr"
 	"mawg/internal/provision"
 	"mawg/internal/rotator"
 	"mawg/internal/selfupdate"
@@ -120,6 +120,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/v1/pools/{name}/engine/select", s.putPoolEngineSelect)
 	mux.HandleFunc("POST /api/v1/pools/{name}/engine/retest", s.postPoolEngineRetest)
 	mux.HandleFunc("POST /api/v1/pools/{name}/engine/toggle", s.postPoolEngineToggle)
+	mux.HandleFunc("POST /api/v1/pools/{name}/smart-cascade/check-now", s.smartCascadeCheckNow)
+	mux.HandleFunc("POST /api/v1/pools/{name}/smart-cascade/on", s.smartCascadeOn)
+	mux.HandleFunc("POST /api/v1/pools/{name}/smart-cascade/off", s.smartCascadeOff)
 	mux.HandleFunc("GET /api/v1/pools/{name}/configs/{file}", s.getPoolConfigRaw)
 	mux.HandleFunc("POST /api/v1/pools/{name}/premium", s.importPremium)
 	mux.HandleFunc("POST /api/v1/pools/{name}/premium/country", s.switchPremium)
@@ -467,26 +470,27 @@ func (c *respCache) reset() {
 func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 	pools := s.store.Pools()
 	type poolView struct {
-		Name           string             `json:"name"`
-		Platform       string             `json:"platform"`
-		Device         string             `json:"device"`
-		Slot           string             `json:"slot,omitempty"`
-		Mode           string             `json:"mode"`
-		ActiveFile     string             `json:"activeFile"`
-		ActiveEndpoint string             `json:"activeEndpoint"`
-		LastResult     string             `json:"lastResult"`
-		LastError      string             `json:"lastError"`
-		Rotations      int                `json:"rotations"`
-		Disabled       bool               `json:"disabled"`
-		ConsecFails    int                `json:"consecFails"`
-		RefreshFails   int                `json:"refreshFails,omitempty"`
-		LastRefreshErr string             `json:"lastRefreshErr,omitempty"`
-		SubRefreshAt   time.Time          `json:"subRefreshAt,omitempty"`
-		Settings       store.PoolSettings `json:"settings"`
-		Configs        []configView       `json:"configs"`
-		Premium        store.PremiumView  `json:"premium"`
-		Protos         []protoBadge       `json:"protos,omitempty"`
-		Free           bool               `json:"free,omitempty"`
+		Name           string                   `json:"name"`
+		Platform       string                   `json:"platform"`
+		Device         string                   `json:"device"`
+		Slot           string                   `json:"slot,omitempty"`
+		Mode           string                   `json:"mode"`
+		ActiveFile     string                   `json:"activeFile"`
+		ActiveEndpoint string                   `json:"activeEndpoint"`
+		LastResult     string                   `json:"lastResult"`
+		LastError      string                   `json:"lastError"`
+		Rotations      int                      `json:"rotations"`
+		Disabled       bool                     `json:"disabled"`
+		ConsecFails    int                      `json:"consecFails"`
+		RefreshFails   int                      `json:"refreshFails,omitempty"`
+		LastRefreshErr string                   `json:"lastRefreshErr,omitempty"`
+		SubRefreshAt   time.Time                `json:"subRefreshAt,omitempty"`
+		Smart          *store.SmartCascadeState `json:"smart,omitempty"`
+		Settings       store.PoolSettings       `json:"settings"`
+		Configs        []configView             `json:"configs"`
+		Premium        store.PremiumView        `json:"premium"`
+		Protos         []protoBadge             `json:"protos,omitempty"`
+		Free           bool                     `json:"free,omitempty"`
 	}
 	out := struct {
 		Version     string `json:"version"`
@@ -514,6 +518,7 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 			LastResult: st.LastResult, LastError: st.LastError,
 			Rotations: st.Rotations, Disabled: p.Disabled, ConsecFails: st.ConsecFails, Settings: p.Settings,
 			RefreshFails: st.RefreshFails, LastRefreshErr: st.LastRefreshErr, SubRefreshAt: st.SubRefreshAt,
+			Smart:   st.Smart,
 			Configs: []configView{},
 			Premium: s.store.PremiumView(p.Name),
 			Protos:  s.poolProtoBadges(p),
@@ -1506,6 +1511,23 @@ func (s *Server) updatePool(w http.ResponseWriter, r *http.Request) {
 	// ничего не получит. Поле EngineDetour оставлено в схеме про запас -
 	// к конфигу движка не применяется, из UI убрано.
 	_ = patch.EngineDetour
+	if patch.SmartCascade != nil {
+		sc, err := s.validSmartCascade(pool, patch.SmartCascade)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		if sc == nil && pool.Settings.SmartCascade != nil {
+			// настройки сняты при живом автомате - честно выключить каскад,
+			// иначе он остался бы включённым навсегда без расписания
+			if st := s.store.State(name); st.Smart != nil && st.Smart.On {
+				if err := s.engine.SmartCascadeSetManual(name, false); err != nil {
+					s.store.LogEvent(name, "smart-cascade", "не выключил каскад при снятии настроек: "+err.Error())
+				}
+			}
+		}
+		merged.SmartCascade = sc
+	}
 	if pool.Free {
 		merged.ProbeHost = FreeProbeURL
 	}
@@ -1517,6 +1539,12 @@ func (s *Server) updatePool(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.UpdatePool(name, merged); err != nil {
 		writeErr(w, err)
 		return
+	}
+	if merged.SmartCascade != nil {
+		// служебная группа каскада - сразу при сохранении настроек,
+		// выключена до триггера (слово владельца, 86-док); при недоступном
+		// MT долечит домашка (EnsureErr в стейте виден в панели)
+		s.engine.EnsureSmartCascade(name)
 	}
 	if engineRebuild {
 		if _, err := s.applyEngine(); err != nil {
@@ -2279,6 +2307,9 @@ func (s *Server) mtToggleGroup(w http.ResponseWriter, r *http.Request) {
 				writeErr(w, err)
 				return
 			}
+			// тумблер служебной группы каскада меняет и автомат умного
+			// каскада - держим зеркало-стейт в согласии с MT (86-док)
+			s.engine.SmartCascadeSyncToggle(id, req.Enable)
 			writeJSON(w, http.StatusOK, map[string]string{"ok": "ok"})
 			return
 		}

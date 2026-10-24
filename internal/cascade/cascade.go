@@ -161,6 +161,10 @@ func (m *Manager) ipt(args ...string) (string, error) {
 	return string(out), err
 }
 
+// SetIptRun - подмена iptables-раннера (тесты; живой прогон зовёт
+// бинарь iptables).
+func (m *Manager) SetIptRun(fn func(args ...string) (string, error)) { m.iptRun = fn }
+
 func (m *Manager) HookPresent(groupID string) bool {
 	out, err := m.ipt("-t", "mangle", "-S", "OUTPUT")
 	if err != nil {
