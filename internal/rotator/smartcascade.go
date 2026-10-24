@@ -149,17 +149,21 @@ func (e *Engine) smartEnable(p store.Pool, reason string) error {
 }
 
 // smartDisable - снять каскад (под actMu). reason - для события.
+// Работает и при рассинхроне (группа включена, а стейт считает «выкл»):
+// ручное «вернуть напрямую» обязано выключать группу независимо от On
+// (живой кейс Кинетика: Create не успел выключиться, off выходил рано).
 func (e *Engine) smartDisable(p store.Pool, reason string) {
 	st := e.store.State(p.Name)
-	if st.Smart == nil || !st.Smart.On {
+	if st.Smart == nil {
 		return
 	}
-	if entry, ok := e.smartEntry(p, st); ok {
+	entry, ok := e.smartEntry(p, st)
+	if ok {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
 		if err := e.casc.SetEnabled(ctx, entry.Group, false); err != nil {
 			e.store.LogEvent(p.Name, "smart-cascade", "не выключил каскад: "+err.Error())
 		}
+		cancel()
 	}
 	now := e.now()
 	e.smartMutate(p.Name, func(s *store.SmartCascadeState) {
@@ -329,13 +333,15 @@ func nextTimeOfDay(now time.Time, times []string) time.Time {
 }
 
 // checkSmartCascades - минутная домашка умных каскадов (нечётные тики):
-// долечить несозданные служебные группы (MT был недоступен при
-// сохранении настроек) и прогнать наступившие проверки возврата.
+// сверка рассинхрона, долечить несозданные служебные группы (MT был
+// недоступен при сохранении настроек) и прогнать наступившие проверки
+// возврата.
 func (e *Engine) checkSmartCascades() {
 	if e.casc == nil {
 		return
 	}
 	now := e.now()
+	e.smartReconcile()
 	for _, p := range e.store.Pools() {
 		if !smartConfigured(p) {
 			continue
@@ -351,6 +357,48 @@ func (e *Engine) checkSmartCascades() {
 		e.actMu.Lock()
 		e.smartReturn(p, false)
 		e.actMu.Unlock()
+	}
+}
+
+// smartReconcile - страховка от рассинхрона: служебная группа каскада
+// включена в MT, а автомат не срабатывал (не успела выключиться после
+// Create, включили руками в нативном MT) - выключаем: группой управляет
+// только автомат. Запрашивает MT только когда есть хоть один кандидат.
+func (e *Engine) smartReconcile() {
+	candidates := map[string]string{} // groupID -> pool name
+	for _, p := range e.store.Pools() {
+		if !smartConfigured(p) {
+			continue
+		}
+		st := e.store.State(p.Name)
+		if st.Smart == nil || st.Smart.Group == "" || st.Smart.On {
+			continue
+		}
+		candidates[st.Smart.Group] = p.Name
+	}
+	if len(candidates) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	enabled := map[string]bool{}
+	for _, info := range e.casc.Infos(ctx) {
+		if info.Enabled {
+			enabled[info.Group] = true
+		}
+	}
+	for groupID, name := range candidates {
+		if !enabled[groupID] {
+			continue
+		}
+		cctx, ccancel := context.WithTimeout(context.Background(), 15*time.Second)
+		err := e.casc.SetEnabled(cctx, groupID, false)
+		ccancel()
+		if err != nil {
+			e.store.LogEvent(name, "smart-cascade", "сверка: не выключил включённую без автомата группу: "+err.Error())
+			continue
+		}
+		e.store.LogEvent(name, "smart-cascade", "сверка: группа каскада была включена без срабатывания автомата - выключена")
 	}
 }
 
@@ -387,10 +435,28 @@ func (e *Engine) smartEnsure(p store.Pool) {
 			})
 			return
 		}
-		// Create создаёт включённой - сразу гасим до триггера
-		if err := e.casc.SetEnabled(ctx, created.ID, false); err != nil {
-			e.store.LogEvent(p.Name, "smart-cascade", "группа каскада создана, но не выключилась: "+err.Error())
+		// Create создаёт группу ВКЛЮЧЕННОЙ; выключение - отдельным свежим
+		// бюджетом: на слабом железе Create с большим числом правил съедает
+		// общий таймаут и выключение падало по дедлайну - группа оставалась
+		// включённой при живом пуле (живой кейс Кинетика, 56 правил)
+		dctx, dcancel := context.WithTimeout(context.Background(), 20*time.Second)
+		derr := e.casc.SetEnabled(dctx, created.ID, false)
+		dcancel()
+		if derr != nil {
+			e.store.LogEvent(p.Name, "smart-cascade",
+				"группа каскада создана, но не выключилась: "+derr.Error()+" - откатываю создание")
+			rctx, rcancel := context.WithTimeout(context.Background(), 20*time.Second)
+			if err := e.casc.Delete(rctx, created.ID); err != nil {
+				e.store.LogEvent(p.Name, "smart-cascade", "откат не удался: "+err.Error()+" - минутная сверка выключит группу")
+			}
+			rcancel()
+			e.smartMutate(p.Name, func(s *store.SmartCascadeState) {
+				s.EnsureErr, s.EnsureAt = "не выключилась: " + derr.Error(), e.now()
+			})
+			return
 		}
+		// Create включён и выключен: хук мог остаться от включённого
+		// мгновения - снять не жалко, триггер поставит заново
 		ours, hasOurs = store.CascadeEntry{Group: created.ID, Source: "pool:" + p.Name, Via: "pool:" + wantVia}, true
 		e.store.LogEvent(p.Name, "smart-cascade",
 			"служебная группа каскада готова (выключена, путь через "+wantVia+")")

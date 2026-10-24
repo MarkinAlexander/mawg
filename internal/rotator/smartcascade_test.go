@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -427,4 +428,73 @@ func (s *mtState) snapshot() []magitrickle.Group {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]magitrickle.Group(nil), s.groups...)
+}
+
+// forceEnable - дрейф: группу включили мимо автомата (нативный MT или
+// незавершённое выключение после Create) - стейт mawg про это не знает.
+func (s *mtState) forceEnable(id string, on bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.groups {
+		if s.groups[i].ID == id {
+			s.groups[i].Enable = on
+		}
+	}
+}
+
+func driftPark(t *testing.T) *smartPark {
+	t.Helper()
+	park := smartSetup(t, "one")
+	park.e.EnsureSmartCascade("proton")
+	entry := park.st.Cascades()[0]
+	for _, g := range park.mt.snapshot() {
+		if g.ID == entry.Group && g.Enable {
+			t.Fatal("ensure оставил группу включённой")
+		}
+	}
+	park.mt.forceEnable(entry.Group, true)
+	return park
+}
+
+// минутная сверка: группа включена без срабатывания автомата (дрейф) -
+// домашка выключает её сама
+func TestSmartCascadeReconcileDrift(t *testing.T) {
+	park := driftPark(t)
+	entry := park.st.Cascades()[0]
+
+	park.e.checkSmartCascades()
+
+	for _, g := range park.mt.snapshot() {
+		if g.ID == entry.Group && g.Enable {
+			t.Fatal("сверка не выключила дрейфовую группу")
+		}
+	}
+	found := false
+	for _, ev := range park.st.Events() {
+		if ev.Kind == "smart-cascade" && strings.Contains(ev.Message, "без срабатывания автомата") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("нет события сверки")
+	}
+}
+
+// ручное «вернуть напрямую» при дрейфе (On=false, группа включена):
+// обязано выключать группу, а не выходить рано (живой кейс Кинетика)
+func TestSmartCascadeManualOffDrift(t *testing.T) {
+	park := driftPark(t)
+	entry := park.st.Cascades()[0]
+
+	if err := park.e.SmartCascadeSetManual("proton", false); err != nil {
+		t.Fatal(err)
+	}
+	for _, g := range park.mt.snapshot() {
+		if g.ID == entry.Group && g.Enable {
+			t.Fatal("ручной off не выключил дрейфовую группу")
+		}
+	}
+	if park.st.State("proton").Smart.On {
+		t.Fatal("стейт после off")
+	}
 }
