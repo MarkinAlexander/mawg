@@ -239,7 +239,9 @@ function pick(o: UiSelectOption) {
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
   width: max-content;
   min-width: 100%;
-  max-width: 460px;
+  /* на телефоне max-content (до 460) шире экрана и список уезжает за
+     край - клемпим по вьюпорту, длинные опции переносятся на строки */
+  max-width: min(460px, calc(100vw - 24px));
 }
 .psel-item {
   display: flex;

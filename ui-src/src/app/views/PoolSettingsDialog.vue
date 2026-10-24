@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { UiBadge, UiButton, UiCheckbox, UiDialog, UiHelp, UiHint, UiInput, UiSelect, type UiSelectOption, UiSwitch, UiTextarea } from '../../components/ui'
+import { UiBadge, UiButton, UiDialog, UiHelp, UiHint, UiInput, UiOrderList, UiSelect, type UiSelectOption, UiSwitch, UiTextarea } from '../../components/ui'
 import { useIfaces } from '../../stores/ifaces'
 import { usePoolActions } from '../../stores/pools'
 import { useStatus } from '../../stores/status'
@@ -45,9 +45,9 @@ const cooldown = ref('5');
 const keepalive = ref('25');
 const updateInt = ref('0');
 const fallback = ref('direct');
-// умный каскад (86-док)
+// умный каскад (86-док): Via - упорядоченный список (порядок = приоритет)
 const scOn = ref(false);
-const scVia = ref<Record<string, boolean>>({});
+const scVia = ref<string[]>([]);
 const scMode = ref('schedule');
 const scInterval = ref('6');
 const scTimes = ref('03:00');
@@ -151,7 +151,9 @@ const probeLocked = computed(() => isFree.value || isEng.value);
 
 // другие пулы - кандидаты запасного пути умного каскада
 const scPoolOptions = computed(() =>
-  (status.data?.pools || []).filter((p) => p.name !== props.poolName && !p.disabled));
+  (status.data?.pools || [])
+    .filter((p) => p.name !== props.poolName && !p.disabled)
+    .map((p) => ({ value: p.name, label: p.name })));
 const scModeOptions: UiSelectOption[] = [
   { value: 'schedule', label: 'по расписанию (в определённое время)' },
   { value: 'interval', label: 'по интервалу (раз в N часов)' },
@@ -186,8 +188,7 @@ watch(open, (v) => {
   const sc = p.settings.smartCascade;
   const scRet = sc?.return || {};
   scOn.value = !!(sc?.via && sc.via.length);
-  scVia.value = {};
-  for (const v of sc?.via || []) scVia.value[v] = true;
+  scVia.value = [...(sc?.via || [])]; // порядок = приоритет, храним как есть
   scMode.value = scRet.mode === 'interval' || scRet.mode === 'manual' ? scRet.mode : 'schedule';
   scInterval.value = String((scRet.intervalH || 0) > 0 ? (scRet.intervalH as number) : 6);
   scTimes.value = (scRet.timeOfDay && scRet.timeOfDay.length ? scRet.timeOfDay : ['03:00']).join(', ');
@@ -317,7 +318,8 @@ async function save(): Promise<void> {
       // умный каскад: полный объект при включении, пустой via = выключить
       let smartBody: Record<string, unknown> | undefined;
       if (!isEng.value) {
-        const via = scPoolOptions.value.filter((p) => scVia.value[p.name]).map((p) => p.name);
+        const known = new Set(scPoolOptions.value.map((o) => o.value));
+        const via = scVia.value.filter((v) => known.has(v)); // порядок списка = приоритет
         smartBody = scOn.value && via.length
           ? {
             smartCascade: {
@@ -624,27 +626,19 @@ async function save(): Promise<void> {
           <UiHelp :text="G.smartCascade" />
         </div>
         <template v-if="scOn">
-          <div class="scvia">
-            <div
-              v-for="p in scPoolOptions"
-              :key="p.name"
-              class="scvia-row"
-            >
-              <UiCheckbox
-                :model-value="!!scVia[p.name]"
-                :label="p.name"
-                @update:model-value="(v: boolean) => scVia[p.name] = v"
-              />
-            </div>
-            <UiHint text="Отметьте запасные пулы; порядок сверху вниз = приоритет. Включается первый живой." />
-          </div>
+          <UiOrderList
+            v-model="scVia"
+            :options="scPoolOptions"
+            label="добавить запасной пул"
+            empty-hint="Запасных нет: при блокировке пул не сможет уйти в каскад - добавьте хотя бы один пул."
+            order-hint="Первый живой сверху становится запасным путём; порядок списка = приоритет."
+          />
           <div class="hrow">
             <UiSelect
               v-model="scMode"
               :options="scModeOptions"
               label="Когда пробовать прямой путь обратно"
             />
-            <UiHelp :text="G.smartCascade" />
           </div>
           <UiInput
             v-if="scMode === 'interval'"
@@ -698,11 +692,6 @@ async function save(): Promise<void> {
   font-weight: 600;
   font-size: 13px;
   margin: 12px 0 4px;
-}
-.scvia {
-  display: grid;
-  gap: 2px;
-  margin: 4px 0;
 }
 .inrow {
   display: flex;
