@@ -785,6 +785,19 @@ func (e *Engine) probeAndMaybeRotate(p store.Pool, st *store.PoolState) {
 	}
 	fails := st.ConsecFails + 1
 	e.store.MutateState(p.Name, func(s *store.PoolState) { s.ConsecFails = fails })
+	// ранний триггер умного каскада (86-док, слово владельца: «напрямую
+	// проверили - фейл - переключились на варп и их же проверили, если и
+	// там фейл - идут следующие»): после N отказов АКТИВНОГО конфига
+	// сразу пробуем его же через Via; не ожил - конфиг проверен обоими
+	// путями, к следующему немедленно
+	if n := e.smartTriggerFails(p); n > 0 && fails >= n {
+		if e.smartRescue(p) {
+			e.store.MutateState(p.Name, func(s *store.PoolState) { s.ConsecFails = 0 })
+			return
+		}
+		e.rotate(p, e.store.State(p.Name), st.ActiveFile)
+		return
+	}
 	if fails < p.Settings.FailThreshold {
 		return
 	}
@@ -1095,8 +1108,10 @@ func (e *Engine) rotate(p store.Pool, st *store.PoolState, failedActive string) 
 		}
 		if chosen < 0 {
 			// умный каскад (86-док): спасает пул - туннель продолжает
-			// жить через Via-пул, группы остаются при своём IP
-			if e.smartRescue(pool) {
+			// жить через Via-пул, группы остаются при своём IP. В раннем
+			// режиме (fails) попытки уже шли на каждом конфиге - тут
+			// только обычный фоллбэк
+			if e.smartTriggerFails(pool) == 0 && e.smartRescue(pool) {
 				return
 			}
 			e.enterFallback(pool, state)

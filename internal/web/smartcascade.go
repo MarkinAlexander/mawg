@@ -48,6 +48,14 @@ func (s *Server) validSmartCascade(p store.Pool, sc *store.SmartCascadeSettings)
 	default:
 		return nil, errors.New("режим возврата: interval | schedule | manual")
 	}
+	switch sc.TriggerMode {
+	case "", "exhaust", "fails":
+	default:
+		return nil, errors.New("когда включать каскад: exhaust | fails")
+	}
+	if sc.TriggerFails < 0 || sc.TriggerFails > 10 {
+		return nil, errors.New("отказов до каскада: 0-10 (0 = 3)")
+	}
 	if sc.Return.IntervalH < 0 || sc.Return.IntervalH > 168 {
 		return nil, errors.New("интервал возврата: 0-168 часов (0 = 6)")
 	}

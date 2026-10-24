@@ -192,6 +192,11 @@ export interface PoolSettings {
 
 export interface SmartCascadeSettings {
   via?: string[] // пулы запасного пути в порядке приоритета
+  // когда включать: fails - после triggerFails отказов подряд активного
+  // конфига (тот же конфиг сразу пробуется через Via); exhaust (пусто) -
+  // после перебора всех конфигов пула
+  triggerMode?: string
+  triggerFails?: number // для fails, 0 = 3
   return?: {
     mode?: string // interval | schedule | manual (пусто = schedule 03:00)
     intervalH?: number // для interval, 0 = 6

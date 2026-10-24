@@ -127,6 +127,13 @@ type SmartCascadeSettings struct {
 	// Via - пулы запасного пути в порядке приоритета; включается первый
 	// живой (Mode==up, не Disabled).
 	Via []string `json:"via,omitempty"`
+	// TriggerMode - когда включать каскад: "fails" - после TriggerFails
+	// отказов подряд активного конфига (тот же конфиг сразу пробуется
+	// через Via, без перебора остальных); "exhaust" (пусто) - после
+	// исчерпания всех конфигов пула, перед фоллбэком (слово владельца:
+	// гибкость - пусть пользователь выбирает).
+	TriggerMode  string `json:"triggerMode,omitempty"`
+	TriggerFails int    `json:"triggerFails,omitempty"` // для fails; 0 = 3
 	// Return - стратегия возврата на прямой путь.
 	Return SmartCascadeReturn `json:"return,omitempty"`
 	// MinDwellMin - антифлап: минимум минут в состоянии до АВТОматического
@@ -232,6 +239,9 @@ func (s PoolSettings) WithDefaults() PoolSettings {
 		}
 		if sc.MinDwellMin <= 0 {
 			sc.MinDwellMin = 10
+		}
+		if sc.TriggerMode == "fails" && sc.TriggerFails <= 0 {
+			sc.TriggerFails = 3
 		}
 		out.SmartCascade = &sc
 	}

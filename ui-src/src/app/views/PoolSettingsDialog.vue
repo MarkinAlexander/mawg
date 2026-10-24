@@ -49,6 +49,8 @@ const fallback = ref('direct');
 const scOn = ref(false);
 const scVia = ref<string[]>([]);
 const scMode = ref('schedule');
+const scTrigMode = ref('exhaust');
+const scTrigFails = ref('3');
 const scInterval = ref('6');
 const scTimes = ref('03:00');
 const scDwell = ref('10');
@@ -159,6 +161,10 @@ const scModeOptions: UiSelectOption[] = [
   { value: 'interval', label: 'по интервалу (раз в N часов)' },
   { value: 'manual', label: 'только кнопкой' },
 ];
+const scTrigOptions: UiSelectOption[] = [
+  { value: 'exhaust', label: 'после перебора всех конфигов пула' },
+  { value: 'fails', label: 'после отказов подряд (быстрее)' },
+];
 
 watch(open, (v) => {
   if (!v) return;
@@ -190,6 +196,8 @@ watch(open, (v) => {
   scOn.value = !!(sc?.via && sc.via.length);
   scVia.value = [...(sc?.via || [])]; // порядок = приоритет, храним как есть
   scMode.value = scRet.mode === 'interval' || scRet.mode === 'manual' ? scRet.mode : 'schedule';
+  scTrigMode.value = sc?.triggerMode === 'fails' ? 'fails' : 'exhaust';
+  scTrigFails.value = String((sc?.triggerFails || 0) > 0 ? sc!.triggerFails! : 3);
   scInterval.value = String((scRet.intervalH || 0) > 0 ? (scRet.intervalH as number) : 6);
   scTimes.value = (scRet.timeOfDay && scRet.timeOfDay.length ? scRet.timeOfDay : ['03:00']).join(', ');
   scDwell.value = String((sc?.minDwellMin || 0) > 0 ? sc!.minDwellMin! : 10);
@@ -324,6 +332,8 @@ async function save(): Promise<void> {
           ? {
             smartCascade: {
               via,
+              triggerMode: scTrigMode.value,
+              ...(scTrigMode.value === 'fails' ? { triggerFails: Math.max(1, +scTrigFails.value || 3) } : {}),
               return: {
                 mode: scMode.value,
                 ...(scMode.value === 'interval' ? { intervalH: Math.max(1, +scInterval.value || 6) } : {}),
@@ -626,6 +636,20 @@ async function save(): Promise<void> {
           <UiHelp :text="G.smartCascade" />
         </div>
         <template v-if="scOn">
+          <div class="hrow">
+            <UiSelect
+              v-model="scTrigMode"
+              :options="scTrigOptions"
+              label="Когда включать каскад"
+            />
+          </div>
+          <UiInput
+            v-if="scTrigMode === 'fails'"
+            v-model="scTrigFails"
+            type="number"
+            label="Отказов подряд до каскада"
+            tooltip="после N отказов активного конфига mawg сразу пробует ЭТОТ ЖЕ конфиг через запасной пул; не ожил - следующий конфиг напрямую, и так по кругу"
+          />
           <UiOrderList
             v-model="scVia"
             :options="scPoolOptions"

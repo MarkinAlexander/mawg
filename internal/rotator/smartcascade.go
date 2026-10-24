@@ -28,6 +28,21 @@ func smartConfigured(p store.Pool) bool {
 	return p.Settings.SmartCascade != nil && len(p.Settings.SmartCascade.Via) > 0
 }
 
+// smartTriggerFails - порог раннего включения каскада: >0 только в
+// режиме "fails" (после N отказов подряд активного конфига); 0/"" -
+// каскад включается на исчерпании конфигов в rotate().
+func (e *Engine) smartTriggerFails(p store.Pool) int {
+	sc := p.Settings.SmartCascade
+	if sc == nil || e.casc == nil || sc.TriggerMode != "fails" {
+		return 0
+	}
+	n := sc.TriggerFails
+	if n <= 0 {
+		n = 3
+	}
+	return n
+}
+
 // smartMutate - правка состояния автомата с ленивым созданием.
 func (e *Engine) smartMutate(name string, fn func(*store.SmartCascadeState)) {
 	e.store.MutateState(name, func(s *store.PoolState) {
