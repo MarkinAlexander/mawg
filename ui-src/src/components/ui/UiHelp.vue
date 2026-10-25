@@ -54,8 +54,10 @@ watch(
       const pop = root.value?.querySelector<HTMLElement>('.uihelp-pop')
       if (!btn || !pop) return
       const margin = 8
-      const vw = window.innerWidth
-      const vh = window.innerHeight
+      // видимая область БЕЗ полосы прокрутки: innerWidth её включает, и
+      // прижатый к innerWidth поповер вылезал на ширину скроллбара
+      const vw = Math.min(window.innerWidth, document.documentElement.clientWidth || window.innerWidth)
+      const vh = Math.min(window.innerHeight, document.documentElement.clientHeight || window.innerHeight)
       const width = Math.min(290, vw - margin * 2)
       // сначала ширина (невидимым): от неё зависит высота текста
       popStyle.value = {
