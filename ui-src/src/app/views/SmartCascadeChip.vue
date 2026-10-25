@@ -121,7 +121,7 @@ watch(
     <button
       type="button"
       class="scchip"
-      :class="on ? 'v-warn' : 'v-info'"
+      :class="on ? 'v-on' : 'v-idle'"
       :aria-expanded="open"
       title="умный каскад - нажмите для подробностей"
       @click="open = !open"
@@ -168,7 +168,12 @@ watch(
   display: inline-flex;
   vertical-align: baseline;
 }
+/* фирменный цвет умного каскада (слово владельца: #27d1ce): спокойный
+   чип - контурный полупрозрачный, активный - плотная бирюза с мягким
+   свечением; оба состояния в одной гамме, hover подсвечивает */
 .scchip {
+  --sc: #27d1ce;
+  --sc-text: #2fd9d6;
   font-size: 11px;
   line-height: 1;
   border-radius: 10px;
@@ -177,15 +182,22 @@ watch(
   background: var(--bg);
   cursor: pointer;
 }
-.scchip.v-info {
-  color: var(--dim);
+.scchip.v-idle {
+  color: var(--sc-text);
+  border-color: rgba(39, 209, 206, 0.45);
+  background: rgba(39, 209, 206, 0.07);
 }
-.scchip.v-warn {
-  color: var(--warn, #d19a66);
-  border-color: currentColor;
+.scchip.v-idle:hover {
+  background: rgba(39, 209, 206, 0.14);
 }
-.scchip:hover {
-  border-color: var(--accent);
+.scchip.v-on {
+  color: var(--sc-text);
+  border-color: var(--sc);
+  background: rgba(39, 209, 206, 0.16);
+  box-shadow: 0 0 0 1px rgba(39, 209, 206, 0.25);
+}
+.scchip.v-on:hover {
+  background: rgba(39, 209, 206, 0.24);
 }
 .scpop {
   z-index: 60;

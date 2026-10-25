@@ -22,7 +22,7 @@ describe('SmartCascadeChip', () => {
   it('спокоен: бейдж «умный каскад», поповер - план и «ждёт блокировки»', async () => {
     const w = mount(SmartCascadeChip, { props: { settings } })
     expect(w.find('.scchip').text()).toBe('умный каскад')
-    expect(w.find('.scchip').classes()).toContain('v-info')
+    expect(w.find('.scchip').classes()).toContain('v-idle')
     await w.find('.scchip').trigger('click')
     const pop = w.find('.scpop')
     expect(pop.exists()).toBe(true)
@@ -37,7 +37,7 @@ describe('SmartCascadeChip', () => {
   it('активен: бейдж «через warp (каскад)», в поповере путь и следующая проверка', async () => {
     const w = mount(SmartCascadeChip, { props: { settings, state } })
     expect(w.find('.scchip').text()).toBe('через warp (каскад)')
-    expect(w.find('.scchip').classes()).toContain('v-warn')
+    expect(w.find('.scchip').classes()).toContain('v-on')
     await w.find('.scchip').trigger('click')
     const pop = w.find('.scpop')
     expect(pop.text()).toContain('трафик идёт через warp')
