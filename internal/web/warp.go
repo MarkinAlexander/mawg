@@ -429,6 +429,7 @@ func (s *Server) warpGenerate(w http.ResponseWriter, r *http.Request) {
 	}
 	s.store.LogEvent(name, "applied", fmt.Sprintf("генератор WARP: +%d конфигов в %s (режим %s), рабочих %d, удалено %d",
 		kept, name, req.Mode, okCount, removedCount))
+	s.cascSyncPool(name)
 	writeJSON(w, http.StatusOK, warpPlan{Pool: name, Added: kept, Results: results, Warnings: warnings})
 }
 
@@ -531,6 +532,7 @@ func (s *Server) poolWarpAdd(w http.ResponseWriter, r *http.Request) {
 		warnings = append(warnings, "параметры WARP пула не сохранились: "+err.Error())
 	}
 	s.store.LogEvent(name, "applied", fmt.Sprintf("генератор WARP: +1 конфиг %s (%s)", last.Endpoint, verdictRU(res)))
+	s.cascSyncPool(name)
 	writeJSON(w, http.StatusOK, warpPlan{Pool: name, Added: added, Results: []warpResultOne{res}, Warnings: warnings})
 }
 

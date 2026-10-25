@@ -1172,7 +1172,7 @@ func (e *Engine) recordApplied(p store.Pool, file, endpoint string) error {
 	}
 	e.store.LogEvent(p.Name, "applied", file+" -> "+endpoint)
 	if e.casc != nil {
-		go e.casc.SyncSourceEndpoints(context.Background(), "pool:"+p.Name)
+		go e.casc.SyncPoolRules(context.Background(), "pool:"+p.Name)
 	}
 	if err != nil {
 		return fmt.Errorf("configuration applied but active state could not be saved")

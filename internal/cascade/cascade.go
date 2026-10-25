@@ -579,6 +579,9 @@ func (m *Manager) resolve(ctx context.Context, host string) []string {
 func (m *Manager) poolEndpoints(pool store.Pool) (hosts, domains []string) {
 	seen := map[string]bool{}
 	for _, c := range pool.Configs {
+		if !c.Enabled {
+			continue // выключенный конфиг не должен держать правила каскада
+		}
 		h := HostOf(c.Endpoint)
 		if h == "" || seen[h] {
 			continue
@@ -882,7 +885,11 @@ func (m *Manager) cascadeHosts(ctx context.Context, entry store.CascadeEntry) []
 	return hosts
 }
 
-func (m *Manager) SyncSourceEndpoints(ctx context.Context, source string) {
+// SyncPoolRules - пересборка правил каскадов ИСТОЧНИКА по текущему
+// составу (жалобы пользователей: новые конфиги не попадали в каскад,
+// адреса удалённых/выключенных оставались навсегда). Пул без включённых
+// конфигов каскаду смысла не даёт - каскад выключаем с событием.
+func (m *Manager) SyncPoolRules(ctx context.Context, source string) {
 	for _, entry := range m.Store.Cascades() {
 		if entry.Source != source {
 			continue
@@ -894,16 +901,86 @@ func (m *Manager) SyncSourceEndpoints(ctx context.Context, source string) {
 		if kind == "pool" {
 			p, ok := m.Store.Pool(name)
 			if !ok {
+				// пул удалён: каскад с его адресами остался бы висеть включённым
+				m.disableIfOn(ctx, entry, "пул-источник удалён - каскад выключен")
 				continue
 			}
 			poolHosts, poolDomains := m.poolEndpoints(p)
-			m.syncRules(ctx, entry, poolHosts, poolDomains)
+			if len(poolHosts)+len(poolDomains) == 0 {
+				m.disableIfOn(ctx, entry, "у пула-источника не осталось включённых конфигов - каскад выключен")
+				continue
+			}
+			if entry.AutoDisabled {
+				m.reEnableAuto(ctx, entry)
+			}
+			m.syncRules(ctx, entry, append(poolHosts, poolDomains...), nil)
 			continue
 		}
 		if kind == "iface" && m.EP != nil {
 			if resolved, epErr := m.EP.IfaceEndpoints(name); epErr == nil && len(resolved) > 0 {
 				m.syncRules(ctx, entry, resolved, nil)
 			}
+		}
+	}
+}
+
+// disableIfOn - гасит каскад с событием и меткой AutoDisabled (по ней
+// sync вернёт его при оживании пула). Уже выключенный (или исчезла
+// группа) не трогаем - иначе каждый sync сыпал бы одно и то же событие;
+// ручное выключение пользователя метки не получает.
+func (m *Manager) disableIfOn(ctx context.Context, entry store.CascadeEntry, reason string) {
+	groups, err := m.MT.GroupsWithRules(ctx)
+	if err != nil {
+		return
+	}
+	for _, g := range groups {
+		if g.ID != entry.Group {
+			continue
+		}
+		if g.Enable {
+			if err := m.SetEnabled(ctx, entry.Group, false); err == nil {
+				m.updateCascade(entry.Group, func(e *store.CascadeEntry) { e.AutoDisabled = true })
+				m.Store.LogEvent("cascade", "sync", entry.Name+": "+reason)
+			}
+		}
+		return
+	}
+}
+
+// reEnableAuto - возврат каскада, погашенного самим sync (флаг
+// AutoDisabled). Живую группу в MT не дёргаем - её мог включить умный
+// каскад, тогда просто снимаем флаг.
+func (m *Manager) reEnableAuto(ctx context.Context, entry store.CascadeEntry) {
+	clear := func() { m.updateCascade(entry.Group, func(e *store.CascadeEntry) { e.AutoDisabled = false }) }
+	groups, err := m.MT.GroupsWithRules(ctx)
+	if err != nil {
+		return
+	}
+	for _, g := range groups {
+		if g.ID != entry.Group {
+			continue
+		}
+		if !g.Enable {
+			if err := m.SetEnabled(ctx, entry.Group, true); err != nil {
+				m.log("cascade", "sync", entry.Name+": пул-источник ожил, но каскад не включился: "+err.Error())
+				return
+			}
+			m.Store.LogEvent("cascade", "sync", entry.Name+": пул-источник снова с конфигами - каскад включён")
+		}
+		clear()
+		return
+	}
+	clear() // группа исчезла - метка больше не имеет смысла
+}
+
+// updateCascade - правит запись каскада в сторе
+func (m *Manager) updateCascade(group string, fn func(*store.CascadeEntry)) {
+	cs := m.Store.Cascades()
+	for i := range cs {
+		if cs[i].Group == group {
+			fn(&cs[i])
+			_ = m.Store.SetCascades(cs)
+			return
 		}
 	}
 }
@@ -921,12 +998,27 @@ func (m *Manager) RefreshDNS(ctx context.Context) {
 	}
 }
 
-func (m *Manager) syncRules(ctx context.Context, entry store.CascadeEntry, hosts, domains []string) {
-	if len(hosts) == 0 && len(domains) == 0 {
+// syncRules - ПРИВОДИТ правила группы каскада к нужному набору: было
+// add-only, адреса удалённых/выключенных конфигов оставались навсегда
+// (живые жалобы); теперь полная замена с diff-логом. Домены пула
+// резолвятся и дублируются A-записями - как при Create.
+func (m *Manager) syncRules(ctx context.Context, entry store.CascadeEntry, hosts, _ []string) {
+	if len(hosts) == 0 {
 		return
 	}
-	need := BuildRules(hosts, nil)
-	_ = domains
+	var domains []string
+	for _, h := range hosts {
+		if net.ParseIP(h) == nil {
+			if _, _, err := net.ParseCIDR(h); err != nil {
+				domains = append(domains, h)
+			}
+		}
+	}
+	resolutions := map[string][]string{}
+	for _, d := range domains {
+		resolutions[d] = m.resolve(ctx, d)
+	}
+	need := BuildRules(hosts, resolutions)
 	groups, err := m.MT.GroupsWithRules(ctx)
 	if err != nil {
 		return
@@ -945,14 +1037,33 @@ func (m *Manager) syncRules(ctx context.Context, entry store.CascadeEntry, hosts
 		m.log("cascade", "sync", "группа каскада исчезла: "+entry.Name)
 		return
 	}
-	var added []magitrickle.Rule
+	needSet := map[string]bool{}
+	added, removed := 0, 0
 	for _, r := range need {
-		if !existing[r.Type+" "+r.Rule] {
-			added = append(added, r)
+		k := r.Type + " " + r.Rule
+		needSet[k] = true
+		if !existing[k] {
+			added++
 		}
 	}
-	if len(added) == 0 {
+	for k := range existing {
+		if !needSet[k] {
+			removed++
+		}
+	}
+	if added == 0 && removed == 0 {
 		return
+	}
+	kept := make([]magitrickle.Rule, 0, len(need))
+	for _, r := range target.Rules {
+		if needSet[r.Type+" "+r.Rule] {
+			kept = append(kept, r) // сохраняем id включённых правил
+		}
+	}
+	for _, r := range need {
+		if !existing[r.Type+" "+r.Rule] {
+			kept = append(kept, r)
+		}
 	}
 	err = m.retry("cascade", func() error {
 		return m.MT.MutateGroups(ctx, func(groups []magitrickle.Group) bool {
@@ -960,17 +1071,17 @@ func (m *Manager) syncRules(ctx context.Context, entry store.CascadeEntry, hosts
 				if groups[i].ID != entry.Group {
 					continue
 				}
-				groups[i].Rules = append(groups[i].Rules, added...)
+				groups[i].Rules = kept
 				return true
 			}
 			return false
 		})
 	})
 	if err != nil {
-		m.log("cascade", "sync", "не добавил адреса в "+entry.Name+": "+err.Error())
+		m.log("cascade", "sync", "не пересобрал правила "+entry.Name+": "+err.Error())
 		return
 	}
-	m.Store.LogEvent("cascade", "sync", entry.Name+": добавлено адресов "+strconv.Itoa(len(added)))
+	m.Store.LogEvent("cascade", "sync", entry.Name+": правила пересобраны (+"+strconv.Itoa(added)+"/-"+strconv.Itoa(removed)+")")
 }
 
 type Info struct {

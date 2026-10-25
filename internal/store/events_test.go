@@ -7,11 +7,12 @@ import (
 	"testing"
 )
 
-// tmpfs-журнал общий на машину - перед тестом чистить
+// tmpfs-журналы (уникальные на инстанс) - перед тестом чистить все
 func cleanTmpJournal(t *testing.T) {
 	t.Helper()
-	for _, f := range []string{"mawg-events.jsonl", "mawg-events.jsonl.old"} {
-		if err := os.Remove(filepath.Join(os.TempDir(), f)); err != nil && !os.IsNotExist(err) {
+	matches, _ := filepath.Glob(filepath.Join(os.TempDir(), "mawg-events*"))
+	for _, f := range matches {
+		if err := os.Remove(f); err != nil && !os.IsNotExist(err) {
 			t.Fatal(err)
 		}
 	}

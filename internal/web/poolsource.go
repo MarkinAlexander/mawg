@@ -238,6 +238,7 @@ func (s *Server) createPoolFromNodes(w http.ResponseWriter, r *http.Request, req
 			_ = s.engine.SetActive(pool.Name, p.Configs[0].File)
 		}
 		s.applyEngineWarn(&plan)
+		s.cascSyncPool(req.Name)
 		writeJSON(w, http.StatusOK, plan)
 		return
 	}
@@ -342,5 +343,6 @@ func (s *Server) createPoolFromNodes(w http.ResponseWriter, r *http.Request, req
 		writeJSON(w, http.StatusOK, plan)
 		return
 	}
+	s.cascSyncPool(req.Name)
 	writeJSON(w, http.StatusOK, plan)
 }

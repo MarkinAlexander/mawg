@@ -373,6 +373,9 @@ type CascadeEntry struct {
 	Source  string   `json:"source"` // "pool:warp" | "iface:wg0"
 	Via     string   `json:"via"`    // "pool:proton" | "iface:wg0"
 	Domains []string `json:"domains,omitempty"`
+	// AutoDisabled - каскад погас сам sync (пул-источник опустел/удалён):
+	// при оживания пула вернуть. Ручное выключение не трогаем.
+	AutoDisabled bool `json:"autoDisabled,omitempty"`
 }
 
 type DegradedGroup struct {
