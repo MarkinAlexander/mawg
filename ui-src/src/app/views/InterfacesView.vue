@@ -18,6 +18,7 @@ import PoolCard from './PoolCard.vue'
 import PoolCreateDialog from './PoolCreateDialog.vue'
 import PoolSettingsDialog from './PoolSettingsDialog.vue'
 import WarpGenerateDialog from './WarpGenerateDialog.vue'
+import SmartCascadeChip from './SmartCascadeChip.vue'
 
 // Фаза 3.4 «Интерфейсы + WAN-probe» + Фаза 3.5 «Пулы» (44-дока §5.4-5.5).
 // WAN-блок в легаси живёт в карточке Системы, пулы - в шапке; по слову
@@ -26,6 +27,13 @@ import WarpGenerateDialog from './WarpGenerateDialog.vue'
 
 const ifaces = useIfaces();
 const { pools } = usePools();
+// умный каскад пула для строки интерфейса (чип без захода в настройки)
+function poolSmart(name?: string) {
+  const p = (pools.value || []).find((x) => x.name === name);
+  return p && p.settings?.smartCascade?.via?.length
+    ? { settings: p.settings.smartCascade!, state: p.smart || null }
+    : null;
+}
 const { push } = useToast();
 const { confirm } = useConfirm();
 
@@ -341,10 +349,14 @@ async function saveWan(): Promise<void> {
         />
         <span class="sp" />
         <span class="right">
-          <UiBadge
-            v-if="r.it.mode === 'managed'"
-            :text="'пул ' + (r.it.pool || '')"
-          />
+          <template v-if="r.it.mode === 'managed'">
+            <UiBadge :text="'пул ' + (r.it.pool || '')" />
+            <SmartCascadeChip
+              v-if="poolSmart(r.it.pool)"
+              :settings="poolSmart(r.it.pool)!.settings"
+              :state="poolSmart(r.it.pool)!.state"
+            />
+          </template>
           <template v-else>
             <UiButton
               v-if="r.it.mode === 'external'"

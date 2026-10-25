@@ -1117,6 +1117,12 @@ func (s *Server) dnsUpstreamsSet(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, fmt.Errorf("пустой запрос: нет ни списка серверов, ни настроек проверки"))
 		return
 	}
+	// это РАБОЧИЙ каскад DNS форка (не только проверки): пустой список
+	// оставил бы роутер без резолва при перехвате DNS в MT - минимум один
+	if req.Upstreams != nil && len(req.Upstreams) == 0 {
+		writeErr(w, fmt.Errorf("нужен хотя бы один сервер: это рабочая цепочка DNS, а не только цели проверки"))
+		return
+	}
 	// петлезащита: dnsmasq направлен в MT, а в списке адрес dnsmasq
 	// (127.0.0.1:53/свой IP:53) - петля dnsmasq->MT->dnsmasq; без confirm
 	// честный 409 со списком (предупреждение+подтверждение, слово

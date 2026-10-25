@@ -10,6 +10,7 @@ import { useSecrets } from '../secrets'
 import { G } from '../glossary'
 import { probeHuman } from './groupsLogic'
 import { isWarpPool } from './poolsLogic'
+import SmartCascadeChip from './SmartCascadeChip.vue'
 import type { ConfigView, PoolEngine, PoolView } from '../../api/types'
 
 // Карточка пула (легаси ensureCard/updateCard 67-265). Данные приходят из
@@ -327,11 +328,10 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
         :variant="modeBadge.variant"
         :tooltip="modeBadge.tooltip"
       />
-      <UiBadge
-        v-if="smart?.on"
-        :text="`через ${smart.via} (каскад)`"
-        variant="warn"
-        :tooltip="G.smartCascade"
+      <SmartCascadeChip
+        v-if="smartShown && pool.settings.smartCascade"
+        :settings="pool.settings.smartCascade"
+        :state="smart"
       />
       <!-- вкл/выкл свитчем (слово владельца: единый стиль чекеров, подпись
            состояния рядом; красная кнопка «Выключить» пугала) -->
