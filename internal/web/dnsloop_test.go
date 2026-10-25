@@ -124,3 +124,41 @@ func TestDNSUpstreamsLoopKeeneticExempt(t *testing.T) {
 		t.Fatalf("на Кинетике 127.0.0.1:53 легален: %d", resp.StatusCode)
 	}
 }
+
+// пустой список апстримов запрещён: это РАБОЧИЙ каскад DNS форка,
+// ноль серверов оставил бы роутер без резолва при перехвате DNS в MT
+func TestDNSUpstreamsEmptyRejected(t *testing.T) {
+	fm := &fakeMT{version: "0.8.2-rev8-mawgfix1"}
+	mt := httptest.NewServer(fm.handler())
+	defer mt.Close()
+	srv := dnsTestServerMT(t, mt.URL)
+
+	req, err := http.NewRequest(http.MethodPut, srv.URL+"/api/v1/dns/upstreams", strings.NewReader(`{"upstreams":[]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("пустой список должен отбиваться 400, получил %d", resp.StatusCode)
+	}
+	// health-only запись по-прежнему легальна (список не трогает);
+	// health требует rev14 - отдельный фейк
+	fm14 := &fakeMT{version: "0.8.2-rev14-mawg-dev"}
+	mt14 := httptest.NewServer(fm14.handler())
+	defer mt14.Close()
+	srv14 := dnsTestServerMT(t, mt14.URL)
+	req2, _ := http.NewRequest(http.MethodPut, srv14.URL+"/api/v1/dns/upstreams", strings.NewReader(`{"health":{"checkIntervalSec":60}}`))
+	resp2, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("health-only не должен страдать от гарда: %d", resp2.StatusCode)
+	}
+}
