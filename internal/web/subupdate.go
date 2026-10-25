@@ -290,6 +290,7 @@ func (s *Server) applySourceToPool(p store.Pool, res store.Sub) (subApplyVerdict
 		}
 	}
 	s.engine.CheckNow(name)
+	s.cascSyncPool(name)
 	deadline := time.Now().Add(subProbeWait)
 	start := time.Now()
 	for time.Now().Before(deadline) {

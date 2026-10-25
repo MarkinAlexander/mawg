@@ -63,6 +63,14 @@ func New(st *store.Store, e *rotator.Engine, b platform.Backend, mt *magitrickle
 	return &Server{store: st, engine: e, backend: b, mt: mt, version: version, auth: a}
 }
 
+// cascSyncPool - пересборка правил каскадов, где этот пул ИСТОЧНИК
+// (жалобы: новые/удалённые/выключенные конфиги не отражались в каскаде)
+func (s *Server) cascSyncPool(name string) {
+	if c := s.casc(); c != nil {
+		go c.SyncPoolRules(context.Background(), "pool:"+name)
+	}
+}
+
 func (s *Server) casc() *cascade.Manager {
 	if s.engine == nil {
 		return nil
@@ -1581,6 +1589,7 @@ func (s *Server) deletePool(w http.ResponseWriter, r *http.Request) {
 			s.store.LogEvent(name, "applied", "движок не пересобран после удаления: "+err.Error())
 		}
 	}
+	s.cascSyncPool(name) // каскады с этим источником погасятся
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "deleted"})
 }
 
@@ -1652,6 +1661,7 @@ func (s *Server) uploadConfigs(w http.ResponseWriter, r *http.Request) {
 		s.store.LogEvent(name, "conflict", w)
 	}
 	s.engine.CheckNow(name)
+	s.cascSyncPool(name)
 	writeJSON(w, http.StatusOK, map[string]any{"added": added, "duplicates": dupes, "errors": errors, "warnings": warnings})
 }
 
@@ -1669,6 +1679,7 @@ func (s *Server) deleteConfig(w http.ResponseWriter, r *http.Request) {
 	} else {
 		s.engine.CheckNow(r.PathValue("name"))
 	}
+	s.cascSyncPool(r.PathValue("name"))
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "deleted"})
 }
 
@@ -1692,6 +1703,7 @@ func (s *Server) enableConfig(w http.ResponseWriter, r *http.Request) {
 	if !req.Enabled {
 		s.engine.CheckNow(r.PathValue("name"))
 	}
+	s.cascSyncPool(r.PathValue("name"))
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "ok"})
 }
 

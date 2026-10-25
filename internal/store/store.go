@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"net"
 	"os"
 	"path/filepath"
@@ -117,8 +118,12 @@ func (s *Store) backupDir() string { return filepath.Join(s.base, "backups") }
 // изнашивать - журнал некритичен, теряется только при ребуте роутера,
 // рестарт mawg переживает). Легаси-файлы на флеше (base/events.json
 // и .old) читаются при старте один раз (апгрейд) и больше не пишутся.
+// Суффикс от базового каталога: параллельные инстансы (и параллельные
+// же тест-бинари go test) не должны смешивать события в один файл.
 func (s *Store) eventsTmpPath() string {
-	return filepath.Join(os.TempDir(), "mawg-events.jsonl")
+	h := fnv.New64a()
+	h.Write([]byte(s.base))
+	return filepath.Join(os.TempDir(), fmt.Sprintf("mawg-events-%x.jsonl", h.Sum64()))
 }
 
 func (s *Store) eventsPath() string    { return filepath.Join(s.base, "events.json") }
@@ -525,6 +530,28 @@ func (s *Store) RenamePool(oldName, newName string) (Pool, error) {
 	}
 	if !found {
 		return Pool{}, fmt.Errorf("пул %q не найден", oldName)
+	}
+	// ссылки на пул в каскадах (Source/Via "pool:имя") и Via умных
+	// каскадов других пулов следуют за новым именем - иначе sync не
+	// найдёт источник и каскад застынет со старым набором правил
+	for i := range s.root.Settings.Cascades {
+		if s.root.Settings.Cascades[i].Source == "pool:"+oldName {
+			s.root.Settings.Cascades[i].Source = "pool:" + clean
+		}
+		if s.root.Settings.Cascades[i].Via == "pool:"+oldName {
+			s.root.Settings.Cascades[i].Via = "pool:" + clean
+		}
+	}
+	for i := range s.root.Pools {
+		sc := s.root.Pools[i].Settings.SmartCascade
+		if sc == nil {
+			continue
+		}
+		for j, v := range sc.Via {
+			if v == oldName {
+				sc.Via[j] = clean
+			}
+		}
 	}
 	if st := s.state.Pools[oldName]; st != nil {
 		delete(s.state.Pools, oldName)
@@ -1031,13 +1058,16 @@ func (s *Store) appendEventLocked(ev Event) {
 func (s *Store) loadEvents() {
 	var evs []Event
 	var legacyRead []string
-	for _, path := range []string{s.eventsTmpPath() + ".old", s.eventsTmpPath(), s.eventsOldPath(), s.eventsPath()} {
+	// журнал до уникальных имён (фиксированный путь) - хвост подхватить
+	// один раз и снять, чтобы не висел мёртвым грузом
+	legacyTmp := filepath.Join(os.TempDir(), "mawg-events.jsonl")
+	for _, path := range []string{s.eventsTmpPath() + ".old", s.eventsTmpPath(), legacyTmp, s.eventsOldPath(), s.eventsPath()} {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			continue
 		}
-		if strings.HasPrefix(path, s.base) {
-			// легаси-файл на флеше: после чтения снимаем (слово владельца
+		if strings.HasPrefix(path, s.base) || path == legacyTmp {
+			// легаси-файлы: после чтения снимаем (слово владельца
 			// 2026-10-17: мёртвый груз после апгрейда не должен висеть)
 			legacyRead = append(legacyRead, path)
 		}
