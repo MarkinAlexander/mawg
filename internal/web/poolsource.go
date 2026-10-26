@@ -199,9 +199,12 @@ func (s *Server) createPoolFromNodes(w http.ResponseWriter, r *http.Request, req
 	if ob, ok := s.backend.(*openwrt.Backend); ok && !ob.SupportsNativeAWG3() {
 		rNeedEngine = true
 	}
+	// Keenetic 5.2+ / OpenWrt kmod 3.x поднимают AWG 3.x нативно
+	// (asc-хвост) - движок не нужен
+	native3 := s.nativeAWG3()
 	needsEngine := false
 	for _, nc := range ncs {
-		if nc.Config.NeedsEngine() || (rNeedEngine && nc.Config.AWG.HasRandomInit()) {
+		if (nc.Config.NeedsEngine() && !native3) || (rNeedEngine && nc.Config.AWG.HasRandomInit()) {
 			needsEngine = true
 			break
 		}

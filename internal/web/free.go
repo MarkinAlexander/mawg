@@ -57,13 +57,17 @@ func (s *Server) serveFreePool(w http.ResponseWriter, r *http.Request, withAnswe
 		return
 	}
 	// Путь Free зависит от платформы:
-	//  - OpenWrt с kmod amneziawg 3.x - НАТИВНО (без движка sing-box:
-	//    юзеру без ядра или места под него Free всё равно доступен);
-	//  - иначе (Keenetic; OpenWrt со старым kmod) - движок sing-box-lx
+	//  - OpenWrt с kmod amneziawg 3.x и Keenetic 5.2+ - НАТИВНО (без
+	//    движка sing-box: юзеру без ядра или места под него Free всё
+	//    равно доступен; слот Кинетика применяет asc-хвост 3.x);
+	//  - иначе (Keenetic 5.1-; OpenWrt со старым kmod) - движок sing-box-lx
 	//    (tun-интерфейс). Ядро может быть не установлено на момент
 	//    создания - пул создаётся выключенным, предупредим в плане.
 	native := false
 	if ob, ok := s.backend.(*openwrt.Backend); ok && ob.SupportsNativeAWG3() {
+		native = true
+	}
+	if kb, ok := s.backend.(*keenetic.Backend); ok && kb.SupportsNativeAWG3() {
 		native = true
 	}
 	engineMissing := false
@@ -83,7 +87,9 @@ func (s *Server) serveFreePool(w http.ResponseWriter, r *http.Request, withAnswe
 	}
 	if native {
 		settings.NativeAWG3 = true
-		settings.OpenwrtProto = "amneziawg"
+		if _, ok := s.backend.(*openwrt.Backend); ok {
+			settings.OpenwrtProto = "amneziawg"
+		}
 	} else {
 		settings.EngineMode = engineMode
 	}
@@ -114,7 +120,7 @@ func (s *Server) serveFreePool(w http.ResponseWriter, r *http.Request, withAnswe
 	}
 	via := "через ядро sing-box, " + settings.TunName
 	if native {
-		via = "нативно (kmod amneziawg 3.x), движок sing-box не требуется"
+		via = "нативно (AWG 3.x), движок sing-box не требуется"
 	}
 	plan.Warnings = []string{"Amnezia Free получен без аккаунта (конфиг AmneziaWG 3.x идёт " + via + "). Пул не активирован: используйте обычную кнопку активации после проверки настроек."}
 	if engineMissing {
