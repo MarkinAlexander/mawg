@@ -508,8 +508,12 @@ func (b *Backend) Apply(pool store.Pool, cfg wgconf.Config) error {
 		"interface " + slot + " wireguard private-key " + cfg.PrivateKey,
 	}
 	if cfg.AWG.Present() {
-		args := cfg.AWG.AscArgs()
-		steps = append(steps, "interface "+slot+" wireguard asc "+strings.Join(args, " "))
+		if cfg.AWG.AWG3() && !b.SupportsNativeAWG3() {
+			return fmt.Errorf("конфиг AmneziaWG 3.x: прошивка ниже 5.2 не применяет его нативно (нужен движок sing-box-lx)")
+		}
+		if err := b.applyAsc(slot, cfg.AWG); err != nil {
+			return err
+		}
 	} else {
 		steps = append(steps, "interface "+slot+" no wireguard asc")
 	}
@@ -531,6 +535,13 @@ func (b *Backend) Apply(pool store.Pool, cfg wgconf.Config) error {
 	keepalive := pool.Settings.Keepalive
 	if cfg.Peer.PersistentKeepalive > 0 {
 		keepalive = cfg.Peer.PersistentKeepalive
+	}
+	if cfg.Peer.KeepaliveRange != "" {
+		// 3.x-диапазон «min-max»: CLI слота берёт одно число - нижняя
+		// граница (jitter NAT-keepalive на обфускацию не влияет)
+		if n, err := strconv.Atoi(strings.SplitN(cfg.Peer.KeepaliveRange, "-", 2)[0]); err == nil && n > 0 {
+			keepalive = n
+		}
 	}
 	peer := "interface " + slot + " wireguard peer " + cfg.Peer.PublicKey
 	steps = append(steps, peer)
@@ -561,6 +572,26 @@ func (b *Backend) Apply(pool store.Pool, cfg wgconf.Config) error {
 		}
 	}
 	return nil
+}
+
+// applyAsc - asc-параметры слота. I-поля с <r>/<rc>/<rd>-токенами идут
+// как есть (прошивка 5.2 их понимает, сохраняя в running-config); если
+// конкретная сборка токены не знает (argument parse error) - один повтор
+// чистой статикой: <b>-блобы сохраняются, случайные куски выпадают
+// (сервер статику принимает - проверено live на 5.01).
+func (b *Backend) applyAsc(slot string, p wgconf.AWGParams) error {
+	cmd := "interface " + slot + " wireguard asc "
+	args := p.AscArgs()
+	_, err := b.ndmc(cmd + strings.Join(args, " "))
+	if err == nil {
+		return nil
+	}
+	if retry, ok := p.AscArgsNoRandom(); ok {
+		if _, err2 := b.ndmc(cmd + strings.Join(retry, " ")); err2 == nil {
+			return nil
+		}
+	}
+	return err
 }
 
 // Destroy вычищает слот при удалении пула: Down гасит линк и адрес,

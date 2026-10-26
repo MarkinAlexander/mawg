@@ -105,6 +105,16 @@ func setAWG(p *AWGParams, key, raw string) {
 			p.HeaderProtectionKey = &v
 		}
 		return
+	case "randomtrailers", "disablecookies":
+		// флаги on/off - не числа, числовую валидацию минуют
+		if v := strings.TrimSpace(raw); v != "" {
+			if strings.EqualFold(key, "randomtrailers") {
+				p.RandomTrailers = &v
+			} else {
+				p.DisableCookies = &v
+			}
+		}
+		return
 	default:
 		return
 	}

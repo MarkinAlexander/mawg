@@ -86,3 +86,22 @@ func TestIfaceEndpoints(t *testing.T) {
 		t.Fatal("ожидали ошибку на не-слотовом имени")
 	}
 }
+
+// живой вывод 5.2 Beta 1 (Netcraze Ultra, тестер 2026-10-26): ведущий
+// ноль в миноре, sandbox preview - SupportsNativeAWG3 должен узнать 5.2
+func TestParseVersion52Beta(t *testing.T) {
+	b := New()
+	out := `release: 5.02.B.1.0-3
+sandbox: preview
+title: 5.2 Beta 1
+arch: aarch64
+components: base,opkg,wireguard,wireguard-server
+`
+	info := b.parseVersion(out)
+	if info.major != 5 || info.minor != 2 {
+		t.Fatalf("version = %d.%d, want 5.2", info.major, info.minor)
+	}
+	if !info.components["wireguard"] {
+		t.Fatal("component wireguard not parsed")
+	}
+}

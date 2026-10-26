@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 
+	"mawg/internal/platform/keenetic"
 	"mawg/internal/premium"
 	"mawg/internal/store"
 )
@@ -28,15 +29,19 @@ func (s *Server) createPremiumPoolFromSource(w http.ResponseWriter, r *http.Requ
 		writeErr(w, err)
 		return
 	}
-	// Keenetic: конфиг gateway - AWG 3.x (защита заголовка и диапазоны),
-	// слот 5.1 (AWG 2.0) его не поднимает - пул сразу в режиме движка
-	// sing-box-lx. OpenWrt - нативно (kmod AWG 3.x).
+	// Keenetic ниже 5.2: конфиг gateway - AWG 3.x (защита заголовка и
+	// диапазоны), слот AWG 2.0 его не поднимает - пул сразу в режиме
+	// движка sing-box-lx. Keenetic 5.2+ - нативно (asc-хвост 3.x).
+	// OpenWrt - нативно (kmod AWG 3.x). Проба Premium на Кинетике -
+	// google-204 в обоих путях: gstatic-подобные отдают AAAA и резолвятся
+	// мимо туннеля (v6 у Premium нет), 1.1.1.1 режет сам сервер Premium;
+	// google-204 стабилен и в списке.
 	if s.backend.Name() == store.PlatformKeenetic {
-		settings.KeeneticSlot = ""
-		settings.EngineMode = engineMode
-		// проба Premium - google-204: gstatic/gstatic-like домены отдают
-		// AAAA и резолвятся мимо туннеля (v6 у Premium нет), 1.1.1.1 режет
-		// сам сервер Premium; google-204 стабилен и в списке
+		kb, isKb := s.backend.(*keenetic.Backend)
+		if !isKb || !kb.SupportsNativeAWG3() {
+			settings.KeeneticSlot = ""
+			settings.EngineMode = engineMode
+		}
 		settings.ProbeHost = "https://www.google.com/generate_204"
 	}
 	var p store.Pool
@@ -98,15 +103,17 @@ func (s *Server) switchPremium(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := r.PathValue("name")
-	// пул, созданный до движкового пути (нативный на Keenetic), мигрирует
-	// при первой же смене страны: gateway выдаёт AWG 3.x, слот 5.1 его
-	// не поднимает
+	// пул, созданный до движкового пути (нативный на Keenetic ниже 5.2),
+	// мигрирует при первой же смене страны: gateway выдаёт AWG 3.x,
+	// слот AWG 2.0 его не поднимает. Keenetic 5.2+ остаётся нативным.
 	if p, ok := s.store.Pool(name); ok && p.Premium && p.Settings.EngineMode == "" && s.backend.Name() == store.PlatformKeenetic {
-		merged := p.Settings
-		merged.EngineMode = engineMode
-		merged.TunName = s.allocTun()
-		if err := s.store.UpdatePool(name, merged); err == nil {
-			s.store.LogEvent(name, "premium", "миграция в режим движка (конфиги gateway - AWG 3.x, слот AWG 2.0 их не поднимает)")
+		if kb, isKb := s.backend.(*keenetic.Backend); !isKb || !kb.SupportsNativeAWG3() {
+			merged := p.Settings
+			merged.EngineMode = engineMode
+			merged.TunName = s.allocTun()
+			if err := s.store.UpdatePool(name, merged); err == nil {
+				s.store.LogEvent(name, "premium", "миграция в режим движка (конфиги gateway - AWG 3.x, слот AWG 2.0 их не поднимает)")
+			}
 		}
 	}
 	if err := s.engine.SwitchPremium(r.Context(), name, req.Country); err != nil {

@@ -1651,8 +1651,11 @@ func (s *Server) uploadConfigs(w http.ResponseWriter, r *http.Request) {
 		if ob, ok := s.backend.(*openwrt.Backend); ok && !ob.SupportsNativeAWG3() {
 			rNeedEngine = true
 		}
+		// Keenetic 5.2+ / OpenWrt kmod 3.x поднимают 3.x нативно
+		// (asc-хвост из 31 аргумента) - предупреждение не нужно
+		native3 := s.nativeAWG3()
 		for _, nc := range unique {
-			if nc.Config.NeedsEngine() || (rNeedEngine && nc.Config.AWG.HasRandomInit()) {
+			if (nc.Config.NeedsEngine() && !native3) || (rNeedEngine && nc.Config.AWG.HasRandomInit()) {
 				warnings = append(warnings, nc.OriginalName+": конфиг AmneziaWG 3.x - нативный интерфейс его поля не применит, нужен движок sing-box-lx («Система -> Зависимости»); конфиг сохранён")
 			}
 		}
