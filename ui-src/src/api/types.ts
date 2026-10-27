@@ -44,6 +44,10 @@ export interface CascadeEntry {
 export interface GroupView extends Group {
   policy?: GroupPolicy | null
   cascade?: CascadeEntry | null
+  // служебные группы DNS (путь зоны / туннель общего DNS-каскада);
+  // управляются вкладкой DNS, вручную редактировать бессмысленно
+  dnsZone?: boolean
+  dnsTunnel?: boolean
   degraded?: string // '' | 'direct' | 'direct-pending' | 'iface' | 'iface:<...>'
   interfaceTitle?: string
 }

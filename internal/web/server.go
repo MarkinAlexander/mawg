@@ -2012,10 +2012,15 @@ func (s *Server) mtDuplicates(w http.ResponseWriter, r *http.Request) {
 	// ключ - только паттерн: domain и namespace на один домен перекрываются
 	// полностью, для владельца это тот же дубликат.
 	// Не участвуют: выключенные правила и группы целиком - в маршрутизации
-	// их нет, пересечением они быть не могут.
+	// их нет, пересечением они быть не могут. Служебные группы (путь
+	// зонного DNS dnszone-*, включая dnszone-included-* самого форка, и
+	// каскадные «Служебная: ») тоже не участвуют: они управляются mawg,
+	// «разобрать дубль» там нельзя, а адрес DNS-сервера зоны обязан
+	// жить и в группе пути, и в группе форка (живая жалоба: треугольник
+	// висел на обеих без возможности что-то сделать).
 	byKey := map[string][]ref{}
 	for _, g := range groups {
-		if !g.Enable {
+		if !g.Enable || isServiceGroup(g.Name) {
 			continue
 		}
 		for _, rl := range g.Rules {
@@ -2054,7 +2059,12 @@ func (s *Server) mtGetGroups(w http.ResponseWriter, r *http.Request) {
 		InterfaceTitle string              `json:"interfaceTitle,omitempty"`
 		Policy         *store.GroupPolicy  `json:"policy,omitempty"`
 		Cascade        *store.CascadeEntry `json:"cascade,omitempty"`
-		Degraded       string              `json:"degraded,omitempty"`
+		// DnsZone/DnsTunnel - служебные группы DNS (путь зоны / туннель
+		// общего DNS-каскада): управляются вкладкой DNS, редактировать
+		// руками бессмысленно - применение перезапишет.
+		DnsZone   bool   `json:"dnsZone,omitempty"`
+		DnsTunnel bool   `json:"dnsTunnel,omitempty"`
+		Degraded  string `json:"degraded,omitempty"`
 	}
 	policies := map[string]store.GroupPolicy{}
 	for id, p := range s.store.GroupPoliciesAll() {
@@ -2078,6 +2088,8 @@ func (s *Server) mtGetGroups(w http.ResponseWriter, r *http.Request) {
 		if c, ok := cascades[g.ID]; ok {
 			gv.Cascade = &c
 		}
+		gv.DnsZone = strings.HasPrefix(g.Name, dnsZoneGroupPrefix)
+		gv.DnsTunnel = g.Name == "dns-tunnel"
 		if d, ok := degraded[g.ID]; ok {
 			gv.Degraded = d.Mode
 		}

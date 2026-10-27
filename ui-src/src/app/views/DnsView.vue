@@ -157,12 +157,23 @@ const healthText = computed(() => {
   return `отключение при ${h.failCycles} сбоях подряд, восстановление после ${h.restoreCycles} успешных проверок, пауза между переключениями ${gap}`;
 });
 
-function upTooltip(u: DnsUpstream): string {
+function upTooltip(u: DnsUpstream, z?: DnsZone): string {
   const bits: string[] = [];
   if (u.reason) bits.push('причина: ' + u.reason);
   if (u.lastSwap && !u.lastSwap.startsWith('0001-')) bits.push('переключён: ' + new Date(u.lastSwap).toLocaleString());
   bits.push(`сбои подряд: ${u.fails}, успешные подряд: ${u.oks}`);
+  bits.push('вердикт health-воркера MT (A-запрос имени зоны); после отвалов сервер возвращается только после N успешных проверок подряд - возможен разбег с пробой ниже');
+  if (z && !u.alive && zoneProbeOk(z)) {
+    bits.push('проба через путь клиентов проходит - сервером можно пользоваться, health-воркер догонит');
+  }
   return bits.join(' · ');
+}
+
+// последняя проба зоны (кнопка «проверить») прошла - хотя бы один сервер
+// чисто ответил через путь клиентов
+function zoneProbeOk(z: DnsZone): boolean {
+  const rows = zoneVerdicts.value[z.id];
+  return !!rows && rows.length > 0 && rows.some((r) => r.verdict === 'clean');
 }
 
 // --- политика автопроверки серверов (форк rev14+, 82-док): частота,
@@ -1375,22 +1386,34 @@ function a2key(z: DnsZone, i: number): string {
           </span>
         </div>
         <div class="zservers">
-          <span
-            v-for="a in z.upstreams"
-            :key="a"
-            class="zsrv"
-            :class="{ secret: secrets.line(a) }"
-          >{{ a }}</span>
-          <template v-if="zoneLive[z.zone]">
+          <!-- без живого статуса - просто список адресов; с ним адрес уже
+               в каждом бейдже, второй раз не дублируем (жалоба: адрес
+               светился трижды) -->
+          <template v-if="!zoneLive[z.zone]">
+            <span
+              v-for="a in z.upstreams"
+              :key="a"
+              class="zsrv"
+              :class="{ secret: secrets.line(a) }"
+            >{{ a }}</span>
+          </template>
+          <template v-else>
             <UiBadge
               v-for="(u, ui) in zoneLive[z.zone].upstreams"
               :key="a2key(z, ui)"
               :text="(u.alive ? 'жив' : 'мёртв') + ': ' + u.address"
               :variant="u.alive ? 'ok' : 'err'"
-              :tooltip="upTooltip(u)"
+              :tooltip="upTooltip(u, z)"
             />
           </template>
         </div>
+        <!-- «Шрёдингер»: health-воркер MT считает мёртвым, а проба через
+             путь клиентов проходит - объясняем, а не показываем оба
+             вердикта как противоречие -->
+        <UiHint
+          v-if="zoneLive[z.zone] && zoneProbeOk(z) && zoneLive[z.zone].upstreams.some((u) => !u.alive)"
+          text="Проба через путь клиентов проходит, но health-воркер MT ещё считает сервер мёртвым: после отвалов он возвращает сервер только после N успешных проверок подряд (гистерезис возврата, настраивается выше). Пользоваться зоной можно - вердикты догонят друг друга."
+        />
         <div
           v-if="zoneVerdicts[z.id]"
           class="kv zprobe"

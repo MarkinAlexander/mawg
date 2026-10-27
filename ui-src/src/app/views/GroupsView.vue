@@ -776,6 +776,18 @@ onMounted(openFromLink);
             :tooltip="G.cascade"
           />
           <UiBadge
+            v-if="g.dnsZone"
+            text="зонный DNS"
+            variant="muted"
+            tooltip="служебная группа зонного DNS: маршрут к серверам зоны через выбранный туннель. Создаётся и обновляется на вкладке DNS («Зонные DNS»), редактировать вручную бессмысленно - применение зоны перезапишет правила"
+          />
+          <UiBadge
+            v-if="g.dnsTunnel"
+            text="DNS-туннель"
+            variant="muted"
+            tooltip="служебная группа туннелирования DNS: маршрут от роутера к DNS-серверам общего списка через выбранный пул. Создаётся и обновляется на вкладке DNS, редактировать вручную бессмысленно"
+          />
+          <UiBadge
             v-if="g.interface === 'blackhole'"
             text="блокировка"
             variant="err"
