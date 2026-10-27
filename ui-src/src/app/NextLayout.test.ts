@@ -594,3 +594,22 @@ describe('NextLayout - клик по ТЕКУЩЕЙ вкладке закрыв�
     back.mockRestore();
   });
 });
+
+describe('NextLayout - липкая шапка (десктоп)', () => {
+  it('класс scrolled появляется при скролле и снимается наверху', async () => {
+    const router = createRouter({ history: createWebHashHistory(), routes: [{ path: '/next/:tab?', component: { template: '<div />' } }] });
+    const w = mount(NextLayout, { global: { plugins: [router] } });
+    await nextTick();
+    const header = w.find('header');
+    expect(header.classes()).not.toContain('scrolled');
+    Object.defineProperty(window, 'scrollY', { value: 400, configurable: true });
+    window.dispatchEvent(new Event('scroll'));
+    await nextTick();
+    expect(header.classes()).toContain('scrolled');
+    Object.defineProperty(window, 'scrollY', { value: 0, configurable: true });
+    window.dispatchEvent(new Event('scroll'));
+    await nextTick();
+    expect(header.classes()).not.toContain('scrolled');
+    w.unmount();
+  });
+});

@@ -16,6 +16,16 @@ const { state: status, start, stop } = useStatus();
 onMounted(start);
 onBeforeUnmount(stop);
 
+// Липкая шапка на десктопе (просьба пользователя: листаешь - панель
+// остаётся сверху, вкладки и поиск всегда под рукой): при скролле
+// сжимается в одну строку - строка меты прячется, паддинги меньше.
+const scrolled = ref(false);
+const onScroll = () => {
+  scrolled.value = window.scrollY > 8;
+};
+onMounted(() => window.addEventListener('scroll', onScroll, { passive: true }));
+onBeforeUnmount(() => window.removeEventListener('scroll', onScroll));
+
 // Мобильное меню: НЕ в шапке (растягивало её), а кнопкой внизу справа
 // + шторка снизу; жест - потянуть от правого края влево. Закрытие -
 // тап по фону, по вкладке, смена маршрута, Escape.
@@ -240,7 +250,10 @@ const appVisible = computed(() => !status.authNeeded && (status.loaded || !!stat
       class="topbar"
       :class="{ on: inflight.n > 0 }"
     />
-    <header v-if="appVisible">
+    <header
+      v-if="appVisible"
+      :class="{ scrolled }"
+    >
       <h1>
         <RouterLink
           to="/next/"
@@ -390,6 +403,24 @@ header h1 {
 .meta {
   color: var(--dim);
   font-size: 12px;
+}
+/* липкая шапка - только десктоп (мобильный - FAB и шторка): прижата
+   к верху, при скролле сжимается в одну строку без меты, с тенью */
+@media (min-width: 821px) {
+  header {
+    position: sticky;
+    top: 0;
+    z-index: 40;
+    background: var(--bg);
+  }
+  header.scrolled {
+    gap: 10px;
+    padding: 6px 10px;
+    box-shadow: 0 8px 18px rgba(0, 0, 0, 0.35);
+  }
+  header.scrolled .meta {
+    display: none;
+  }
 }
 nav {
   display: flex;
