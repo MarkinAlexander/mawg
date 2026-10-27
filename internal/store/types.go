@@ -436,6 +436,9 @@ type Settings struct {
 	GroupPolicies map[string]GroupPolicy `json:"groupPolicies,omitempty"`
 	Cascades      []CascadeEntry         `json:"cascades,omitempty"`
 	SingboxMode   string                 `json:"singboxMode,omitempty"`
+	// EngineDisabled - движок sing-box выключен совсем (Система → Ядра
+	// VPN): не стартует ни своим процессом, ни фрагментом в чужом ядре.
+	EngineDisabled bool `json:"engineDisabled,omitempty"`
 	// PolicyFailCycles/PolicyRestoreCycles - гистерезис политик групп
 	// МагиТрикла: сколько отказных циклов до переключения с исходного
 	// интерфейса и сколько здоровых до возврата (по умолчанию 2 и 2).

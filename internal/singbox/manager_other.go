@@ -27,6 +27,10 @@ func NewManagerConfig(dir string, cfg RunConfig) (*Manager, error) {
 	return nil, fmt.Errorf("движок sing-box доступен только на роутере")
 }
 
+func (m *Manager) StopOwn() {}
+
+func (m *Manager) ClearSharedFragment() {}
+
 type Status struct {
 	Running   bool   `json:"running"`
 	API       bool   `json:"api"`

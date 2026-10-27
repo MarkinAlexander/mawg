@@ -2,9 +2,10 @@
 // ответ на 3 минуты, так что частый опрос дешёв).
 import { reactive } from 'vue'
 import { api } from '../api/client'
-import type { InstallRes, SystemCheckRes, UpdateInfo } from '../api/types'
+import type { CoreInfo, InstallRes, SystemCheckRes, UpdateInfo } from '../api/types'
 
 const state = reactive<{ loaded: boolean; data: SystemCheckRes | null }>({ loaded: false, data: null });
+const cores = reactive<{ loaded: boolean; list: CoreInfo[] }>({ loaded: false, list: [] });
 const upd = reactive<{ info: UpdateInfo | null }>({ info: null });
 
 let timer: ReturnType<typeof setInterval> | null = null;
@@ -19,10 +20,23 @@ export function useSystem() {
       // сеть - держим предыдущее
     }
   }
+  async function refreshCores(): Promise<void> {
+    try {
+      const data = await api<{ cores: CoreInfo[] }>('GET', '/cores');
+      cores.list = data.cores || [];
+      cores.loaded = true;
+    } catch {
+      // сеть - держим предыдущее
+    }
+  }
   function start(intervalMs = 60000) {
     void refresh();
+    void refreshCores();
     if (timer) return;
-    timer = setInterval(() => void refresh(), intervalMs);
+    timer = setInterval(() => {
+      void refresh();
+      void refreshCores();
+    }, intervalMs);
   }
   function stop() {
     if (timer) {
@@ -51,5 +65,13 @@ export function useSystem() {
   async function setSingboxCache(mode: 'off' | 'tmp'): Promise<void> {
     await api('POST', '/singbox/cache-file', { mode });
   }
-  return { state, upd, refresh, start, stop, checkUpdate, install, setSingboxMode, setSingboxCache };
+  // lifecycle ядра: start|stop|restart|enable|disable|uninstall
+  async function corePower(id: string, action: string): Promise<CoreInfo> {
+    const r = await api<{ core: CoreInfo }>('POST', `/cores/${id}/power`, { action });
+    const i = cores.list.findIndex((c) => c.id === id);
+    if (i >= 0) cores.list[i] = r.core;
+    else cores.list.push(r.core);
+    return r.core;
+  }
+  return { state, cores, upd, refresh, refreshCores, start, stop, checkUpdate, install, setSingboxMode, setSingboxCache, corePower };
 }

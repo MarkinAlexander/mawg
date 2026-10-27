@@ -142,6 +142,10 @@ func (s *Server) RestoreEngine() {
 	if len(s.enginePools()) == 0 {
 		return
 	}
+	if s.store.EngineDisabled() {
+		s.store.LogEvent("singbox", "power", "движок выключен («Система → Ядра VPN») - пулы не восстановлены")
+		return
+	}
 	if _, err := s.applyEngine(); err != nil {
 		s.store.LogEvent("singbox", "applied", "восстановление движка при старте: "+err.Error())
 	}
@@ -196,6 +200,11 @@ func (s *Server) applyEngineWarn(plan *sourcePlan) {
 }
 
 func (s *Server) applyEngine() ([]string, error) {
+	// мастер-выключатель («Система → Ядра VPN»): конфиг не строим, свой
+	// процесс не поднимаем, чужой фрагмент не пишем
+	if s.store.EngineDisabled() {
+		return nil, nil
+	}
 	var specs []singbox.PoolSpec
 	for _, p := range s.enginePools() {
 		if p.Disabled {

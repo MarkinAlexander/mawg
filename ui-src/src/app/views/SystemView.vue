@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { UiBadge, UiBanner, UiButton, UiCard, UiDialog, UiHelp, UiHint, UiInput, UiSelect, type UiSelectOption, UiTable, type UiTableColumn } from '../../components/ui'
+import { UiBadge, UiBanner, UiButton, UiCard, UiDialog, UiHelp, UiHint, UiInput, UiSelect, type UiSelectOption, UiSwitch, UiTable, type UiTableColumn } from '../../components/ui'
 import { useEvents } from '../../stores/events'
 import { useStatus } from '../../stores/status'
 import { useSystem } from '../../stores/system'
 import { useConfirm } from '../../stores/confirm'
 import { useToast } from '../../stores/toast'
-import type { AppEvent, SystemItem } from '../../api/types'
+import type { AppEvent, CoreInfo, SystemItem } from '../../api/types'
 import { useSecrets } from '../secrets'
 import LxInstallDialog from './LxInstallDialog.vue'
 
@@ -207,6 +207,50 @@ const sbCacheWarn = computed(() => {
   return !!eng && eng.mode === 'shared' && !!eng.cacheFile && !eng.cacheFile.startsWith('/tmp');
 });
 const SB_CACHE_TEXT = 'Кэш ядра пишется на флешку - постоянный износ ~170МБ/сутки. Выключить совсем: ничего не пишется, выборы сбрасываются при рестарте ядра. В /tmp: не пишется на флешку, выборы живут до ребута роутера.';
+// --- «Ядра VPN»: lifecycle ядра sing-box (start/stop/автозагрузка/удаление)
+const coreBusy = ref('');
+async function corePower(c: CoreInfo, action: 'start' | 'stop' | 'enable' | 'disable'): Promise<void> {
+  if (action === 'stop') {
+    const ok = await confirm({
+      title: 'Остановить ' + c.title,
+      text: 'Ядро выключается совсем: движковые пулы (tun) перестанут работать, пока вы не включите его обратно. Нативные пулы не затрагиваются.',
+      okLabel: 'Остановить',
+    });
+    if (!ok) return;
+  }
+  coreBusy.value = action;
+  try {
+    await sys.corePower(c.id, action);
+    push(action === 'start' ? 'Ядро включено, конфиг применён' : action === 'stop' ? 'Ядро остановлено' : 'Автозагрузка сервиса sing-box: ' + (action === 'enable' ? 'включена' : 'выключена'));
+    void refreshStatus();
+  } catch (e) {
+    push(e instanceof Error ? e.message : String(e), true);
+  }
+  coreBusy.value = '';
+}
+async function coreUninstall(c: CoreInfo): Promise<void> {
+  const ok = await confirm({
+    title: 'Удалить ' + c.title,
+    text: 'Ядро lx удаляется полностью (маркер mawg). Если при установке сохранялся ваш прежний sing-box - он вернётся на место. Движковые пулы перестанут работать, пока ядро не установить снова.',
+    okLabel: 'Удалить',
+  });
+  if (!ok) return;
+  coreBusy.value = 'uninstall';
+  try {
+    await sys.corePower(c.id, 'uninstall');
+    push('Ядро удалено');
+    void refreshStatus();
+    void sys.refresh();
+  } catch (e) {
+    push(e instanceof Error ? e.message : String(e), true);
+  }
+  coreBusy.value = '';
+}
+const coreStateBadge = (c: CoreInfo): { text: string; variant: 'ok' | 'err' | 'warn' } => {
+  if (c.disabled) return { text: 'выключен', variant: 'err' };
+  return c.running ? { text: 'работает', variant: 'ok' } : { text: 'остановлен', variant: 'warn' };
+};
+
 async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
   const texts = {
     off: ['Выключить кэш ядра', 'Кэш будет выключен (experimental.cache_file.enabled = false): запись на флешку прекратится совсем. Ваш sing-box будет перезапущен - соединения коротко прервутся. Запомненные выборы селекторов сбросятся - urltest-пулы восстановятся сами.', 'Выключить'],
@@ -281,7 +325,89 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
     </UiTable>
 
     <div class="sect">
-      Режим движка (sing-box)<UiHelp text="«Свой экземпляр» - панель держит отдельный процесс движка (интерфейсы tun1+, свои порты). «Общее ядро» - пулы работают внутри вашего sing-box как фрагмент mawg-pools.json рядом с его config.json (сам config.json не меняется); обновление списка пулов - «горячее», туннели и соединения не рвутся (на оригинальном ядре - рестарт сервиса). Пробы идут через API основного ядра (clash_api)." />
+      Ядра VPN<UiHelp text="Жизненный цикл туннельных движков: включить/выключить совсем, автозагрузка сервиса, удаление. Сейчас - sing-box; список строится по данным роутера и готов к другим ядрам (mihomo и подобные). Остановка выключает движок целиком: движковые пулы перестают работать, нативные (WireGuard-слоты) не затрагиваются." />
+    </div>
+    <div
+      v-for="c in sys.cores.list"
+      :key="c.id"
+      class="corerow"
+    >
+      <div class="coreline">
+        <b>{{ c.title }}</b>
+        <template v-if="c.installed">
+          <UiBadge
+            :text="c.version || '?'"
+            variant="info"
+          />
+          <UiBadge
+            v-if="c.lx"
+            text="lx"
+            variant="ok"
+          />
+          <UiBadge
+            :text="c.mode || '?'"
+            variant="muted"
+          />
+          <UiBadge
+            :text="coreStateBadge(c).text"
+            :variant="coreStateBadge(c).variant"
+          />
+          <UiBadge
+            v-if="c.mode === 'shared'"
+            :text="c.autostart ? 'автозагрузка вкл' : 'автозагрузка выкл'"
+            :variant="c.autostart ? 'ok' : 'warn'"
+            tooltip="автозапуск сервиса sing-box при загрузке роутера"
+          />
+          <span
+            v-if="c.autostartNote"
+            class="corenote"
+          >{{ c.autostartNote }}</span>
+        </template>
+        <UiBadge
+          v-else
+          text="не установлен"
+          variant="muted"
+        />
+      </div>
+      <div
+        v-if="c.installed"
+        class="coreact"
+      >
+        <UiButton
+          v-if="c.caps.start"
+          variant="primary"
+          :busy="coreBusy === 'start'"
+          @click="corePower(c, 'start')"
+        >
+          Запустить
+        </UiButton>
+        <UiButton
+          v-if="c.caps.stop"
+          :busy="coreBusy === 'stop'"
+          @click="corePower(c, 'stop')"
+        >
+          Остановить
+        </UiButton>
+        <UiSwitch
+          v-if="c.mode === 'shared'"
+          :model-value="c.autostart"
+          :busy="coreBusy === 'enable' || coreBusy === 'disable'"
+          label="автозагрузка"
+          @update:model-value="(v: boolean) => corePower(c, v ? 'enable' : 'disable')"
+        />
+        <UiButton
+          v-if="c.caps.uninstall"
+          variant="danger"
+          :busy="coreBusy === 'uninstall'"
+          @click="coreUninstall(c)"
+        >
+          Удалить ядро
+        </UiButton>
+      </div>
+      <UiHint
+        v-if="c.note"
+        :text="c.note"
+      />
     </div>
     <UiHint text="«Свой экземпляр» - панель держит движок сама; «Общее ядро» - пулы живут внутри вашего sing-box, обновляются без разрыва соединений." />
     <UiSelect
@@ -431,6 +557,33 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
   font-weight: 600;
   font-size: 13px;
   margin: 16px 0 6px;
+}
+.corerow {
+  padding: 8px 0 4px;
+  border-bottom: 1px dashed var(--border);
+}
+.corerow:last-of-type {
+  border-bottom: none;
+}
+.coreline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.coreline > b {
+  margin-right: 4px;
+}
+.corenote {
+  color: var(--dim);
+  font-size: 12px;
+}
+.coreact {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-top: 6px;
 }
 .ver {
   color: var(--dim);
