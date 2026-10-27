@@ -84,9 +84,9 @@ describe('InterfacesView - карточка «Интерфейсы роутер�
     expect(rowTexts).toHaveLength(3); // tun1 скрыт
     expect(rowTexts[0]).toContain('Awg0');
     expect(rowTexts[0]).toContain('пул proton'); // managed - бейдж, без кнопок
-    expect(rowTexts[0]).toContain('ok'); // вердикт пробы пула в той же строке
-    // время той же пробы - в tooltip бейджа
-    const poolBadge = card.findAll('.ifrow')[0].findAll('.uibadge').find((b) => b.text() === 'ok');
+    expect(rowTexts[0]).toContain('проба: ок 152мс'); // плашка пробы пула - как у внешних
+    // время той же пробы - в tooltip плашки
+    const poolBadge = card.findAll('.ifrow')[0].findAll('.uibadge').find((b) => b.text() === 'проба: ок 152мс');
     expect(poolBadge?.attributes('title')).toMatch(/ok \(handshake 3s ago, http 152ms\) · \d+ с назад/);
     expect(rowTexts[0]).not.toContain('скрыть');
     expect(rowTexts[1]).toContain('nwg7');
@@ -110,12 +110,13 @@ describe('InterfacesView - карточка «Интерфейсы роутер�
     const { w } = await makeView();
     const card = ifCard(w);
     const pbadges = card.findAll('.pbadge');
-    expect(pbadges).toHaveLength(2);
-    expect(pbadges[0].text()).toBe('проба: ок (45ms)'); // ок - целиком
-    expect(pbadges[1].text()).toBe('проба: не прошла'); // короткий
+    expect(pbadges).toHaveLength(3); // теперь и managed-строка несёт плашку пробы пула
+    expect(pbadges[0].text()).toBe('проба: ок 152мс'); // пул Awg0 - той же пробой
+    expect(pbadges[1].text()).toBe('проба: ок (45ms)'); // ок - целиком
+    expect(pbadges[2].text()).toBe('проба: не прошла'); // короткий
     expect(card.text()).not.toContain('dial tcp');
 
-    await pbadges[1].trigger('click');
+    await pbadges[2].trigger('click'); // wg11 - провальная, с деталью в скобках
     await nextTick();
     expect(useConfirm().state.open).toBe(true);
     expect(useConfirm().state.title).toBe('Проверка wg11');

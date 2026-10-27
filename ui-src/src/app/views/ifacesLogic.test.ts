@@ -28,11 +28,16 @@ describe('ifacesLogic', () => {
     expect(probeBadgeOf('проба: не прошла')).toEqual({ short: 'проба: не прошла', detail: '', ok: false });
   });
 
-  it('poolProbeBadge: без пробы null, вердикт до скобок, флаг из probeOk', () => {
+  it('poolProbeBadge: плашка как у внешних - проба: ок Nмс / не прошла', () => {
     expect(poolProbeBadge({})).toBeNull();
     expect(poolProbeBadge({ probeOk: null })).toBeNull();
-    expect(poolProbeBadge({ probeOk: true, probeStatus: 'ok (handshake 3s ago, http 152ms)' })).toEqual({ short: 'ok', ok: true });
-    expect(poolProbeBadge({ probeOk: false, probeStatus: 'probe http://x failed' })).toEqual({ short: 'probe http://x failed', ok: false });
-    expect(poolProbeBadge({ probeOk: false })).toEqual({ short: 'нет ответа', ok: false });
+    expect(poolProbeBadge({ probeOk: true, probeMs: 152, probeStatus: 'ok (handshake 3s ago, http 152ms)' }))
+      .toEqual({ short: 'проба: ок 152мс', detail: 'handshake 3s ago, http 152ms', ok: true });
+    expect(poolProbeBadge({ probeOk: true, probeStatus: 'ok (handshake 9s ago, icmp lossy)' }))
+      .toEqual({ short: 'проба: ок', detail: 'handshake 9s ago, icmp lossy', ok: true });
+    expect(poolProbeBadge({ probeOk: false, probeStatus: 'probe http://x failed' }))
+      .toEqual({ short: 'проба: не прошла', detail: '', ok: false });
+    expect(poolProbeBadge({ probeOk: false, probeMs: 900, probeStatus: 'http 900ms выше порога 500ms' }))
+      .toEqual({ short: 'проба: не прошла', detail: '', ok: false });
   });
 });
