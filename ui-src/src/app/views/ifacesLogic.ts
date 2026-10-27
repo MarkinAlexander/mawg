@@ -35,13 +35,19 @@ export function probeBadgeOf(
   return { short, detail, ok };
 }
 
-// бейдж пробы ПУЛА в managed-строке: вердикт из probeOk (бэкендовский
-// флаг той же пробы, что в карточке пула), короткий текст - до скобок
+// плашка пробы ПУЛА в managed-строке - тем же видом и в том же месте,
+// что и у внешних интерфейсов (слово владельца: «чтоб прям плашкой, а
+// не чипом ok»): вердикт из probeOk, мс из probeMs (та же единственная
+// проба, что в карточке пула); развёрнутая причина из скобок - по клику
 export function poolProbeBadge(
-  it: { probeOk?: boolean | null; probeStatus?: string },
-): { short: string; ok: boolean } | null {
+  it: { probeOk?: boolean | null; probeMs?: number; probeStatus?: string },
+): { short: string; detail: string; ok: boolean } | null {
   if (it.probeOk === undefined || it.probeOk === null) return null;
   const st = (it.probeStatus || '').trim();
-  const short = (st.includes('(') ? st.slice(0, st.indexOf('(')) : st).trim();
-  return { short: short || (it.probeOk ? 'ok' : 'нет ответа'), ok: it.probeOk };
+  const detail = st.includes('(') ? st.slice(st.indexOf('(') + 1).replace(/\)$/, '') : '';
+  if (!it.probeOk) {
+    return { short: 'проба: не прошла', detail, ok: false };
+  }
+  const ms = it.probeMs || 0;
+  return { short: ms > 0 ? `проба: ок ${ms}мс` : 'проба: ок', detail, ok: true };
 }
