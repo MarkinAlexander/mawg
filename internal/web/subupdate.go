@@ -49,12 +49,12 @@ func (s *Server) subUpdateTick() {
 			continue
 		}
 		if p.Settings.EngineMode == engineMode {
-			mgr, err := s.sb()
+			mgr, err := s.engineMgr(p)
 			if err != nil {
 				continue
 			}
-			// waits-lx: обновление источника такие узлы не поднимет
-			if ps, ok := mgr.PoolStatus(p.Name); ok && ps.Reason == "waits-lx" {
+			// waits-lx/waits-core: обновление источника такие узлы не поднимет
+			if ps, ok := mgr.PoolStatus(p.Name); ok && (ps.Reason == "waits-lx" || ps.Reason == "waits-core") {
 				continue
 			}
 		}
@@ -91,7 +91,7 @@ func (s *Server) subDegraded(p store.Pool, st *store.PoolState) bool {
 		thr = 2
 	}
 	if p.Settings.EngineMode == engineMode {
-		mgr, err := s.sb()
+		mgr, err := s.engineMgr(p)
 		if err != nil {
 			return false
 		}
@@ -243,7 +243,7 @@ func (s *Server) applySourceToPool(p store.Pool, res store.Sub) (subApplyVerdict
 		if err != nil {
 			return subApplyFail, err.Error()
 		}
-		mgr, mgrErr := s.sb()
+		mgr, mgrErr := s.engineMgr(p)
 		if mgrErr != nil {
 			return subApplyUnverified, mgrErr.Error()
 		}

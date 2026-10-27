@@ -65,6 +65,7 @@ const modeOptions: { value: Mode; label: string }[] = [
 function setMode(m: Mode): void {
   mode.value = m;
   if (m === 'free') proto.value = 'amneziawg';
+  engineCore.value = '';
   inspectRes.value = null;
   inspectErr.value = '';
   plan.value = null;
@@ -86,6 +87,25 @@ watch(
     if (p) proto.value = p;
   },
 );
+
+// ядро движкового пула (88-док): выбор появляется, только когда mihomo
+// установлен на роутере; дефолт - sing-box, как у всех прежних пулов
+const engineCore = ref('');
+const mihomoAvailable = computed(() => !!status.data?.engines?.mihomo?.available);
+const showCoreSelect = computed(
+  () =>
+    mihomoAvailable.value &&
+    mode.value === 'link' &&
+    !!inspectRes.value &&
+    !inspectRes.value.error &&
+    !inspectRes.value.amnezia &&
+    (inspectRes.value.native ?? 0) === 0 &&
+    (inspectRes.value.engine ?? 0) > 0,
+);
+const coreOptions: UiSelectOption[] = [
+  { value: '', label: 'sing-box' },
+  { value: 'mihomo', label: 'mihomo (Clash.Meta)' },
+];
 
 let inspectTimer: ReturnType<typeof setTimeout> | null = null;
 let inspectSeq = 0;
@@ -293,6 +313,7 @@ async function create(): Promise<void> {
         req.exchange = true;
         req.via = amneziaVia.value;
       }
+      if (engineCore.value) req.engineCore = engineCore.value;
       const p = await a.createFromSource(req as never);
       finishPlan(p);
     } catch (e) {
@@ -473,6 +494,13 @@ const fallbackOptions: UiSelectOption[] = [
           :hint="mode === 'link' && inspectRes && inspectRes.native > 0 && inspectRes.engine > 0
             ? 'Прокси-узлы пойдут в tun-интерфейс движка - протокол нужен только WG/AWG-конфигам.'
             : undefined"
+        />
+        <UiSelect
+          v-if="showCoreSelect"
+          v-model="engineCore"
+          :options="coreOptions"
+          label="Ядро движка"
+          hint="Второе ядро mihomo (Clash.Meta) - альтернатива sing-box для vless/vmess/trojan-пулов; tun, пробы и ротация работают так же."
         />
         <UiBanner
           v-if="offerInstall"

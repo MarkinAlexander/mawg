@@ -417,3 +417,67 @@ describe('SystemView - Ядра VPN (lifecycle)', () => {
     w.unmount();
   });
 });
+
+// mihomo (88-док): второе ядро в списке, установка из релиза прямо в строке
+const mihomoPayload = (over: Partial<import('../../api/types').CoreInfo> = {}) => ({
+  id: 'mihomo', title: 'mihomo (Clash.Meta)', installed: false, running: false,
+  managedByMawg: false, disabled: false,
+  note: 'не установлен (кнопка «Установить» ставит из релиза MetaCubeX)',
+  caps: { start: false, stop: false, enable: false, disable: false, uninstall: false, install: true },
+  ...over,
+});
+
+describe('SystemView - Ядра VPN (mihomo)', () => {
+  it('не установлен: вторая строка с кнопкой «Установить» -> confirm -> POST /system/install {id:mihomo}', async () => {
+    const { w, f } = await makeView({
+      '/cores': { cores: [corePayload(), mihomoPayload()] },
+      '/system/install': () => ({ ok: true, output: '- установлено\n', version: 'v1.19.33' }),
+    });
+    await vi.waitFor(() => expect(useSystem().cores.loaded).toBe(true));
+    await nextTick();
+    const rows = w.findAll('.corerow');
+    expect(rows).toHaveLength(2);
+    const mh = rows[1];
+    expect(mh.text()).toContain('mihomo (Clash.Meta)');
+    expect(mh.text()).toContain('не установлен');
+    const inst = mh.findAll('button').find((b) => b.text() === 'Установить');
+    expect(inst).toBeDefined();
+    await inst!.trigger('click');
+    const dlg = await vi.waitFor(() => {
+      const d = w.findAll('dialog').find((x) => x.find('h3').text() === 'Установить mihomo (Clash.Meta)');
+      expect(d).toBeDefined();
+      return d!;
+    });
+    await dlg.findAll('.btnrow button')[1].trigger('click'); // «Установить» в confirm
+    await vi.waitFor(() => {
+      const post = f.mock.calls.find(
+        (c) => (c[0] as string).endsWith('/system/install') && String(c[1]?.body).includes('"mihomo"'));
+      expect(post).toBeTruthy();
+      expect(JSON.parse(String(post![1]!.body))).toEqual({ id: 'mihomo' });
+    });
+    // прогресс установки держит диалог занятым
+    await vi.waitFor(() => expect(w.text()).toContain('Идёт установка'));
+    w.unmount();
+  });
+
+  it('установлен: own-бейджи, состояние, Остановить; тумблера автозагрузки нет', async () => {
+    const { w } = await makeView({
+      '/cores': { cores: [corePayload(), mihomoPayload({
+        installed: true, version: 'v1.19.33', mode: 'own', running: true, managedByMawg: true,
+        autostartNote: 'own-режим: ядро стартует вместе с движковыми пулами mawg',
+        caps: { start: false, stop: true, enable: false, disable: false, uninstall: true, install: false },
+      })] },
+    });
+    await vi.waitFor(() => expect(useSystem().cores.loaded).toBe(true));
+    await nextTick();
+    const mh = w.findAll('.corerow')[1];
+    const text = mh.text();
+    expect(text).toContain('v1.19.33');
+    expect(text).toContain('own');
+    expect(text).toContain('работает');
+    expect(text).toContain('own-режим: ядро стартует вместе с движковыми пулами');
+    expect(mh.findComponent(UiSwitch).exists()).toBe(false);
+    expect(mh.findAll('button').filter((b) => b.text() === 'Остановить')).toHaveLength(1);
+    w.unmount();
+  });
+});

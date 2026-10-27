@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,13 +11,18 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"mawg/internal/links"
+	"mawg/internal/mihomo"
 	"mawg/internal/singbox"
 	"mawg/internal/store"
 )
 
 const engineMode = "singbox"
+
+// engineCoreMihomo - второй движок туннелей (88-док); "" = sing-box.
+const engineCoreMihomo = "mihomo"
 
 // FreeProbeURL - фиксированная цель пробы Amnezia Free (см. web/free.go).
 const FreeProbeURL = "http://1.1.1.1/"
@@ -62,6 +68,64 @@ func (s *Server) resetSB() {
 		sbMgr.Close()
 	}
 	sbMgr = nil
+}
+
+var mhMu sync.Mutex
+var mhMgr *mihomo.Manager
+
+// mh - менеджер ядра mihomo (только own-режим, 88-док): свой процесс со
+// своим конфигом/портами (mixed 2381+, контроллер 2391).
+func (s *Server) mh() (*mihomo.Manager, error) {
+	mhMu.Lock()
+	defer mhMu.Unlock()
+	if mhMgr != nil {
+		return mhMgr, nil
+	}
+	m, err := mihomo.NewManagerConfig(filepath.Join(s.store.Base(), "mihomo"), mihomo.RunConfig{
+		WebPort: s.store.Settings().WebPort,
+		// события таймерной ротации узлов - в журнал панели
+		LogEvent: func(pool, kind, msg string) { s.store.LogEvent(pool, kind, msg) }})
+	if err != nil {
+		return nil, err
+	}
+	mhMgr = m
+	return mhMgr, nil
+}
+
+// resetMH сбрасывает кэш менеджера mihomo (подмена бинаря/выключение):
+// свой процесс гасится, чтобы не осиротел с занятыми портами.
+func (s *Server) resetMH() {
+	mhMu.Lock()
+	defer mhMu.Unlock()
+	if mhMgr != nil {
+		mhMgr.Close()
+	}
+	mhMgr = nil
+}
+
+// engineManager - общий срез менеджеров ядер: clash-клиент + статусы
+// пулов (у mihomo API тот же - он и есть эталонная реализация clash API).
+type engineManager interface {
+	ClashProxies(ctx context.Context) (map[string]singbox.ClashProxy, error)
+	ClashSelect(ctx context.Context, group, name string) error
+	ClashGroupDelay(ctx context.Context, group, testURL string, timeout time.Duration) (map[string]int, error)
+	PoolStatus(name string) (singbox.PoolStatus, bool)
+}
+
+// engineMgr - менеджер ядра, которым крутится пул.
+func (s *Server) engineMgr(p store.Pool) (engineManager, error) {
+	if p.Settings.EngineCore == engineCoreMihomo {
+		return s.mh()
+	}
+	return s.sb()
+}
+
+// engineCoreOf - id ядра пула для мастер-выключателей ("singbox"|"mihomo").
+func engineCoreOf(p store.Pool) string {
+	if p.Settings.EngineCore == engineCoreMihomo {
+		return engineCoreMihomo
+	}
+	return "singbox"
 }
 
 func (s *Server) sharedPaths() (dir, init string) {
@@ -135,19 +199,37 @@ func (s *Server) postCacheFile(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"ok": req.Mode})
 }
 
-// RestoreEngine при старте mawg приводит движок к текущим пулам: без этого
+// RestoreEngine при старте mawg приводит ядра к текущим пулам: без этого
 // после рестарта mawg пулы висят в «не применял конфиг» без проб (в shared
-// фрагмент на диске уже верный, но статусы и пробы пустые).
+// фрагмент на диске уже верный, но статусы и пробы пустые). Выключенные
+// ядра («Система → Ядра VPN») пропускаются с событием в журнал.
 func (s *Server) RestoreEngine() {
-	if len(s.enginePools()) == 0 {
-		return
-	}
-	if s.store.EngineDisabled() {
-		s.store.LogEvent("singbox", "power", "движок выключен («Система → Ядра VPN») - пулы не восстановлены")
-		return
-	}
-	if _, err := s.applyEngine(); err != nil {
+	specs, err := s.engineSpecs()
+	if err != nil {
 		s.store.LogEvent("singbox", "applied", "восстановление движка при старте: "+err.Error())
+		return
+	}
+	sbN, mhN := 0, 0
+	for _, es := range specs {
+		if es.core == engineCoreMihomo {
+			mhN++
+		} else {
+			sbN++
+		}
+	}
+	if sbN == 0 && mhN == 0 {
+		return
+	}
+	if sbN > 0 && s.store.CoreDisabled("singbox") {
+		s.store.LogEvent("singbox", "power", "движок sing-box выключен («Система → Ядра VPN») - его пулы не восстановлены")
+	}
+	if mhN > 0 && s.store.CoreDisabled("mihomo") {
+		s.store.LogEvent("mihomo", "power", "ядро mihomo выключено («Система → Ядра VPN») - его пулы не восстановлены")
+	}
+	if (sbN > 0 && !s.store.CoreDisabled("singbox")) || (mhN > 0 && !s.store.CoreDisabled("mihomo")) {
+		if _, err := s.applyEngine(); err != nil {
+			s.store.LogEvent("singbox", "applied", "восстановление движков при старте: "+err.Error())
+		}
 	}
 }
 
@@ -159,6 +241,18 @@ func (s *Server) enginePools() []store.Pool {
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// enginePoolsOfCore - движковые пулы конкретного ядра.
+func (s *Server) enginePoolsOfCore(core string) []store.Pool {
+	var out []store.Pool
+	for _, p := range s.enginePools() {
+		if core == engineCoreMihomo && p.Settings.EngineCore == engineCoreMihomo ||
+			core != engineCoreMihomo && p.Settings.EngineCore != engineCoreMihomo {
+			out = append(out, p)
+		}
+	}
 	return out
 }
 
@@ -199,13 +293,17 @@ func (s *Server) applyEngineWarn(plan *sourcePlan) {
 	}
 }
 
-func (s *Server) applyEngine() ([]string, error) {
-	// мастер-выключатель («Система → Ядра VPN»): конфиг не строим, свой
-	// процесс не поднимаем, чужой фрагмент не пишем
-	if s.store.EngineDisabled() {
-		return nil, nil
-	}
-	var specs []singbox.PoolSpec
+// engineSpec - спецификация движкового пула + ядро, которое его крутит.
+type engineSpec struct {
+	core string // "" = sing-box | "mihomo"
+	spec singbox.PoolSpec
+}
+
+// engineSpecs собирает спецификации ВСЕХ движковых пулов (оба ядра) -
+// общая сборка, ядро определяет EngineCore пула. Задвоение tun ловится
+// здесь же, до каких-либо менеджеров.
+func (s *Server) engineSpecs() ([]engineSpec, error) {
+	var specs []engineSpec
 	for _, p := range s.enginePools() {
 		if p.Disabled {
 			continue
@@ -219,12 +317,6 @@ func (s *Server) applyEngine() ([]string, error) {
 		// него заведено; каскады правильнее делать нативными средствами
 		// роутера (интерфейсы + маршруты). Реализация wgEndpoint(detour)
 		// сохранена в build.go, сюда не подключена.
-		// detour := ""
-		// if p.Settings.EngineDetour != "" {
-		// 	if dp, ok := s.store.Pool(p.Settings.EngineDetour); ok && !dp.Disabled && dp.Settings.EngineMode == engineMode && dp.Name != p.Name {
-		// 		detour = "mawg-" + dp.Name
-		// 	}
-		// }
 		probe := p.Settings.ProbeHost
 		if p.Free {
 			// старые пулы могли сохранить цель без схемы (например «1.1.1.1») -
@@ -272,27 +364,80 @@ func (s *Server) applyEngine() ([]string, error) {
 		default:
 			return nil, fmt.Errorf("пул %s: %v", p.Name, err)
 		}
-		specs = append(specs, spec)
+		specs = append(specs, engineSpec{core: p.Settings.EngineCore, spec: spec})
 	}
 	seen := map[string]string{}
-	for _, spec := range specs {
-		if prev, dup := seen[spec.Tun]; dup {
-			return nil, fmt.Errorf("tun %s назначен пулам %s и %s - исправьте настройки одного из них", spec.Tun, prev, spec.Name)
+	for _, es := range specs {
+		if prev, dup := seen[es.spec.Tun]; dup {
+			return nil, fmt.Errorf("tun %s назначен пулам %s и %s - исправьте настройки одного из них", es.spec.Tun, prev, es.spec.Name)
 		}
-		seen[spec.Tun] = spec.Name
+		seen[es.spec.Tun] = es.spec.Name
 	}
-	mgr, err := s.sb()
+	return specs, nil
+}
+
+// applyEngine применяет конфиги ВСЕХ ядер: пулы раскладываются по
+// EngineCore, каждое ядро получает свой список. Выключенное ядро
+// («Система → Ядра VPN») пропускается; сбой одного ядра не валит
+// другое - ошибки суммируются.
+func (s *Server) applyEngine() ([]string, error) {
+	specs, err := s.engineSpecs()
 	if err != nil {
 		return nil, err
 	}
-	skipped, err := mgr.Apply(specs)
-	// что mawg поправил в чужом config.json (clash_api, занятые порты) -
-	// в журнал независимо от исхода Apply: правка чужого файла уже
-	// произошла, владелец должен её видеть даже при позднем отказе
-	if note := mgr.PatchNote(); note != "" {
-		s.store.LogEvent("singbox", "applied", note)
+	var sbList, mhList []singbox.PoolSpec
+	for _, es := range specs {
+		if es.core == engineCoreMihomo {
+			mhList = append(mhList, es.spec)
+		} else {
+			sbList = append(sbList, es.spec)
+		}
 	}
-	return skipped, err
+	var skipped []string
+	var errs []string
+	// sing-box: мастер-флаг EngineDisabled/CoreDisabled - конфиг не
+	// строим, процесс не поднимаем (пулы показывают «движок выключен»)
+	if !s.store.CoreDisabled("singbox") {
+		sbMu.Lock()
+		haveMgr := sbMgr != nil
+		sbMu.Unlock()
+		if len(sbList) > 0 || haveMgr {
+			if mgr, err := s.sb(); err != nil {
+				errs = append(errs, "sing-box: "+err.Error())
+			} else {
+				sk, aerr := mgr.Apply(sbList)
+				// что mawg поправил в чужом config.json (clash_api, занятые
+				// порты) - в журнал независимо от исхода Apply
+				if note := mgr.PatchNote(); note != "" {
+					s.store.LogEvent("singbox", "applied", note)
+				}
+				skipped = append(skipped, sk...)
+				if aerr != nil {
+					errs = append(errs, "sing-box: "+aerr.Error())
+				}
+			}
+		}
+	}
+	if !s.store.CoreDisabled("mihomo") {
+		if len(mhList) > 0 {
+			mgr, err := s.mh()
+			if err != nil {
+				errs = append(errs, "mihomo: "+err.Error())
+			} else if sk, aerr := mgr.Apply(mhList); aerr != nil {
+				errs = append(errs, "mihomo: "+aerr.Error())
+				skipped = append(skipped, sk...)
+			} else {
+				skipped = append(skipped, sk...)
+			}
+		} else {
+			// пулов mihomo не осталось - погасить живой процесс
+			s.resetMH()
+		}
+	}
+	if len(errs) > 0 {
+		return skipped, fmt.Errorf("%s", strings.Join(errs, "; "))
+	}
+	return skipped, nil
 }
 
 func (s *Server) readPoolNodes(name string) ([]links.Node, error) {

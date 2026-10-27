@@ -157,6 +157,7 @@ export interface ServerSettings {
 export interface PoolSettings {
   platform?: string
   engineMode?: string // "singbox" - пул через tun-движок
+  engineCore?: string // "mihomo" - пул крутит второе ядро (88-док); пусто = sing-box
   groupMode?: string // движковый пул: "selector" - ручной выбор узла; "rotate" - ротация по таймеру; "urltest" (дефолт) - лучший пинг
   rotateSec?: number // интервал ротации для groupMode="rotate", сек
   nodeOff?: Record<string, boolean> // выключенные узлы подписки (имя -> true)
@@ -285,6 +286,9 @@ export interface Status {
   mtSources: boolean
   pools: PoolView[]
   engine?: EngineInfo
+  // ядра движков (88-док): singbox (копия engine) и mihomo;
+  // available=false - ядро не установлено
+  engines?: Record<string, EngineInfo>
 }
 
 // GET /magitrickle: шапке нужен только available (легаси MTState);
@@ -530,7 +534,7 @@ export interface CoreInfo {
   managedByMawg: boolean
   disabled: boolean
   note?: string
-  caps: { start: boolean; stop: boolean; enable: boolean; disable: boolean; uninstall: boolean }
+  caps: { start: boolean; stop: boolean; enable: boolean; disable: boolean; uninstall: boolean; install?: boolean }
 }
 
 export interface SystemCheckRes {

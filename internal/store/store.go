@@ -183,6 +183,38 @@ func (s *Store) SetEngineDisabled(v bool) error {
 	return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
 }
 
+// CoreDisabled - выключено ли ядро по id ("singbox"|"mihomo"): у singbox
+// исторический флаг EngineDisabled остаётся источником правды, прочие
+// ядра живут в карте CoreDisabled (88-док: стоп/старт по ядру).
+func (s *Store) CoreDisabled(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if id == "singbox" {
+		return s.root.Settings.EngineDisabled
+	}
+	return s.root.Settings.CoreDisabled[id]
+}
+
+func (s *Store) SetCoreDisabled(id string, v bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if id == "singbox" {
+		if s.root.Settings.EngineDisabled == v {
+			return nil
+		}
+		s.root.Settings.EngineDisabled = v
+		return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
+	}
+	if s.root.Settings.CoreDisabled[id] == v {
+		return nil
+	}
+	if s.root.Settings.CoreDisabled == nil {
+		s.root.Settings.CoreDisabled = map[string]bool{}
+	}
+	s.root.Settings.CoreDisabled[id] = v
+	return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
+}
+
 // SetMTGlitchy пишет флаг «глючная сборка MT» только при смене значения -
 // проба совместимости ходит при каждом старте, config.json не надо
 // перезаписывать впустую.

@@ -19,10 +19,11 @@ import (
 // engineGroupTag - тег группы пула в конфиге движка (build.go).
 const engineGroupTag = "mawg-"
 
-// engineGroup - группа пула в живом движке: менеджер + весь /proxies +
-// группа mawg-<name>. Недижковый пул/остановленный движок/отсутствующая
-// группа - честные ошибки, ответ уже записан.
-func (s *Server) engineGroup(w http.ResponseWriter, r *http.Request, name string) (*singbox.Manager, map[string]singbox.ClashProxy, singbox.ClashProxy, bool) {
+// engineGroup - группа пула в живом движке (менеджер выбирается ядром
+// пула: sing-box | mihomo): менеджер + весь /proxies + группа
+// mawg-<name>. Недижковый пул/остановленный движок/отсутствующая группа -
+// честные ошибки, ответ уже записан.
+func (s *Server) engineGroup(w http.ResponseWriter, r *http.Request, name string) (engineManager, map[string]singbox.ClashProxy, singbox.ClashProxy, bool) {
 	pool, ok := s.store.Pool(name)
 	if !ok {
 		http.NotFound(w, r)
@@ -32,7 +33,7 @@ func (s *Server) engineGroup(w http.ResponseWriter, r *http.Request, name string
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "пул не движковый (узлы не в tun-движке)"})
 		return nil, nil, singbox.ClashProxy{}, false
 	}
-	mgr, err := s.sb()
+	mgr, err := s.engineMgr(pool)
 	if err != nil {
 		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": err.Error()})
 		return nil, nil, singbox.ClashProxy{}, false

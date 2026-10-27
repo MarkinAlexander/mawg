@@ -91,6 +91,10 @@ type PoolSettings struct {
 	MagitrickleGroupID string `json:"magitrickleGroupID,omitempty"`
 	Source             string `json:"source,omitempty"`     // URL/ссылка, из которой собраны конфиги пула (для цикла обновлений)
 	EngineMode         string `json:"engineMode,omitempty"` // "singbox" - узлы пула в tun-интерфейсе движка, а не в нативном слоте
+	// EngineCore - какое ядро крутит пул (88-док): "" = sing-box (как
+	// все пулы до mihomo), "mihomo" - второй движок. EngineMode при этом
+	// остаётся "singbox" (значение = «движковый пул» вообще).
+	EngineCore string `json:"engineCore,omitempty"`
 	// EngineDetour - каскад движка: туннель пула (wireguard-эндпоинт)
 	// заводится через группу другого движкового пула (detour в sing-box).
 	EngineDetour string `json:"engineDetour,omitempty"`
@@ -439,6 +443,11 @@ type Settings struct {
 	// EngineDisabled - движок sing-box выключен совсем (Система → Ядра
 	// VPN): не стартует ни своим процессом, ни фрагментом в чужом ядре.
 	EngineDisabled bool `json:"engineDisabled,omitempty"`
+	// CoreDisabled - мастер-выключатели ядер по id («Система → Ядра
+	// VPN», 88-док): у каждого ядра свой стоп/старт. Ключ "singbox"
+	// читается с фолбэком на EngineDisabled (историческое поле) - миграция
+	// конфигов не нужна.
+	CoreDisabled map[string]bool `json:"coreDisabled,omitempty"`
 	// BackupKeep - сколько последних копий каждого вида бэкапа держать
 	// в base/backups (2..10, слово владельца; 0 = дефолт 10).
 	BackupKeep int `json:"backupKeep,omitempty"`

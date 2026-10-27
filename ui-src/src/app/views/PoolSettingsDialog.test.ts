@@ -263,6 +263,46 @@ describe('PoolSettingsDialog - режим группы движка (60-док)'
     dlg.unmount();
   });
 
+  it('mihomo установлен: селектор ядра виден, выбор уходит в PUT engineCore', async () => {
+    const eng: PoolView = {
+      ...pool, name: 'sub', device: 'tun1', slot: undefined,
+      settings: { ...pool.settings, engineMode: 'singbox', tunName: 'tun1' },
+      configs: [],
+    };
+    const { dlg, f } = await makeDialog({
+      '/members': { members: [] },
+      '/engine': { mode: 'urltest', groupMode: 'urltest', now: 'mawg-sub|a', nodes: [{ tag: 'mawg-sub|a', delay: 80 }] },
+    }, [eng], { engines: { mihomo: { available: true, running: true, version: 'v1.19.33' } } });
+    await vi.waitFor(() => expect(dlg.text()).toContain('Ядро движка'));
+    // дефолт sing-box; переключаем на mihomo
+    const coreBtn = dlg.findAll('.psel-btn').find((b) => b.text() === 'sing-box');
+    expect(coreBtn).toBeDefined();
+    await coreBtn!.trigger('click');
+    await vi.waitFor(() => expect(dlg.find('.psel-list').exists()).toBe(true));
+    const opt = dlg.findAll('.psel-item').find((o) => o.text().includes('mihomo'));
+    await opt!.trigger('click');
+    await nextTick();
+    await btn(dlg, 'Сохранить')[0].trigger('click');
+    await vi.waitFor(() => {
+      const put = f.mock.calls.find((c) => (c[0] as string).endsWith('/pools/sub') && c[1]?.method === 'PUT');
+      expect(put).toBeTruthy();
+      expect(JSON.parse(put![1]!.body as string)).toMatchObject({ engineCore: 'mihomo' });
+    });
+    dlg.unmount();
+  });
+
+  it('mihomo не установлен: селектора ядра нет, PUT без engineCore-mihomo', async () => {
+    const eng: PoolView = {
+      ...pool, name: 'sub2', device: 'tun1', slot: undefined,
+      settings: { ...pool.settings, engineMode: 'singbox', tunName: 'tun1' },
+      configs: [],
+    };
+    const { dlg } = await makeDialog({ '/members': { members: [] }, '/engine': { nodes: [] } }, [eng]);
+    await vi.waitFor(() => expect(dlg.text()).toContain('Выбор узла в подписке'));
+    expect(dlg.text()).not.toContain('Ядро движка');
+    dlg.unmount();
+  });
+
   it('не-движковый: режима группы нет, PUT без groupMode', async () => {
     const { dlg, f } = await makeDialog({}, [pool]);
     await vi.waitFor(() => expect(dlg.text()).toContain('Источник'));

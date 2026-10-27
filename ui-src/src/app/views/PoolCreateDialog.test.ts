@@ -194,6 +194,44 @@ describe('PoolCreateDialog', () => {
     dlg.unmount();
   });
 
+  it('mihomo установлен + vless: селектор ядра виден, mihomo уходит в from-source', async () => {
+    const { dlg, f } = await makeDialog({
+      '/links/inspect': { native: 0, engine: 1, types: ['vless'] },
+    }, { platform: 'openwrt', engines: { mihomo: { available: true, running: true, version: 'v1.19.33' } } });
+    await btn(dlg, 'ссылка или подписка')[0].trigger('click');
+    await nextTick();
+    await dlg.find('textarea').setValue('vless://uuid@1.2.3.4:443?security=tls#node');
+    await vi.waitFor(() => expect(dlg.text()).toContain('прокси-узлов: 1 (vless)'), { timeout: 3000 });
+    await vi.waitFor(() => expect(dlg.text()).toContain('Ядро движка'));
+    const coreBtn = dlg.findAll('.psel-btn').find((b) => b.text() === 'sing-box');
+    expect(coreBtn).toBeDefined();
+    await coreBtn!.trigger('click');
+    await vi.waitFor(() => expect(dlg.find('.psel-list').exists()).toBe(true));
+    const opt = dlg.findAll('.psel-item').find((o) => o.text().includes('mihomo'));
+    await opt!.trigger('click');
+    await nextTick();
+    await dlg.find('input').setValue('mh');
+    await btn(dlg, 'Создать')[0].trigger('click');
+    await vi.waitFor(() => {
+      const post = f.mock.calls.find((c) => (c[0] as string).endsWith('/pools/from-source'));
+      expect(post).toBeTruthy();
+      expect(JSON.parse(post![1]!.body as string)).toMatchObject({ engineCore: 'mihomo' });
+    });
+    dlg.unmount();
+  });
+
+  it('mihomo не установлен: селектора ядра нет при движковых узлах', async () => {
+    const { dlg } = await makeDialog({
+      '/links/inspect': { native: 0, engine: 1, types: ['vless'] },
+    }, { platform: 'openwrt' });
+    await btn(dlg, 'ссылка или подписка')[0].trigger('click');
+    await nextTick();
+    await dlg.find('textarea').setValue('vless://uuid@1.2.3.4:443?security=tls#node');
+    await vi.waitFor(() => expect(dlg.text()).toContain('прокси-узлов: 1 (vless)'), { timeout: 3000 });
+    expect(dlg.text()).not.toContain('Ядро движка');
+    dlg.unmount();
+  });
+
   it('openwrt + amneziawg-ссылка: селект появился с предвыбором amneziawg', async () => {
     const { dlg } = await makeDialog({
       '/links/inspect': { native: 1, engine: 0, types: ['amneziawg'] },
