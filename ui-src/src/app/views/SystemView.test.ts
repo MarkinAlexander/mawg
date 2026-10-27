@@ -69,6 +69,8 @@ beforeEach(() => {
   const sys = useSystem().state;
   sys.loaded = false;
   sys.data = null;
+  useSystem().cores.loaded = false;
+  useSystem().cores.list = [];
   useStatus().state.data = null;
   useConfirm().cancel();
 });
@@ -326,6 +328,92 @@ describe('SystemView - карточка «Система»', () => {
       expect(post).toBeTruthy();
       expect(JSON.parse(post![1]!.body as string)).toEqual({ mode: 'own' });
     });
+    w.unmount();
+  });
+});
+
+const corePayload = (over: Partial<import('../../api/types').CoreInfo> = {}) => ({
+  id: 'singbox', title: 'sing-box (движок туннелей)', installed: true,
+  version: '1.14.2-lx.12', lx: true, mode: 'shared', running: true,
+  autostart: true, managedByMawg: true, disabled: false,
+  caps: { start: false, stop: true, enable: false, disable: true, uninstall: true },
+  ...over,
+});
+
+describe('SystemView - Ядра VPN (lifecycle)', () => {
+  it('карточка рендерит ядро: версия/lx/режим/состояние/автозагрузка', async () => {
+    const { w } = await makeView({ '/cores': { cores: [corePayload()] } });
+    await vi.waitFor(() => expect(useSystem().cores.loaded).toBe(true));
+    await nextTick();
+    const card = w.findAll('.corerow');
+    expect(card).toHaveLength(1);
+    const text = card[0].text();
+    expect(text).toContain('sing-box');
+    expect(text).toContain('1.14.2-lx.12');
+    expect(text).toContain('shared');
+    expect(text).toContain('работает');
+    expect(text).toContain('автозагрузка вкл');
+    expect(text).toContain('Остановить'); // работает - старт не нужен
+    expect(card[0].findAll('button').filter((b) => b.text() === 'Запустить')).toHaveLength(0);
+    w.unmount();
+  });
+
+  it('Остановить: confirm о движковых пулах -> POST /cores/singbox/power stop', async () => {
+    const { w, f } = await makeView({
+      '/cores': { cores: [corePayload()] },
+      '/cores/singbox/power': () => ({ core: corePayload({ running: false, disabled: true, autostart: true,
+        caps: { start: true, stop: false, enable: false, disable: true, uninstall: true } }) }),
+    });
+    await vi.waitFor(() => expect(useSystem().cores.loaded).toBe(true));
+    await nextTick();
+    await btn(w, 'Остановить')[0].trigger('click');
+    const dlg = await vi.waitFor(() => {
+      const d = w.findAll('dialog').find((x) => x.find('h3').text() === 'Остановить sing-box (движок туннелей)');
+      expect(d).toBeDefined();
+      return d!;
+    });
+    expect(dlg.text()).toContain('движковые пулы');
+    await dlg.findAll('.btnrow button')[1].trigger('click'); // ОК
+    await vi.waitFor(() => {
+      const call = f.mock.calls.find((c) => c[0].endsWith('/cores/singbox/power'));
+      expect(call).toBeTruthy();
+    });
+    const call = f.mock.calls.find((c) => c[0].endsWith('/cores/singbox/power'))!;
+    expect(call[1]?.method).toBe('POST');
+    expect(JSON.parse(String(call[1]?.body)).action).toBe('stop');
+    w.unmount();
+  });
+
+  it('own-режим: переключателя автозагрузки нет, есть пояснение; выключенный движок предлагает Запустить', async () => {
+    const { w } = await makeView({
+      '/cores': { cores: [corePayload({ mode: 'own', running: false, disabled: true, autostart: false,
+        autostartNote: 'own-режим: ядро стартует вместе с движковыми пулами mawg',
+        caps: { start: true, stop: false, enable: false, disable: false, uninstall: true } })] },
+    });
+    await vi.waitFor(() => expect(useSystem().cores.loaded).toBe(true));
+    await nextTick();
+    const row = w.findAll('.corerow')[0];
+    expect(row.text()).toContain('own-режим: ядро стартует вместе с движковыми пулами');
+    expect(row.findComponent(UiSwitch).exists()).toBe(false);
+    expect(row.text()).toContain('выключен');
+    expect(row.findAll('button').filter((b) => b.text() === 'Запустить')).toHaveLength(1);
+    // кнопки ищем ВНУТРИ строки: скрытый ConfirmHost держит stale-лейбл
+    // прошлого confirm, глобальный поиск ловил бы его
+    expect(row.findAll('button').filter((b) => b.text() === 'Остановить')).toHaveLength(0);
+    w.unmount();
+  });
+
+  it('не установлен: строка-заглушка без кнопок lifecycle', async () => {
+    const { w } = await makeView({
+      '/cores': { cores: [corePayload({ installed: false, version: '', lx: false, mode: '', running: false,
+        note: 'не установлен (пункт singbox-lx в таблице зависимостей выше)',
+        caps: { start: false, stop: false, enable: false, disable: false, uninstall: false } })] },
+    });
+    await vi.waitFor(() => expect(useSystem().cores.loaded).toBe(true));
+    await nextTick();
+    const row = w.findAll('.corerow')[0];
+    expect(row.text()).toContain('не установлен');
+    expect(row.findAll('button')).toHaveLength(0);
     w.unmount();
   });
 });

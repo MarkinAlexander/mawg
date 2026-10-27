@@ -118,6 +118,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/links/inspect", s.inspectSource)
 	mux.HandleFunc("POST /api/v1/singbox/mode", s.postSingboxMode)
 	mux.HandleFunc("POST /api/v1/singbox/cache-file", s.postCacheFile)
+	mux.HandleFunc("GET /api/v1/cores", s.getCores)
+	mux.HandleFunc("POST /api/v1/cores/{id}/power", s.postCorePower)
 	mux.HandleFunc("POST /api/v1/pools/{name}/refresh-source", s.refreshSource)
 	mux.HandleFunc("PUT /api/v1/pools/{name}", s.updatePool)
 	mux.HandleFunc("DELETE /api/v1/pools/{name}", s.deletePool)
@@ -585,6 +587,7 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 			"available": true, "running": st.Running, "api": st.API, "version": st.Version,
 			"lx": st.LX, "bin": st.Bin, "mixedPort": st.Mixed, "clashPort": st.Clash,
 			"mode": st.Mode, "fragment": st.Fragment, "cacheFile": st.CacheFile, "tuns": tuns,
+			"disabled": s.store.EngineDisabled(), "autostart": s.coreAutostart(),
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -806,6 +809,9 @@ func (s *Server) poolProbeInfo(p store.Pool) (ok *bool, ms int, at int64, mode, 
 		}
 		v := st.ProbeOK
 		return &v, st.ProbeMs, st.LastCheck.Unix(), st.Mode, st.LastResult
+	}
+	if p.Settings.EngineMode == engineMode && s.store.EngineDisabled() {
+		return nil, 0, 0, "fallback", "движок выключен (Система → Ядра VPN)"
 	}
 	mgr, err := s.sb()
 	if err != nil {

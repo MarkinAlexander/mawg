@@ -512,6 +512,23 @@ export interface InstallRes {
   error?: string
 }
 
+// ядро VPN для карточки «Ядра VPN» (GET /cores): lifecycle-менеджмент
+export interface CoreInfo {
+  id: string
+  title: string
+  installed: boolean
+  version?: string
+  lx?: boolean
+  mode?: string // own | shared
+  running: boolean
+  autostart: boolean
+  autostartNote?: string
+  managedByMawg: boolean
+  disabled: boolean
+  note?: string
+  caps: { start: boolean; stop: boolean; enable: boolean; disable: boolean; uninstall: boolean }
+}
+
 export interface SystemCheckRes {
   platform: string
   items: SystemItem[]

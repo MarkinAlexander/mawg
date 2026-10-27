@@ -101,6 +101,31 @@ func (m *Manager) Info() Engine {
 	return *m.eng
 }
 
+// StopOwn - гасит собственный процесс ядра (own-режим), менеджер жив:
+// статус читается, следующий Apply поднимет ядро снова. Используется
+// мастер-выключателем движка (Система → Ядра VPN).
+func (m *Manager) StopOwn() {
+	m.mu.Lock()
+	mode := m.Mode
+	m.mu.Unlock()
+	if mode == "shared" {
+		return
+	}
+	m.stop()
+}
+
+// ClearSharedFragment - снимает наш фрагмент из чужого конфига, НЕ
+// перезапуская сервис (uninstall/выключение: сервис остановят следом).
+func (m *Manager) ClearSharedFragment() {
+	m.mu.Lock()
+	mode := m.Mode
+	m.mu.Unlock()
+	if mode != "shared" {
+		return
+	}
+	_ = m.removeFragment()
+}
+
 type PoolStatus struct {
 	Eligible    int       `json:"eligible"`
 	MixedPort   int       `json:"mixedPort"`

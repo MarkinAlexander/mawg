@@ -160,6 +160,25 @@ func (s *Store) SetSingboxMode(mode string) error {
 	return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
 }
 
+// EngineDisabled - мастер-выключатель движка sing-box («Система → Ядра
+// VPN»): выключен - mawg не поднимает ни свой процесс, ни фрагмент в
+// чужом ядре, движковые пулы показывают «движок выключен».
+func (s *Store) EngineDisabled() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.root.Settings.EngineDisabled
+}
+
+func (s *Store) SetEngineDisabled(v bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.root.Settings.EngineDisabled == v {
+		return nil
+	}
+	s.root.Settings.EngineDisabled = v
+	return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
+}
+
 // SetMTGlitchy пишет флаг «глючная сборка MT» только при смене значения -
 // проба совместимости ходит при каждом старте, config.json не надо
 // перезаписывать впустую.
