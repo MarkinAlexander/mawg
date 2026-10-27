@@ -124,7 +124,7 @@ export interface PolicyCycles {
 
 export interface BackupInfo {
   name: string
-  kind: 'shadow' | 'config'
+  kind: 'shadow' | 'config' | 'full'
   size: number
   modified: string
 }

@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"time"
 
 	"mawg/internal/magitrickle"
 )
@@ -35,7 +34,7 @@ type mtBackupInfo struct {
 
 // имя файла бэкапа строго нашего формата - никаких traversal и чужих
 // путей; -NN - суффикс двух записей в одну секунду
-var mtBackupNameRe = regexp.MustCompile(`^(mt-(shadow|config)|mawg-full)-\d{8}-\d{6}(-\d{2})?\.(conf|tar\.gz)$`)
+var mtBackupNameRe = regexp.MustCompile(`^(mt-(shadow|config)|mawg-full)-\d{8}-\d{6}(-\d{2})?\.(conf|conf\.gz|tar\.gz)$`)
 
 // mawgServiceScript - init-скрипт панели; var ради тестов (на Windows
 // его нет - рестор настроек проверяется до записи файла).
@@ -133,6 +132,21 @@ func (s *Server) mtRestore(w http.ResponseWriter, r *http.Request) {
 		writeErrCode(w, http.StatusNotFound, err)
 		return
 	}
+	// сжатые частичные бэкапы (.conf.gz) распаковываем; старые несжатые
+	// .conf (в т.ч. скачанные на ПК до сжатия) работают как раньше
+	if strings.HasSuffix(req.File, ".conf.gz") {
+		zr, err := gzip.NewReader(bytes.NewReader(data))
+		if err != nil {
+			writeErrCode(w, http.StatusBadRequest, fmt.Errorf("бэкап повреждён (не gzip): %v", err))
+			return
+		}
+		out, err := io.ReadAll(zr)
+		if err != nil {
+			writeErrCode(w, http.StatusBadRequest, fmt.Errorf("бэкап повреждён: %v", err))
+			return
+		}
+		data = out
+	}
 	switch {
 	case strings.HasPrefix(req.File, "mt-shadow-"):
 		// восстановление правил штатным путём записи: бэкап приходит в
@@ -166,8 +180,9 @@ func (s *Server) mtRestore(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if cur, err := os.ReadFile(path); err == nil {
-			name := "mt-config-" + time.Now().Format("20060102-150405") + ".conf"
-			if err := os.WriteFile(s.backupPath(name), cur, 0o600); err != nil {
+			// через SaveBackupRotated: сжатие и ретеншен (раньше писался
+			// напрямую и не ротировался до следующей авто-копии)
+			if _, err := s.store.SaveBackupRotated("mt-config", "conf.gz", string(cur)); err != nil {
 				s.store.LogEvent("magitrickle", "restore", "авто-бэкап текущего конфига не удался: "+err.Error())
 			}
 		}
@@ -394,4 +409,33 @@ func countRules(groups []magitrickle.Group) int {
 		n += len(g.Rules)
 	}
 	return n
+}
+
+// сколько копий каждого вида бэкапа хранить (2..10, слово владельца);
+// после смены - немедленная чистка лишних
+func (s *Server) getBackupKeep(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"keep": s.store.BackupKeep()})
+}
+
+func (s *Server) putBackupKeep(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Keep int `json:"keep"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, err)
+		return
+	}
+	if req.Keep < 2 || req.Keep > 10 {
+		writeErr(w, fmt.Errorf("сколько копий хранить - целое от 2 до 10"))
+		return
+	}
+	st := s.store.Settings()
+	st.BackupKeep = req.Keep
+	if err := s.store.SetSettings(st); err != nil {
+		writeErr(w, err)
+		return
+	}
+	s.store.EnforceBackupRetention()
+	s.store.LogEvent("backup", "settings", fmt.Sprintf("хранить копий каждого вида: %d (лишние удалены)", req.Keep))
+	writeJSON(w, http.StatusOK, map[string]any{"keep": req.Keep})
 }

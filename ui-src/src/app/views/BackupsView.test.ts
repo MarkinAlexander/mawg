@@ -30,6 +30,8 @@ async function makeView() {
   const f = vi.fn(async (url: string, init?: { method?: string; body?: string }) => {
     const u = url;
     if (u.endsWith('/mt/backups')) return ok({ backups: data.backups });
+    if (u.endsWith('/mt/backup-keep') && (init?.method || 'GET') === 'GET') return ok({ keep: 10 });
+    if (u.endsWith('/mt/backup-keep') && init?.method === 'PUT') return ok({ keep: JSON.parse(init.body!).keep });
     if (u.endsWith('/mt/backup')) {
       data.backups.unshift({ name: 'mawg-full-20261014-040404.tar.gz', kind: 'full', size: 99, modified: '2026-10-14 04:04' });
       return ok();
@@ -323,6 +325,39 @@ describe('BackupsView - выгрузка на ПК', () => {
     expect(blobText).toContain('"telegram"');
     expect(useToast().toasts.list.map((t) => t.text)).toContain('Выгружено групп: 1');
     clickSpy.mockRestore();
+    w.unmount();
+  });
+});
+
+describe('BackupsView - ретеншен и сжатие', () => {
+  it('поле «сколько копий хранить»: предзаполнено, применять -> PUT keep, subtitle честный', async () => {
+    const { w, f } = await makeView();
+    const numInput = () => w.findAll('input').find((i) => i.attributes('type') === 'number');
+    await vi.waitFor(() => expect(numInput()?.element.value).toBe('10'));
+    const card = w.findAll('.card').find((c) => c.text().includes('Резервные копии'))!;
+    expect(card.text()).toContain('по 10 последних каждого вида');
+    expect(card.text()).toContain('сжатыми');
+
+    await numInput()!.setValue('3');
+    const apply = w.findAll('button').find((b) => b.text() === 'применить')!;
+    expect(apply.attributes('disabled')).toBeUndefined();
+    await apply.trigger('click');
+    await vi.waitFor(() => {
+      const put = f.mock.calls.find((c) => c[0].endsWith('/mt/backup-keep') && c[1]?.method === 'PUT');
+      expect(put).toBeTruthy();
+      expect(JSON.parse(String(put![1]!.body)).keep).toBe(3);
+    });
+    w.unmount();
+  });
+
+  it('вне диапазона 2..10 - тост с подсказкой, PUT не уходит', async () => {
+    const { w, f } = await makeView();
+    await vi.waitFor(() => expect(w.findAll('input').find((i) => i.attributes('type') === 'number')?.element.value).toBe('10'));
+    await w.findAll('input').find((i) => i.attributes('type') === 'number')!.setValue('11');
+    await w.findAll('button').find((b) => b.text() === 'применить')!.trigger('click');
+    await nextTick();
+    expect(useToast().toasts.list.some((t) => t.text.includes('от 2 до 10'))).toBe(true);
+    expect(f.mock.calls.find((c) => c[0].endsWith('/mt/backup-keep') && c[1]?.method === 'PUT')).toBeUndefined();
     w.unmount();
   });
 });

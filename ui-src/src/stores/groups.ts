@@ -146,6 +146,16 @@ export function useGroups() {
   }
 
   // --- бэкапы и импорт/выгрузка групп файлом (легаси 1786-2010) ---
+  // сколько копий каждого вида бэкапа хранить (2..10)
+  async function loadBackupKeep(): Promise<number> {
+    const r = await api<{ keep: number }>('GET', '/mt/backup-keep');
+    return r.keep;
+  }
+  async function saveBackupKeep(keep: number): Promise<number> {
+    const r = await api<{ keep: number }>('PUT', '/mt/backup-keep', { keep });
+    return r.keep;
+  }
+
   async function loadBackups(): Promise<void> {
     try {
       const r = await api<{ backups: BackupInfo[] }>('GET', '/mt/backups');
@@ -265,6 +275,8 @@ export function useGroups() {
     applyPreset,
     createCascade,
     loadBackups,
+    loadBackupKeep,
+    saveBackupKeep,
     createBackup,
     restoreBackup,
     importGroups,

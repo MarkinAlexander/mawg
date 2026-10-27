@@ -1,6 +1,9 @@
 package web
 
 import (
+	"bytes"
+	"compress/gzip"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -77,7 +80,7 @@ func TestMTConfigRestoreAutoBackup(t *testing.T) {
 		t.Fatalf("конфиг не заменён: %q", got)
 	}
 
-	// авто-бэкап: новый mt-config-*.conf с ПРЕЖНИМ содержимым
+	// авто-бэкап: новый mt-config-*.conf.gz (сжатый) с ПРЕЖНИМ содержимым
 	entries, err := os.ReadDir(filepath.Join(st.Base(), "backups"))
 	if err != nil {
 		t.Fatal(err)
@@ -88,12 +91,23 @@ func TestMTConfigRestoreAutoBackup(t *testing.T) {
 			continue
 		}
 		autos++
+		if !strings.HasSuffix(en.Name(), ".conf.gz") {
+			t.Fatalf("авто-бэкап %s должен быть сжат (.conf.gz)", en.Name())
+		}
 		b, err := os.ReadFile(filepath.Join(st.Base(), "backups", en.Name()))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if string(b) != string(original) {
-			t.Fatalf("авто-бэкап %s не совпал с прежним конфигом: %q", en.Name(), b)
+		zr, err := gzip.NewReader(bytes.NewReader(b))
+		if err != nil {
+			t.Fatalf("авто-бэкап %s не gzip: %v", en.Name(), err)
+		}
+		out, err := io.ReadAll(zr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(out) != string(original) {
+			t.Fatalf("авто-бэкап %s не совпал с прежним конфигом: %q", en.Name(), out)
 		}
 	}
 	if autos != 1 {

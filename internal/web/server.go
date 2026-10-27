@@ -175,6 +175,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/mt/backups", s.mtBackupList)
 	mux.HandleFunc("GET /api/v1/mt/backups/{file}", s.mtBackupGet)
 	mux.HandleFunc("POST /api/v1/mt/restore", s.mtRestore)
+	mux.HandleFunc("GET /api/v1/mt/backup-keep", s.getBackupKeep)
+	mux.HandleFunc("PUT /api/v1/mt/backup-keep", s.putBackupKeep)
 	mux.HandleFunc("GET /api/v1/settings/server", s.getServerSettings)
 	mux.HandleFunc("GET /api/v1/lan/clients", s.lanClients)
 	mux.HandleFunc("PUT /api/v1/settings/server", s.putServerSettings)

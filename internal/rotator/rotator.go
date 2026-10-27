@@ -1426,10 +1426,6 @@ func (e *Engine) mtRestartBudget() bool {
 	return true
 }
 
-// mtBackupKeep - сколько последних копий каждого вида держим в
-// base/backups (mt-shadow-*.conf, mt-config-*.conf).
-const mtBackupKeep = 10
-
 // BackupMagitrickleState снимает копии дискового конфига MT и нашей
 // shadow-копии в base/backups. Вызывается перед каждым фактическим PUT
 // групп (через magitrickle.PreSave) и вручную из панели. Инцидент
@@ -1438,11 +1434,11 @@ const mtBackupKeep = 10
 // спасательная верёвка делается кодом автоматически.
 func (e *Engine) BackupMagitrickleState() {
 	if data, err := os.ReadFile(filepath.Join(e.store.Base(), "magitrickle-shadow.json")); err == nil {
-		e.store.SaveBackupRotated("mt-shadow", "conf", string(data), mtBackupKeep)
+		e.store.SaveBackupRotated("mt-shadow", "conf.gz", string(data))
 	}
 	if path := e.backend.MTConfigPath(); path != "" {
 		if data, err := os.ReadFile(path); err == nil {
-			e.store.SaveBackupRotated("mt-config", "conf", string(data), mtBackupKeep)
+			e.store.SaveBackupRotated("mt-config", "conf.gz", string(data))
 		}
 	}
 }
@@ -1513,7 +1509,7 @@ func (e *Engine) BackupFull() error {
 	if err := gz.Close(); err != nil {
 		return err
 	}
-	_, err = e.store.SaveBackupRotated("mawg-full", "tar.gz", buf.String(), mtBackupKeep)
+	_, err = e.store.SaveBackupRotated("mawg-full", "tar.gz", buf.String())
 	return err
 }
 
