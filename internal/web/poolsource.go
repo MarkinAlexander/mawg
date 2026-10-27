@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"mawg/internal/links"
+	"mawg/internal/mihomo"
 	"mawg/internal/platform/openwrt"
 	"mawg/internal/singbox"
 	"mawg/internal/store"
@@ -56,6 +57,9 @@ type poolSourceReq struct {
 	Exchange     bool   `json:"exchange"`
 	Via          string `json:"via"`
 	Country      string `json:"country"`
+	// EngineCore - ядро движкового пула (88-док): "" = sing-box,
+	// "mihomo" - второй движок (только пул из узлов движка).
+	EngineCore string `json:"engineCore"`
 }
 
 // poolSettingsFromReq собирает настройки нового пула из запроса.
@@ -286,22 +290,49 @@ func (s *Server) createPoolFromNodes(w http.ResponseWriter, r *http.Request, req
 	}
 
 	if len(engineNodes) > 0 {
-		lx := false
-		if mgr, err := s.sb(); err == nil {
-			lx = mgr.Info().LX
-		}
-		eligible, reasons := singbox.EligibleNodes(res.Nodes, lx)
-		if len(eligible) == 0 {
-			plan.Engine = engineNodes
-			plan.Skipped = append(plan.Skipped, reasons...)
-			plan.Warnings = append(plan.Warnings,
-				"Пул не создан: ни один узел не поддерживается текущим движком sing-box. Нужен lx-профиль ядра - после его установки добавьте ссылку заново.")
-			writeJSON(w, http.StatusOK, plan)
+		// ядро пула (88-док): mihomo - второй движок, дефолт sing-box
+		core := req.EngineCore
+		if core != "" && core != "singbox" && core != engineCoreMihomo {
+			writeErr(w, fmt.Errorf("engineCore: singbox|mihomo"))
 			return
+		}
+		if core == "singbox" {
+			core = ""
+		}
+		var eligible []links.Node
+		var reasons []string
+		if core == engineCoreMihomo {
+			if _, err := s.mh(); err != nil {
+				writeErr(w, fmt.Errorf("ядро mihomo не установлено: кнопка «Установить» в «Система → Ядра VPN»"))
+				return
+			}
+			eligible, reasons = mihomo.EligibleNodes(res.Nodes)
+			if len(eligible) == 0 {
+				plan.Engine = engineNodes
+				plan.Skipped = append(plan.Skipped, reasons...)
+				plan.Warnings = append(plan.Warnings,
+					"Пул не создан: ни один узел не поддерживается ядром mihomo (xhttp и vless-шифрование - только sing-box lx).")
+				writeJSON(w, http.StatusOK, plan)
+				return
+			}
+		} else {
+			lx := false
+			if mgr, err := s.sb(); err == nil {
+				lx = mgr.Info().LX
+			}
+			eligible, reasons = singbox.EligibleNodes(res.Nodes, lx)
+			if len(eligible) == 0 {
+				plan.Engine = engineNodes
+				plan.Skipped = append(plan.Skipped, reasons...)
+				plan.Warnings = append(plan.Warnings,
+					"Пул не создан: ни один узел не поддерживается текущим движком sing-box. Нужен lx-профиль ядра - после его установки добавьте ссылку заново.")
+				writeJSON(w, http.StatusOK, plan)
+				return
+			}
 		}
 		settings := store.PoolSettings{
 			Platform: s.backend.Name(), Fallback: req.Fallback, ProbeHost: req.ProbeHost,
-			Source: req.Source, EngineMode: engineMode, Amnezia: storeAmnezia(amnezia),
+			Source: req.Source, EngineMode: engineMode, EngineCore: core, Amnezia: storeAmnezia(amnezia),
 		}
 		if err := s.validFallback(req.Name, settings.Fallback); err != nil {
 			writeErr(w, err)
@@ -333,13 +364,15 @@ func (s *Server) createPoolFromNodes(w http.ResponseWriter, r *http.Request, req
 		plan.Skipped = append(plan.Skipped, skipped...)
 		if err != nil {
 			plan.Warnings = append(plan.Warnings, "движок не применил конфиг: "+err.Error())
-		} else if mgr, mgrErr := s.sb(); mgrErr == nil {
-			if ps, ok := mgr.PoolStatus(pool.Name); ok && !ps.CheckedAt.IsZero() {
-				ok := ps.ProbeOK
-				plan.ProbeOK = &ok
-				plan.ProbeMs = ps.ProbeMs
-				if !ps.ProbeOK {
-					plan.Warnings = append(plan.Warnings, "проба не прошла: "+ps.ProbeErr)
+		} else if cur, ok := s.store.Pool(pool.Name); ok {
+			if mgr, mgrErr := s.engineMgr(cur); mgrErr == nil {
+				if ps, ok := mgr.PoolStatus(pool.Name); ok && !ps.CheckedAt.IsZero() {
+					ok := ps.ProbeOK
+					plan.ProbeOK = &ok
+					plan.ProbeMs = ps.ProbeMs
+					if !ps.ProbeOK {
+						plan.Warnings = append(plan.Warnings, "проба не прошла: "+ps.ProbeErr)
+					}
 				}
 			}
 		}

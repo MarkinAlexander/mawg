@@ -525,6 +525,9 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 		MtSources bool           `json:"mtSources"`
 		Pools     []poolView     `json:"pools"`
 		Engine    map[string]any `json:"engine,omitempty"`
+		// Engines - состояние по ядрам (88-док): singbox (копия Engine
+		// для совместимости) и mihomo. available:false - ядро не установлено.
+		Engines map[string]map[string]any `json:"engines,omitempty"`
 	}{Version: s.version, Platform: s.backend.Name(), BackendName: s.backend.Name(),
 		AuthEnabled: s.auth == nil || s.auth.Enabled, NativeAWG3: s.nativeAWG3(), MtSources: s.mtSourcesCapable(r.Context()), Pools: []poolView{}}
 
@@ -565,7 +568,7 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 	if mgr, err := s.sb(); err == nil {
 		st := mgr.Status()
 		var tuns []map[string]any
-		for _, p := range s.enginePools() {
+		for _, p := range s.enginePoolsOfCore("singbox") {
 			nodes := 0
 			if ns, err := s.readPoolNodes(p.Name); err == nil {
 				nodes = len(ns)
@@ -591,6 +594,42 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 			"mode": st.Mode, "fragment": st.Fragment, "cacheFile": st.CacheFile, "tuns": tuns,
 			"disabled": s.store.EngineDisabled(), "autostart": s.coreAutostart(),
 		}
+	}
+	out.Engines = map[string]map[string]any{}
+	if out.Engine != nil {
+		out.Engines["singbox"] = out.Engine
+	} else {
+		out.Engines["singbox"] = map[string]any{"available": false, "disabled": s.store.CoreDisabled("singbox")}
+	}
+	if mmgr, err := s.mh(); err == nil {
+		st := mmgr.Status()
+		var tuns []map[string]any
+		for _, p := range s.enginePoolsOfCore(engineCoreMihomo) {
+			nodes := 0
+			if ns, err := s.readPoolNodes(p.Name); err == nil {
+				nodes = len(ns)
+			}
+			entry := map[string]any{
+				"pool": p.Name, "tun": p.Settings.TunName,
+				"disabled": p.Disabled, "nodes": nodes,
+			}
+			if ps, ok := mmgr.PoolStatus(p.Name); ok {
+				entry["probePort"] = ps.MixedPort
+				entry["probeOk"] = ps.ProbeOK
+				entry["probeMs"] = ps.ProbeMs
+				entry["probeErr"] = ps.ProbeErr
+				entry["reason"] = ps.Reason
+			}
+			tuns = append(tuns, entry)
+		}
+		out.Engines["mihomo"] = map[string]any{
+			"available": true, "running": st.Running, "api": st.API, "version": st.Version,
+			"bin": st.Bin, "mixedPort": st.Mixed, "clashPort": st.Clash,
+			"mode": st.Mode, "cacheFile": st.Cache, "tuns": tuns,
+			"disabled": s.store.CoreDisabled("mihomo"),
+		}
+	} else {
+		out.Engines["mihomo"] = map[string]any{"available": false, "disabled": s.store.CoreDisabled("mihomo")}
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -812,10 +851,10 @@ func (s *Server) poolProbeInfo(p store.Pool) (ok *bool, ms int, at int64, mode, 
 		v := st.ProbeOK
 		return &v, st.ProbeMs, st.LastCheck.Unix(), st.Mode, st.LastResult
 	}
-	if p.Settings.EngineMode == engineMode && s.store.EngineDisabled() {
+	if p.Settings.EngineMode == engineMode && s.store.CoreDisabled(engineCoreOf(p)) {
 		return nil, 0, 0, "fallback", "движок выключен (Система → Ядра VPN)"
 	}
-	mgr, err := s.sb()
+	mgr, err := s.engineMgr(p)
 	if err != nil {
 		return nil, 0, 0, "fallback", "движок недоступен"
 	}
@@ -824,6 +863,8 @@ func (s *Server) poolProbeInfo(p store.Pool) (ok *bool, ms int, at int64, mode, 
 		return nil, 0, 0, "fallback", "движок не применял конфиг"
 	}
 	switch {
+	case ps.Reason == "waits-core":
+		return nil, 0, 0, "fallback", "узлы не поддерживаются mihomo: " + ps.Detail
 	case ps.Reason == "waits-lx":
 		return nil, 0, 0, "fallback", "узлы ждут lx-ядро: " + ps.Detail
 	case ps.CheckedAt.IsZero():
@@ -1559,6 +1600,23 @@ func (s *Server) updatePool(w http.ResponseWriter, r *http.Request) {
 		}
 		merged.RotateSec = patch.RotateSec
 	}
+	// Ядро движкового пула (88-док): "" и "singbox" - одно и то же
+	// (нормализуем в ""), "mihomo" - второй движок; переключение живого
+	// пула пересобирает конфиги обоих ядер (engineRebuild ниже).
+	if patch.EngineCore != "" {
+		if patch.EngineCore != "singbox" && patch.EngineCore != "mihomo" {
+			writeErr(w, fmt.Errorf("engineCore: singbox|mihomo"))
+			return
+		}
+		if pool.Settings.EngineMode != engineMode {
+			writeErr(w, fmt.Errorf("ядро движка выбирается только у движкового пула"))
+			return
+		}
+		merged.EngineCore = patch.EngineCore
+		if merged.EngineCore == "singbox" {
+			merged.EngineCore = ""
+		}
+	}
 	// Каскад движка (detour) владельцем отвергнут: всё, заведённое через
 	// ядро, умирает вместе с ядром, а на OpenWrt без sing-box юзер вообще
 	// ничего не получит. Поле EngineDetour оставлено в схеме про запас -
@@ -1872,9 +1930,10 @@ func (s *Server) getSystemCheck(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) postSystemInstall(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ID     string `json:"id"`
-		Flavor string `json:"flavor"`
-		Backup *bool  `json:"backup"`
+		ID      string `json:"id"`
+		Flavor  string `json:"flavor"`
+		Backup  *bool  `json:"backup"`
+		Replace bool   `json:"replace"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ID == "" {
 		writeErr(w, fmt.Errorf("не указан id компонента"))
@@ -1886,6 +1945,14 @@ func (s *Server) postSystemInstall(w http.ResponseWriter, r *http.Request) {
 			backup = *req.Backup
 		}
 		s.installLXCore(w, r, req.Flavor, backup)
+		return
+	}
+	if req.ID == "mihomo" {
+		backup := true
+		if req.Backup != nil {
+			backup = *req.Backup
+		}
+		s.installMihomoCore(w, r, req.Replace, backup)
 		return
 	}
 	// MagiTrickle ставим кодом из релиза mawg-форка (детект таргета, пакет

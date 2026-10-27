@@ -141,6 +141,7 @@ function showResult(ok: boolean, output: string, errText: string): void {
   const meta = [status.data?.version, status.data?.backendName].filter(Boolean).join(' · ');
   result.value = { open: true, ok, out: (meta ? meta + '\n' : '') + (errText ? errText + '\n\n' : '') + output.trim() };
   void sys.refresh(); // легаси: после установки перечитываем системную проверку
+  void sys.refreshCores(); // строка ядра могла ожить/обновиться
 }
 const result = ref<{ open: boolean; ok: boolean; out: string } | null>(null);
 const resultOpen = computed({
@@ -231,7 +232,7 @@ async function corePower(c: CoreInfo, action: 'start' | 'stop' | 'enable' | 'dis
 async function coreUninstall(c: CoreInfo): Promise<void> {
   const ok = await confirm({
     title: 'Удалить ' + c.title,
-    text: 'Ядро lx удаляется полностью (маркер mawg). Если при установке сохранялся ваш прежний sing-box - он вернётся на место. Движковые пулы перестанут работать, пока ядро не установить снова.',
+    text: 'Ядро удаляется полностью (маркер mawg). Если при установке сохранялся ваш прежний бинарь - он вернётся на место. Движковые пулы этого ядра перестанут работать, пока ядро не установить снова.',
     okLabel: 'Удалить',
   });
   if (!ok) return;
@@ -245,6 +246,17 @@ async function coreUninstall(c: CoreInfo): Promise<void> {
     push(e instanceof Error ? e.message : String(e), true);
   }
   coreBusy.value = '';
+}
+// установка ядра из релиза (88-док, mihomo): confirm -> busy-диалог -> результат
+async function coreInstall(c: CoreInfo): Promise<void> {
+  if (busyId.value) return;
+  const ok = await confirm({
+    title: 'Установить ' + c.title,
+    text: 'Ядро скачивается из релиза на GitHub (gz-бинарь, до пары минут), проверяется контрольная сумма и тест-запуск. Если в системе уже стоит чужой mihomo - он будет сохранён рядом как .pre-mawg.',
+    okLabel: 'Установить',
+  });
+  if (!ok) return;
+  await runInstall({ id: c.id });
 }
 const coreStateBadge = (c: CoreInfo): { text: string; variant: 'ok' | 'err' | 'warn' } => {
   if (c.disabled) return { text: 'выключен', variant: 'err' };
@@ -325,7 +337,7 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
     </UiTable>
 
     <div class="sect">
-      Ядра VPN<UiHelp text="Жизненный цикл туннельных движков: включить/выключить совсем, автозагрузка сервиса, удаление. Сейчас - sing-box; список строится по данным роутера и готов к другим ядрам (mihomo и подобные). Остановка выключает движок целиком: движковые пулы перестают работать, нативные (WireGuard-слоты) не затрагиваются." />
+      Ядра VPN<UiHelp text="Жизненный цикл туннельных движков: включить/выключить совсем, автозагрузка сервиса, удаление. Ядра: sing-box и mihomo (Clash.Meta) - второе ядро для движковых пулов, ставится кнопкой «Установить». Остановка выключает ядро целиком: его движковые пулы перестают работать, нативные (WireGuard-слоты) и пулы другого ядра не затрагиваются." />
     </div>
     <div
       v-for="c in sys.cores.list"
@@ -402,6 +414,18 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
           @click="coreUninstall(c)"
         >
           Удалить ядро
+        </UiButton>
+      </div>
+      <div
+        v-else-if="c.caps.install"
+        class="coreact"
+      >
+        <UiButton
+          variant="primary"
+          :busy="busyId === c.id"
+          @click="coreInstall(c)"
+        >
+          Установить
         </UiButton>
       </div>
       <UiHint

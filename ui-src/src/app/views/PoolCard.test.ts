@@ -175,6 +175,14 @@ describe('PoolCard - отображение', () => {
     nativePool.lastResult = 'проба: ok (30ms)'; // восстановить фикстуру
   });
 
+  it('движковый на mihomo: подзаголовок от engines.mihomo (88-док)', () => {
+    const w = makeCard(
+      { ...enginePool, settings: { ...enginePool.settings, engineCore: 'mihomo' } },
+      { engines: { mihomo: { available: true, running: true, version: 'v1.19.33', mode: 'own', tuns: [] } } });
+    expect(w.text()).toContain('tun1 | движок mihomo v1.19.33');
+    w.unmount();
+  });
+
   it('фоллбек: красный бейдж; ошибка пула - красной строкой; отказы подряд в проверке', () => {
     const w = makeCard({ ...nativePool, mode: 'fallback', lastError: 'dial timeout', consecFails: 2 });
     expect(w.find('.uibadge.v-err').text()).toBe('фоллбек');

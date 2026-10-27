@@ -93,7 +93,7 @@ export const SEARCH_PLACES: SearchPlace[] = [
   // --- Система ---
   {
     title: 'Система: зависимости и обновление',
-    keywords: ['система', 'зависимости', 'обновление', 'provision', 'sing-box', 'сингбокс', 'версия'],
+    keywords: ['система', 'зависимости', 'обновление', 'provision', 'sing-box', 'сингбокс', 'mihomo', 'клаш', 'ядра', 'версия'],
     route: '/next/system',
     anchor: 'card-system',
   },

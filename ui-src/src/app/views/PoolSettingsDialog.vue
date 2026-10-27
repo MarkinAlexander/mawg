@@ -66,6 +66,14 @@ const busy = ref(false);
 
 const isEng = computed(() => pool.value?.settings.engineMode === 'singbox');
 const isFree = computed(() => !!pool.value?.free);
+// ядро движка пула (88-док): выбор при установленном mihomo (кроме Free)
+const engineCore = ref('');
+const mihomoAvailable = computed(() => !!status.data?.engines?.mihomo?.available);
+const showCoreSelect = computed(() => isEng.value && mihomoAvailable.value && !isFree.value);
+const coreOptions: UiSelectOption[] = [
+  { value: '', label: 'sing-box' },
+  { value: 'mihomo', label: 'mihomo (Clash.Meta)' },
+];
 const isPrem = computed(() => !!(pool.value?.premium || {}).imported);
 const sourceRowShown = computed(() =>
   !isFree.value && !isPrem.value && (isEng.value || !!pool.value?.settings.source));
@@ -187,6 +195,7 @@ watch(open, (v) => {
   updateInt.value = String(p.settings.updateIntervalH || 0);
   const gm = p.settings.groupMode;
   groupMode.value = gm === 'selector' || gm === 'rotate' ? gm : 'urltest';
+  engineCore.value = p.settings.engineCore === 'mihomo' ? 'mihomo' : '';
   rotateSec.value = String((p.settings.rotateSec || 0) > 0 ? (p.settings.rotateSec as number) : 300);
   if (isEng.value) void loadEngineNodes();
   const fb = p.settings.fallback || 'direct';
@@ -354,6 +363,8 @@ async function save(): Promise<void> {
         maxRttMs: rttOn.value ? +rtt.value || 0 : 0,
         updateIntervalH: updateInt.value === '' ? 0 : +updateInt.value || 0,
         ...(isEng.value ? {
+          // ядро шлём всегда явно: «singbox» = вернуть на sing-box
+          engineCore: engineCore.value === 'mihomo' ? 'mihomo' : 'singbox',
           groupMode: groupMode.value,
           ...(groupMode.value === 'rotate' ? { rotateSec: Math.max(10, +rotateSec.value || 300) } : {}),
         } : {}),
@@ -536,6 +547,18 @@ async function save(): Promise<void> {
           label="Выбор узла в подписке"
         />
         <UiHelp :text="G.urltest" />
+      </div>
+      <div
+        v-if="showCoreSelect"
+        class="hrow"
+      >
+        <UiSelect
+          v-model="engineCore"
+          :options="coreOptions"
+          label="Ядро движка"
+          hint="применяется по «Сохранить»: пул пересобирается на выбранном ядре"
+        />
+        <UiHelp text="Второе ядро mihomo (Clash.Meta). Узлы xhttp и vless-шифрования mihomo не запустит - такие останутся только у sing-box lx." />
       </div>
       <div
         v-if="isEng && groupMode === 'rotate'"

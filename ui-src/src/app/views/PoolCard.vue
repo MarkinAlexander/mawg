@@ -202,8 +202,10 @@ const sub = computed(() => {
   const p = props.pool;
   if (isEng.value) {
     if (p.disabled) return `${p.settings.tunName} | движок остановлен`;
-    const eng = engine.value;
-    return `${p.settings.tunName} | движок sing-box${eng?.version ? ' ' + eng.version : ''}${eng && !eng.running ? ' (не запущен)' : ''}`;
+    // ядро пула (88-док): mihomo-пулы берут состояние своего движка
+    const core = p.settings.engineCore === 'mihomo' ? 'mihomo' : 'sing-box';
+    const eng = core === 'mihomo' ? status.data?.engines?.mihomo : engine.value;
+    return `${p.settings.tunName} | движок ${core}${eng?.version ? ' ' + eng.version : ''}${eng && !eng.running ? ' (не запущен)' : ''}`;
   }
   const slot = p.slot ? `${p.slot} = ` : '';
   if (p.disabled) return `${slot}${p.device} | ротация остановлена`;
