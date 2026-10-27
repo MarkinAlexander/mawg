@@ -25,7 +25,18 @@ import (
 
 // dnsZoneGroupPrefix - префикс имён служебных групп пути зон; всё с этим
 // префиксом принадлежит зонному DNS и синхронизируется применением.
+// Под него попадает и dnszone-included-* - такую группу создаёт сам форк
+// (маршрут доменов зоны), mawg её только показывает.
 const dnsZoneGroupPrefix = "dnszone-"
+
+// isServiceGroup - группа управляется mawg/форком, а не пользователем:
+// путь зонного DNS, туннель общего DNS-каскада или каскад. В детекте
+// межгрупповых дублей не участвует - «разобрать» такой дубль руками
+// нельзя, а адрес корп-DNS закономерно живёт и в пути зоны, и в общем
+// списке (живые жалобы: треугольник на обеих группах).
+func isServiceGroup(name string) bool {
+	return strings.HasPrefix(name, dnsZoneGroupPrefix) || name == "dns-tunnel" || strings.HasPrefix(name, "Служебная: ")
+}
 
 // maxDnsZones - потолок таблицы (форк держит тот же).
 const maxDnsZones = 32

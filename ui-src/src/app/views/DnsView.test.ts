@@ -612,6 +612,31 @@ describe('DnsView - зонные DNS (форк rev13)', () => {
     w.unmount();
   });
 
+  it('Шрёдингер: мёртвый по health-воркеру + чистая проба - пояснение, адрес без дубля', async () => {
+    useStatus().state.data = {
+      version: 'v', platform: 'openwrt', backendName: 'openwrt', authEnabled: false,
+      nativeAWG3: false, mtSources: true,
+      pools: [{ name: 'proton' }] as Status['pools'],
+    } as Status;
+    vi.stubGlobal('fetch', zonesStub());
+    const w = mount(DnsView);
+    await vi.waitFor(() => expect(w.find('#card-dns-zones').text()).toContain('мёртв: 10.8.0.2:53'));
+    const zbox = w.findAll('.zonebox')[0];
+    // живой статус есть - голый список адресов спрятан, адрес живёт только
+    // в бейдже (жалоба: адрес светился трижды)
+    expect((zbox.text().match(/10\.8\.0\.1:53/g) || []).length).toBe(1);
+    // расхождения с пробой ещё нет - пояснения нет
+    expect(zbox.text()).not.toContain('health-воркер MT ещё считает');
+    // проба зоны: clean - появляется пояснение Шрёдингера
+    const probeBtn = zbox.findAll('button').find((b) => b.attributes('title') === 'проверить зону');
+    await probeBtn!.trigger('click');
+    await vi.waitFor(() => expect(zbox.text()).toContain('Проба через путь клиентов проходит'));
+    // tooltip мёртвого сервера объясняет, что пользоваться можно
+    const dead = zbox.findAll('.uibadge').find((b) => b.text().includes('мёртв: 10.8.0.2:53'));
+    expect(dead?.attributes('title')).toContain('health-воркер догонит');
+    w.unmount();
+  });
+
   it('rev12 - честный хинт вместо карточки, кнопки нет', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       if (url.endsWith('/dns/zones')) {

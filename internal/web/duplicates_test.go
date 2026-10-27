@@ -134,3 +134,48 @@ func TestMtApplyPresetSingleBulkPut(t *testing.T) {
 		t.Fatalf("bulk PUT не содержал группу roblox с правилами: %s", runtime[:min(len(runtime), 300)])
 	}
 }
+
+// живая жалоба: при создании DNS-зоны появлялись две служебные группы
+// (путь dnszone-* от mawg и dnszone-included-* от форка) с треугольником
+// «дубликаты» на обеих - адрес DNS-сервера обязан жить в обеих, а
+// «разобрать дубль» там нельзя. Служебные группы в детекте не участвуют.
+func TestMtDuplicatesSkipsServiceGroups(t *testing.T) {
+	groups := `{"groups":[
+		{"id":"u1","name":"моя","enable":true,"rules":[{"id":"1","type":"subnet","rule":"1.1.1.1/32","enable":true}]},
+		{"id":"z1","name":"dnszone-example-com-1a2b","enable":true,"rules":[{"id":"2","type":"subnet","rule":"1.1.1.1/32","enable":true}]},
+		{"id":"z2","name":"dnszone-included-example.com","enable":true,"rules":[{"id":"3","type":"subnet","rule":"1.1.1.1/32","enable":true}]},
+		{"id":"c1","name":"Служебная: proton через warp","enable":true,"rules":[{"id":"4","type":"subnet","rule":"1.1.1.1/32","enable":true}]},
+		{"id":"u2","name":"вторая","enable":true,"rules":[{"id":"5","type":"domain","rule":"dup.net","enable":true}]},
+		{"id":"u3","name":"третья","enable":true,"rules":[{"id":"6","type":"namespace","rule":"dup.net","enable":true}]}
+	]}`
+	mt := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/groups" {
+			http.NotFound(w, r)
+			return
+		}
+		io.WriteString(w, groups)
+	}))
+	defer mt.Close()
+
+	ts := newTestServerWithMT(t, mt.URL)
+	resp, err := http.Get(ts.URL + "/api/v1/mt/duplicates")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Duplicates map[string]json.RawMessage `json:"duplicates"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	// 1.1.1.1/32 есть в одной пользовательской + трёх служебных:
+	// пользовательских-то одна - не дубль
+	if _, ok := out.Duplicates["1.1.1.1/32"]; ok {
+		t.Fatalf("адрес DNS-сервера зоны не должен считаться дублем: %v", out.Duplicates)
+	}
+	// настоящие пользовательские дубли - по-прежнему находятся
+	if _, ok := out.Duplicates["dup.net"]; !ok {
+		t.Fatalf("пользовательский дубль dup.net потерялся: %v", out.Duplicates)
+	}
+}

@@ -27,6 +27,11 @@ function groupsFixture(): GroupView[] {
       degraded: 'iface:nwg7',
       rules: [{ id: 'r3', type: 'wildcard', rule: '*.example.com', enable: true }],
     },
+    {
+      id: 'g4', name: 'dnszone-example-com-1a2b', interface: 'nwg2', enable: true,
+      dnsZone: true,
+      rules: [{ id: 'r4', type: 'subnet', rule: '1.1.1.1/32', enable: true }],
+    },
   ];
 }
 
@@ -171,6 +176,9 @@ describe('GroupsView - список групп', () => {
     const g3 = block(w, 'g3');
     expect(g3.text()).toContain('каскад');
     expect(g3.text()).toContain('временно переключена на запасной интерфейс');
+    // служебная группа зонного DNS - бейдж, чтобы было понятно, откуда она
+    const g4 = block(w, 'g4');
+    expect(g4.text()).toContain('зонный DNS');
     w.unmount();
   });
 
@@ -264,7 +272,7 @@ describe('GroupsView - список групп', () => {
     await vi.waitFor(() => {
       const post = f.mock.calls.find((c) => (c[0] as string).endsWith('/mt/groups/order'));
       expect(post).toBeTruthy();
-      expect(JSON.parse(post![1]!.body as string)).toEqual({ ids: ['g2', 'g1', 'g3'] });
+      expect(JSON.parse(post![1]!.body as string)).toEqual({ ids: ['g2', 'g1', 'g3', 'g4'] });
     });
     w.unmount();
   });
