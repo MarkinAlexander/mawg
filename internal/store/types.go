@@ -439,6 +439,9 @@ type Settings struct {
 	// EngineDisabled - движок sing-box выключен совсем (Система → Ядра
 	// VPN): не стартует ни своим процессом, ни фрагментом в чужом ядре.
 	EngineDisabled bool `json:"engineDisabled,omitempty"`
+	// BackupKeep - сколько последних копий каждого вида бэкапа держать
+	// в base/backups (2..10, слово владельца; 0 = дефолт 10).
+	BackupKeep int `json:"backupKeep,omitempty"`
 	// PolicyFailCycles/PolicyRestoreCycles - гистерезис политик групп
 	// МагиТрикла: сколько отказных циклов до переключения с исходного
 	// интерфейса и сколько здоровых до возврата (по умолчанию 2 и 2).
@@ -505,6 +508,9 @@ func (s Settings) WithDefaults() Settings {
 	}
 	if out.ListenAddr == "" {
 		out.ListenAddr = "0.0.0.0"
+	}
+	if out.BackupKeep <= 0 {
+		out.BackupKeep = 10
 	}
 	if out.PolicyFailCycles <= 0 {
 		out.PolicyFailCycles = 2

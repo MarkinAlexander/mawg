@@ -1,6 +1,8 @@
 package web
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -154,8 +156,20 @@ func TestMTBackupAndRestoreShadow(t *testing.T) {
 	}
 	got, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if resp.StatusCode != 200 || !strings.Contains(string(got), "спасённая") {
-		t.Fatalf("скачивание: status %d, body %q", resp.StatusCode, got)
+	// скачивается сжатый .conf.gz - распаковываем и сверяем содержимое
+	if !strings.HasSuffix(name, ".conf.gz") {
+		t.Fatalf("новый бэкап должен быть сжат: %s", name)
+	}
+	zr, err := gzip.NewReader(bytes.NewReader(got))
+	if err != nil {
+		t.Fatalf("скачивание: не gzip: %v", err)
+	}
+	unpacked, err := io.ReadAll(zr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 200 || !strings.Contains(string(unpacked), "спасённая") {
+		t.Fatalf("скачивание: status %d, body %q", resp.StatusCode, unpacked)
 	}
 
 	// рантайм MT "потерял" группы (усечение) - восстанавливаем из бэкапа
@@ -338,5 +352,137 @@ func TestMTBackupFullAndRestore(t *testing.T) {
 	got, _ = os.ReadFile(filepath.Join(st.Base(), "config.json"))
 	if !strings.Contains(string(got), "9999") {
 		t.Fatal("мусорный архив испортил config.json")
+	}
+}
+
+// старые несжатые .conf-бэкапы (до сжатия, в т.ч. скачанные на ПК)
+// восстанавливаются как раньше; новые .conf.gz - распаковываются
+func TestMTRestorePlainAndGzipBackups(t *testing.T) {
+	mtSrv, mtState := restoreMTServer(t)
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fb := fake.New()
+	e := rotator.New(st, fb, magitrickle.New(mtSrv.URL))
+	srv := New(st, e, fb, magitrickle.New(mtSrv.URL), "test", nil)
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	groupsJSON := func(name string) string {
+		return `{"groups":[{"name":"` + name + `","enable":true,"interface":"nwg1"}]}`
+	}
+	plain := "mt-shadow-20261001-120000.conf"
+	gzName := "mt-shadow-20261002-120000.conf.gz"
+	if err := os.WriteFile(filepath.Join(st.Base(), "backups", plain), []byte(groupsJSON("из-старого")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	zw.Write([]byte(groupsJSON("из-сжатого")))
+	zw.Close()
+	if err := os.WriteFile(filepath.Join(st.Base(), "backups", gzName), buf.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// старый несжатый
+	resp, err := http.Post(ts.URL+"/api/v1/mt/restore", "application/json", strings.NewReader(`{"file":"`+plain+`"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("рестор старого .conf: %d %s", resp.StatusCode, body)
+	}
+	mtState.mu.Lock()
+	restored := len(mtState.groups) == 1 && mtState.groups[0].Name == "из-старого"
+	mtState.mu.Unlock()
+	if !restored {
+		t.Fatalf("старый бэкап не восстановился: %+v", mtState.groups)
+	}
+
+	// новый сжатый
+	resp, err = http.Post(ts.URL+"/api/v1/mt/restore", "application/json", strings.NewReader(`{"file":"`+gzName+`"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("рестор .conf.gz: %d %s", resp.StatusCode, body)
+	}
+	mtState.mu.Lock()
+	restored = len(mtState.groups) == 1 && mtState.groups[0].Name == "из-сжатого"
+	mtState.mu.Unlock()
+	if !restored {
+		t.Fatalf("сжатый бэкап не восстановился: %+v", mtState.groups)
+	}
+}
+
+// ретеншен: PUT вне диапазона отбивается, в диапазоне применяется
+// сразу (лишние копии чистятся немедленно)
+func TestBackupKeepEndpoints(t *testing.T) {
+	mtSrv, _ := restoreMTServer(t)
+	base := t.TempDir()
+	st, err := store.Open(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fb := fake.New()
+	e := rotator.New(st, fb, magitrickle.New(mtSrv.URL))
+	srv := New(st, e, fb, magitrickle.New(mtSrv.URL), "test", nil)
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	// дефолт
+	resp, _ := http.Get(ts.URL + "/api/v1/mt/backup-keep")
+	var got struct {
+		Keep int `json:"keep"`
+	}
+	json.NewDecoder(resp.Body).Decode(&got)
+	resp.Body.Close()
+	if got.Keep != 10 {
+		t.Fatalf("дефолт keep = %d, want 10", got.Keep)
+	}
+
+	// вне диапазона 2..10 - отказ
+	r1, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/mt/backup-keep", strings.NewReader(`{"keep":1}`))
+	resp1, err := http.DefaultClient.Do(r1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp1.Body.Close()
+	if resp1.StatusCode != http.StatusBadRequest {
+		t.Fatalf("keep=1 должен отбиваться 400, получил %d", resp1.StatusCode)
+	}
+
+	// 5 старых копий на диске; ставим keep=2 - лишние чистятся сразу
+	dir := filepath.Join(base, "backups")
+	for i := 0; i < 5; i++ {
+		name := fmt.Sprintf("mt-config-20261001-12000%d.conf.gz", i)
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r2, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/mt/backup-keep", strings.NewReader(`{"keep":2}`))
+	resp2, err := http.DefaultClient.Do(r2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	json.NewDecoder(resp2.Body).Decode(&got)
+	resp2.Body.Close()
+	if resp2.StatusCode != 200 || got.Keep != 2 {
+		t.Fatalf("keep=2: %d %+v", resp2.StatusCode, got)
+	}
+	entries, _ := os.ReadDir(dir)
+	n := 0
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "mt-config-") {
+			n++
+		}
+	}
+	if n != 2 {
+		t.Fatalf("после keep=2 копий %d, want 2", n)
 	}
 }

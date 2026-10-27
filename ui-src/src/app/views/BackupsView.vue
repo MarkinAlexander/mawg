@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { UiBadge, UiButton, UiCheckbox, UiCard, UiHelp, UiHint, UiSelect, type UiSelectOption, UiSwitch, UiTextarea } from '../../components/ui'
+import { UiBadge, UiButton, UiCheckbox, UiCard, UiHelp, UiHint, UiInput, UiSelect, type UiSelectOption, UiSwitch, UiTextarea } from '../../components/ui'
 import { useGroups } from '../../stores/groups'
 import { useConfirm } from '../../stores/confirm'
 import { useToast } from '../../stores/toast'
@@ -17,7 +17,7 @@ import {
 // и авто-верёвки MT (shadow/mt-config) перед массовыми записями. Ниже -
 // перенос групп файлом: выгрузка на ПК и импорт с выбором, без модалок.
 
-const { state, loadBackups, createBackup, restoreBackup, importGroups, setPolicy, start, stop } = useGroups();
+const { state, loadBackups, loadBackupKeep, saveBackupKeep, createBackup, restoreBackup, importGroups, setPolicy, start, stop } = useGroups();
 const { push } = useToast();
 const { confirm } = useConfirm();
 
@@ -28,6 +28,38 @@ onMounted(() => {
 onBeforeUnmount(stop);
 
 const backupBusy = ref('');
+
+// сколько копий хранить (2..10): предзаполняется с сервера, применяется
+// кнопкой; после смены панель чистит лишние сразу - список обновляем
+const keepVal = ref('');
+const keepLoadedVal = ref('');
+const keepApplying = ref(false);
+const keepChanged = computed(() => keepVal.value !== '' && keepVal.value !== keepLoadedVal.value);
+onMounted(() => {
+  void loadBackupKeep().then((k) => {
+    keepVal.value = keepLoadedVal.value = String(k);
+  }).catch(() => { /* сеть - поле пустое, подсказка дефолтная */ });
+});
+const keepSub = computed(() => (keepLoadedVal.value
+  ? `хранятся на роутере сжатыми, по ${keepLoadedVal.value} последних каждого вида`
+  : 'хранятся на роутере сжатыми'));
+async function applyKeep(): Promise<void> {
+  const n = parseInt(keepVal.value, 10);
+  if (!Number.isInteger(n) || n < 2 || n > 10) {
+    push('сколько копий хранить - целое от 2 до 10', true);
+    return;
+  }
+  keepApplying.value = true;
+  try {
+    await saveBackupKeep(n);
+    keepLoadedVal.value = String(n);
+    push(`Хранится по ${n} последних копий каждого вида`);
+    void loadBackups();
+  } catch (e) {
+    push(e instanceof Error ? e.message : String(e), true);
+  }
+  keepApplying.value = false;
+}
 
 function kindLabel(b: BackupInfo): string {
   return backupKind(b.name).label;
@@ -227,7 +259,7 @@ async function impGo(): Promise<void> {
   <UiCard
     id="card-backups"
     title="Резервные копии"
-    subtitle="хранятся на роутере, по 10 последних каждого вида"
+    :subtitle="keepSub"
   >
     <template #actions>
       <UiHelp text="Копии лежат в каталоге базы панели на роутере (base/backups). «Полный» - вся панель одним архивом: настройки, пулы, каскады, наборы, правила, конфиг MagiTrickle; «правила (shadow)» - только группы правил; «MT-конфиг» - сырой файл настроек MagiTrickle. Перед каждой массовой записью копии делаются автоматически." />
@@ -240,6 +272,22 @@ async function impGo(): Promise<void> {
         @click="backupNow"
       >
         создать бэкап сейчас
+      </UiButton>
+      <span class="sp" />
+      <UiInput
+        v-model="keepVal"
+        type="number"
+        label="сколько копий хранить (2-10)"
+        tooltip="ротация каждого вида: при превышении старые удаляются; частичные копии хранятся сжатыми"
+        style="max-width: 210px"
+      />
+      <UiButton
+        variant="primary"
+        :busy="keepApplying"
+        :disabled="!keepChanged"
+        @click="applyKeep"
+      >
+        применить
       </UiButton>
     </div>
 
