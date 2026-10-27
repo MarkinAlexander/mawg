@@ -21,7 +21,8 @@ function apiStub(routes: Record<string, unknown | ((init?: { method?: string; bo
 }
 
 const fixtures: IfaceInfo[] = [
-  { device: 'Awg0', slot: 'Awg0', description: 'proton', mode: 'managed', pool: 'proton', linkUp: true, connected: true, handshakeAgo: -1 },
+  { device: 'Awg0', slot: 'Awg0', description: 'proton', mode: 'managed', pool: 'proton', linkUp: true, connected: true, handshakeAgo: -1,
+    probeOk: true, probeMs: 152, probeAt: Math.floor(Date.now() / 1000) - 42, probeStatus: 'ok (handshake 3s ago, http 152ms)' },
   { device: 'nwg7', description: 'провайдерский WG', mode: 'external', linkUp: true, connected: true, handshakeAgo: 25, probe: { type: 'http', target: PROBE_HTTP, maxRttMs: 300 }, probeStatus: 'проба: ок (45ms)' },
   { device: 'wg11', mode: 'external', linkUp: false, connected: false, handshakeAgo: -1, probe: null, probeStatus: 'проба: не прошла (dial tcp 1.1.1.1: i/o timeout)' },
   { device: 'tun1', description: 'движок', mode: 'hidden', linkUp: true, connected: true, handshakeAgo: -1 },
@@ -83,6 +84,10 @@ describe('InterfacesView - карточка «Интерфейсы роутер�
     expect(rowTexts).toHaveLength(3); // tun1 скрыт
     expect(rowTexts[0]).toContain('Awg0');
     expect(rowTexts[0]).toContain('пул proton'); // managed - бейдж, без кнопок
+    expect(rowTexts[0]).toContain('ok'); // вердикт пробы пула в той же строке
+    // время той же пробы - в tooltip бейджа
+    const poolBadge = card.findAll('.ifrow')[0].findAll('.uibadge').find((b) => b.text() === 'ok');
+    expect(poolBadge?.attributes('title')).toMatch(/ok \(handshake 3s ago, http 152ms\) · \d+ с назад/);
     expect(rowTexts[0]).not.toContain('скрыть');
     expect(rowTexts[1]).toContain('nwg7');
     expect(rowTexts[1]).toContain('handshake 25с назад');

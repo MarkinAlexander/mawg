@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SlotInfo } from '../../api/types'
-import { fallbackHint, inspectLine, isWarpEndpoint, isWarpPool, planView, protoGate, slotGate, slotOptions } from './poolsLogic'
+import { fallbackHint, inspectLine, isWarpEndpoint, isWarpPool, planView, protoGate, slotGate, slotOptions, agoText } from './poolsLogic'
 import { probeHuman } from './groupsLogic'
 
 const slot = (over: Partial<SlotInfo>): SlotInfo => ({
@@ -171,5 +171,16 @@ describe('warp - isWarpPool', () => {
   it('rejects plain pools', () => {
     expect(isWarpPool({ configs: [{ endpoint: '217.23.3.76:51820' }] })).toBe(false);
     expect(isWarpPool({ configs: [] })).toBe(false);
+  });
+
+  it('agoText: время от последней пробы человеческим интервалом', () => {
+    const now = 1770000000_000;
+    expect(agoText(undefined, now)).toBe('');
+    expect(agoText(0, now)).toBe('');
+    expect(agoText(now / 1000, now)).toBe('только что');
+    expect(agoText(now / 1000 - 42, now)).toBe('42 с назад');
+    expect(agoText(now / 1000 - 125, now)).toBe('2 мин назад');
+    expect(agoText(now / 1000 - 3 * 3600, now)).toBe('3 ч назад');
+    expect(agoText(now / 1000 - 50 * 3600, now)).toBe('2 дн назад');
   });
 });

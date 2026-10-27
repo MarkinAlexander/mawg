@@ -32,6 +32,6 @@ func (e *Engine) ProbeConfigNow(pool, file string) (bool, string, error) {
 		return false, "", err
 	}
 	e.settleAfterIfaceOp()
-	v, detail := e.probe(p)
+	v, _, detail := e.probe(p)
 	return v != probeFail, detail, nil
 }

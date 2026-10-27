@@ -478,15 +478,21 @@ func (c *respCache) reset() {
 func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 	pools := s.store.Pools()
 	type poolView struct {
-		Name           string                   `json:"name"`
-		Platform       string                   `json:"platform"`
-		Device         string                   `json:"device"`
-		Slot           string                   `json:"slot,omitempty"`
-		Mode           string                   `json:"mode"`
-		ActiveFile     string                   `json:"activeFile"`
-		ActiveEndpoint string                   `json:"activeEndpoint"`
-		LastResult     string                   `json:"lastResult"`
-		LastError      string                   `json:"lastError"`
+		Name           string `json:"name"`
+		Platform       string `json:"platform"`
+		Device         string `json:"device"`
+		Slot           string `json:"slot,omitempty"`
+		Mode           string `json:"mode"`
+		ActiveFile     string `json:"activeFile"`
+		ActiveEndpoint string `json:"activeEndpoint"`
+		LastResult     string `json:"lastResult"`
+		LastError      string `json:"lastError"`
+		// ProbeOk/ProbeMs/ProbeAt - структурированный итог последней
+		// пробы и её время (unix-сек): единый источник для карточки
+		// пула и строки интерфейса; nil/0 - пробы ещё не было
+		ProbeOk        *bool                    `json:"probeOk,omitempty"`
+		ProbeMs        int                      `json:"probeMs,omitempty"`
+		ProbeAt        int64                    `json:"probeAt,omitempty"`
 		Rotations      int                      `json:"rotations"`
 		Disabled       bool                     `json:"disabled"`
 		ConsecFails    int                      `json:"consecFails"`
@@ -533,28 +539,10 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 			Free:    p.Free,
 		}
 		if p.Settings.EngineMode == engineMode {
-			switch {
-			case func() bool { _, err := s.sb(); return err != nil }():
-				view.Mode, view.LastResult = "fallback", "движок недоступен"
-			default:
-				if mgr, err := s.sb(); err == nil {
-					if ps, ok := mgr.PoolStatus(p.Name); ok {
-						switch {
-						case ps.Reason == "waits-lx":
-							view.Mode, view.LastResult = "fallback", "узлы ждут lx-ядро: "+ps.Detail
-						case ps.CheckedAt.IsZero():
-							view.Mode, view.LastResult = "fallback", "проба ещё не выполнялась"
-						case ps.ProbeOK:
-							view.Mode = "up"
-							view.LastResult = fmt.Sprintf("ok (http %dms)", ps.ProbeMs)
-						default:
-							view.Mode, view.LastResult = "fallback", "проба не прошла: "+ps.ProbeErr
-						}
-					} else {
-						view.Mode, view.LastResult = "fallback", "движок не применял конфиг"
-					}
-				}
-			}
+			view.ProbeOk, view.ProbeMs, view.ProbeAt, view.Mode, view.LastResult = s.poolProbeInfo(p)
+		} else if !st.LastCheck.IsZero() {
+			v := st.ProbeOK
+			view.ProbeOk, view.ProbeMs, view.ProbeAt = &v, st.ProbeMs, st.LastCheck.Unix()
 		}
 		now := time.Now().Unix()
 		for _, c := range p.Configs {
@@ -714,6 +702,11 @@ type ifaceView struct {
 	HandshakeAgo int                `json:"handshakeAgo"`
 	Probe        *store.ProbeConfig `json:"probe,omitempty"`
 	ProbeStatus  string             `json:"probeStatus,omitempty"`
+	// ProbeOk/ProbeMs/ProbeAt - итог пробы ПУЛА для managed-строки: те же
+	// данные, что в карточке пула (/status), проба не повторяется
+	ProbeOk *bool `json:"probeOk,omitempty"`
+	ProbeMs int   `json:"probeMs,omitempty"`
+	ProbeAt int64 `json:"probeAt,omitempty"`
 }
 
 func (s *Server) allIfaces(ctx context.Context) []platform.SlotInfo {
@@ -763,9 +756,9 @@ func (s *Server) buildIfaces(r *http.Request) ([]byte, error) {
 	if slots == nil {
 		return nil, fmt.Errorf("не удалось получить список интерфейсов")
 	}
-	poolByDevice := map[string]string{}
+	poolByDevice := map[string]store.Pool{}
 	for _, p := range s.store.Pools() {
-		poolByDevice[p.DeviceName()] = p.Name
+		poolByDevice[p.DeviceName()] = p
 	}
 	modes := s.store.IfaceModes()
 	out := make([]ifaceView, 0, len(slots))
@@ -774,9 +767,12 @@ func (s *Server) buildIfaces(r *http.Request) ([]byte, error) {
 			Device: sl.Device, Slot: sl.ID, Description: sl.Description,
 			LinkUp: sl.LinkUp, Connected: sl.Connected, HandshakeAgo: -1,
 		}
-		if pool, ok := poolByDevice[sl.Device]; ok {
+		if p, ok := poolByDevice[sl.Device]; ok {
 			v.Mode = store.IfaceManaged
-			v.Pool = pool
+			v.Pool = p.Name
+			// проба пула тем же единственным источником, что и карточка
+			// пула: запрос не дублируется, время пробы переиспользуется
+			v.ProbeOk, v.ProbeMs, v.ProbeAt, _, v.ProbeStatus = s.poolProbeInfo(p)
 		} else if m := modes[sl.Device]; m == store.IfaceExternal {
 			v.Mode = store.IfaceExternal
 		} else {
@@ -796,6 +792,41 @@ func (s *Server) buildIfaces(r *http.Request) ([]byte, error) {
 		}
 	}
 	return json.Marshal(map[string]any{"interfaces": out})
+}
+
+// poolProbeInfo - итог последней пробы пула одним местом: нативные пулы
+// из состояния ротатора, движковые из PoolStatus менеджера. /status и
+// /ifaces читают только его - проба не выполняется повторно, время
+// переиспользуется. ok=nil - пробы ещё не было.
+func (s *Server) poolProbeInfo(p store.Pool) (ok *bool, ms int, at int64, mode, text string) {
+	if p.Settings.EngineMode != engineMode {
+		st := s.store.State(p.Name)
+		if st.LastCheck.IsZero() {
+			return nil, 0, 0, st.Mode, st.LastResult
+		}
+		v := st.ProbeOK
+		return &v, st.ProbeMs, st.LastCheck.Unix(), st.Mode, st.LastResult
+	}
+	mgr, err := s.sb()
+	if err != nil {
+		return nil, 0, 0, "fallback", "движок недоступен"
+	}
+	ps, valid := mgr.PoolStatus(p.Name)
+	if !valid {
+		return nil, 0, 0, "fallback", "движок не применял конфиг"
+	}
+	switch {
+	case ps.Reason == "waits-lx":
+		return nil, 0, 0, "fallback", "узлы ждут lx-ядро: " + ps.Detail
+	case ps.CheckedAt.IsZero():
+		return nil, 0, 0, "fallback", "проба ещё не выполнялась"
+	case ps.ProbeOK:
+		v := true
+		return &v, ps.ProbeMs, ps.CheckedAt.Unix(), "up", fmt.Sprintf("ok (http %dms)", ps.ProbeMs)
+	default:
+		v := false
+		return &v, ps.ProbeMs, ps.CheckedAt.Unix(), "fallback", "проба не прошла: " + ps.ProbeErr
+	}
 }
 
 func (s *Server) setIfaceMode(w http.ResponseWriter, r *http.Request) {
@@ -1744,6 +1775,9 @@ func (s *Server) postCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.engine.CheckNow(r.PathValue("name"))
+	// строка интерфейса показывает ту же пробу - после «Проверить» пусть
+	// обновится сразу, а не через TTL кэша /ifaces
+	s.ifaceCache.reset()
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "checking"})
 }
 

@@ -254,6 +254,10 @@ export interface PoolView {
   activeEndpoint: string
   lastResult: string
   lastError: string
+  // структурированный итог той же пробы (время - unix-сек)
+  probeOk?: boolean | null
+  probeMs?: number
+  probeAt?: number
   rotations: number
   disabled: boolean
   consecFails: number
@@ -442,6 +446,10 @@ export interface IfaceInfo {
   handshakeAgo: number
   probe?: ProbeConfig | null
   probeStatus?: string
+  // итог пробы ПУЛА (managed-строки): те же данные, что в карточке пула
+  probeOk?: boolean | null
+  probeMs?: number
+  probeAt?: number
 }
 
 export interface WanProbeInfo {

@@ -188,3 +188,17 @@ export function isWarpPool(p: { settings?: { warp?: unknown }; configs?: { endpo
   if (p.settings?.warp) return true;
   return (p.configs || []).some((c) => isWarpEndpoint(c.endpoint));
 }
+
+// agoText - сколько времени назад была проба (probeAt - unix-сек из
+// /status и /ifaces: время той же единственной пробы пула).
+export function agoText(at?: number, now = Date.now()): string {
+  if (!at) return '';
+  const s = Math.max(0, Math.round((now - at * 1000) / 1000));
+  if (s < 10) return 'только что';
+  if (s < 60) return s + ' с назад';
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + ' мин назад';
+  const h = Math.floor(m / 60);
+  if (h < 48) return h + ' ч назад';
+  return Math.floor(h / 24) + ' дн назад';
+}

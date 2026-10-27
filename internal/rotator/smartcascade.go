@@ -213,7 +213,7 @@ func (e *Engine) smartRescue(p store.Pool) bool {
 // smartBestProbe - лучшая из двух проб с паузой между (хендшейк через
 // Via/напрямую должен успеть случиться за неё).
 func (e *Engine) smartBestProbe(p store.Pool) (bool, string) {
-	if verdict, detail := e.probe(p); verdict != probeFail {
+	if verdict, _, detail := e.probe(p); verdict != probeFail {
 		return true, detail
 	}
 	pause := e.smartPause
@@ -221,7 +221,7 @@ func (e *Engine) smartBestProbe(p store.Pool) (bool, string) {
 		pause = 5 * time.Second
 	}
 	time.Sleep(pause)
-	verdict, detail := e.probe(p)
+	verdict, _, detail := e.probe(p)
 	return verdict != probeFail, detail
 }
 
