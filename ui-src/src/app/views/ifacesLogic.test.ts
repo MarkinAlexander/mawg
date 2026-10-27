@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { PROBE_DEFAULTS, probeBadgeOf, probeTypeOf, targetOnTypeChange } from './ifacesLogic'
+import { PROBE_DEFAULTS, probeBadgeOf, probeTypeOf, targetOnTypeChange, poolProbeBadge } from './ifacesLogic'
 
 describe('ifacesLogic', () => {
   it('probeTypeOf: URL - http, IP и пустое - icmp (легаси probeTypeOf)', () => {
@@ -26,5 +26,13 @@ describe('ifacesLogic', () => {
       ok: false,
     });
     expect(probeBadgeOf('проба: не прошла')).toEqual({ short: 'проба: не прошла', detail: '', ok: false });
+  });
+
+  it('poolProbeBadge: без пробы null, вердикт до скобок, флаг из probeOk', () => {
+    expect(poolProbeBadge({})).toBeNull();
+    expect(poolProbeBadge({ probeOk: null })).toBeNull();
+    expect(poolProbeBadge({ probeOk: true, probeStatus: 'ok (handshake 3s ago, http 152ms)' })).toEqual({ short: 'ok', ok: true });
+    expect(poolProbeBadge({ probeOk: false, probeStatus: 'probe http://x failed' })).toEqual({ short: 'probe http://x failed', ok: false });
+    expect(poolProbeBadge({ probeOk: false })).toEqual({ short: 'нет ответа', ok: false });
   });
 });

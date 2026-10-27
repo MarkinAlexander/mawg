@@ -11,6 +11,8 @@ import { usePools } from '../../stores/status'
 import { useToast } from '../../stores/toast'
 import type { BundleView, IfaceInfo, ProbeConfig } from '../../api/types'
 import { PROBE_DEFAULTS, probeBadgeOf, probeTypeOf, targetOnTypeChange } from './ifacesLogic'
+import { poolProbeBadge } from './ifacesLogic'
+import { agoText } from './poolsLogic'
 import { G } from '../glossary'
 import BundleDialog from './BundleDialog.vue'
 import CaptchaHost from './CaptchaHost.vue'
@@ -80,7 +82,12 @@ const rows = computed(() =>
       hs: it.mode === 'managed'
         ? ''
         : it.handshakeAgo >= 0 ? `handshake ${it.handshakeAgo}с назад` : 'handshake нет',
-      pb: it.probeStatus ? probeBadgeOf(it.probeStatus) : null,
+      // бейдж внешней пробы - только не-managed строкам; managed несёт
+      // бейдж пробы ПУЛА (ppb) из тех же данных
+      pb: it.mode !== 'managed' && it.probeStatus ? probeBadgeOf(it.probeStatus) : null,
+      // проба пула в managed-строке: тот же единственный вердикт и время
+      ppb: it.mode === 'managed' ? poolProbeBadge(it) : null,
+      pwhen: it.mode === 'managed' ? agoText(it.probeAt) : '',
     })));
 
 // заголовок строки: слот+описание или описание (легаси title в renderIfaces)
@@ -351,6 +358,12 @@ async function saveWan(): Promise<void> {
         <span class="right">
           <template v-if="r.it.mode === 'managed'">
             <UiBadge :text="'пул ' + (r.it.pool || '')" />
+            <UiBadge
+              v-if="r.ppb"
+              :text="r.ppb.short"
+              :variant="r.ppb.ok ? 'ok' : 'err'"
+              :tooltip="(r.it.probeStatus || '') + (r.pwhen ? ' · ' + r.pwhen : '')"
+            />
             <SmartCascadeChip
               v-if="poolSmart(r.it.pool)"
               :settings="poolSmart(r.it.pool)!.settings"

@@ -9,7 +9,7 @@ import { useWarp } from '../../stores/warp'
 import { useSecrets } from '../secrets'
 import { G } from '../glossary'
 import { probeHuman } from './groupsLogic'
-import { isWarpPool } from './poolsLogic'
+import { agoText, isWarpPool } from './poolsLogic'
 import SmartCascadeChip from './SmartCascadeChip.vue'
 import type { ConfigView, PoolEngine, PoolView } from '../../api/types'
 
@@ -211,7 +211,9 @@ const sub = computed(() => {
 });
 const result = computed(() => {
   const p = props.pool;
+  const when = agoText(p.probeAt);
   return (p.lastResult || '-')
+    + (when ? ` · ${when}` : '')
     + (p.consecFails ? ` (отказов подряд: ${p.consecFails}/${p.settings.failThreshold})` : '')
     + (p.refreshFails ? ` ⚠ автообновление источника падало: ${p.refreshFails}` : '');
 });

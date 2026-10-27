@@ -34,3 +34,14 @@ export function probeBadgeOf(
   const detail = st.slice(st.indexOf('(') + 1).replace(/\)$/, '');
   return { short, detail, ok };
 }
+
+// бейдж пробы ПУЛА в managed-строке: вердикт из probeOk (бэкендовский
+// флаг той же пробы, что в карточке пула), короткий текст - до скобок
+export function poolProbeBadge(
+  it: { probeOk?: boolean | null; probeStatus?: string },
+): { short: string; ok: boolean } | null {
+  if (it.probeOk === undefined || it.probeOk === null) return null;
+  const st = (it.probeStatus || '').trim();
+  const short = (st.includes('(') ? st.slice(0, st.indexOf('(')) : st).trim();
+  return { short: short || (it.probeOk ? 'ok' : 'нет ответа'), ok: it.probeOk };
+}

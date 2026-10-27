@@ -597,6 +597,7 @@ func (e *Engine) DisablePool(pool string) error {
 	e.store.MutateState(pool, func(s *store.PoolState) {
 		s.Mode = store.ModeFallback
 		s.LastResult = "выключен вручную"
+		s.ProbeOK, s.ProbeMs = false, 0
 		s.ConsecFails = 0
 	})
 	e.store.LogEvent(pool, "disable", "пул выключен вручную, ротация остановлена")
@@ -707,6 +708,7 @@ func (e *Engine) PoolDown(pool string) error {
 		s.Mode = store.ModeFallback
 		s.Since = e.now()
 		s.LastResult = "manual down"
+		s.ProbeOK, s.ProbeMs = false, 0
 	})
 	return nil
 }
@@ -733,6 +735,7 @@ func (e *Engine) checkPool(name string) {
 			e.store.MutateState(name, func(s *store.PoolState) {
 				s.LastCheck = e.now()
 				s.LastResult = "конфигов нет - туннель остановлен"
+				s.ProbeOK, s.ProbeMs = false, 0
 				s.ActiveFile = ""
 				s.Mode = store.ModeFallback
 				s.ConsecFails = 0
@@ -744,6 +747,7 @@ func (e *Engine) checkPool(name string) {
 		e.store.MutateState(name, func(s *store.PoolState) {
 			s.LastCheck = e.now()
 			s.LastResult = "конфигов для ротации нет"
+			s.ProbeOK, s.ProbeMs = false, 0
 		})
 		return
 	}
@@ -763,13 +767,16 @@ func (e *Engine) probeAndMaybeRotate(p store.Pool, st *store.PoolState) {
 		e.store.MutateState(p.Name, func(s *store.PoolState) {
 			s.LastCheck = e.now()
 			s.LastResult = "settling after apply"
+			s.ProbeOK, s.ProbeMs = false, 0
 		})
 		return
 	}
-	verdict, detail := e.probe(p)
+	verdict, rtt, detail := e.probe(p)
 	e.store.MutateState(p.Name, func(s *store.PoolState) {
 		s.LastCheck = e.now()
 		s.LastResult = detail
+		s.ProbeOK = verdict == probeOK
+		s.ProbeMs = rtt
 	})
 	if verdict != probeFail {
 		if st.ConsecFails > 0 && verdict == probeOK {
@@ -811,13 +818,13 @@ const (
 	probeLossy = 2
 )
 
-func (e *Engine) probe(p store.Pool) (int, string) {
+func (e *Engine) probe(p store.Pool) (verdict int, rttMs int, detail string) {
 	status, err := e.backend.Status(p)
 	if err != nil {
-		return probeFail, "status error: " + err.Error()
+		return probeFail, 0, "status error: " + err.Error()
 	}
 	if !status.LinkUp {
-		return probeFail, "link down"
+		return probeFail, 0, "link down"
 	}
 	target := p.Settings.ProbeHost
 	var gotReply bool
@@ -831,7 +838,7 @@ func (e *Engine) probe(p store.Pool) (int, string) {
 		gotReply, rtt, _ = e.backend.Probe(p, target)
 	}
 	if gotReply && rtt > 0 && p.Settings.MaxRTTms > 0 && rtt > p.Settings.MaxRTTms {
-		return probeFail, fmt.Sprintf("%s %dms выше порога %dms", kind, rtt, p.Settings.MaxRTTms)
+		return probeFail, rtt, fmt.Sprintf("%s %dms выше порога %dms", kind, rtt, p.Settings.MaxRTTms)
 	}
 	rttSuffix := ""
 	if rtt > 0 {
@@ -840,13 +847,13 @@ func (e *Engine) probe(p store.Pool) (int, string) {
 	if !gotReply {
 		if status.HandshakeAgo >= 0 && status.HandshakeAgo <= 120 {
 			if p.Settings.MaxRTTms > 0 {
-				return probeLossy, fmt.Sprintf("ok (handshake %ds ago, %s lossy), отказы не сброшены: задан порог %dms", status.HandshakeAgo, kind, p.Settings.MaxRTTms)
+				return probeLossy, 0, fmt.Sprintf("ok (handshake %ds ago, %s lossy), отказы не сброшены: задан порог %dms", status.HandshakeAgo, kind, p.Settings.MaxRTTms)
 			}
-			return probeOK, fmt.Sprintf("ok (handshake %ds ago, %s lossy)", status.HandshakeAgo, kind)
+			return probeOK, 0, fmt.Sprintf("ok (handshake %ds ago, %s lossy)", status.HandshakeAgo, kind)
 		}
-		return probeFail, "probe " + target + " failed"
+		return probeFail, 0, "probe " + target + " failed"
 	}
-	return probeOK, fmt.Sprintf("ok (handshake %ds ago%s)", status.HandshakeAgo, rttSuffix)
+	return probeOK, rtt, fmt.Sprintf("ok (handshake %ds ago%s)", status.HandshakeAgo, rttSuffix)
 }
 
 type wanCacheEntry struct {
@@ -1159,6 +1166,7 @@ func (e *Engine) recordApplied(p store.Pool, file, endpoint string) error {
 		s.Rotations++
 		s.GraceUntil = e.now().Add(settleSeconds * time.Second).Unix()
 		s.LastResult = "applied, settling"
+		s.ProbeOK, s.ProbeMs = false, 0
 		s.LastError = ""
 		if s.Mode == store.ModeFallback {
 			s.Mode = store.ModeUp
@@ -1186,6 +1194,7 @@ func (e *Engine) enterFallback(p store.Pool, st *store.PoolState) {
 		s.Mode = store.ModeFallback
 		s.Since = e.now()
 		s.LastResult = "all configs failed"
+		s.ProbeOK, s.ProbeMs = false, 0
 	})
 	e.store.LogEvent(p.Name, "fallback", "all configs failed, mode "+p.Settings.Fallback)
 	if was == store.ModeFallback {
@@ -1249,6 +1258,7 @@ func (e *Engine) tryRecover(p store.Pool, st *store.PoolState) {
 		e.store.MutateState(p.Name, func(s *store.PoolState) {
 			s.LastCheck = e.now()
 			s.LastResult = "fallback, waiting for cooldown"
+			s.ProbeOK, s.ProbeMs = false, 0
 		})
 		return
 	}
