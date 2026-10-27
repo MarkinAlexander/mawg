@@ -274,12 +274,15 @@ async function impGo(): Promise<void> {
         создать бэкап сейчас
       </UiButton>
       <span class="sp" />
+      <!-- инлайн-ряд как в DNS-настройках: голый инпут в рост кнопки,
+           подпись обычным текстом - поле с label сверху распирало строку -->
+      <span class="muted">сколько копий хранить (2-10)</span>
       <UiInput
         v-model="keepVal"
         type="number"
-        label="сколько копий хранить (2-10)"
+        bare
+        class="cnum"
         tooltip="ротация каждого вида: при превышении старые удаляются; частичные копии хранятся сжатыми"
-        style="max-width: 210px"
       />
       <UiButton
         variant="primary"
@@ -488,7 +491,12 @@ async function impGo(): Promise<void> {
   gap: 8px;
   flex-wrap: wrap;
   justify-content: flex-end;
+  align-items: center;
   margin: 6px 0;
+}
+/* голый number-инпут ретеншена - в рост кнопки, как cnum в DNS */
+.cnum {
+  width: 64px;
 }
 .bkline {
   display: flex;
