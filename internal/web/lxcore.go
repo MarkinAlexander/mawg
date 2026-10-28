@@ -102,7 +102,7 @@ type singboxSourceView struct {
 	Title     string `json:"title"`
 	Note      string `json:"note"`
 	Latest    string `json:"latest,omitempty"`
-	UPX       bool   `json:"upx"`      // есть сжатый профиль
+	UPX       bool   `json:"upx"`       // есть сжатый профиль
 	Available bool   `json:"available"` // есть ассет под арх роутера
 	Error     string `json:"error,omitempty"`
 }
@@ -123,12 +123,16 @@ func (s *Server) getSingboxSources(w http.ResponseWriter, r *http.Request) {
 			v := singboxSourceView{ID: rep.Source.ID, Title: rep.Source.Title, Note: rep.Source.Note, UPX: rep.Source.CompactMarker != ""}
 			if rep.Error != "" {
 				v.Error = rep.Error
-			} else if latest := rep.Latest(); latest != nil {
-				v.Latest = latest.Tag
-				if arch != "" {
-					if n, ok := latest.Names[arch]; ok && (n.Plain != "" || n.UPX != "") {
-						v.Available = true
+			} else {
+				// свежий релиз, ГДЕ ЕСТЬ сборка под арх роутера (у альф
+				// части платформ нет - available не должен из-за них гаснуть)
+				for _, rel := range rep.Releases {
+					n, ok := rel.Names[arch]
+					if !ok || (n.Plain == "" && n.UPX == "") {
+						continue
 					}
+					v.Latest, v.Available = rel.Tag, true
+					break
 				}
 			}
 			out = append(out, v)

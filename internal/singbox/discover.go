@@ -202,6 +202,12 @@ func fetchReleases(ctx context.Context, src Source) ([]Release, error) {
 	}
 	out := make([]Release, 0, len(raw))
 	for _, r := range raw {
+		// GitHub отдаёт первыми prereleases (у апстрима - v1.15.0-alpha,
+		// у Leadaxe - lx.24-rc): альфы без части платформ, rc - сырьё,
+		// на роутеры такое не ставим
+		if r.Prerelease {
+			continue
+		}
 		out = append(out, buildRelease(r, src))
 	}
 	return out, nil
