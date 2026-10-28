@@ -26,6 +26,9 @@ type Item struct {
 	Note           string   `json:"note,omitempty"`
 	// StatusText - свой текст бейджа состояния вместо ок/нет («чужое upstream»).
 	StatusText string `json:"statusText,omitempty"`
+	// Source - источник установленного ядра (lx|extended|upstream): диалог
+	// предвыбирает его, чтобы «обновить» не меняло ядро молча.
+	Source string `json:"source,omitempty"`
 	// FreeBytes/BackupBytes - место на диске и размер ядра: диалог решает,
 	// влезет ли бэкап старого бинаря.
 	FreeBytes   int64 `json:"freeBytes,omitempty"`
@@ -383,7 +386,8 @@ func parseBinVersion(out string) string {
 	return ""
 }
 
-// lxCoreItem - пункт «ядро sing-box-lx». Action - маркер для web-обработчика
+// lxCoreItem - пункт «ядро sing-box» (источник установки выбирается в
+// диалоге: extended/lx/апстрим). Action - маркер для web-обработчика
 // (установка идёт кодом singbox.InstallLXCore), не shell-скрипт; пути
 // совпадают с singbox.LXTargetForPlatform.
 func lxCoreItem(run Runner, platform string) Item {
@@ -400,10 +404,10 @@ func lxCoreItem(run Runner, platform string) Item {
 		backupBytes = size
 	}
 	item := Item{
-		ID: "singbox-lx", Title: "Ядро sing-box-lx", Version: ver,
+		ID: "singbox-lx", Title: "Ядро sing-box", Version: ver,
 		FreeBytes: lxDiskFree(disk), BackupBytes: backupBytes,
 	}
-	confirm := fmt.Sprintf("mawg скачает свежий релиз sing-box-lx, проверит контрольную сумму, прогонит тест-запуск во временном каталоге и только потом установит в %s. После установки движок mawg работает на lx-профиле; в режиме «общего ядра» сервис sing-box будет перезапущен - соединения порвутся на несколько секунд.", bin)
+	confirm := fmt.Sprintf("mawg скачает свежий релиз выбранного источника (extended / наш lx / апстрим - выбирается ниже), проверит контрольную сумму, прогонит тест-запуск во временном каталоге и только потом установит в %s. После установки движок mawg работает на этом ядре; в режиме «общего ядра» сервис sing-box будет перезапущен - соединения порвутся на несколько секунд.", bin)
 	switch {
 	case ver == "" && binExists:
 		// бинарь стоит, но version-запуск не уложился в таймаут (upx-
@@ -418,21 +422,31 @@ func lxCoreItem(run Runner, platform string) Item {
 		item.Action = "singbox-lx"
 		item.ActionLabel = "установить lx"
 		item.Confirm = "Сейчас ядро sing-box не установлено. " + confirm
-	case strings.Contains(ver, "-lx."):
+	case strings.Contains(ver, "-lx."), strings.Contains(ver, "-extended-"), marked:
+		// наша установка любого источника (маркер) либо сборка семейства
+		// lx/extended, поставленная вручную, - ядро рабочее, обновляемо
 		item.Installed = true
+		switch {
+		case strings.Contains(ver, "-lx."):
+			item.Source = "lx"
+		case strings.Contains(ver, "-extended-"):
+			item.Source = "extended"
+		default:
+			item.Source = "upstream"
+		}
 		item.Action = "singbox-lx"
-		item.ActionLabel = "обновить lx"
-		item.Confirm = fmt.Sprintf("Сейчас стоит lx-ядро %s. mawg переустановит его нашей сборкой, если релиз новее по суффиксу -lx.N, выбран другой профиль (plain/upx) или стоящая сборка не наша (нет маркера источника mawg). ", ver) + confirm
+		item.ActionLabel = "обновить ядро"
+		item.Confirm = fmt.Sprintf("Сейчас стоит ядро %s. mawg переустановит его, если релиз новее, выбран другой источник или профиль (plain/сжатый) либо стоящая сборка не наша (нет маркера источника mawg). ", ver) + confirm
 		if !marked {
-			item.Note = "Ядро lx стоит без маркера mawg (ставили вручную или оригинальной сборкой автора) - обновление заменит бинарь нашей сборкой той же версии."
+			item.Note = "Ядро стоит без маркера mawg (ставили вручную) - обновление заменит бинарь нашей сборкой того же источника."
 			item.ActionLabel = "заменить своей сборкой"
 		}
 	default:
 		item.StatusText = "чужое"
 		item.Action = "singbox-lx-replace"
-		item.ActionLabel = "заменить на lx"
+		item.ActionLabel = "заменить"
 		item.Note = fmt.Sprintf("Сейчас стоит чужое ядро (upstream %s): mawg его не трогает, замена - только по этой кнопке. Сохранять ли старое перед заменой - выбор в диалоге (зависит от свободного места).", ver)
-		item.Confirm = fmt.Sprintf("Заменит чужое ядро %s (upstream %s) на lx-релиз. Сервис sing-box будет перезапущен - соединения порвутся; если сервис не переподнимется с новым бинарем с первого раза, перезапустите его ещё раз. ", bin, ver) + confirm + " lx-профиль нужен движку для xhttp/mlkem-узлов и AWG-эндпоинтов."
+		item.Confirm = fmt.Sprintf("Заменит чужое ядро %s (upstream %s) на релиз выбранного источника. Сервис sing-box будет перезапущен - соединения порвутся; если сервис не переподнимется с новым бинарем с первого раза, перезапустите его ещё раз. ", bin, ver) + confirm + " Расширенное ядро (lx или extended) нужно движку для xhttp/vless-шифрования и AWG-эндпоинтов."
 	}
 	return item
 }

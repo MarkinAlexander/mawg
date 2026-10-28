@@ -5,26 +5,46 @@ import (
 	"time"
 )
 
+func lxMarker() string  { return ".upx" }
+func extMarker() string { return "-compressed" }
+
 func TestParseAssetName(t *testing.T) {
 	cases := []struct {
-		name string
-		arch string
-		upx  bool
-		ok   bool
+		name   string
+		marker string
+		arch   string
+		upx    bool
+		ok     bool
 	}{
-		{"sing-box-1.14.2-lx.12-linux-amd64.tar.gz", "amd64", false, true},
-		{"sing-box-1.14.2-lx.12-linux-mipsle-softfloat.tar.gz", "mipsle-softfloat", false, true},
-		{"sing-box-1.14.2-lx.12-linux-386.tar.gz", "386", false, true},
-		{"sing-box-1.14.2-lx.12-linux-riscv64.tar.gz", "riscv64", false, true},
-		{"sing-box-1.14.2-lx.12-linux-amd64.upx.tar.gz", "amd64", true, true},
-		{"sing-box-1.14.2-lx.12-linux-mips-softfloat.upx.tar.gz", "mips-softfloat", true, true},
-		{"sing-box-1.14.2-lx.12-windows-amd64.zip", "", false, false},
-		{"sing-box-1.14.2-lx.12-linux-amd64.tar.gz.sha256", "", false, false},
-		{"SHA256SUMS", "", false, false},
-		{"random.tar.gz", "", false, false},
+		// lx: сжатый профиль - суффикс .upx
+		{"sing-box-1.14.2-lx.12-linux-amd64.tar.gz", lxMarker(), "amd64", false, true},
+		{"sing-box-1.14.2-lx.12-linux-mipsle-softfloat.tar.gz", lxMarker(), "mipsle-softfloat", false, true},
+		{"sing-box-1.14.2-lx.12-linux-386.tar.gz", lxMarker(), "386", false, true},
+		{"sing-box-1.14.2-lx.12-linux-riscv64.tar.gz", lxMarker(), "riscv64", false, true},
+		{"sing-box-1.14.2-lx.12-linux-amd64.upx.tar.gz", lxMarker(), "amd64", true, true},
+		{"sing-box-1.14.2-lx.12-linux-mips-softfloat.upx.tar.gz", lxMarker(), "mips-softfloat", true, true},
+		{"sing-box-1.14.2-lx.12-windows-amd64.zip", lxMarker(), "", false, false},
+		{"sing-box-1.14.2-lx.12-linux-amd64.tar.gz.sha256", lxMarker(), "", false, false},
+		{"SHA256SUMS", lxMarker(), "", false, false},
+		{"random.tar.gz", lxMarker(), "", false, false},
+		// extended: сжатый профиль - суффикс -compressed
+		{"sing-box-1.14.3-extended-2.7.3-linux-mipsle-softfloat.tar.gz", extMarker(), "mipsle-softfloat", false, true},
+		{"sing-box-1.14.3-extended-2.7.3-linux-mipsle-softfloat-compressed.tar.gz", extMarker(), "mipsle-softfloat", true, true},
+		{"sing-box-1.14.3-extended-2.7.3-linux-386-compressed.tar.gz", extMarker(), "386", true, true},
+		{"sing-box-1.14.3-extended-2.7.3-linux-arm64.tar.gz", extMarker(), "arm64", false, true},
+		// у extended .upx-профиля нет: файл с .upx не разбирается как ассет
+		{"sing-box-1.14.3-extended-2.7.3-linux-386.upx.tar.gz", extMarker(), "", false, false},
+		// апстрим: сжатого профиля нет вовсе
+		{"sing-box-1.14.4-linux-mipsle-softfloat.tar.gz", "", "mipsle-softfloat", false, true},
+		{"sing-box-1.14.4-linux-386-softfloat.tar.gz", "", "386-softfloat", false, true},
+		{"sing-box-1.14.4-linux-amd64.tar.gz", "", "amd64", false, true},
+		// динамические/альтернативные сборки не наши
+		{"sing-box-1.14.4-linux-386-glibc.tar.gz", "", "", false, false},
+		{"sing-box-1.14.4-linux-amd64-musl.tar.gz", "", "", false, false},
+		{"sing-box-1.14.3-extended-2.7.3-linux-amd64-purego.tar.gz", extMarker(), "", false, false},
 	}
 	for _, c := range cases {
-		arch, upx, ok := parseAssetName(c.name)
+		arch, upx, ok := parseAssetName(c.name, c.marker)
 		if ok != c.ok || arch != c.arch || upx != c.upx {
 			t.Errorf("%s: got %q %v %v, want %q %v %v", c.name, arch, upx, ok, c.arch, c.upx, c.ok)
 		}
@@ -32,6 +52,7 @@ func TestParseAssetName(t *testing.T) {
 }
 
 func TestBuildReleaseMatrix(t *testing.T) {
+	lx, _ := SourceByID(SourceLXID)
 	r := buildRelease(ghRelease{
 		TagName:   "v1.14.2-lx.12",
 		HTMLURL:   "https://github.com/MarkinAlexander/sing-box-lx/releases/tag/v1.14.2-lx.12",
@@ -43,7 +64,7 @@ func TestBuildReleaseMatrix(t *testing.T) {
 			{Name: "sing-box-1.14.2-lx.12-windows-amd64.zip"},
 			{Name: "SHA256SUMS"},
 		},
-	})
+	}, lx)
 	if !r.SHA256SUM {
 		t.Fatal("SHA256SUMS не замечен")
 	}
@@ -59,15 +80,46 @@ func TestBuildReleaseMatrix(t *testing.T) {
 }
 
 func TestBuildReleaseWithoutSHA(t *testing.T) {
+	lx, _ := SourceByID(SourceLXID)
 	r := buildRelease(ghRelease{
 		TagName: "v1",
 		Assets:  []ghAsset{{Name: "sing-box-1-linux-arm64.tar.gz"}},
-	})
+	}, lx)
 	if r.SHA256SUM {
 		t.Fatal("SHA256SUM не должно быть")
 	}
 	if r.Matrix["arm64"] != (Flavors{Plain: true}) {
 		t.Fatalf("arm64: %+v", r.Matrix["arm64"])
+	}
+}
+
+// extended/апстрим: digest-поля ассетов GitHub API становятся суммами
+// FlavorAssets, сжатый профиль узнаётся по -compressed
+func TestBuildReleaseDigests(t *testing.T) {
+	ext, _ := SourceByID(SourceExtID)
+	if ext.SumsFile {
+		t.Fatal("у extended нет SHA256SUMS-файла")
+	}
+	r := buildRelease(ghRelease{
+		TagName: "v1.14.3-extended-2.7.3",
+		Assets: []ghAsset{
+			{Name: "sing-box-1.14.3-extended-2.7.3-linux-386.tar.gz", Digest: "sha256:cafe"},
+			{Name: "sing-box-1.14.3-extended-2.7.3-linux-386-compressed.tar.gz", Digest: "sha256:beef"},
+			{Name: "sing-box-1.14.3-extended-2.7.3-linux-386-glibc.tar.gz", Digest: "sha256:dead"},
+		},
+	}, ext)
+	if r.SHA256SUM {
+		t.Fatal("SHA256SUMS не должно быть")
+	}
+	n := r.Names["386"]
+	if n.PlainSHA != "cafe" || n.UPXSHA != "beef" {
+		t.Fatalf("digests: %+v", n)
+	}
+	if _, has := r.Matrix["386-glibc"]; has {
+		t.Fatal("glibc-вариант не должен попадать в матрицу")
+	}
+	if r.Matrix["386"] != (Flavors{Plain: true, UPX: true}) {
+		t.Fatalf("386: %+v", r.Matrix["386"])
 	}
 }
 

@@ -2,6 +2,8 @@ package web
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"os/exec"
 	"time"
@@ -9,10 +11,19 @@ import (
 	"mawg/internal/singbox"
 )
 
-// installLXCore - установка lx-ядра по кнопке «Система -> Зависимости».
-// Чужое ядро меняется только когда свежая проверка показала пункт замены
-// (владелец подтвердил в диалоге); backup=false - без копии старого.
-func (s *Server) installLXCore(w http.ResponseWriter, r *http.Request, flavor string, backup bool) {
+// installLXCore - установка ядра sing-box по кнопке «Система -> Зависимости»
+// (источник на выбор: extended/lx/upstream). Чужое ядро меняется только когда
+// свежая проверка показала пункт замены (владелец подтвердил в диалоге);
+// backup=false - без копии старого.
+func (s *Server) installLXCore(w http.ResponseWriter, r *http.Request, flavor string, backup bool, source string) {
+	if source != "" {
+		if _, ok := singbox.SourceByID(source); !ok {
+			writeErr(w, fmt.Errorf("неизвестный источник ядра %q", source))
+			return
+		}
+	} else if len(singbox.Sources) > 0 {
+		source = singbox.Sources[0].ID
+	}
 	replace := false
 	for _, item := range s.systemCheck().Items {
 		if item.ID == "singbox-lx" {
@@ -21,11 +32,11 @@ func (s *Server) installLXCore(w http.ResponseWriter, r *http.Request, flavor st
 		}
 	}
 	target := singbox.LXTargetForPlatform(s.backend.Name())
-	s.store.LogEvent("system", "lxcore", "установка lx-ядра ("+orDefault(flavor, "plain")+", цель "+target.Bin+", замена чужого: "+yesNo(replace)+", копия старого: "+yesNo(backup)+")")
+	s.store.LogEvent("system", "lxcore", "установка ядра sing-box ("+orDefault(flavor, "plain")+", источник "+source+", цель "+target.Bin+", замена чужого: "+yesNo(replace)+", копия старого: "+yesNo(backup)+")")
 	ctx, cancel := context.WithTimeout(r.Context(), 290*time.Second)
 	defer cancel()
 	res, err := singbox.InstallLXCore(ctx, singbox.LXInstallOptions{
-		Flavor: flavor, Target: target, ReplaceForeign: replace,
+		Flavor: flavor, Target: target, Source: source, ReplaceForeign: replace,
 		DropForeignBackup: replace && !backup,
 	})
 	if err != nil {
@@ -35,9 +46,9 @@ func (s *Server) installLXCore(w http.ResponseWriter, r *http.Request, flavor st
 	}
 	switch {
 	case res.UpToDate:
-		s.store.LogEvent("system", "lxcore", "lx-ядро "+res.Version+" уже актуально")
+		s.store.LogEvent("system", "lxcore", "ядро "+res.Version+" уже актуально")
 	default:
-		msg := "установлено lx-ядро " + res.Version + " (" + res.Tag + ") в " + res.Bin
+		msg := "установлено ядро sing-box " + res.Version + " (" + res.Tag + ") в " + res.Bin
 		if res.Previous != "" {
 			msg += ", было " + res.Previous
 		}
@@ -50,6 +61,7 @@ func (s *Server) installLXCore(w http.ResponseWriter, r *http.Request, flavor st
 	// ответ клиенту его не ждёт
 	s.resetSB()
 	s.sysCache.reset()
+	s.coreDetectReset()
 	if len(s.enginePools()) > 0 {
 		go func() {
 			// после установки с нуля сервиса нет; start идемпотентен
@@ -62,17 +74,59 @@ func (s *Server) installLXCore(w http.ResponseWriter, r *http.Request, flavor st
 			}
 			skipped, err := s.applyEngine()
 			if err != nil {
-				s.store.LogEvent("singbox", "applied", "после установки lx движок не пересобран: "+err.Error())
+				s.store.LogEvent("singbox", "applied", "после установки движок не пересобран: "+err.Error())
 				return
 			}
 			for _, sk := range skipped {
 				s.store.LogEvent("singbox", "applied", sk)
 			}
-			s.store.LogEvent("singbox", "applied", "движок пересобран под lx-ядро "+res.Version)
+			s.store.LogEvent("singbox", "applied", "движок пересобран под ядро "+res.Version)
 		}()
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true, "output": res.Log, "upToDate": res.UpToDate, "version": res.Version, "backup": res.Backup,
+	})
+}
+
+// singboxSourceView - источник установки для селекта диалога: живой дискавери
+// с пометкой, есть ли сборка под архитектуру роутера и сжатый профиль.
+type singboxSourceView struct {
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	Note      string `json:"note"`
+	Latest    string `json:"latest,omitempty"`
+	UPX       bool   `json:"upx"`      // есть сжатый профиль
+	Available bool   `json:"available"` // есть ассет под арх роутера
+	Error     string `json:"error,omitempty"`
+}
+
+// getSingboxSources - GET /api/v1/cores/singbox/sources: список источников
+// ядра с их последними релизами (кэш 10 минут - GitHub API, как чекер MT).
+func (s *Server) getSingboxSources(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	s.sysCache.serve(w, 10*time.Minute, func() ([]byte, error) {
+		arch := ""
+		if a, _, err := singbox.DetectLxArch(); err == nil {
+			arch = a
+		}
+		reports := singbox.Discovery(ctx)
+		out := make([]singboxSourceView, 0, len(reports))
+		for _, rep := range reports {
+			v := singboxSourceView{ID: rep.Source.ID, Title: rep.Source.Title, Note: rep.Source.Note, UPX: rep.Source.CompactMarker != ""}
+			if rep.Error != "" {
+				v.Error = rep.Error
+			} else if latest := rep.Latest(); latest != nil {
+				v.Latest = latest.Tag
+				if arch != "" {
+					if n, ok := latest.Names[arch]; ok && (n.Plain != "" || n.UPX != "") {
+						v.Available = true
+					}
+				}
+			}
+			out = append(out, v)
+		}
+		return json.Marshal(map[string]any{"sources": out, "arch": arch})
 	})
 }
 

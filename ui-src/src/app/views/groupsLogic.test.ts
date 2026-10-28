@@ -130,12 +130,13 @@ describe('источники (Ф3.7б)', () => {
 
 describe('пресеты (Ф3.7б)', () => {
   it('presetRulesLine: сводка с метками типов', () => {
-    const p = { title: 'Telegram', rules: [{ type: 'domain' }, { type: 'namespace' }, { type: 'subnet' }, { type: 'subnet' }, { type: 'regex' }] };
+    const p = { title: 'Telegram', rules: [{ type: 'domain' }, { type: 'namespace' }, { type: 'subnet' }, { type: 'subnet' }, { type: 'regex' }, { type: 'wildcard' }] };
     const line = presetRulesLine(p, 'x');
-    expect(line).toContain('Telegram - правил: 5');
+    expect(line).toContain('Telegram - правил: 6');
     expect(line).toContain('домен+поддомены: 1');
     expect(line).toContain('подсети IPv4: 2');
-    expect(line).toContain('regex: 1');
+    expect(line).toContain('регулярки: 1');
+    expect(line).toContain('маски: 1');
     expect(presetRulesLine(null, 'p9')).toBe('Шаблон: p9');
   });
 });

@@ -15,6 +15,10 @@ var listsFS embed.FS
 
 const AllowDomainsURL = "https://github.com/itdoginfo/allow-domains"
 
+// OwnerListsSource - пометка владельческих списков (dir owner/): они не
+// тянутся из allow-domains и обновляются только с версией mawg.
+const OwnerListsSource = "список владельца mawg"
+
 type Preset struct {
 	ID     string `json:"id"`
 	Title  string `json:"title"`
@@ -37,9 +41,14 @@ type presetSpec struct {
 	ID       string
 	Title    string
 	Note     string
-	Domains  []string
-	SubnetV4 []string
-	SubnetV6 []string
+	// Source - происхождение списков (в allow-domains-пресетах пусто =
+	// репозиторий itdoginfo; владельческие списки несут свою пометку).
+	Source    string
+	Domains   []string
+	SubnetV4  []string
+	SubnetV6  []string
+	Wildcards []string
+	Regex     []string
 }
 
 var presetSpecs = []presetSpec{
@@ -135,6 +144,22 @@ var presetSpecs = []presetSpec{
 		Title:   "GeoBlock: доступ из РФ через VPN (ChatGPT, Claude, новости и др.)",
 		Domains: []string{"categories/geoblock.lst"},
 	},
+	// Владельческие списки (dir owner/): YouTube целиком и масочная вырезка
+	// зарубежной раздачи googlevideo. Регулярки foreign-списка матчат
+	// DNS-резолвы видео-серверов Google (тип regex у MT).
+	{
+		ID:      "youtube",
+		Title:   "YouTube целиком (сайт, API, плеер, googlevideo)",
+		Source:  OwnerListsSource,
+		Domains: []string{"owner/youtube.lst"},
+	},
+	{
+		ID:      "googlevideo-foreign",
+		Title:   "googlevideo: только заблокированные в РФ видео-серверы (регулярки)",
+		Note:    "в группу уходит только зарубежная раздача видео YouTube (серверы, заблокированные в РФ); сайт и API YouTube не входят. Если провайдер замедляет зарубежный канал - видео может грузиться медленнее; есть полный шаблон YouTube",
+		Source:  OwnerListsSource,
+		Regex:   []string{"owner/googlevideo-foreign.lst"},
+	},
 }
 
 func loadManifest() listManifestInfo {
@@ -169,6 +194,16 @@ func SourceNote() string {
 }
 
 func listLines(rel string) []string {
+	return readList(rel, true)
+}
+
+// listLinesRaw - строки без приведения регистра: regex-паттерны могут быть
+// регистрозависимыми (классы [A-Z]), ToLower их ломает.
+func listLinesRaw(rel string) []string {
+	return readList(rel, false)
+}
+
+func readList(rel string, lower bool) []string {
 	raw, err := listsFS.ReadFile("data/allow-domains/" + rel)
 	if err != nil {
 		return nil
@@ -179,13 +214,20 @@ func listLines(rel string) []string {
 		if ln == "" || strings.HasPrefix(ln, "#") {
 			continue
 		}
-		out = append(out, strings.ToLower(ln))
+		if lower {
+			ln = strings.ToLower(ln)
+		}
+		out = append(out, ln)
 	}
 	return out
 }
 
 func buildPreset(spec presetSpec) Preset {
-	p := Preset{ID: spec.ID, Title: spec.Title, Source: AllowDomainsURL, Note: spec.Note}
+	source := spec.Source
+	if source == "" {
+		source = AllowDomainsURL
+	}
+	p := Preset{ID: spec.ID, Title: spec.Title, Source: source, Note: spec.Note}
 	add := func(files []string, typ string) {
 		for _, f := range files {
 			for _, v := range listLines(f) {
@@ -193,9 +235,18 @@ func buildPreset(spec presetSpec) Preset {
 			}
 		}
 	}
+	addRaw := func(files []string, typ string) {
+		for _, f := range files {
+			for _, v := range listLinesRaw(f) {
+				p.Rules = append(p.Rules, Rule{Type: typ, Rule: v, Enable: true})
+			}
+		}
+	}
 	add(spec.Domains, "namespace")
 	add(spec.SubnetV4, "subnet")
 	add(spec.SubnetV6, "subnet6")
+	add(spec.Wildcards, "wildcard")
+	addRaw(spec.Regex, "regex")
 	return p
 }
 

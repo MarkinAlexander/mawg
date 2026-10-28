@@ -273,7 +273,7 @@ describe('PoolCreateDialog', () => {
     await btn(dlg, 'Установить').at(-1)!.trigger('click');
     await vi.waitFor(() => {
       const post = f.mock.calls.find((c) => (c[0] as string).endsWith('/system/install'));
-      expect(JSON.parse(post![1]!.body as string)).toEqual({ id: 'singbox-lx', flavor: 'plain', backup: false });
+      expect(JSON.parse(post![1]!.body as string)).toEqual({ id: 'singbox-lx', source: 'extended', flavor: 'plain', backup: false });
     });
     await vi.waitFor(() => expect(dlg.text()).toContain('Установлено'));
     expect(useToast().toasts.list.some((t) => t.text.includes('Ядро sing-box-lx установлено'))).toBe(true);

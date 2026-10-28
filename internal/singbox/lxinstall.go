@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -24,7 +25,8 @@ const (
 	LXFlavorPlain = "plain" // по умолчанию
 	LXFlavorUPX   = "upx"   // opt-in: меньше на диске, дороже по RAM и старту
 
-	lxMinTarball = 10 << 20 // sanity размера скачанного архива
+	lxMinTarball           = 10 << 20 // sanity размера скачанного архива (plain)
+	lxMinCompactTarball    = 4 << 20  // сжатые профили (upx/-compressed) меньше
 
 	LXMarkerName = ".installed-by-mawg"
 )
@@ -169,6 +171,9 @@ type PickedAsset struct {
 	Tag    string
 	Asset  string
 	Size   int64
+	// SHA256 - сумма ассета из digest-поля GitHub API (источники без
+	// SHA256SUMS-файла: extended, апстрим).
+	SHA256 string
 }
 
 func (p PickedAsset) URL() string {
@@ -179,16 +184,19 @@ func (p PickedAsset) SumsURL() string {
 	return fmt.Sprintf("https://github.com/%s/%s/releases/download/%s/SHA256SUMS", p.Source.Owner, p.Source.Repo, p.Tag)
 }
 
-// PickAsset ищет по отчётам дискавери (релизы от новых к старым, источники
-// по порядку) ассет arch+flavor. Никаких тихих подмен flavor: чего нет -
-// честный ответ со списком того, что есть.
-func PickAsset(reports []SourceReport, arch, flavor string) (*PickedAsset, error) {
+// PickAsset ищет ассет arch+flavor. srcID "" - источники перебираются по
+// порядку Sources (фолбэк); явный источник ошибкой отвечает, если ассета
+// или профиля в нём нет - тихих подмен источника не делаем.
+func PickAsset(reports []SourceReport, srcID, arch, flavor string) (*PickedAsset, error) {
 	if flavor != LXFlavorPlain && flavor != LXFlavorUPX {
 		return nil, fmt.Errorf("неизвестный профиль ядра %q (plain или upx)", flavor)
 	}
 	var have []string
 	for _, rep := range reports {
 		if rep.Error != "" {
+			continue
+		}
+		if srcID != "" && rep.Source.ID != srcID {
 			continue
 		}
 		archs := map[string]bool{}
@@ -200,56 +208,121 @@ func PickAsset(reports []SourceReport, arch, flavor string) (*PickedAsset, error
 			if !ok {
 				continue
 			}
-			name, size := n.Plain, n.PlainSz
+			pick := PickedAsset{Source: rep.Source, Tag: rel.Tag, Asset: n.Plain, Size: n.PlainSz, SHA256: n.PlainSHA}
 			if flavor == LXFlavorUPX {
-				name, size = n.UPX, n.UPXSz
+				pick.Asset, pick.Size, pick.SHA256 = n.UPX, n.UPXSz, n.UPXSHA
 			}
-			if name == "" {
+			if pick.Asset == "" {
 				continue
 			}
-			return &PickedAsset{Source: rep.Source, Tag: rel.Tag, Asset: name, Size: size}, nil
+			return &pick, nil
 		}
 		for a := range archs {
 			have = append(have, fmt.Sprintf("%s: %s", rep.Source, a))
 		}
 	}
 	if len(have) == 0 {
-		return nil, fmt.Errorf("в источниках lx нет доступных релизов")
+		return nil, fmt.Errorf("в источниках ядра нет доступных релизов")
 	}
 	return nil, fmt.Errorf("в этом источнике нет ассета для %s (%s): есть %s",
 		arch, flavor, strings.Join(have, "; "))
 }
 
-// HasLXSuffix отличает lx-ядро от upstream: только у lx в версии есть "-lx.".
+// HasLXSuffix отличает lx-ядро от прочих: только у lx в версии есть "-lx.".
 func HasLXSuffix(version string) bool { return strings.Contains(version, "-lx.") }
 
-// parseLxVer разбирает "1.14.2-lx.12" на базу и номер сборки lx.
-func parseLxVer(v string) (base string, n int, ok bool) {
-	v = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(v), "v"))
-	i := strings.Index(v, "-lx.")
-	if i < 0 {
-		return "", 0, false
+// HasExtSuffix - ядро форка extended (версия "...-extended-2.7.3").
+func HasExtSuffix(version string) bool { return strings.Contains(version, "-extended-") }
+
+// MatchesVersion - форма версии, ожидаемая от источника: lx - "-lx.",
+// extended - "-extended-", апстрим - чистая версия без суффиксов форков.
+func (s Source) MatchesVersion(v string) bool {
+	switch s.ID {
+	case SourceLXID:
+		return HasLXSuffix(v)
+	case SourceExtID:
+		return HasExtSuffix(v)
+	default:
+		return !HasLXSuffix(v) && !HasExtSuffix(v)
 	}
-	base, tail := v[:i], v[i+4:]
-	fmt.Sscanf(tail, "%d", &n)
-	return base, n, true
 }
 
-// LXNewer говорит, стоит ли ставить candidate вместо installed: сравнение
-// суффикса -lx.N (не selfupdate-сравнение, тот lx-версии не понимает).
-func LXNewer(candidate, installed string) bool {
-	cb, cn, cok := parseLxVer(candidate)
-	ib, in, iok := parseLxVer(installed)
-	if !cok {
-		return false
+// splitVer - база semver и числовой хвост суффикса сборки ("1.14.2-lx.12"
+// -> ("1.14.2", [12]); "1.14.3-extended-2.7.3" -> ("1.14.3", [2,7,3]);
+// апстрим - без хвоста).
+func (s Source) splitVer(v string) (string, []int) {
+	v = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(v), "v"))
+	switch s.ID {
+	case SourceLXID:
+		if i := strings.Index(v, "-lx."); i >= 0 {
+			return v[:i], parseInts(v[i+4:])
+		}
+	case SourceExtID:
+		if i := strings.Index(v, "-extended-"); i >= 0 {
+			return v[:i], parseInts(v[i+10:])
+		}
 	}
-	if !iok {
-		return true
+	return v, nil
+}
+
+func parseInts(s string) []int {
+	var out []int
+	for _, f := range strings.FieldsFunc(s, func(r rune) bool { return r < '0' || r > '9' }) {
+		n := 0
+		if _, err := fmt.Sscanf(f, "%d", &n); err == nil {
+			out = append(out, n)
+		}
 	}
-	if cb != ib {
-		return true
+	return out
+}
+
+func compareSemver(a, b string) int {
+	as := strings.Split(a, ".")
+	bs := strings.Split(b, ".")
+	for i := 0; i < len(as) || i < len(bs); i++ {
+		av, bv := -1, -1
+		if i < len(as) {
+			if n, err := strconv.Atoi(as[i]); err == nil {
+				av = n
+			}
+		}
+		if i < len(bs) {
+			if n, err := strconv.Atoi(bs[i]); err == nil {
+				bv = n
+			}
+		}
+		if av != bv {
+			if av > bv {
+				return 1
+			}
+			return -1
+		}
 	}
-	return cn > in
+	return 0
+}
+
+// Newer говорит, стоит ли ставить candidate вместо installed в рамках
+// источника: базы semver сравниваются численно, при равенстве - номер
+// сборки суффикса (lx.N / extended-N.N.N).
+func (s Source) Newer(candidate, installed string) bool {
+	cb, cn := s.splitVer(candidate)
+	ib, in := s.splitVer(installed)
+	if c := compareSemver(cb, ib); c != 0 {
+		return c > 0
+	}
+	for i := 0; i < len(cn) || i < len(in); i++ {
+		a, b := -1, -1
+		if i < len(cn) {
+			a = cn[i]
+		}
+		if i < len(in) {
+			b = in[i]
+		}
+		if a != b {
+			return a > b
+		}
+	}
+	return false
 }
 
 // SingBoxVersion запускает `bin version` и достаёт версию из первой строки.
@@ -274,6 +347,9 @@ func SingBoxVersion(bin string, run func(argv0 string, args ...string) ([]byte, 
 type LXInstallOptions struct {
 	Flavor string // plain|upx, пусто = plain
 	Target LXTarget
+	// Source - источник установки (id из singbox.Sources: extended|lx|
+	// upstream); пусто = первый из Sources (дефолт).
+	Source string
 
 	// ReplaceForeign - явное согласие заменить чужое (upstream) ядро,
 	// DropForeignBackup - без сохранения копии <bin>.pre-lx (диск дороже).
@@ -286,7 +362,7 @@ type LXInstallOptions struct {
 	Fetch      func(ctx context.Context, url, dest string) (int64, error)
 	Run        func(argv0 string, args ...string) ([]byte, error)
 	TmpDir     string
-	MinTarball int64 // 0 = lxMinTarball
+	MinTarball int64 // 0 = по профилю (plain/upx)
 }
 
 type LXInstallResult struct {
@@ -346,36 +422,36 @@ func InstallLXCore(ctx context.Context, opts LXInstallOptions) (LXInstallResult,
 	if discover == nil {
 		discover = Discovery
 	}
-	pick, err := PickAsset(discover(ctx), arch, opts.Flavor)
+	pick, err := PickAsset(discover(ctx), opts.Source, arch, opts.Flavor)
 	if err != nil {
 		return res, err
 	}
 	res.Tag = pick.Tag
 	step("релиз %s из %s: %s", pick.Tag, pick.Source, pick.Asset)
 
-	// чужое ядро не трогаем без согласия, отказ - до скачивания
+	// чужое ядро не трогаем без согласия, отказ - до скачивания. «Чужое» =
+	// версия не профиля выбранного источника и не наша установка (маркер)
 	prevVer := ""
+	marked := markerExists(opts.Target.MarkerDir)
 	if out, verr := SingBoxVersion(opts.Target.Bin, run); verr == nil {
 		prevVer = out
 		res.Previous = prevVer
-		if !HasLXSuffix(prevVer) {
-			marked := markerExists(opts.Target.MarkerDir)
-			if !marked && !opts.ReplaceForeign {
-				return res, fmt.Errorf("в %s стоит чужое ядро %s (без -lx. и маркера mawg): без явного согласия не трогаю", opts.Target.Bin, prevVer)
-			}
+		if !pick.Source.MatchesVersion(prevVer) && !marked && !opts.ReplaceForeign {
+			return res, fmt.Errorf("в %s стоит чужое ядро %s (не сборка %s и без маркера mawg): без явного согласия не трогаю", opts.Target.Bin, prevVer, pick.Source.Title)
 		}
 	}
+	matches := prevVer != "" && pick.Source.MatchesVersion(prevVer)
 
 	// ядро не старее релиза, НАША сборка и тот же профиль - не перекачиваем;
-	// чужую/ручную сборку или другой профиль (plain<->upx) той же версии
-	// переустанавливаем своей: храним только то, что сами собираем
+	// чужую/ручную сборку, другой источник или профиль (plain<->upx) той же
+	// версии переустанавливаем своей: храним только то, что сами ставим
 	releaseVer := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(pick.Tag), "v"))
-	if HasLXSuffix(prevVer) && !LXNewer(releaseVer, prevVer) &&
+	if matches && !pick.Source.Newer(releaseVer, prevVer) &&
 		markerSource(opts.Target.MarkerDir) == pick.Source.String() &&
 		markerFlavor(opts.Target.MarkerDir) == opts.Flavor {
 		res.Version = prevVer
 		res.UpToDate = true
-		step("lx-ядро %s уже актуально (наша сборка из %s, профиль %s)", prevVer, pick.Source, opts.Flavor)
+		step("ядро %s уже актуально (наша сборка из %s, профиль %s)", prevVer, pick.Source, opts.Flavor)
 		res.Log = log.String()
 		return res, nil
 	}
@@ -392,6 +468,9 @@ func InstallLXCore(ctx context.Context, opts LXInstallOptions) (LXInstallResult,
 	minSize := opts.MinTarball
 	if minSize == 0 {
 		minSize = lxMinTarball
+		if opts.Flavor == LXFlavorUPX {
+			minSize = lxMinCompactTarball
+		}
 	}
 	if size < minSize {
 		os.Remove(tarball)
@@ -399,17 +478,32 @@ func InstallLXCore(ctx context.Context, opts LXInstallOptions) (LXInstallResult,
 	}
 	step("скачано %d байт", size)
 
-	sumsPath := filepath.Join(tmp, "SHA256SUMS-"+pick.Tag)
-	if _, err := fetch(ctx, pick.SumsURL(), sumsPath); err != nil {
-		step("SHA256SUMS недоступен, проверка суммы пропущена")
-	} else if want, ok := sumsLineFor(sumsPath, pick.Asset); !ok {
-		step("в SHA256SUMS нет строки для %s, проверка суммы пропущена", pick.Asset)
-	} else if got, gerr := fileSHA256(tarball); gerr != nil {
-		return res, gerr
-	} else if got != want {
-		return res, fmt.Errorf("контрольная сумма не совпала: %s, ожидалось %s", got, want)
+	// контрольные суммы: у lx в релизе файл SHA256SUMS, у extended/апстрима -
+	// digest-поля ассетов GitHub API; отсутствие суммы - мягкий skip
+	if pick.Source.SumsFile {
+		sumsPath := filepath.Join(tmp, "SHA256SUMS-"+pick.Tag)
+		if _, err := fetch(ctx, pick.SumsURL(), sumsPath); err != nil {
+			step("SHA256SUMS недоступен, проверка суммы пропущена")
+		} else if want, ok := sumsLineFor(sumsPath, pick.Asset); !ok {
+			step("в SHA256SUMS нет строки для %s, проверка суммы пропущена", pick.Asset)
+		} else if got, gerr := fileSHA256(tarball); gerr != nil {
+			return res, gerr
+		} else if got != want {
+			return res, fmt.Errorf("контрольная сумма не совпала: %s, ожидалось %s", got, want)
+		} else {
+			step("checksum ok")
+		}
+	} else if pick.SHA256 != "" {
+		got, gerr := fileSHA256(tarball)
+		if gerr != nil {
+			return res, gerr
+		}
+		if got != pick.SHA256 {
+			return res, fmt.Errorf("контрольная сумма не совпала: %s, ожидалось %s (digest github)", got, pick.SHA256)
+		}
+		step("checksum ok (digest github)")
 	} else {
-		step("checksum ok")
+		step("сумма ассета недоступна (нет SHA256SUMS и digest), проверка пропущена")
 	}
 
 	dir := filepath.Join(tmp, "sing-box-lx-"+pick.Tag)
@@ -430,16 +524,16 @@ func InstallLXCore(ctx context.Context, opts LXInstallOptions) (LXInstallResult,
 		return res, err
 	}
 	_ = os.Remove(tarball)
-	_ = os.Remove(sumsPath)
+	_ = os.Remove(filepath.Join(tmp, "SHA256SUMS-"+pick.Tag))
 
 	ver, err := SingBoxVersion(bin, run)
 	if err != nil {
 		_ = os.RemoveAll(dir)
 		return res, fmt.Errorf("тест-запуск скачанного ядра не удался: %v", err)
 	}
-	if !HasLXSuffix(ver) {
+	if !pick.Source.MatchesVersion(ver) {
 		_ = os.RemoveAll(dir)
-		return res, fmt.Errorf("скачанный бинарь не lx-ядро (version: %s)", ver)
+		return res, fmt.Errorf("скачанный бинарь не сборка %s (version: %s)", pick.Source.Title, ver)
 	}
 	res.Version = ver
 	step("тест-запуск в /tmp ok: %s", ver)
@@ -456,7 +550,8 @@ func InstallLXCore(ctx context.Context, opts LXInstallOptions) (LXInstallResult,
 	if st, err := os.Stat(bin); err == nil {
 		binSize = st.Size()
 	}
-	keepOld := prevVer != "" && !HasLXSuffix(prevVer) && !opts.DropForeignBackup
+	foreign := prevVer != "" && !matches && !marked
+	keepOld := foreign && !opts.DropForeignBackup
 	need := binSize
 	if keepOld {
 		if st, err := os.Stat(opts.Target.Bin); err == nil {
@@ -465,9 +560,9 @@ func InstallLXCore(ctx context.Context, opts LXInstallOptions) (LXInstallResult,
 	}
 	binDir := filepath.Dir(opts.Target.Bin)
 	if free := diskFree(binDir); free > 0 && free < need {
-		// наша предыдущая сборка восстановима повторным скачиванием -
-		// её можно снять до копирования, это освобождает место старого
-		if HasLXSuffix(prevVer) && markerSource(opts.Target.MarkerDir) == pick.Source.String() {
+		// наша предыдущая сборка любого источника восстановима повторным
+		// скачиванием - её можно снять до копирования, это освобождает место
+		if marked && markerSource(opts.Target.MarkerDir) != "" {
 			if rmErr := os.Remove(opts.Target.Bin); rmErr == nil {
 				step("места в ПЗУ мало (свободно %s): старая наша сборка снята до копирования, при сбое просто повторите установку", mb(free))
 				free = diskFree(binDir)
@@ -504,7 +599,6 @@ func InstallLXCore(ctx context.Context, opts LXInstallOptions) (LXInstallResult,
 		return res, err
 	}
 	_ = os.RemoveAll(dir)
-	foreign := prevVer != "" && !HasLXSuffix(prevVer)
 	if foreign {
 		backup := opts.Target.Bin + ".pre-lx"
 		if _, exists := os.Stat(backup); exists == nil {
@@ -533,8 +627,8 @@ func InstallLXCore(ctx context.Context, opts LXInstallOptions) (LXInstallResult,
 		return res, err
 	}
 	final, err := SingBoxVersion(opts.Target.Bin, run)
-	if err != nil || !HasLXSuffix(final) {
-		return res, fmt.Errorf("после установки %s не отвечает как lx-ядро", opts.Target.Bin)
+	if err != nil || !pick.Source.MatchesVersion(final) {
+		return res, fmt.Errorf("после установки %s не отвечает как ядро источника %s", opts.Target.Bin, pick.Source.Title)
 	}
 	step("установлено: %s (%s)", final, opts.Target.Bin)
 	res.Log = log.String()

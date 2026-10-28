@@ -452,7 +452,7 @@ func (m *Manager) stop() {
 
 func (m *Manager) writeConfig(pools []PoolSpec) error {
 	merged := m.Mode == "shared"
-	data, _, err := BuildConfig(pools, Params{ClashPort: m.ClashPort, LX: m.eng.LX, Merged: merged, ResolverTag: m.resolverTag})
+	data, _, err := BuildConfig(pools, Params{ClashPort: m.ClashPort, LX: m.eng.FullCaps(), Merged: merged, ResolverTag: m.resolverTag})
 	if err != nil {
 		return err
 	}
@@ -685,6 +685,7 @@ func (m *Manager) sharedPids() []string {
 // reloadShared применяет конфиг без рестарта: lx-ядро (1.14) умеет
 // SIGHUP-перезачитывание - чужие туннели и соединения не рвутся. Upstream
 // 1.13.3 от SIGHUP умирал, поэтому там и при невыжившем процессе - рестарт.
+// Для extended консервативно рестарт, пока SIGHUP не проверен живьём.
 func (m *Manager) reloadShared(timeout time.Duration) error {
 	if !m.eng.LX {
 		return m.restartShared(timeout)
@@ -926,16 +927,16 @@ func (m *Manager) Apply(pools []PoolSpec) ([]string, error) {
 	var skipped []string
 	var runnable []PoolSpec
 	for i, spec := range pools {
-		eligible, reasons := EligibleNodes(spec.Nodes, m.eng.LX)
+		eligible, reasons := EligibleNodes(spec.Nodes, m.eng.FullCaps())
 		// WG-конфиги пула - полноценные члены (wireguard-эндпоинты): пул
-		// без vless-узлов, но с конфигами runnable. AWG-поля умеет только
-		// lx-сборка - на upstream такие конфигы ждут ядро.
+		// без vless-узлов, но с конфигами runnable. AWG-поля умеют только
+		// расширенные ядра (lx/extended) - на upstream такие конфиги ждут.
 		wgOK := len(spec.WG) > 0
-		if wgOK && !m.eng.LX {
+		if wgOK && !m.eng.FullCaps() {
 			for _, c := range spec.WG {
 				if c.AWG.Present() {
 					wgOK = false
-					reasons = append(reasons, "конфиги AmneziaWG требуют ядро lx (сборку с awg)")
+					reasons = append(reasons, "конфиги AmneziaWG требуют ядро lx или extended")
 					break
 				}
 			}
@@ -1040,6 +1041,8 @@ type Status struct {
 	PID       int    `json:"pid,omitempty"`
 	Version   string `json:"version,omitempty"`
 	LX        bool   `json:"lx"`
+	Extended  bool   `json:"extended,omitempty"`
+	SourceID  string `json:"source,omitempty"` // lx | extended | upstream
 	Bin       string `json:"bin,omitempty"`
 	Mixed     int    `json:"mixedPort"`
 	Clash     int    `json:"clashPort"`
@@ -1049,7 +1052,7 @@ type Status struct {
 }
 
 func (m *Manager) Status() Status {
-	st := Status{Version: m.eng.Version, LX: m.eng.LX, Bin: m.eng.Bin, Mixed: m.MixedPort, Clash: m.clashBase(), Mode: m.Mode, CacheFile: m.sharedCacheFile}
+	st := Status{Version: m.eng.Version, LX: m.eng.LX, Extended: m.eng.Extended, SourceID: m.eng.SourceID, Bin: m.eng.Bin, Mixed: m.MixedPort, Clash: m.clashBase(), Mode: m.Mode, CacheFile: m.sharedCacheFile}
 	if m.Mode == "shared" {
 		st.Fragment = m.fragmentPath()
 		if m.sharedAlive() {

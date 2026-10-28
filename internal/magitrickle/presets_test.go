@@ -2,6 +2,7 @@ package magitrickle
 
 import (
 	"net"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -19,7 +20,7 @@ func TestPresetsBuilt(t *testing.T) {
 		if len(p.Rules) == 0 {
 			t.Fatalf("пресет %s пустой", p.ID)
 		}
-		if p.Source != AllowDomainsURL && p.Source != "встроенный список" {
+		if p.Source != AllowDomainsURL && p.Source != "встроенный список" && p.Source != OwnerListsSource {
 			t.Fatalf("пресет %s: source = %q", p.ID, p.Source)
 		}
 		for _, rl := range p.Rules {
@@ -42,6 +43,19 @@ func TestPresetsBuilt(t *testing.T) {
 				}
 				if rl.Type == "subnet6" && isV4 {
 					t.Fatalf("%s: %q не IPv6", p.ID, rl.Rule)
+				}
+			case "wildcard":
+				if !strings.HasPrefix(rl.Rule, "*") || strings.ContainsAny(rl.Rule, " /") {
+					t.Fatalf("%s: кривая маска wildcard %q", p.ID, rl.Rule)
+				}
+			case "regex":
+				// базовый синтаксис должен компилироваться (MT использует
+				// regexp2, эти паттерны проще); пробелов в хост-паттернах нет
+				if strings.ContainsAny(rl.Rule, " \t") {
+					t.Fatalf("%s: пробел в regex %q", p.ID, rl.Rule)
+				}
+				if _, err := regexp.Compile(rl.Rule); err != nil {
+					t.Fatalf("%s: regex %q не компилируется: %v", p.ID, rl.Rule, err)
 				}
 			default:
 				t.Fatalf("%s: неожиданный тип %q", p.ID, rl.Type)
@@ -190,5 +204,96 @@ func TestMetaSplitPresets(t *testing.T) {
 	}
 	if len(m["subnet"]) == 0 || len(m["subnet6"]) == 0 {
 		t.Error("meta: подсети пропали")
+	}
+}
+
+// владельческие пресеты (90-док): YouTube целиком и зарубежный googlevideo
+func TestOwnerPresets(t *testing.T) {
+	// YouTube: 17 namespace-доменов (yting.com убран как опечатка),
+	// пометка источника - не allow-domains
+	yt, ok := PresetByID("youtube")
+	if !ok {
+		t.Fatal("нет пресета youtube")
+	}
+	if yt.Source != OwnerListsSource {
+		t.Fatalf("youtube: source = %q", yt.Source)
+	}
+	doms := map[string]bool{}
+	for _, rl := range yt.Rules {
+		if rl.Type != "namespace" {
+			t.Fatalf("youtube: неожиданный тип %q у %q", rl.Type, rl.Rule)
+		}
+		doms[rl.Rule] = true
+	}
+	for _, d := range []string{
+		"youtube.com", "ytimg.com", "ggpht.com", "googlevideo.com",
+		"youtu.be", "yt.be", "youtube-nocookie.com", "youtubekids.com",
+		"youtubei.googleapis.com", "jnn-pa.googleapis.com",
+		"returnyoutubedislikeapi.com", "yt3.googleusercontent.com",
+		"wide-youtube.l.google.com", "yt-video-upload.l.google.com",
+	} {
+		if !doms[d] {
+			t.Errorf("youtube: нет домена %s", d)
+		}
+	}
+	if doms["yting.com"] {
+		t.Error("youtube: yting.com (опечатка ytimg.com) не должен попадать")
+	}
+	if len(doms) != 17 {
+		t.Errorf("youtube: доменов %d, ожидалось 17", len(doms))
+	}
+
+	// зарубежный googlevideo: >=70 regex, все про googlevideo.com,
+	// матчат реальные хосты с префиксом и не матчат чужие
+	fg, ok := PresetByID("googlevideo-foreign")
+	if !ok {
+		t.Fatal("нет пресета googlevideo-foreign")
+	}
+	if fg.Source != OwnerListsSource {
+		t.Fatalf("googlevideo-foreign: source = %q", fg.Source)
+	}
+	if fg.Note == "" || !strings.Contains(fg.Note, "замедл") {
+		t.Error("googlevideo-foreign: нет предупреждения о замедлении")
+	}
+	var rules []string
+	for _, rl := range fg.Rules {
+		if rl.Type != "regex" {
+			t.Fatalf("googlevideo-foreign: неожиданный тип %q у %q", rl.Type, rl.Rule)
+		}
+		if !strings.HasSuffix(rl.Rule, `\.googlevideo\.com$`) {
+			t.Fatalf("googlevideo-foreign: кривой хвост regex %q", rl.Rule)
+		}
+		rules = append(rules, rl.Rule)
+	}
+	if len(rules) < 70 {
+		t.Fatalf("googlevideo-foreign: regex %d, ожидалось >=70", len(rules))
+	}
+	match := func(host string) bool {
+		for _, r := range rules {
+			re := regexp.MustCompile(r)
+			if re.MatchString(host) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, host := range []string{
+		"r1---sn-4g5lznss.googlevideo.com",
+		"rr5---sn-ojhgnc-5q.googlevideo.com",
+		"videoplayback---sn-hgn7yn7l.googlevideo.com",
+	} {
+		if !match(host) {
+			t.Errorf("googlevideo-foreign: %s не заматчен", host)
+		}
+	}
+	for _, host := range []string{
+		"evil-sn-4g5lznss.googlevideo.com",         // один дефис - не маска
+		"r1---sn-4g5lznss.googlevideo.com.evil.me", // чужой хвост
+		"googlevideo.com",                          // сам домен вне масок
+		"youtube.com",
+	} {
+		if match(host) {
+			t.Errorf("googlevideo-foreign: %s ложно заматчен", host)
+		}
 	}
 }

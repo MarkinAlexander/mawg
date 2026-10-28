@@ -486,6 +486,9 @@ export interface SystemItem {
   requiresReboot?: boolean
   note?: string
   statusText?: string
+  // источник установленного ядра sing-box (lx|extended|upstream) - диалог
+  // установки предвыбирает его
+  source?: string
   // для замены ядра: сколько займёт копия старого и сколько свободно
   backupBytes?: number
   freeBytes?: number
@@ -527,6 +530,8 @@ export interface CoreInfo {
   installed: boolean
   version?: string
   lx?: boolean
+  extended?: boolean
+  source?: string // источник сборки sing-box: lx | extended | upstream
   mode?: string // own | shared
   running: boolean
   autostart: boolean
@@ -540,6 +545,17 @@ export interface CoreInfo {
 export interface SystemCheckRes {
   platform: string
   items: SystemItem[]
+}
+
+// GET /cores/singbox/sources: источники установки ядра sing-box
+export interface SingboxSourceInfo {
+  id: string
+  title: string
+  note: string
+  latest?: string
+  upx: boolean
+  available: boolean
+  error?: string
 }
 
 export interface UpdateInfo {

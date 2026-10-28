@@ -316,16 +316,16 @@ func (s *Server) createPoolFromNodes(w http.ResponseWriter, r *http.Request, req
 				return
 			}
 		} else {
-			lx := false
+			fullCaps := false
 			if mgr, err := s.sb(); err == nil {
-				lx = mgr.Info().LX
+				fullCaps = mgr.Info().FullCaps()
 			}
-			eligible, reasons = singbox.EligibleNodes(res.Nodes, lx)
+			eligible, reasons = singbox.EligibleNodes(res.Nodes, fullCaps)
 			if len(eligible) == 0 {
 				plan.Engine = engineNodes
 				plan.Skipped = append(plan.Skipped, reasons...)
 				plan.Warnings = append(plan.Warnings,
-					"Пул не создан: ни один узел не поддерживается текущим движком sing-box. Нужен lx-профиль ядра - после его установки добавьте ссылку заново.")
+					"Пул не создан: ни один узел не поддерживается текущим движком sing-box. Нужно расширенное ядро (lx или extended) - после его установки добавьте ссылку заново.")
 				writeJSON(w, http.StatusOK, plan)
 				return
 			}

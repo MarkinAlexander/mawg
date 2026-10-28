@@ -357,6 +357,12 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
             variant="ok"
           />
           <UiBadge
+            v-if="c.extended"
+            text="extended"
+            variant="ok"
+            tooltip="форк sing-box-extended (shtorm-7): xhttp, vless-шифрование и AWG доступны"
+          />
+          <UiBadge
             :text="c.mode || '?'"
             variant="muted"
           />

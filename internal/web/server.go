@@ -119,6 +119,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/singbox/mode", s.postSingboxMode)
 	mux.HandleFunc("POST /api/v1/singbox/cache-file", s.postCacheFile)
 	mux.HandleFunc("GET /api/v1/cores", s.getCores)
+	mux.HandleFunc("GET /api/v1/cores/singbox/sources", s.getSingboxSources)
 	mux.HandleFunc("POST /api/v1/cores/{id}/power", s.postCorePower)
 	mux.HandleFunc("POST /api/v1/pools/{name}/refresh-source", s.refreshSource)
 	mux.HandleFunc("PUT /api/v1/pools/{name}", s.updatePool)
@@ -591,7 +592,8 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 		}
 		out.Engine = map[string]any{
 			"available": true, "running": st.Running, "api": st.API, "version": st.Version,
-			"lx": st.LX, "bin": st.Bin, "mixedPort": st.Mixed, "clashPort": st.Clash,
+			"lx": st.LX, "extended": st.Extended, "source": st.SourceID,
+			"bin": st.Bin, "mixedPort": st.Mixed, "clashPort": st.Clash,
 			"mode": st.Mode, "fragment": st.Fragment, "cacheFile": st.CacheFile, "tuns": tuns,
 			"disabled": s.store.EngineDisabled(), "autostart": s.coreAutostart(),
 		}
@@ -1933,6 +1935,7 @@ func (s *Server) postSystemInstall(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ID      string `json:"id"`
 		Flavor  string `json:"flavor"`
+		Source  string `json:"source"` // источник sing-box: extended|lx|upstream
 		Backup  *bool  `json:"backup"`
 		Replace bool   `json:"replace"`
 	}
@@ -1945,7 +1948,7 @@ func (s *Server) postSystemInstall(w http.ResponseWriter, r *http.Request) {
 		if req.Backup != nil {
 			backup = *req.Backup
 		}
-		s.installLXCore(w, r, req.Flavor, backup)
+		s.installLXCore(w, r, req.Flavor, backup, req.Source)
 		return
 	}
 	if req.ID == "mihomo" {

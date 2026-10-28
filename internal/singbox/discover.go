@@ -11,20 +11,74 @@ import (
 	"time"
 )
 
+// ID источников ядра sing-box (90-док: мультиисточник вместо единственного
+// lx-форка; порядок Sources = приоритет фолбэка PickAsset, первый элемент -
+// дефолт установки по слову владельца 2026-10-28).
+const (
+	SourceExtID  = "extended"
+	SourceLXID   = "lx"
+	SourceUpID   = "upstream"
+	digestPrefix = "sha256:"
+)
+
+// Source - источник релизов ядра: репозиторий + конвенции его ассетов.
 type Source struct {
 	Owner string `json:"owner"`
 	Repo  string `json:"repo"`
+	// ID - ключ выбора источника (маркер, UI, установщик).
+	ID    string `json:"id"`
+	Title string `json:"title"`
+	Note  string `json:"note"`
+	// CompactMarker - суффикс сжатого ассета перед .tar.gz (".upx" у lx,
+	// "-compressed" у extended); "" - сжатого профиля нет (апстрим).
+	CompactMarker string `json:"-"`
+	// SumsFile - в релизе есть файл SHA256SUMS; иначе сумма берётся из
+	// digest-поля ассета в GitHub API.
+	SumsFile bool `json:"-"`
+	// FullCaps - источник понимает расширения lx: xhttp, vless-шифрование,
+	// AWG-поля wireguard. У апстрима их нет - узлы честно скрываются.
+	FullCaps bool `json:"-"`
 }
 
 func (s Source) String() string { return s.Owner + "/" + s.Repo }
 
-// Единственный источник lx-ядер - наш форк, временная мера: ядру нужен
-// upx-профиль под все платформы (на роутерах с малым флешем без него не
-// влезает); upx-профиль принят в апстрим нашим PR, при появлении таких
-// сборок в релизах оригинала вернёмся на оригинал. Источник фиксируется
-// и в маркере установки.
+// Sources - установка на выбор (слово владельца 2026-10-28: дефолт
+// sing-box-extended, наш lx остаётся проверенным fallback'ом, апстрим для
+// тех кому хватает базы). Источник фиксируется в маркере установки.
 var Sources = []Source{
-	{Owner: "MarkinAlexander", Repo: "sing-box-lx"},
+	{
+		Owner: "shtorm-7", Repo: "sing-box-extended",
+		ID:    SourceExtID,
+		Title: "sing-box-extended (форк shtorm-7)",
+		Note:  "форк shtorm-7: как наш lx (AWG-обфускация, xhttp, vless-шифрование) плюс новые протоколы; база свежее, сжатые -compressed сборки",
+		CompactMarker: "-compressed",
+		FullCaps:      true,
+	},
+	{
+		Owner: "MarkinAlexander", Repo: "sing-box-lx",
+		ID:    SourceLXID,
+		Title: "sing-box-lx (наш форк)",
+		Note:  "наш форк: AWG-обфускация, xhttp, vless-шифрование, upx-профиль под тесную флешу; проверен на проде",
+		CompactMarker: ".upx",
+		SumsFile:      true,
+		FullCaps:      true,
+	},
+	{
+		Owner: "SagerNet", Repo: "sing-box",
+		ID:    SourceUpID,
+		Title: "sing-box (официальный апстрим)",
+		Note:  "официальный SagerNET: без AWG-полей, xhttp и vless-шифрования - такие узлы будут скрыты с подсказкой поставить lx/extended",
+	},
+}
+
+// SourceByID - профиль источника по ключу выбора.
+func SourceByID(id string) (Source, bool) {
+	for _, s := range Sources {
+		if s.ID == id {
+			return s, true
+		}
+	}
+	return Source{}, false
 }
 
 const (
@@ -48,12 +102,15 @@ type Release struct {
 	Names map[string]FlavorAssets `json:"-"`
 }
 
-// FlavorAssets - имена файлов plain/upx ассета одной архитектуры.
+// FlavorAssets - имена файлов plain/upx ассета одной архитектуры; суммы -
+// digest из GitHub API (у источников без SHA256SUMS-файла).
 type FlavorAssets struct {
-	Plain   string
-	PlainSz int64
-	UPX     string
-	UPXSz   int64
+	Plain     string
+	PlainSz   int64
+	PlainSHA  string
+	UPX       string
+	UPXSz     int64
+	UPXSHA    string
 }
 
 type SourceReport struct {
@@ -70,8 +127,9 @@ func (r *SourceReport) Latest() *Release {
 }
 
 type ghAsset struct {
-	Name string `json:"name"`
-	Size int64  `json:"size"`
+	Name   string `json:"name"`
+	Size   int64  `json:"size"`
+	Digest string `json:"digest"`
 }
 
 type ghRelease struct {
@@ -116,17 +174,17 @@ func fetchReleases(ctx context.Context, src Source) ([]Release, error) {
 		return nil, fmt.Errorf("github ответил %d для %s", resp.StatusCode, src)
 	}
 	var raw []ghRelease
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&raw); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&raw); err != nil {
 		return nil, err
 	}
 	out := make([]Release, 0, len(raw))
 	for _, r := range raw {
-		out = append(out, buildRelease(r))
+		out = append(out, buildRelease(r, src))
 	}
 	return out, nil
 }
 
-func buildRelease(r ghRelease) Release {
+func buildRelease(r ghRelease, src Source) Release {
 	rel := Release{
 		Tag: r.TagName, URL: r.HTMLURL, Published: r.Published,
 		Assets: len(r.Assets), Matrix: map[string]Flavors{}, Names: map[string]FlavorAssets{},
@@ -136,18 +194,19 @@ func buildRelease(r ghRelease) Release {
 			rel.SHA256SUM = true
 			continue
 		}
-		arch, upx, ok := parseAssetName(a.Name)
+		arch, compact, ok := parseAssetName(a.Name, src.CompactMarker)
 		if !ok {
 			continue
 		}
+		sum := strings.TrimPrefix(a.Digest, digestPrefix)
 		f := rel.Matrix[arch]
 		n := rel.Names[arch]
-		if upx {
+		if compact {
 			f.UPX = true
-			n.UPX, n.UPXSz = a.Name, a.Size
+			n.UPX, n.UPXSz, n.UPXSHA = a.Name, a.Size, sum
 		} else {
 			f.Plain = true
-			n.Plain, n.PlainSz = a.Name, a.Size
+			n.Plain, n.PlainSz, n.PlainSHA = a.Name, a.Size, sum
 		}
 		rel.Matrix[arch] = f
 		rel.Names[arch] = n
@@ -155,13 +214,17 @@ func buildRelease(r ghRelease) Release {
 	return rel
 }
 
-func parseAssetName(name string) (arch string, upx bool, ok bool) {
+// parseAssetName разбирает "sing-box-<ver>-linux-<arch>[<compact>].tar.gz";
+// compact-маркер зависит от источника (.upx / -compressed / нет). Варианты
+// -glibc/-musl/-purego (динамические/альтернативные сборки) не наши - skip.
+func parseAssetName(name, compactMarker string) (arch string, compact bool, ok bool) {
 	if !strings.HasSuffix(name, ".tar.gz") {
 		return "", false, false
 	}
 	base := strings.TrimSuffix(name, ".tar.gz")
-	if upx = strings.HasSuffix(base, ".upx"); upx {
-		base = strings.TrimSuffix(base, ".upx")
+	if compactMarker != "" && strings.HasSuffix(base, compactMarker) {
+		compact = true
+		base = strings.TrimSuffix(base, compactMarker)
 	}
 	const sep = "-linux-"
 	i := strings.LastIndex(base, sep)
@@ -172,7 +235,10 @@ func parseAssetName(name string) (arch string, upx bool, ok bool) {
 	if arch == "" || strings.ContainsAny(arch, "./") {
 		return "", false, false
 	}
-	return arch, upx, true
+	if strings.Contains(arch, "-glibc") || strings.Contains(arch, "-musl") || strings.Contains(arch, "-purego") {
+		return "", false, false
+	}
+	return arch, compact, true
 }
 
 func SortedArches(m map[string]Flavors) []string {

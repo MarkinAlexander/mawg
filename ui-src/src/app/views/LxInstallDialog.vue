@@ -2,31 +2,60 @@
 import { computed, ref, watch } from 'vue'
 import { UiButton, UiDialog, UiHelp, UiHint, UiSelect, UiSwitch, type UiSelectOption } from '../../components/ui'
 import { useSystem } from '../../stores/system'
-import type { SystemItem } from '../../api/types'
+import type { SingboxSourceInfo, SystemItem } from '../../api/types'
 import { G } from '../glossary'
 
-// Диалог установки ядра sing-box-lx: профиль сборки (plain/upx) и бэкап
-// чужого ядра при замене. Общий для «Система -> Зависимости» и потока
-// создания пула (слово владельца 2026-10-17: если движка нет - предлагать
-// установку прямо при создании пула, а не отсылать в другой раздел).
+// Диалог установки ядра sing-box: источник релиза на выбор (extended - наш
+// дефолт по слову владельца 2026-10-28, lx, апстрим), профиль сборки
+// (plain/сжатый) и бэкап чужого ядра при замене. Общий для «Система ->
+// Зависимости» и потока создания пула (слово владельца 2026-10-17: если
+// движка нет - предлагать установку прямо при создании пула).
 const open = defineModel<boolean>('open', { default: false });
 const emit = defineEmits<{ installed: [] }>();
 
 const sys = useSystem();
 
+// фолбэк, если GitHub-дискавери недоступен: порядок = приоритет установки
+const fallbackSources: SingboxSourceInfo[] = [
+  { id: 'extended', title: 'sing-box-extended (форк shtorm-7)', note: 'форк shtorm-7: как наш lx, плюс новые протоколы; база свежее', upx: true, available: true },
+  { id: 'lx', title: 'sing-box-lx (наш форк)', note: 'наш форк: AWG-обфускация, xhttp, vless-шифрование, upx-профиль', upx: true, available: true },
+  { id: 'upstream', title: 'sing-box (официальный апстрим)', note: 'официальный: без AWG-полей, xhttp и vless-шифрования', upx: false, available: true },
+];
+
 const dlg = ref<{
   item: SystemItem | null
   phase: 'form' | 'progress' | 'result'
+  source: string
   flavor: string
   backup: boolean
   ok: boolean
   out: string
 } | null>(null);
 
-const flavorOptions: UiSelectOption[] = [
-  { value: 'plain', label: 'обычный: быстрый старт, занимает больше места' },
-  { value: 'upx', label: 'сжатый (upx): в ~4 раза меньше на диске, старт дольше' },
-];
+const sources = ref<SingboxSourceInfo[]>([]);
+const sourcesLoaded = ref(false);
+
+const flavorOptions = computed<UiSelectOption[]>(() => {
+  const src = sources.value.find((s) => s.id === dlg.value?.source);
+  const opts: UiSelectOption[] = [
+    { value: 'plain', label: 'обычный: быстрый старт, занимает больше места' },
+  ];
+  if (!src || src.upx) {
+    opts.push({ value: 'upx', label: 'сжатый: в ~4 раза меньше на диске, старт дольше' });
+  }
+  return opts;
+});
+
+const sourceOptions = computed<UiSelectOption[]>(() =>
+  sources.value.map((s) => {
+    let hint = s.note;
+    if (s.error) hint = `источник недоступен: ${s.error}`;
+    else if (!s.available) hint = `${s.note} — нет сборки под архитектуру этого роутера`;
+    else if (s.latest) hint = `${s.note} — свежий релиз ${s.latest}`;
+    return { value: s.id, label: s.title, hint };
+  }),
+);
+
 const mb = (b: number) => (b / 1048576).toFixed(0) + ' МБ';
 const isLxReplace = computed(() => dlg.value?.item?.action === 'singbox-lx-replace');
 const backupFits = computed(() => {
@@ -40,7 +69,7 @@ const backupText = computed(() => {
     ? `сохранить старое ядро рядом (sing-box.pre-lx, ${mb(it.backupBytes || 0)}, свободно ${mb(it.freeBytes || 0)})`
     : `для копии старого ядра (${mb(it.backupBytes || 0)}) места не хватит (свободно ${mb(it.freeBytes || 0)}) - будет удалено без сохранения`;
 });
-const dlgTitle = computed(() => (dlg.value?.item ? `${dlg.value.item.actionLabel || 'Установить'} - ядро sing-box-lx` : ''));
+const dlgTitle = computed(() => (dlg.value?.item ? `${dlg.value.item.actionLabel || 'Установить'} - ядро sing-box` : ''));
 
 watch(open, async (v) => {
   if (!v) return;
@@ -52,15 +81,32 @@ watch(open, async (v) => {
     open.value = false;
     return;
   }
+  // источник: предвыбор установленному (чтобы «обновить» не меняло ядро
+  // молча), иначе дефолт extended
   dlg.value = {
     item: fresh, phase: 'form',
+    source: fresh.source || 'extended',
     flavor: 'plain',
     backup: fresh.action === 'singbox-lx-replace' && (fresh.backupBytes || 0) > 0 && (fresh.freeBytes || 0) > (fresh.backupBytes || 0) + 64 * 1048576,
     ok: false, out: '',
   };
+  sourcesLoaded.value = false;
+  sources.value = [];
+  const list = await sys.coreSources();
+  if (list.length > 0) sources.value = list;
+  else sources.value = fallbackSources;
+  sourcesLoaded.value = true;
 });
 
-async function runInstall(payload: { id: string; flavor?: string; backup?: boolean }): Promise<void> {
+watch(() => dlg.value?.source, (id) => {
+  // у апстрима нет сжатого профиля - сбрасываем на plain
+  const src = sources.value.find((s) => s.id === id);
+  if (dlg.value && dlg.value.flavor === 'upx' && src && !src.upx) {
+    dlg.value.flavor = 'plain';
+  }
+});
+
+async function runInstall(payload: { id: string; flavor?: string; source?: string; backup?: boolean }): Promise<void> {
   if (dlg.value) dlg.value.phase = 'progress';
   try {
     const r = await sys.install(payload);
@@ -71,7 +117,12 @@ async function runInstall(payload: { id: string; flavor?: string; backup?: boole
 }
 
 function installForm(): void {
-  void runInstall({ id: 'singbox-lx', flavor: dlg.value?.flavor || 'plain', backup: dlg.value?.backup || false });
+  void runInstall({
+    id: 'singbox-lx',
+    source: dlg.value?.source || '',
+    flavor: dlg.value?.flavor || 'plain',
+    backup: dlg.value?.backup || false,
+  });
 }
 
 function showResult(ok: boolean, output: string, errText: string): void {
@@ -99,12 +150,23 @@ function showResult(ok: boolean, output: string, errText: string): void {
         </div>
         <div class="hrow">
           <UiSelect
+            v-model="dlg.source"
+            :options="sourceOptions"
+            label="Источник сборки"
+          />
+        </div>
+        <div class="hrow">
+          <UiSelect
             v-model="dlg.flavor"
             :options="flavorOptions"
             label="Профиль сборки"
           />
           <UiHelp :text="G.checksum" />
         </div>
+        <UiHint
+          v-if="!sourcesLoaded"
+          text="источники уточняются (GitHub)..."
+        />
         <UiSwitch
           v-if="isLxReplace && (dlg.item?.backupBytes || 0) > 0"
           :model-value="dlg.backup"
