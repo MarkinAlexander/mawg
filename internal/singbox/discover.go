@@ -3,6 +3,7 @@ package singbox
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -163,10 +164,6 @@ type ghRelease struct {
 	Assets     []ghAsset `json:"assets"`
 }
 
-func releasesURL(s Source) string {
-	return fmt.Sprintf("https://api.github.com/repos/%s/%s/releases?per_page=5", s.Owner, s.Repo)
-}
-
 func Discovery(ctx context.Context) []SourceReport {
 	out := make([]SourceReport, 0, len(Sources))
 	for _, src := range Sources {
@@ -182,8 +179,46 @@ func Discovery(ctx context.Context) []SourceReport {
 	return out
 }
 
+// apiBase - урл GitHub API (подменяется в тестах).
+var apiBase = "https://api.github.com"
+
 func fetchReleases(ctx context.Context, src Source) ([]Release, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, releasesURL(src), nil)
+	// большие ответы (мегабайтный JSON без gzip) на капризных маршрутах
+	// обрезаются без ошибки HTTP (живой кейс Кинетика): один ретрай на
+	// транспортный/декод-сбой; статусные ответы (403 рейт-лимит) не
+	// ретраим - бессмысленно и дороже по лимиту
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(700 * time.Millisecond):
+			}
+		}
+		rels, err := fetchReleasesOnce(ctx, src)
+		if err == nil {
+			return rels, nil
+		}
+		lastErr = err
+		if isStatusErr(err) {
+			return nil, err
+		}
+	}
+	return nil, lastErr
+}
+
+type statusErr struct{ code int }
+
+func (e statusErr) Error() string { return fmt.Sprintf("github ответил %d", e.code) }
+
+func isStatusErr(err error) bool {
+	var se statusErr
+	return errors.As(err, &se)
+}
+
+func fetchReleasesOnce(ctx context.Context, src Source) ([]Release, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiBase+"/repos/"+src.Owner+"/"+src.Repo+"/releases?per_page=5", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -194,11 +229,11 @@ func fetchReleases(ctx context.Context, src Source) ([]Release, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("github ответил %d для %s", resp.StatusCode, src)
+		return nil, fmt.Errorf("github ответил %d для %s: %w", resp.StatusCode, src, statusErr{resp.StatusCode})
 	}
 	var raw []ghRelease
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&raw); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("ответ %s обрезан/битый: %v", src, err)
 	}
 	out := make([]Release, 0, len(raw))
 	for _, r := range raw {
