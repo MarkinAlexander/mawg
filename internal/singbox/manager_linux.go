@@ -612,6 +612,10 @@ func (m *Manager) restartShared(timeout time.Duration) error {
 	return m.waitClash(timeout)
 }
 
+// SharedAlive - жив ли чужой процесс shared-сервиса (для web: решает,
+// рестартить ли сервис после подмены бинаря ядра).
+func (m *Manager) SharedAlive() bool { return m.sharedAlive() }
+
 func (m *Manager) sharedAlive() bool {
 	return len(m.sharedPids()) > 0
 }

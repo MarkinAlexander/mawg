@@ -64,12 +64,19 @@ func (s *Server) installLXCore(w http.ResponseWriter, r *http.Request, flavor st
 	s.coreDetectReset()
 	if len(s.enginePools()) > 0 {
 		go func() {
-			// после установки с нуля сервиса нет; start идемпотентен
+			// бинарь ядра заменён - старый процесс продолжает жить со
+			// снятым образом (живой кейс Кинетика: «start» на работающем
+			// сервисе no-op, движок остался на прежнем ядре). Поэтому при
+			// живом сервисе - рестарт; с нуля - просто start.
 			if s.store.SingboxMode() == "shared" {
 				_, initScript := s.sharedPaths()
-				out, err := exec.Command(initScript, "start").CombinedOutput()
+				action := "start"
+				if mgr, err := s.sb(); err == nil && mgr.SharedAlive() {
+					action = "restart"
+				}
+				out, err := exec.Command(initScript, action).CombinedOutput()
 				if err != nil {
-					s.store.LogEvent("system", "lxcore", "сервис sing-box не стартовал ("+initScript+"): "+firstLine(string(out)))
+					s.store.LogEvent("system", "lxcore", "сервис sing-box не перезапущен ("+initScript+" "+action+"): "+firstLine(string(out)))
 				}
 			}
 			skipped, err := s.applyEngine()
