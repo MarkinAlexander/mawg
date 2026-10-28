@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 	"strings"
 	"testing"
@@ -55,6 +56,24 @@ func TestDeviceGroupOf(t *testing.T) {
 	noSrc := magitrickle.Group{Rules: []magitrickle.Rule{{Type: "subnet", Rule: "0.0.0.0/0", Enable: true}}}
 	if deviceGroupOf(noSrc) {
 		t.Fatal("без источников - обычная группа (весь трафик локалки), не устройство")
+	}
+}
+
+// адрес роутера в источниках = петля туннеля (живой кейс 0.62)
+func TestRouterAddrConflicts(t *testing.T) {
+	router := []net.IPNet{
+		{IP: net.IP{192, 168, 0, 62}.To4(), Mask: net.CIDRMask(32, 32)},
+		{IP: net.IP{127, 0, 0, 1}.To4(), Mask: net.CIDRMask(8, 32)},
+	}
+	for _, src := range []string{"192.168.0.62", "127.0.0.1", "192.168.0.0/24", "0.0.0.0/0"} {
+		if !routerAddrConflicts(src, router) {
+			t.Fatalf("%s должен конфликтовать с адресами роутера", src)
+		}
+	}
+	for _, src := range []string{"192.168.0.50", "192.168.1.0/24", "10.5.0.7"} {
+		if routerAddrConflicts(src, router) {
+			t.Fatalf("%s не должен конфликтовать", src)
+		}
 	}
 }
 

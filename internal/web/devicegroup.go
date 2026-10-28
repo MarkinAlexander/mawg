@@ -56,6 +56,60 @@ func buildDeviceGroup(pool store.Pool, name string, sources []string) magitrickl
 	}
 }
 
+// routerAddrConflicts - пересекается ли источник с адресами самого роутера.
+// Адрес роутера в группе устройства ЗАПРЕЩЁН: исходящие пакеты туннеля
+// (инкапсуляция WireGuard, запросы DNS-каскада) имеют src роутера, пройдут
+// src-гвард и получат метку - маршрут по метке ушлёт их обратно в туннель.
+// Петля (живой кейс 0.62: 6 млн пакетов за минуты) выжгает CPU и рвёт
+// весь egress роутера.
+func routerAddrConflicts(src string, routerAddrs []net.IPNet) bool {
+	ip := net.ParseIP(src)
+	if ip == nil {
+		_, ipnet, err := net.ParseCIDR(src)
+		if err != nil {
+			return false
+		}
+		for _, ra := range routerAddrs {
+			if ipnet.Contains(ra.IP) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, ra := range routerAddrs {
+		if ra.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// routerIPv4Nets - адреса (IPv4+loopback) всех интерфейсов роутера.
+func routerIPv4Nets() []net.IPNet {
+	var out []net.IPNet
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	for _, ifc := range ifaces {
+		addrs, err := ifc.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			ipnet, ok := a.(*net.IPNet)
+			if !ok {
+				continue
+			}
+			if ipnet.IP.To4() == nil {
+				continue
+			}
+			out = append(out, net.IPNet{IP: ipnet.IP.To4(), Mask: ipnet.Mask})
+		}
+	}
+	return out
+}
+
 // mtCreateDeviceGroup - POST /api/v1/mt/device-group {pool, name?, ips[]}:
 // создать группу устройства и поставить её последней (сильнейшая позиция).
 func (s *Server) mtCreateDeviceGroup(w http.ResponseWriter, r *http.Request) {
@@ -85,6 +139,14 @@ func (s *Server) mtCreateDeviceGroup(w http.ResponseWriter, r *http.Request) {
 	if len(sources) == 0 {
 		writeErr(w, fmt.Errorf("нужен хотя бы один IP устройства (например 192.168.1.50; можно подсеть 192.168.1.0/24)"))
 		return
+	}
+	// адрес роутера нельзя: петля туннеля (см. routerAddrConflicts)
+	routerAddrs := routerIPv4Nets()
+	for _, src := range sources {
+		if routerAddrConflicts(src, routerAddrs) {
+			writeErr(w, fmt.Errorf("%s - это адрес самого роутера: его трафик в пул заводить нельзя (инкапсуляция туннеля замкнётся на себя). Укажите адрес устройства локальной сети - телефон, ноутбук", src))
+			return
+		}
 	}
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
