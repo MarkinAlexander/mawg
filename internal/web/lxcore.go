@@ -112,7 +112,7 @@ type singboxSourceView struct {
 func (s *Server) getSingboxSources(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
-	s.sysCache.serve(w, 10*time.Minute, func() ([]byte, error) {
+	s.sbSrcCache.serve(w, 10*time.Minute, func() ([]byte, error) {
 		arch := ""
 		if a, _, err := singbox.DetectLxArch(); err == nil {
 			arch = a
