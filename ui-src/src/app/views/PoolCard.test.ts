@@ -182,7 +182,11 @@ describe('PoolCard - отображение', () => {
     await b.trigger('click');
     await nextTick();
     expect(w.text()).toContain('Устройство целиком через пул');
-    expect(w.find('textarea').exists()).toBe(true);
+    // контент UiDialog живёт в DOM и закрытым - открытость проверяем
+    // атрибутом open самого dialog (грабля v-model vs v-model:open)
+    const dlg = w.findAll('dialog').find((d) => d.text().includes('Устройство целиком через пул'))!;
+    expect((dlg.element as HTMLDialogElement).open).toBe(true);
+    expect(dlg.find('textarea').exists()).toBe(true);
     w.unmount();
   });
 

@@ -736,7 +736,7 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
   </UiCard>
 
   <DeviceGroupDialog
-    v-model="devOpen"
+    v-model:open="devOpen"
     :pool-name="pool.name"
   />
 </template>
