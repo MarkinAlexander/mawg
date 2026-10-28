@@ -37,6 +37,8 @@ type Status struct {
 	PID       int    `json:"pid,omitempty"`
 	Version   string `json:"version,omitempty"`
 	LX        bool   `json:"lx"`
+	Extended  bool   `json:"extended,omitempty"`
+	SourceID  string `json:"source,omitempty"`
 	Bin       string `json:"bin,omitempty"`
 	Mixed     int    `json:"mixedPort"`
 	Clash     int    `json:"clashPort"`

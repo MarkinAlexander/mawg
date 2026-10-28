@@ -305,6 +305,8 @@ export const PRESET_TYPE_LABELS: Record<string, string> = {
   namespace: 'домен+поддомены',
   subnet: 'подсети IPv4',
   subnet6: 'подсети IPv6',
+  wildcard: 'маски',
+  regex: 'регулярки',
 };
 
 // сводка для confirm: «{title} - правил: N (домен+поддомены: X, подсети IPv4: Y)»

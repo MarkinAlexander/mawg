@@ -2,7 +2,7 @@
 // ответ на 3 минуты, так что частый опрос дешёв).
 import { reactive } from 'vue'
 import { api } from '../api/client'
-import type { CoreInfo, InstallRes, SystemCheckRes, UpdateInfo } from '../api/types'
+import type { CoreInfo, InstallRes, SingboxSourceInfo, SystemCheckRes, UpdateInfo } from '../api/types'
 
 const state = reactive<{ loaded: boolean; data: SystemCheckRes | null }>({ loaded: false, data: null });
 const cores = reactive<{ loaded: boolean; list: CoreInfo[] }>({ loaded: false, list: [] });
@@ -49,9 +49,18 @@ export function useSystem() {
     upd.info = info;
     return info;
   }
+  // источники установки ядра sing-box (живой дискавери, кэш 10 мин)
+  async function coreSources(): Promise<SingboxSourceInfo[]> {
+    try {
+      const data = await api<{ sources: SingboxSourceInfo[] }>('GET', '/cores/singbox/sources');
+      return data.sources || [];
+    } catch {
+      return [];
+    }
+  }
   // установка компонента идёт до пары минут - raw fetch, БЕЗ 90с-таймаута
   // api() (легаси тоже ходил сырым fetch)
-  async function install(payload: { id: string; flavor?: string; backup?: boolean }): Promise<InstallRes> {
+  async function install(payload: { id: string; flavor?: string; source?: string; backup?: boolean }): Promise<InstallRes> {
     const r = await fetch('/api/v1/system/install', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -73,5 +82,5 @@ export function useSystem() {
     else cores.list.push(r.core);
     return r.core;
   }
-  return { state, cores, upd, refresh, refreshCores, start, stop, checkUpdate, install, setSingboxMode, setSingboxCache, corePower };
+  return { state, cores, upd, refresh, refreshCores, start, stop, checkUpdate, coreSources, install, setSingboxMode, setSingboxCache, corePower };
 }

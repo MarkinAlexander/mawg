@@ -173,3 +173,18 @@ func TestFromSourceMihomoCoreInvalid(t *testing.T) {
 		t.Fatal("неизвестное ядро должно отклоняться")
 	}
 }
+
+// неизвестный источник ядра sing-box отклоняется до установки
+func TestInstallSingboxBadSource(t *testing.T) {
+	ts := newTestServer(t)
+	resp, err := http.Post(ts.URL+"/api/v1/system/install", "application/json",
+		strings.NewReader(`{"id":"singbox-lx","source":"bogus"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == 200 || !strings.Contains(string(body), "неизвестный источник") {
+		t.Fatalf("код %d тело %s", resp.StatusCode, body)
+	}
+}

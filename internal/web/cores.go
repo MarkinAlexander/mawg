@@ -33,7 +33,9 @@ type coreView struct {
 	Installed     bool     `json:"installed"`
 	Version       string   `json:"version,omitempty"`
 	LX            bool     `json:"lx,omitempty"`
-	Mode          string   `json:"mode,omitempty"` // own | shared
+	Extended      bool     `json:"extended,omitempty"`
+	Source        string   `json:"source,omitempty"` // источник сборки: lx | extended | upstream
+	Mode          string   `json:"mode,omitempty"`  // own | shared
 	Running       bool     `json:"running"`
 	Autostart     bool     `json:"autostart"`               // сервисная автозагрузка (shared)
 	AutostartNote string   `json:"autostartNote,omitempty"` // own: стартует вместе с mawg
@@ -145,6 +147,7 @@ func (s *Server) singboxCoreView() coreView {
 		return v
 	}
 	v.Installed, v.Version, v.LX = true, eng.Version, eng.LX
+	v.Extended, v.Source = eng.Extended, eng.SourceID
 	v.Mode = s.store.SingboxMode()
 	v.ManagedByMawg = singbox.ManagedByMawg(singbox.LXTargetForPlatform(s.backend.Name()))
 	v.Disabled = s.store.EngineDisabled()

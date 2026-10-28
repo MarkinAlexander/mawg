@@ -128,6 +128,8 @@ func wgEndpoint(cfg wgconf.Config, tag, detour string) (map[string]any, error) {
 
 type Params struct {
 	ClashPort int
+	// LX здесь = «полные возможности ядра» (lx или extended): xhttp,
+	// vless-шифрование, AWG-поля; апстрим такие узлы не понимает.
 	LX        bool
 	Merged    bool
 	// ResolverTag - тег dns-сервера для default_domain_resolver lx-профиля
@@ -143,10 +145,11 @@ func lxResolverDNS(tag string) map[string]any {
 	}
 }
 
-// EligibleNodes - узлы, которые текущий профиль движка умеет запустить
-func EligibleNodes(nodes []links.Node, lx bool) (ok []links.Node, reasons []string) {
+// EligibleNodes - узлы, которые текущее ядро умеет запустить (fullCaps =
+// сборка lx/extended; апстриму не дают xhttp/vless-шифрование)
+func EligibleNodes(nodes []links.Node, fullCaps bool) (ok []links.Node, reasons []string) {
 	for _, n := range nodes {
-		ob, good, reason := nodeOutbound("probe", n, lx)
+		ob, good, reason := nodeOutbound("probe", n, fullCaps)
 		_ = ob
 		if good {
 			ok = append(ok, n)
@@ -157,15 +160,15 @@ func EligibleNodes(nodes []links.Node, lx bool) (ok []links.Node, reasons []stri
 	return ok, reasons
 }
 
-func nodeOutbound(poolTag string, n links.Node, lx bool) (map[string]any, bool, string) {
+func nodeOutbound(poolTag string, n links.Node, fullCaps bool) (map[string]any, bool, string) {
 	skip := func(reason string) (map[string]any, bool, string) { return nil, false, reason }
 	switch n.Type {
 	case "vless", "trojan", "vmess":
 	default:
 		return skip(fmt.Sprintf("%s: тип %s идёт нативным пулом", n.Tag, n.Type))
 	}
-	if n.Encryption != "" && n.Encryption != "none" && !lx {
-		return skip(fmt.Sprintf("%s: vless-шифрование требует движок lx", n.Tag))
+	if n.Encryption != "" && n.Encryption != "none" && !fullCaps {
+		return skip(fmt.Sprintf("%s: vless-шифрование требует ядро lx или extended", n.Tag))
 	}
 	out := map[string]any{
 		"type": n.Type, "tag": poolTag + "|" + n.ConfName(),
@@ -238,8 +241,8 @@ func nodeOutbound(poolTag string, n links.Node, lx bool) (map[string]any, bool, 
 		}
 		out["transport"] = tr
 	case "xhttp":
-		if !lx {
-			return skip(fmt.Sprintf("%s: транспорт xhttp требует движок lx", n.Tag))
+		if !fullCaps {
+			return skip(fmt.Sprintf("%s: транспорт xhttp требует ядро lx или extended", n.Tag))
 		}
 		out["transport"] = map[string]any{"type": "xhttp", "path": n.Path, "mode": n.Mode}
 	default:

@@ -90,6 +90,22 @@ func TestArchFromELF(t *testing.T) {
 	}
 }
 
+func srcByID(t *testing.T, id string) Source {
+	t.Helper()
+	s, ok := SourceByID(id)
+	if !ok {
+		t.Fatalf("нет источника %s", id)
+	}
+	return s
+}
+
+// lxTestSource - профиль lx для фикстур установки (Sources[0] теперь
+// extended - дефолт по слову владельца).
+var lxTestSource = func() Source {
+	s, _ := SourceByID(SourceLXID)
+	return s
+}()
+
 func TestPickAsset(t *testing.T) {
 	fork := Source{Owner: "MarkinAlexander", Repo: "sing-box-lx"}
 	alt := Source{Owner: "example", Repo: "sing-box-lx"}
@@ -101,7 +117,7 @@ func TestPickAsset(t *testing.T) {
 				Names: map[string]FlavorAssets{"mipsle-softfloat": {Plain: "p7.tar.gz", PlainSz: 100, UPX: "u7.tar.gz", UPXSz: 30}}},
 		}},
 	}
-	pick, err := PickAsset(reports, "mipsle-softfloat", LXFlavorPlain)
+	pick, err := PickAsset(reports, "", "mipsle-softfloat", LXFlavorPlain)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,23 +127,57 @@ func TestPickAsset(t *testing.T) {
 	if !strings.HasSuffix(pick.URL(), "/releases/download/v1.14.2-lx.7/p7.tar.gz") {
 		t.Fatalf("url: %s", pick.URL())
 	}
-	pick, err = PickAsset(reports, "mipsle-softfloat", LXFlavorUPX)
+	pick, err = PickAsset(reports, "", "mipsle-softfloat", LXFlavorUPX)
 	if err != nil || pick.Asset != "u7.tar.gz" {
 		t.Fatalf("upx: %+v err=%v", pick, err)
 	}
-	if _, err := PickAsset(reports, "386", LXFlavorPlain); err == nil || !strings.Contains(err.Error(), "нет ассета для 386") {
+	if _, err := PickAsset(reports, "", "386", LXFlavorPlain); err == nil || !strings.Contains(err.Error(), "нет ассета для 386") {
 		t.Fatalf("386: %v", err)
 	}
-	if _, err := PickAsset(reports, "386", "zip"); err == nil || !strings.Contains(err.Error(), "plain или upx") {
+	if _, err := PickAsset(reports, "", "386", "zip"); err == nil || !strings.Contains(err.Error(), "plain или upx") {
 		t.Fatalf("flavor: %v", err)
 	}
-	if _, err := PickAsset(nil, "amd64", LXFlavorPlain); err == nil || !strings.Contains(err.Error(), "нет доступных релизов") {
+	if _, err := PickAsset(nil, "", "amd64", LXFlavorPlain); err == nil || !strings.Contains(err.Error(), "нет доступных релизов") {
 		t.Fatalf("empty: %v", err)
 	}
 }
 
-func TestLXNewer(t *testing.T) {
-	cases := []struct {
+// выбор источника: явный id берёт ассет только из него; отсутствие профиля
+// upx у апстрима - честная ошибка, а не тихая подмена источником поглубже
+func TestPickAssetSourceSelection(t *testing.T) {
+	ext := srcByID(t, SourceExtID)
+	up := srcByID(t, SourceUpID)
+	reports := []SourceReport{
+		{Source: up, Releases: []Release{
+			{Tag: "v1.14.4", Matrix: map[string]Flavors{"386": {Plain: true}},
+				Names: map[string]FlavorAssets{"386": {Plain: "up-386.tar.gz"}}},
+		}},
+		{Source: ext, Releases: []Release{
+			{Tag: "v1.14.3-extended-2.7.3", Matrix: map[string]Flavors{"386": {Plain: true, UPX: true}},
+				Names: map[string]FlavorAssets{"386": {Plain: "ext-386.tar.gz", UPX: "ext-386-compressed.tar.gz"}}},
+		}},
+	}
+	pick, err := PickAsset(reports, SourceExtID, "386", LXFlavorPlain)
+	if err != nil || pick.Asset != "ext-386.tar.gz" || pick.Source != ext {
+		t.Fatalf("explicit extended: %+v err=%v", pick, err)
+	}
+	pick, err = PickAsset(reports, SourceUpID, "386", LXFlavorPlain)
+	if err != nil || pick.Asset != "up-386.tar.gz" || pick.Source != up {
+		t.Fatalf("explicit upstream: %+v err=%v", pick, err)
+	}
+	if _, err := PickAsset(reports, SourceUpID, "386", LXFlavorUPX); err == nil || !strings.Contains(err.Error(), "нет ассета для 386 (upx)") {
+		t.Fatalf("upstream не имеет сжатого профиля: %v", err)
+	}
+	if _, err := PickAsset(reports, "no-such", "386", LXFlavorPlain); err == nil || !strings.Contains(err.Error(), "нет доступных релизов") {
+		t.Fatalf("неизвестный источник: %v", err)
+	}
+}
+
+func TestSourceNewer(t *testing.T) {
+	lx := srcByID(t, SourceLXID)
+	ext := srcByID(t, SourceExtID)
+	up := srcByID(t, SourceUpID)
+	lxCases := []struct {
 		cand, inst string
 		want       bool
 	}{
@@ -136,12 +186,62 @@ func TestLXNewer(t *testing.T) {
 		{"1.14.2-lx.6", "1.14.2-lx.7", false},
 		{"1.15.0-lx.1", "1.14.2-lx.99", true},
 		{"v1.14.2-lx.8", "1.14.2-lx.7", true},
-		{"1.14.2-lx.1", "1.13.3", true},
+		{"1.13.3", "1.14.2-lx.7", false},
 		{"мусор", "1.14.2-lx.7", false},
 	}
-	for _, c := range cases {
-		if got := LXNewer(c.cand, c.inst); got != c.want {
-			t.Errorf("LXNewer(%q,%q) = %v, want %v", c.cand, c.inst, got, c.want)
+	for _, c := range lxCases {
+		if got := lx.Newer(c.cand, c.inst); got != c.want {
+			t.Errorf("lx.Newer(%q,%q) = %v, want %v", c.cand, c.inst, got, c.want)
+		}
+	}
+	extCases := []struct {
+		cand, inst string
+		want       bool
+	}{
+		{"1.14.3-extended-2.7.4", "1.14.3-extended-2.7.3", true},
+		{"1.14.3-extended-2.7.3", "1.14.3-extended-2.7.3", false},
+		{"1.14.3-extended-2.8.0", "1.14.3-extended-2.7.9", true},
+		{"1.14.3-extended-2.7.2", "1.14.3-extended-2.7.3", false},
+		{"1.14.4-extended-2.0.0", "1.14.3-extended-2.7.3", true},
+		{"1.14.3-extended-2.7.3", "1.14.4-extended-2.0.0", false},
+	}
+	for _, c := range extCases {
+		if got := ext.Newer(c.cand, c.inst); got != c.want {
+			t.Errorf("ext.Newer(%q,%q) = %v, want %v", c.cand, c.inst, got, c.want)
+		}
+	}
+	upCases := []struct {
+		cand, inst string
+		want       bool
+	}{
+		{"1.14.5", "1.14.4", true},
+		{"1.14.4", "1.14.4", false},
+		{"1.15.0", "1.14.9", true},
+		{"1.14.4", "1.15.0", false},
+	}
+	for _, c := range upCases {
+		if got := up.Newer(c.cand, c.inst); got != c.want {
+			t.Errorf("up.Newer(%q,%q) = %v, want %v", c.cand, c.inst, got, c.want)
+		}
+	}
+	// профиль версии: lx/extended по суффиксу, апстрим - чистая версия
+	for _, c := range []struct {
+		src  Source
+		ver  string
+		want bool
+	}{
+		{lx, "1.14.2-lx.12", true},
+		{lx, "1.14.3-extended-2.7.3", false},
+		{lx, "1.14.4", false},
+		{ext, "1.14.3-extended-2.7.3", true},
+		{ext, "1.14.2-lx.12", false},
+		{ext, "1.14.4", false},
+		{up, "1.14.4", true},
+		{up, "1.14.2-lx.12", false},
+		{up, "1.14.3-extended-2.7.3", false},
+	} {
+		if got := c.src.MatchesVersion(c.ver); got != c.want {
+			t.Errorf("%s.MatchesVersion(%q) = %v, want %v", c.src.ID, c.ver, got, c.want)
 		}
 	}
 }
@@ -191,7 +291,7 @@ func newFakeLXCore(t *testing.T, tag string) *fakeLXCore {
 }
 
 func (f *fakeLXCore) reports() []SourceReport {
-	return []SourceReport{{Source: Sources[0], Releases: []Release{{
+	return []SourceReport{{Source: lxTestSource, Releases: []Release{{
 		Tag:    "v" + f.tag,
 		Matrix: map[string]Flavors{"mipsle-softfloat": {Plain: true, UPX: true}},
 		Names: map[string]FlavorAssets{"mipsle-softfloat": {
@@ -256,7 +356,7 @@ func TestInstallLXCoreFresh(t *testing.T) {
 		t.Fatalf("бинарь не установлен: %v", err)
 	}
 	marker, err := os.ReadFile(filepath.Join(f.markerDir, LXMarkerName))
-	if err != nil || !strings.Contains(string(marker), "version=1.14.2-lx.7") || !strings.Contains(string(marker), "flavor=plain") || !strings.Contains(string(marker), "source="+Sources[0].String()) {
+	if err != nil || !strings.Contains(string(marker), "version=1.14.2-lx.7") || !strings.Contains(string(marker), "flavor=plain") || !strings.Contains(string(marker), "source="+lxTestSource.String()) {
 		t.Fatalf("маркер: %s err=%v", marker, err)
 	}
 	if !strings.Contains(res.Log, "checksum ok") || !strings.Contains(res.Log, "тест-запуск") {
@@ -397,7 +497,7 @@ func TestInstallLXCoreNotLXBinary(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := InstallLXCore(context.Background(), f.opts(false))
-	if err == nil || !strings.Contains(err.Error(), "не lx-ядро") {
+	if err == nil || !strings.Contains(err.Error(), "не сборка") {
 		t.Fatalf("ожидался отказ тест-запуска: %v", err)
 	}
 }
@@ -406,7 +506,7 @@ func TestInstallLXCoreMissingArch(t *testing.T) {
 	f := newFakeLXCore(t, "1.14.2-lx.7")
 	opts := f.opts(false)
 	opts.Discover = func(ctx context.Context) []SourceReport {
-		return []SourceReport{{Source: Sources[0], Releases: []Release{{Tag: "v1", Matrix: map[string]Flavors{"amd64": {Plain: true}}, Names: map[string]FlavorAssets{"amd64": {Plain: "a.tar.gz"}}}}}}
+		return []SourceReport{{Source: lxTestSource, Releases: []Release{{Tag: "v1", Matrix: map[string]Flavors{"amd64": {Plain: true}}, Names: map[string]FlavorAssets{"amd64": {Plain: "a.tar.gz"}}}}}}
 	}
 	_, err := InstallLXCore(context.Background(), opts)
 	if err == nil || !strings.Contains(err.Error(), "нет ассета для mipsle-softfloat") {
@@ -429,7 +529,7 @@ func TestInstallLXCoreTightSpaceRemovesOurOld(t *testing.T) {
 		t.Fatal(err)
 	}
 	// flavor=upx в маркере при запрошенном plain - смена профиля, не «актуально»
-	marker := fmt.Sprintf("tag=v1.14.2-lx.7\nversion=1.14.2-lx.7\nsource=%s\nflavor=upx\n", Sources[0])
+	marker := fmt.Sprintf("tag=v1.14.2-lx.7\nversion=1.14.2-lx.7\nsource=%s\nflavor=upx\n", lxTestSource)
 	if err := os.WriteFile(filepath.Join(f.markerDir, LXMarkerName), []byte(marker), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -535,7 +635,7 @@ func TestInstallLXCoreUpToDateOurs(t *testing.T) {
 	if err := os.MkdirAll(f.markerDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	marker := fmt.Sprintf("tag=v1.14.2-lx.7\nversion=1.14.2-lx.7\nsource=%s\nflavor=plain\n", Sources[0])
+	marker := fmt.Sprintf("tag=v1.14.2-lx.7\nversion=1.14.2-lx.7\nsource=%s\nflavor=plain\n", lxTestSource)
 	if err := os.WriteFile(filepath.Join(f.markerDir, LXMarkerName), []byte(marker), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -584,7 +684,41 @@ func TestInstallLXCoreSameVersionForeignSourceReplaces(t *testing.T) {
 		t.Fatalf("бинарь не заменён нашей сборкой: %q", got)
 	}
 	marker, _ := os.ReadFile(filepath.Join(f.markerDir, LXMarkerName))
-	if !strings.Contains(string(marker), "source="+Sources[0].String()) {
+	if !strings.Contains(string(marker), "source="+lxTestSource.String()) {
 		t.Fatalf("маркер без источника: %s", marker)
+	}
+}
+
+// extended-источник: digest из GitHub API вместо SHA256SUMS-файла,
+// маркер фиксирует источник установки
+func TestInstallExtendedCoreDigest(t *testing.T) {
+	f := newFakeLXCore(t, "1.14.3-extended-2.7.3")
+	ext := srcByID(t, SourceExtID)
+	sum := sha256.Sum256(f.tarBytes)
+	opts := f.opts(false)
+	opts.Source = SourceExtID
+	opts.Discover = func(ctx context.Context) []SourceReport {
+		return []SourceReport{{Source: ext, Releases: []Release{{
+			Tag:    "v" + f.tag,
+			Matrix: map[string]Flavors{"mipsle-softfloat": {Plain: true, UPX: true}},
+			Names: map[string]FlavorAssets{"mipsle-softfloat": {
+				Plain: f.asset, PlainSz: int64(len(f.tarBytes)), PlainSHA: fmt.Sprintf("%x", sum),
+				UPX: strings.TrimSuffix(f.asset, ".tar.gz") + "-compressed.tar.gz", UPXSz: int64(len(f.tarBytes)),
+			}},
+		}}}}
+	}
+	res, err := InstallLXCore(context.Background(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Version != "1.14.3-extended-2.7.3" || res.Tag != "v1.14.3-extended-2.7.3" {
+		t.Fatalf("res: %+v", res)
+	}
+	if !strings.Contains(res.Log, "checksum ok (digest github)") {
+		t.Fatalf("нет digest-проверки: %s", res.Log)
+	}
+	marker, err := os.ReadFile(filepath.Join(f.markerDir, LXMarkerName))
+	if err != nil || !strings.Contains(string(marker), "source="+ext.String()) || !strings.Contains(string(marker), "version=1.14.3-extended-2.7.3") {
+		t.Fatalf("маркер: %s err=%v", marker, err)
 	}
 }

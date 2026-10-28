@@ -272,7 +272,7 @@ describe('SystemView - карточка «Система»', () => {
     const { w, f } = await makeView();
     await btn(w, 'Заменить на lx')[0].trigger('click');
     const dlg = await vi.waitFor(() => {
-      const d = w.findAll('dialog').find((x) => x.text().includes('ядро sing-box-lx'));
+      const d = w.findAll('dialog').find((x) => x.text().includes('ядро sing-box'));
       expect(d).toBeDefined();
       return d!;
     });
@@ -284,15 +284,16 @@ describe('SystemView - карточка «Система»', () => {
     expect(sw.exists()).toBe(true);
     expect(sw.props('modelValue')).toBe(true);
     expect(sw.props('disabled')).toBe(false);
-    await w.find('dialog .psel-btn').trigger('click'); // открыть профиль
+    // первый селект диалога - источник сборки, второй - профиль
+    await w.findAll('dialog .psel-btn')[1].trigger('click');
     await nextTick();
-    const upx = w.findAll('dialog .psel-item').find((o) => o.text().includes('upx'))!;
+    const upx = w.findAll('dialog .psel-item').find((o) => o.text().includes('сжатый'))!;
     await upx.trigger('click');
     await nextTick();
     await btn(w, 'Заменить на lx').at(-1)!.trigger('click'); // «Установить» в диалоге
     await vi.waitFor(() => {
       const post = f.mock.calls.find((c) => (c[0] as string).endsWith('/system/install'));
-      expect(JSON.parse(post![1]!.body as string)).toEqual({ id: 'singbox-lx', flavor: 'upx', backup: true });
+      expect(JSON.parse(post![1]!.body as string)).toEqual({ id: 'singbox-lx', source: 'extended', flavor: 'upx', backup: true });
     });
     // форма гаснет, показывается прогресс установки
     await vi.waitFor(() => expect(w.text()).toContain('Идёт установка'));
