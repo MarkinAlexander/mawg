@@ -452,7 +452,7 @@ func (m *Manager) stop() {
 
 func (m *Manager) writeConfig(pools []PoolSpec) error {
 	merged := m.Mode == "shared"
-	data, _, err := BuildConfig(pools, Params{ClashPort: m.ClashPort, LX: m.eng.FullCaps(), Merged: merged, ResolverTag: m.resolverTag})
+	data, _, err := BuildConfig(pools, Params{ClashPort: m.ClashPort, Profile: m.eng.SourceID, Merged: merged, ResolverTag: m.resolverTag})
 	if err != nil {
 		return err
 	}

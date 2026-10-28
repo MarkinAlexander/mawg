@@ -37,9 +37,13 @@ type PoolSpec struct {
 	Detour string
 }
 
-// wgEndpoint - wireguard-эндпоинт sing-box-lx из конфига WG/AWG: AWG-поля
-// (2.0 и 3.x) прикрепляются к корню эндпоинта, как в опциях форка.
-func wgEndpoint(cfg wgconf.Config, tag, detour string) (map[string]any, error) {
+// wgEndpoint - wireguard-эндпоинт из конфига WG/AWG. Профиль ядра решает
+// формат: lx - AWG-поля (2.0 и 3.x) в корне эндпоинта, keepalive строкой-
+// диапазоном; extended - AWG-поля в объекте amnezia, keepalive числом
+// (живые проверки на 0.62: корневые поля extended отвергает, строковый
+// range в persistent_keepalive_interval - тоже только lx).
+func wgEndpoint(cfg wgconf.Config, tag, detour, profile string) (map[string]any, error) {
+	nested := profile == SourceExtID
 	if cfg.PrivateKey == "" || cfg.Peer.PublicKey == "" || cfg.Peer.EndpointHost == "" {
 		return nil, fmt.Errorf("%s: конфиг без ключа или эндпоинта", tag)
 	}
@@ -58,7 +62,14 @@ func wgEndpoint(cfg wgconf.Config, tag, detour string) (map[string]any, error) {
 	}
 	switch {
 	case cfg.Peer.KeepaliveRange != "":
-		peer["persistent_keepalive_interval"] = cfg.Peer.KeepaliveRange
+		if nested {
+			// extended принимает только число: берём низ диапазона
+			if n, err := strconv.Atoi(strings.SplitN(cfg.Peer.KeepaliveRange, "-", 2)[0]); err == nil {
+				peer["persistent_keepalive_interval"] = n
+			}
+		} else {
+			peer["persistent_keepalive_interval"] = cfg.Peer.KeepaliveRange
+		}
 	case cfg.Peer.PersistentKeepalive > 0:
 		peer["persistent_keepalive_interval"] = cfg.Peer.PersistentKeepalive
 	}
@@ -75,6 +86,7 @@ func wgEndpoint(cfg wgconf.Config, tag, detour string) (map[string]any, error) {
 		ep["mtu"] = cfg.MTU
 	}
 	awg := cfg.AWG
+	amnezia := map[string]any{}
 	num := func(v *string, name string) any {
 		if v == nil {
 			return nil
@@ -86,13 +98,13 @@ func wgEndpoint(cfg wgconf.Config, tag, detour string) (map[string]any, error) {
 		return n
 	}
 	if v := num(awg.Jc, "jc"); v != nil {
-		ep["jc"] = v
+		amnezia["jc"] = v
 	}
 	if v := num(awg.Jmin, "jmin"); v != nil {
-		ep["jmin"] = v
+		amnezia["jmin"] = v
 	}
 	if v := num(awg.Jmax, "jmax"); v != nil {
-		ep["jmax"] = v
+		amnezia["jmax"] = v
 	}
 	for _, f := range []struct {
 		src *string
@@ -101,7 +113,7 @@ func wgEndpoint(cfg wgconf.Config, tag, detour string) (map[string]any, error) {
 		{awg.S1, "s1"}, {awg.S2, "s2"}, {awg.S3, "s3"}, {awg.S4, "s4"},
 	} {
 		if v := num(f.src, f.key); v != nil {
-			ep[f.key] = v
+			amnezia[f.key] = v
 		}
 	}
 	// h1..h4 и AWG 3.x-диапазоны - строкой «N»/«N-M», как ждёт AWGRange
@@ -120,22 +132,37 @@ func wgEndpoint(cfg wgconf.Config, tag, detour string) (map[string]any, error) {
 		{awg.MaxHandshakeAttempts, "max_handshake_attempts"},
 	} {
 		if f.src != nil && strings.TrimSpace(*f.src) != "" {
-			ep[f.key] = strings.TrimSpace(*f.src)
+			amnezia[f.key] = strings.TrimSpace(*f.src)
 		}
+	}
+	if len(amnezia) == 0 {
+		return ep, nil
+	}
+	if nested {
+		ep["amnezia"] = amnezia
+		return ep, nil
+	}
+	for k, v := range amnezia {
+		ep[k] = v
 	}
 	return ep, nil
 }
 
 type Params struct {
 	ClashPort int
-	// LX здесь = «полные возможности ядра» (lx или extended): xhttp,
-	// vless-шифрование, AWG-поля; апстрим такие узлы не понимает.
-	LX        bool
-	Merged    bool
+	// Profile - сборка ядра (lx | extended | upstream): расширенные форки
+	// умеют xhttp/vless-шифрование/AWG (fullCaps), но кладут AWG-поля
+	// ПО-РАЗНОМУ: lx - в корень эндпоинта, extended - в объект amnezia
+	// (живые проверки на 0.62, 90-док). Пусто = апстрим-совместимо.
+	Profile    string
+	Merged     bool
 	// ResolverTag - тег dns-сервера для default_domain_resolver lx-профиля
 	// (пусто = "local"); в shared выбирается свободный у чужого конфига.
 	ResolverTag string
 }
+
+// fullCaps - расширенные возможности ядра (lx/extended).
+func (p Params) fullCaps() bool { return p.Profile == SourceLXID || p.Profile == SourceExtID }
 
 // lxResolverDNS - dns-секция lx-профиля: без записи в dns.servers ядро
 // на check отвечает "default domain resolver not found".
@@ -244,7 +271,9 @@ func nodeOutbound(poolTag string, n links.Node, fullCaps bool) (map[string]any, 
 		if !fullCaps {
 			return skip(fmt.Sprintf("%s: транспорт xhttp требует ядро lx или extended", n.Tag))
 		}
-		out["transport"] = map[string]any{"type": "xhttp", "path": n.Path, "mode": n.Mode}
+		// x_padding_bytes обязателен у extended (check: "cannot be disabled"),
+		// lx поле спокойно принимает - пишем всегда (живая проверка 0.62)
+		out["transport"] = map[string]any{"type": "xhttp", "path": n.Path, "mode": n.Mode, "x_padding_bytes": "100-1000"}
 	default:
 		return skip(fmt.Sprintf("%s: транспорт %s не поддерживается", n.Tag, n.Transport))
 	}
@@ -286,7 +315,7 @@ func BuildConfig(pools []PoolSpec, p Params) ([]byte, []string, error) {
 		groupTag := "mawg-" + spec.Name
 		var tags []string
 		for _, n := range spec.Nodes {
-			ob, ok, reason := nodeOutbound(groupTag, n, p.LX)
+			ob, ok, reason := nodeOutbound(groupTag, n, p.fullCaps())
 			if !ok {
 				skipped = append(skipped, reason)
 				continue
@@ -296,7 +325,7 @@ func BuildConfig(pools []PoolSpec, p Params) ([]byte, []string, error) {
 		}
 		for _, c := range spec.WG {
 			tag := groupTag + "|" + strconv.Itoa(len(tags)+1)
-			ep, err := wgEndpoint(c, tag, spec.Detour)
+			ep, err := wgEndpoint(c, tag, spec.Detour, p.Profile)
 			if err != nil {
 				skipped = append(skipped, fmt.Sprintf("пул %s: %v", spec.Name, err))
 				continue
@@ -345,7 +374,7 @@ func BuildConfig(pools []PoolSpec, p Params) ([]byte, []string, error) {
 	}
 	route := map[string]any{"rules": routeRules}
 	cfgDNS := map[string]any(nil)
-	if p.LX {
+	if p.fullCaps() {
 		tag := p.ResolverTag
 		if tag == "" {
 			tag = "local"
@@ -370,7 +399,7 @@ func BuildConfig(pools []PoolSpec, p Params) ([]byte, []string, error) {
 		"final":                 "direct",
 		"auto_detect_interface": true,
 	}
-	if p.LX {
+	if p.fullCaps() {
 		tag := p.ResolverTag
 		if tag == "" {
 			tag = "local"

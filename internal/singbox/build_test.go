@@ -152,7 +152,7 @@ func TestBuildConfigSkipsXhttpOnUpstream(t *testing.T) {
 
 func TestBuildConfigLXAllowsXhttp(t *testing.T) {
 	spec := PoolSpec{Name: "x", Tun: "tun1", TunIP: TuneIP(1), MixedPort: 2282, Nodes: mustNodes(t, fakeVlessXhttp)}
-	data, skipped, err := BuildConfig([]PoolSpec{spec}, Params{ClashPort: 2291, LX: true})
+	data, skipped, err := BuildConfig([]PoolSpec{spec}, Params{ClashPort: 2291, Profile: SourceLXID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,6 +161,9 @@ func TestBuildConfigLXAllowsXhttp(t *testing.T) {
 	}
 	if !strings.Contains(string(data), `"xhttp"`) {
 		t.Fatal("нет xhttp-транспорта")
+	}
+	if !strings.Contains(string(data), "x_padding_bytes") {
+		t.Fatal("xhttp обязан нести x_padding_bytes (extended без него не проходит check)")
 	}
 	if !strings.Contains(string(data), "default_domain_resolver") {
 		t.Fatal("lx-профиль обязан иметь default_domain_resolver")
@@ -248,7 +251,7 @@ func TestBuildConfigMergedFragment(t *testing.T) {
 func TestBuildConfigMergedLXAddsResolver(t *testing.T) {
 	spec := PoolSpec{Name: "x", Tun: "tun1", TunIP: TuneIP(1), MixedPort: 2282,
 		ProbeTarget: "http://www.gstatic.com/generate_204", Nodes: mustNodes(t, fakeVlessXhttp)}
-	data, _, err := BuildConfig([]PoolSpec{spec}, Params{LX: true, Merged: true})
+	data, _, err := BuildConfig([]PoolSpec{spec}, Params{Profile: SourceLXID, Merged: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,7 +263,7 @@ func TestBuildConfigMergedLXAddsResolver(t *testing.T) {
 	if !strings.Contains(string(data), `"type": "local"`) || !strings.Contains(string(data), `"tag": "local"`) {
 		t.Fatalf("lx-фрагмент обязан определять локальный dns-сервер: %s", data)
 	}
-	custom, _, err := BuildConfig([]PoolSpec{spec}, Params{LX: true, Merged: true, ResolverTag: "mawg-local"})
+	custom, _, err := BuildConfig([]PoolSpec{spec}, Params{Profile: SourceLXID, Merged: true, ResolverTag: "mawg-local"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +280,7 @@ func TestBuildConfigMergedLXAddsResolver(t *testing.T) {
 	if strings.Contains(string(plain), `"dns"`) || strings.Contains(string(plain), "default_domain_resolver") {
 		t.Fatalf("upstream-фрагмент не должен содержать dns/resolver: %s", plain)
 	}
-	if _, _, err := BuildConfig([]PoolSpec{spec}, Params{LX: true, Merged: true, ClashPort: 0}); err != nil {
+	if _, _, err := BuildConfig([]PoolSpec{spec}, Params{Profile: SourceLXID, Merged: true, ClashPort: 0}); err != nil {
 		t.Fatalf("merged-профиль не должен требовать clash-порт: %v", err)
 	}
 	if _, _, err := BuildConfig([]PoolSpec{spec}, Params{ClashPort: 0}); err == nil {
