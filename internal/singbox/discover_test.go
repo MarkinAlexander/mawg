@@ -1,6 +1,9 @@
 package singbox
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
@@ -178,5 +181,52 @@ func TestFetchReleasesSkipsPrerelease(t *testing.T) {
 	}
 	if len(rels) != 1 || rels[0].Tag != "v1.14.4-lx.24" {
 		t.Fatalf("prerelease должен отфильтроваться: %+v", rels)
+	}
+}
+
+// обрезанный ответ (капризный маршрут) ретраится и проходит вторым ударом;
+// статусная ошибка (403) ретраем не размазывается
+func TestFetchReleasesRetryOnTruncation(t *testing.T) {
+	lx, _ := SourceByID(SourceLXID)
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		if hits == 1 {
+			// первый удар - обрыв посреди JSON
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`[{"tag_name":"v1.14.4-lx.24","assets":[{"name":"a.tar.gz"} `))
+			return
+		}
+		w.Write([]byte(`[{"tag_name":"v1.14.4-lx.24","assets":[{"name":"sing-box-1.14.4-lx.24-linux-386.tar.gz"}]}]`))
+	}))
+	defer srv.Close()
+	old := apiBase
+	apiBase = srv.URL
+	t.Cleanup(func() { apiBase = old })
+	rels, err := fetchReleases(context.Background(), lx)
+	if err != nil {
+		t.Fatalf("ретрай не спас от обрезки: %v", err)
+	}
+	if len(rels) != 1 || rels[0].Tag != "v1.14.4-lx.24" {
+		t.Fatalf("rels: %+v", rels)
+	}
+}
+
+func TestFetchReleasesNoRetryOnStatus(t *testing.T) {
+	lx, _ := SourceByID(SourceLXID)
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+	old := apiBase
+	apiBase = srv.URL
+	t.Cleanup(func() { apiBase = old })
+	if _, err := fetchReleases(context.Background(), lx); err == nil {
+		t.Fatal("403 должен ошибаться")
+	}
+	if hits != 1 {
+		t.Fatalf("403 не должен ретраиться, ударов %d", hits)
 	}
 }
