@@ -60,7 +60,7 @@ export function useSystem() {
   }
   // установка компонента идёт до пары минут - raw fetch, БЕЗ 90с-таймаута
   // api() (легаси тоже ходил сырым fetch)
-  async function install(payload: { id: string; flavor?: string; source?: string; backup?: boolean }): Promise<InstallRes> {
+  async function install(payload: { id: string; flavor?: string; source?: string; backup?: boolean; replace?: boolean }): Promise<InstallRes> {
     const r = await fetch('/api/v1/system/install', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

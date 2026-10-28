@@ -650,6 +650,10 @@ func markerSource(dir string) string {
 	return markerField(dir, "source")
 }
 
+// MarkerSource - источник последней установки для внешних пакетов
+// (provision: предвыбор источника в диалоге по репозиторию маркера).
+func MarkerSource(dir string) string { return markerSource(dir) }
+
 // markerFlavor - профиль последней установки (flavor= в маркере): смена
 // plain/upx при той же версии - полноценная переустановка, а не «актуально».
 func markerFlavor(dir string) string {

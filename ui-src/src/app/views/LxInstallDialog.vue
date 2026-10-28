@@ -17,8 +17,9 @@ const sys = useSystem();
 
 // фолбэк, если GitHub-дискавери недоступен: порядок = приоритет установки
 const fallbackSources: SingboxSourceInfo[] = [
-  { id: 'extended', title: 'sing-box-extended (форк shtorm-7)', note: 'форк shtorm-7: как наш lx, плюс новые протоколы; база свежее', upx: true, available: true },
-  { id: 'lx', title: 'sing-box-lx (наш форк)', note: 'наш форк: AWG-обфускация, xhttp, vless-шифрование, upx-профиль', upx: true, available: true },
+  { id: 'extended', title: 'sing-box-extended (форк shtorm-7)', note: 'форк shtorm-7: как lx, плюс новые протоколы; сжатые сборки под все платформы', upx: true, available: true },
+  { id: 'lx', title: 'sing-box-lx (оригинал Leadaxe)', note: 'оригинальный lx-форк: самая свежая база, частые релизы, самое экономное по памяти', upx: true, available: true },
+  { id: 'lx-own', title: 'sing-box-lx (наш форк)', note: 'наш форк: upx-сборки под все платформы (для тесной флешы x86)', upx: true, available: true },
   { id: 'upstream', title: 'sing-box (официальный апстрим)', note: 'официальный: без AWG-полей, xhttp и vless-шифрования', upx: false, available: true },
 ];
 

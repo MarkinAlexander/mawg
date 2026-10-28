@@ -190,3 +190,42 @@ func TestCachedBinVersionReusesStatKey(t *testing.T) {
 		t.Fatalf("запусков после замены: %d, ожидалось 2", calls)
 	}
 }
+
+// пункт mihomo в таблице зависимостей (29.10): версия через -v, кнопка
+// установки/обновления, действие mihomo идёт POST /system/install
+func TestMihomoCoreItemStates(t *testing.T) {
+	bin := "/opt/bin/mihomo"
+
+	// не установлен: кнопка «установить»
+	withFS(t, 0, 0, false)
+	item := mihomoCoreItem(fakeRunner{}.run, "keenetic")
+	if item.Installed || item.Action != "mihomo" || item.ActionLabel != "установить" || item.Version != "" {
+		t.Fatalf("нет mihomo: %+v", item)
+	}
+	if !strings.Contains(item.Confirm, "MetaCubeX") {
+		t.Fatalf("confirm: %q", item.Confirm)
+	}
+
+	// установлен нашей панелью: «обновить ядро» без примечаний
+	withFS(t, 63000000, 26214400*1024, true)
+	r := fakeRunner{bin + " -v": "Mihomo Meta v1.19.33 linux-mipsle-softfloat with go1.24\r\n"}
+	item = mihomoCoreItem(r.run, "keenetic")
+	if !item.Installed || item.Version != "v1.19.33" || item.ActionLabel != "обновить ядро" || item.Note != "" {
+		t.Fatalf("установлен с маркером: %+v", item)
+	}
+
+	// установлен вручную: примечание про маркер
+	withFS(t, 63000000, 26214400*1024, false)
+	item = mihomoCoreItem(r.run, "keenetic")
+	if !item.Installed || item.Note == "" {
+		t.Fatalf("установлен без маркера: %+v", item)
+	}
+
+	// openwrt-путь
+	withFS(t, 63000000, 26214400*1024, true)
+	r = fakeRunner{"/usr/bin/mihomo -v": "Mihomo Meta v1.19.4 darwin-arm64\n"}
+	item = mihomoCoreItem(r.run, "openwrt")
+	if !item.Installed || item.Version != "v1.19.4" {
+		t.Fatalf("openwrt: %+v", item)
+	}
+}

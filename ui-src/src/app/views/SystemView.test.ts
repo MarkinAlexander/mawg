@@ -482,3 +482,34 @@ describe('SystemView - Ядра VPN (mihomo)', () => {
     w.unmount();
   });
 });
+
+// пункт mihomo в таблице зависимостей (29.10): версия, кнопка «обновить»,
+// confirm -> POST /system/install {id:mihomo, replace:true}
+describe('SystemView - mihomo в таблице зависимостей', () => {
+  it('строка с версией и кнопкой, установка уходит POST с replace', async () => {
+    const items: SystemItem[] = [
+      ...defaultItems,
+      {
+        id: 'mihomo', title: 'Ядро mihomo (Clash.Meta)', installed: true, version: 'v1.19.33',
+        action: 'mihomo', actionLabel: 'обновить ядро',
+        confirm: 'Сейчас стоит mihomo v1.19.33. mawg скачает свежий релиз.',
+      },
+    ];
+    const { w, f } = await makeView({
+      '/system/check': sysCheckPayload(items),
+      '/system/install': { ok: true, output: '- digest ok\n- установлено' },
+    });
+    await vi.waitFor(() => expect(w.text()).toContain('Ядро mihomo (Clash.Meta)'));
+    expect(w.text()).toContain('v1.19.33');
+    await btn(w, 'обновить ядро')[0].trigger('click');
+    await vi.waitFor(() => expect(w.text()).toContain('Сейчас стоит mihomo v1.19.33'));
+    await btn(w, 'обновить ядро').at(-1)!.trigger('click'); // ОК в confirm
+    await vi.waitFor(() => {
+      const post = f.mock.calls.find((c) => (c[0] as string).endsWith('/system/install') && c[1]?.method === 'POST');
+      expect(post).toBeTruthy();
+      expect(JSON.parse(post![1]!.body as string)).toEqual({ id: 'mihomo', replace: true });
+    });
+    await vi.waitFor(() => expect(w.text()).toContain('Установлено'));
+    w.unmount();
+  });
+});
