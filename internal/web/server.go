@@ -49,6 +49,7 @@ type Server struct {
 	mtCache    *mtSnapshot
 	ifaceCache respCache
 	sysCache   respCache
+	sbSrcCache respCache // источники ядра sing-box: отдельный слот (respCache одно-тельный)
 	IPGate     *auth.IPGate
 	// warpReg - регистратор Cloudflare WARP (генератор конфигов);
 	// nil = штатный клиент, подменяется в тестах.
