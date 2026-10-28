@@ -172,6 +172,13 @@ export function groupHasDup(g: GroupView, duplicates: Record<string, unknown[]>)
 
 // «кто ходит в группу» (легаси 1628-1637): подписанный чип; для групп без
 // политики - фактические sources (созданы вне mawg или импортом)
+// группа «устройство целиком через пул» (88+): sources непусты + статика
+// 0.0.0.0/0 - весь трафик перечисленных адресов уходит в интерфейс группы
+export function isDeviceGroup(g: GroupView): boolean {
+  if (!g.sources || !g.sources.length) return false;
+  return (g.rules || []).some((r) => r.enable && r.type === 'subnet' && r.rule === '0.0.0.0/0');
+}
+
 export function srcBadge(g: GroupView): { text: string; tooltip: string } | null {
   const pol = g.policy || {};
   if (pol.sourcesMode === 'all+router') {

@@ -206,6 +206,12 @@ export function useGroups() {
     await refresh(true);
     return g;
   }
+  // группа «устройство целиком через пул» (88+: sources + 0.0.0.0/0,
+  // ставится последней в списке - побеждает при пересечениях)
+  async function createDeviceGroup(body: { pool: string; name?: string; ips: string[] }): Promise<void> {
+    await api('POST', '/mt/device-group', body);
+    await refresh(true);
+  }
   async function updateGroup(id: string, body: { name?: string; color?: string; interface?: string; sources?: string[] }): Promise<void> {
     await api('PUT', `/mt/groups/${encodeURIComponent(id)}`, body);
     await refresh(true);
@@ -281,6 +287,7 @@ export function useGroups() {
     restoreBackup,
     importGroups,
     createGroup,
+    createDeviceGroup,
     updateGroup,
     deleteGroup,
     toggleGroup,

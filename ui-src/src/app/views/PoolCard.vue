@@ -11,6 +11,7 @@ import { G } from '../glossary'
 import { probeHuman } from './groupsLogic'
 import { agoText, isWarpPool } from './poolsLogic'
 import SmartCascadeChip from './SmartCascadeChip.vue'
+import DeviceGroupDialog from './DeviceGroupDialog.vue'
 import type { ConfigView, PoolEngine, PoolView } from '../../api/types'
 
 // Карточка пула (легаси ensureCard/updateCard 67-265). Данные приходят из
@@ -121,6 +122,8 @@ const isEng = computed(() => props.pool.settings.engineMode === 'singbox');
 // ручной выбор в selector (⚡), перемер в urltest. Ленивая загрузка по
 // открытию секции - как «Конфиги» у нативных пулов. ---
 const nodesOpen = ref(false);
+// «устройство целиком через пул» (слово владельца 2026-10-28)
+const devOpen = ref(false);
 const engineState = ref<PoolEngine | null>(null);
 const engineErr = ref('');
 async function loadEngine(): Promise<void> {
@@ -521,6 +524,12 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
           Вернуть напрямую
         </UiButton>
         <UiButton
+          tooltip="группа для IP-адресов: весь их трафик идёт через этот пул, доступ к роутеру сохраняется"
+          @click="devOpen = true"
+        >
+          Устройство через пул
+        </UiButton>
+        <UiButton
           v-if="isWarp"
           :busy="busy === `${pool.name}:warpgen`"
           tooltip="ещё одна регистрация WARP с теми же разрешёнными подсетями, новый адрес:порт"
@@ -725,6 +734,11 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
       >
     </details>
   </UiCard>
+
+  <DeviceGroupDialog
+    v-model="devOpen"
+    :pool-name="pool.name"
+  />
 </template>
 
 <style scoped>
