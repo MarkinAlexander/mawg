@@ -161,3 +161,22 @@ func TestSourceIDByRepo(t *testing.T) {
 		t.Fatalf("первый источник должен быть дефолтом extended: %s", Sources[0].ID)
 	}
 }
+
+// prereleases (альфы/рц) не попадают в дискавери: GitHub отдаёт их первыми,
+// у альф нет части платформ
+func TestFetchReleasesSkipsPrerelease(t *testing.T) {
+	lx, _ := SourceByID(SourceLXID)
+	rels := []Release{}
+	for _, r := range []ghRelease{
+		{TagName: "v1.14.4-lx.24-rc.3", Prerelease: true, Assets: []ghAsset{{Name: "sing-box-1.14.4-lx.24-rc.3-linux-386.tar.gz"}}},
+		{TagName: "v1.14.4-lx.24", Assets: []ghAsset{{Name: "sing-box-1.14.4-lx.24-linux-386.tar.gz"}}},
+	} {
+		if r.Prerelease {
+			continue
+		}
+		rels = append(rels, buildRelease(r, lx))
+	}
+	if len(rels) != 1 || rels[0].Tag != "v1.14.4-lx.24" {
+		t.Fatalf("prerelease должен отфильтроваться: %+v", rels)
+	}
+}
