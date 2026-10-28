@@ -61,8 +61,10 @@ func buildDeviceGroup(pool store.Pool, name string, sources []string) magitrickl
 // (инкапсуляция WireGuard, запросы DNS-каскада) имеют src роутера, пройдут
 // src-гвард и получат метку - маршрут по метке ушлёт их обратно в туннель.
 // Петля (живой кейс 0.62: 6 млн пакетов за минуты) выжгает CPU и рвёт
-// весь egress роутера.
-func routerAddrConflicts(src string, routerAddrs []net.IPNet) bool {
+// весь egress роутера. Адреса роутера сравниваются как отдельные ХОСТЫ:
+// маска интерфейса описывает линк, а не «адреса роутера» (кейс 0.62:
+// br0 /24 ложно накрыл всю локалку).
+func routerAddrConflicts(src string, routerAddrs []net.IP) bool {
 	ip := net.ParseIP(src)
 	if ip == nil {
 		_, ipnet, err := net.ParseCIDR(src)
@@ -70,23 +72,23 @@ func routerAddrConflicts(src string, routerAddrs []net.IPNet) bool {
 			return false
 		}
 		for _, ra := range routerAddrs {
-			if ipnet.Contains(ra.IP) {
+			if ipnet.Contains(ra) {
 				return true
 			}
 		}
 		return false
 	}
 	for _, ra := range routerAddrs {
-		if ra.Contains(ip) {
+		if ra.Equal(ip) {
 			return true
 		}
 	}
 	return false
 }
 
-// routerIPv4Nets - адреса (IPv4+loopback) всех интерфейсов роутера.
-func routerIPv4Nets() []net.IPNet {
-	var out []net.IPNet
+// routerIPv4s - адреса (IPv4+loopback) всех интерфейсов роутера, хостами.
+func routerIPv4s() []net.IP {
+	var out []net.IP
 	ifaces, err := net.Interfaces()
 	if err != nil {
 		return nil
@@ -101,10 +103,9 @@ func routerIPv4Nets() []net.IPNet {
 			if !ok {
 				continue
 			}
-			if ipnet.IP.To4() == nil {
-				continue
+			if v4 := ipnet.IP.To4(); v4 != nil {
+				out = append(out, v4)
 			}
-			out = append(out, net.IPNet{IP: ipnet.IP.To4(), Mask: ipnet.Mask})
 		}
 	}
 	return out
@@ -141,7 +142,7 @@ func (s *Server) mtCreateDeviceGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// адрес роутера нельзя: петля туннеля (см. routerAddrConflicts)
-	routerAddrs := routerIPv4Nets()
+	routerAddrs := routerIPv4s()
 	for _, src := range sources {
 		if routerAddrConflicts(src, routerAddrs) {
 			writeErr(w, fmt.Errorf("%s - это адрес самого роутера: его трафик в пул заводить нельзя (инкапсуляция туннеля замкнётся на себя). Укажите адрес устройства локальной сети - телефон, ноутбук", src))
