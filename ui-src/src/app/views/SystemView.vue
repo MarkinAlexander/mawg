@@ -100,11 +100,13 @@ const lxOpen = ref(false);
 // было нажать второй раз (слово владельца 2026-10-18). Держим диалог хода
 // со спиннером до результата, кнопки блокируем.
 const busyId = ref('');
-const busyText = computed(() =>
-  busyId.value === 'magitrickle'
-    ? 'Качаем релиз форка из GitHub и обновляем штатным менеджером пакетов; конфиг и группы сохраняются, служба MagiTrickle перезапустится. Это занимает до пары минут.'
-    : 'Идёт установка. Это может занять до пары минут - не закрывайте панель.',
-);
+const busyText = computed(() => {
+  if (busyId.value === 'magitrickle')
+    return 'Качаем релиз форка из GitHub и обновляем штатным менеджером пакетов; конфиг и группы сохраняются, служба MagiTrickle перезапустится. Это занимает до пары минут.';
+  if (busyId.value === 'mihomo')
+    return 'Качаем релиз mihomo (Clash.Meta) из GitHub, проверяем сумму и тест-запуск. Распакованное ядро ~54 МБ - это до пары минут.';
+  return 'Идёт установка. Это может занять до пары минут - не закрывайте панель.';
+});
 
 async function openInstall(item: SystemItem): Promise<void> {
   if (busyId.value) return;
@@ -120,10 +122,12 @@ async function openInstall(item: SystemItem): Promise<void> {
   const okLabel = fresh.actionLabel || 'Установить';
   const ok = await confirm({ title: `${okLabel}: ${fresh.title}`, text: fresh.confirm, okLabel });
   if (!ok) return;
-  await runInstall({ id: fresh.id });
+  // mihomo в таблице - согласие уже дано confirm'ом: replace=true, чтобы
+  // панель не отказывалась менять чужой бинарь без второго подтверждения
+  await runInstall(fresh.id === 'mihomo' ? { id: fresh.id, replace: true } : { id: fresh.id });
 }
 
-async function runInstall(payload: { id: string; flavor?: string; backup?: boolean }): Promise<void> {
+async function runInstall(payload: { id: string; flavor?: string; source?: string; backup?: boolean; replace?: boolean }): Promise<void> {
   busyId.value = payload.id;
   try {
     const r = await sys.install(payload);

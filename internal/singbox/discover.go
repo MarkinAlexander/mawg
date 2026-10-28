@@ -15,10 +15,11 @@ import (
 // lx-форка; порядок Sources = приоритет фолбэка PickAsset, первый элемент -
 // дефолт установки по слову владельца 2026-10-28).
 const (
-	SourceExtID  = "extended"
-	SourceLXID   = "lx"
-	SourceUpID   = "upstream"
-	digestPrefix = "sha256:"
+	SourceExtID   = "extended"
+	SourceLXID    = "lx"
+	SourceLXOwnID = "lx-own"
+	SourceUpID    = "upstream"
+	digestPrefix  = "sha256:"
 )
 
 // Source - источник релизов ядра: репозиторий + конвенции его ассетов.
@@ -43,22 +44,33 @@ type Source struct {
 func (s Source) String() string { return s.Owner + "/" + s.Repo }
 
 // Sources - установка на выбор (слово владельца 2026-10-28: дефолт
-// sing-box-extended, наш lx остаётся проверенным fallback'ом, апстрим для
-// тех кому хватает базы). Источник фиксируется в маркере установки.
+// sing-box-extended; 29.10 добавлен ОРИГИНАЛЬНЫЙ lx-форк Leadaxe - он
+// живее всех: база 1.14.4, релизы почти ежедневно; наш MarkinAlexander-
+// форк остался как источник upx-сборок под ВСЕ платформы, включая x86,
+// которых у Leadaxe нет). Источник фиксируется в маркере установки.
 var Sources = []Source{
 	{
 		Owner: "shtorm-7", Repo: "sing-box-extended",
-		ID:    SourceExtID,
-		Title: "sing-box-extended (форк shtorm-7)",
-		Note:  "форк shtorm-7: как наш lx (AWG-обфускация, xhttp, vless-шифрование) плюс новые протоколы; база свежее, сжатые -compressed сборки",
+		ID:            SourceExtID,
+		Title:         "sing-box-extended (форк shtorm-7)",
+		Note:          "форк shtorm-7: AWG-обфускация, xhttp, vless-шифрование плюс новые протоколы; сжатые -compressed сборки под все платформы",
 		CompactMarker: "-compressed",
 		FullCaps:      true,
 	},
 	{
+		Owner: "Leadaxe", Repo: "sing-box-lx",
+		ID:            SourceLXID,
+		Title:         "sing-box-lx (оригинал Leadaxe)",
+		Note:          "оригинальный lx-форк: самая свежая база и частые релизы; самое экономное по памяти; upx-сборки только arm64/mipsle-softfloat",
+		CompactMarker: ".upx",
+		SumsFile:      true,
+		FullCaps:      true,
+	},
+	{
 		Owner: "MarkinAlexander", Repo: "sing-box-lx",
-		ID:    SourceLXID,
-		Title: "sing-box-lx (наш форк)",
-		Note:  "наш форк: AWG-обфускация, xhttp, vless-шифрование, upx-профиль под тесную флешу; проверен на проде",
+		ID:            SourceLXOwnID,
+		Title:         "sing-box-lx (наш форк)",
+		Note:          "наш форк lx: база старее, но upx-профиль под ВСЕ платформы (для тесной флешы x86/386, у Leadaxe таких упакованных нет)",
 		CompactMarker: ".upx",
 		SumsFile:      true,
 		FullCaps:      true,
@@ -79,6 +91,17 @@ func SourceByID(id string) (Source, bool) {
 		}
 	}
 	return Source{}, false
+}
+
+// SourceIDByRepo - id источника по строке маркера "owner/repo" (предвыбор
+// диалога: установленное ядро Leadaxe и наш форк по версии неотличимы).
+func SourceIDByRepo(ownerRepo string) (string, bool) {
+	for _, s := range Sources {
+		if s.String() == ownerRepo {
+			return s.ID, true
+		}
+	}
+	return "", false
 }
 
 const (
@@ -105,12 +128,12 @@ type Release struct {
 // FlavorAssets - имена файлов plain/upx ассета одной архитектуры; суммы -
 // digest из GitHub API (у источников без SHA256SUMS-файла).
 type FlavorAssets struct {
-	Plain     string
-	PlainSz   int64
-	PlainSHA  string
-	UPX       string
-	UPXSz     int64
-	UPXSHA    string
+	Plain    string
+	PlainSz  int64
+	PlainSHA string
+	UPX      string
+	UPXSz    int64
+	UPXSHA   string
 }
 
 type SourceReport struct {

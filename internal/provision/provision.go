@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"mawg/internal/platform"
+	"mawg/internal/singbox"
 )
 
 type Item struct {
@@ -261,6 +263,7 @@ func checkOpenwrt(run Runner) Result {
 	}
 
 	res.Items = append(res.Items, lxCoreItem(run, "openwrt"))
+	res.Items = append(res.Items, mihomoCoreItem(run, "openwrt"))
 	return res
 }
 
@@ -309,6 +312,7 @@ func CheckKeenetic(ndmc func(string) (string, error)) Result {
 	}
 
 	res.Items = append(res.Items, lxCoreItem(shellRun, "keenetic"))
+	res.Items = append(res.Items, mihomoCoreItem(shellRun, "keenetic"))
 	return res
 }
 
@@ -386,6 +390,81 @@ func parseBinVersion(out string) string {
 	return ""
 }
 
+// markerSourceOf - репозиторий из маркера установки ядра sing-box.
+func markerSourceOf(markerDir string) string {
+	if data, err := os.ReadFile(filepath.Join(markerDir, singbox.LXMarkerName)); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			if v, ok := strings.CutPrefix(strings.TrimSpace(line), "source="); ok {
+				return strings.TrimSpace(v)
+			}
+		}
+	}
+	return ""
+}
+
+// mihomoCoreItem - пункт «ядро mihomo» в таблице зависимостей: версия,
+// статус и кнопка установки/обновления (установка идёт кодом
+// internal/mihomo.InstallCore через POST /system/install {id:mihomo}).
+func mihomoCoreItem(run Runner, platform string) Item {
+	bin, markerDir := "/usr/bin/mihomo", "/etc/mihomo-mawg"
+	if platform == "keenetic" {
+		bin, markerDir = "/opt/bin/mihomo", "/opt/etc/mihomo-mawg"
+	}
+	ver := cachedMihomoVersion(bin, run)
+	_, _, marked := lxFileStat(filepath.Join(markerDir, singbox.LXMarkerName))
+	item := Item{ID: "mihomo", Title: "Ядро mihomo (Clash.Meta)", Version: ver}
+	if ver == "" {
+		item.Action = "mihomo"
+		item.ActionLabel = "установить"
+		item.Confirm = "mawg скачает свежий релиз MetaCubeX/mihomo под архитектуру роутера (сумма - digest sha256 из GitHub API), прогонит тест-запуск и установит бинарь в " + bin + ". Распакованное ядро занимает ~54 МБ - на тесной флешке может не влезть, панель честно откажет по месту."
+		return item
+	}
+	item.Installed = true
+	item.Action = "mihomo"
+	item.ActionLabel = "обновить ядро"
+	item.Confirm = "Сейчас стоит mihomo " + ver + ". mawg скачает свежий релиз MetaCubeX/mihomo (той же версии - пропустит), проверит контрольную сумму и тест-запуск, затем заменит бинарь; движковые пулы mihomo будут пересобраны, соединения на них на секунды прервутся."
+	if !marked {
+		item.Note = "Ядро стоит без маркера mawg (ставили вручную) - обновление заменит бинарь нашей установкой."
+	}
+	return item
+}
+
+// cachedMihomoVersion - версия mihomo с кэшем по размеру+mtime бинаря
+// (запуск -v на роутере не бесплатный, /system/check опрашивается часто).
+func cachedMihomoVersion(bin string, run Runner) string {
+	size, mtime, ok := lxFileStat(bin)
+	if !ok {
+		return ""
+	}
+	key := bin + ":mh"
+	lxVerMu.Lock()
+	c, hit := lxVerCache[key]
+	lxVerMu.Unlock()
+	if hit && c.size == size && c.mtime.Equal(mtime) {
+		return c.ver
+	}
+	ver := ""
+	if out, err := run(bin+" -v 2>/dev/null", 90*time.Second); err == nil {
+		ver = parseMihomoVersion(out)
+	} else {
+		return "" // сбой запуска не кэшируем
+	}
+	lxVerMu.Lock()
+	lxVerCache[key] = lxVerEntry{size: size, mtime: mtime, ver: ver}
+	lxVerMu.Unlock()
+	return ver
+}
+
+func parseMihomoVersion(out string) string {
+	line := strings.SplitN(out, "\n", 2)[0]
+	for _, f := range strings.Fields(line) {
+		if len(f) > 1 && f[0] == 'v' && strings.Contains(f, ".") {
+			return f
+		}
+	}
+	return ""
+}
+
 // lxCoreItem - пункт «ядро sing-box» (источник установки выбирается в
 // диалоге: extended/lx/апстрим). Action - маркер для web-обработчика
 // (установка идёт кодом singbox.InstallLXCore), не shell-скрипт; пути
@@ -426,13 +505,11 @@ func lxCoreItem(run Runner, platform string) Item {
 		// наша установка любого источника (маркер) либо сборка семейства
 		// lx/extended, поставленная вручную, - ядро рабочее, обновляемо
 		item.Installed = true
-		switch {
-		case strings.Contains(ver, "-lx."):
-			item.Source = "lx"
-		case strings.Contains(ver, "-extended-"):
-			item.Source = "extended"
-		default:
-			item.Source = "upstream"
+		// источник точнее брать из маркера: Leadaxe-lx и наш форк по
+		// версии неотличимы ("-lx."), а диалог предвыбирает источник
+		item.Source = singbox.DetectSourceID(ver)
+		if id, ok := singbox.SourceIDByRepo(markerSourceOf(markerDir)); ok {
+			item.Source = id
 		}
 		item.Action = "singbox-lx"
 		item.ActionLabel = "обновить ядро"

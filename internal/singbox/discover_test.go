@@ -133,3 +133,31 @@ func TestSourceReportLatest(t *testing.T) {
 		t.Fatal("последний релиз — первый в списке")
 	}
 }
+
+func TestSourceIDByRepo(t *testing.T) {
+	for _, c := range []struct{ repo, id string }{
+		{"Leadaxe/sing-box-lx", SourceLXID},
+		{"MarkinAlexander/sing-box-lx", SourceLXOwnID},
+		{"shtorm-7/sing-box-extended", SourceExtID},
+		{"SagerNet/sing-box", SourceUpID},
+	} {
+		got, ok := SourceIDByRepo(c.repo)
+		if !ok || got != c.id {
+			t.Errorf("SourceIDByRepo(%q) = %q,%v want %q", c.repo, got, ok, c.id)
+		}
+	}
+	if _, ok := SourceIDByRepo("unknown/repo"); ok {
+		t.Error("неизвестный репозиторий не должен резолвиться")
+	}
+	// порядок Sources: дефолт (первый) - extended, все id уникальны
+	seen := map[string]bool{}
+	for _, s := range Sources {
+		if seen[s.ID] {
+			t.Fatalf("дубль id %s", s.ID)
+		}
+		seen[s.ID] = true
+	}
+	if Sources[0].ID != SourceExtID {
+		t.Fatalf("первый источник должен быть дефолтом extended: %s", Sources[0].ID)
+	}
+}
