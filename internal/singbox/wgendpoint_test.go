@@ -49,7 +49,7 @@ func TestWGEndpointAWG3(t *testing.T) {
 	if !cfg.NeedsEngine() {
 		t.Fatal("AWG 3.x конфиг должен требовать движок")
 	}
-	ep, err := wgEndpoint(cfg, "mawg-free|1", "")
+	ep, err := wgEndpoint(cfg, "mawg-free|1", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestWGEndpointClassic(t *testing.T) {
 	if cfg.NeedsEngine() {
 		t.Fatal("классика не требует движок")
 	}
-	ep, err := wgEndpoint(cfg, "ep", "mawg-xorek")
+	ep, err := wgEndpoint(cfg, "ep", "mawg-xorek", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func TestBuildConfigWGOnly(t *testing.T) {
 	data, _, err := BuildConfig([]PoolSpec{{
 		Name: "free", Tun: "tun1", TunIP: TuneIP(1), MixedPort: 2281,
 		ProbeTarget: "http://www.gstatic.com/generate_204", WG: []wgconf.Config{cfg},
-	}}, Params{ClashPort: 2291, LX: true})
+	}}, Params{ClashPort: 2291, Profile: SourceLXID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,5 +120,39 @@ func TestBuildConfigWGOnly(t *testing.T) {
 		if !strings.Contains(s, want) {
 			t.Fatalf("нет %s в:\n%s", want, s)
 		}
+	}
+}
+
+// extended-профиль: AWG-поля уходят в объект amnezia, lx - в корень
+// (живые проверки на 0.62: extended корневые поля отвергает, 90-док)
+func TestWgEndpointNestedAmnezia(t *testing.T) {
+	cfg, err := wgconf.Parse([]byte("[Interface]\nPrivateKey = uJd2xK5t0mFvqWz+YbN8cLrA3eHh7oPqQ1wZsX4dC6k=\nAddress = 10.9.0.2/32\nJc = 4\nS1 = 108\n[Peer]\nPublicKey = ll+gozj6agFD5WRhXQUFna6LLoC4zxi7eka5RMUfKE8=\nEndpoint = 192.0.2.1:30565\nAllowedIPs = 0.0.0.0/0\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	nested, err := wgEndpoint(cfg, "ep", "", SourceExtID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	am, ok := nested["amnezia"].(map[string]any)
+	if !ok {
+		t.Fatalf("нет объекта amnezia: %#v", nested)
+	}
+	if am["jc"] != 4 || am["s1"] != 108 {
+		t.Fatalf("amnezia: %#v", am)
+	}
+	if _, root := nested["jc"]; root {
+		t.Fatal("extended-профиль не должен класть jc в корень")
+	}
+
+	root, err := wgEndpoint(cfg, "ep", "", SourceLXID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if root["jc"] != 4 {
+		t.Fatalf("lx-профиль: нет корневого jc: %#v", root)
+	}
+	if _, has := root["amnezia"]; has {
+		t.Fatal("lx-профиль не должен вкладывать amnezia")
 	}
 }
