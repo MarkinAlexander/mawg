@@ -53,6 +53,7 @@ func (m *Manager) Apply(pools []PoolSpec) ([]string, error) {
 	return nil, fmt.Errorf("движок sing-box доступен только на роутере")
 }
 func (m *Manager) Status() Status    { return Status{} }
+func (m *Manager) SharedAlive() bool  { return false }
 func (m *Manager) PatchNote() string { return "" }
 
 func (m *Manager) SetCacheFile(mode string) (string, error) {
