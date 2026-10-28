@@ -175,6 +175,17 @@ describe('PoolCard - отображение', () => {
     nativePool.lastResult = 'проба: ok (30ms)'; // восстановить фикстуру
   });
 
+  it('кнопка «Устройство через пул» открывает диалог группы устройства', async () => {
+    const w = makeCard(nativePool);
+    const b = btn(w, 'Устройство через пул')[0];
+    expect(b).toBeDefined();
+    await b.trigger('click');
+    await nextTick();
+    expect(w.text()).toContain('Устройство целиком через пул');
+    expect(w.find('textarea').exists()).toBe(true);
+    w.unmount();
+  });
+
   it('движковый на mihomo: подзаголовок от engines.mihomo (88-док)', () => {
     const w = makeCard(
       { ...enginePool, settings: { ...enginePool.settings, engineCore: 'mihomo' } },

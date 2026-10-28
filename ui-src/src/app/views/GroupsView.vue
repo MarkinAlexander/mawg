@@ -16,7 +16,7 @@ import {
   groupMatches, hideOffGroups, hideOffRules, hlSegs, IMPORT_TYPE_OPTIONS,
   offGroupsTotal, offRulesTotal,
   normRuleValue, POLICY_SHORT, presetRulesLine, RULE_HINTS, RULE_PLACEHOLDERS,
-  RULE_TYPES, ruleTypeOptions, showAllRules, srcBadge, warnTitle,
+  isDeviceGroup, RULE_TYPES, ruleTypeOptions, showAllRules, srcBadge, warnTitle,
 } from './groupsLogic'
 import CascadeDialog from './CascadeDialog.vue'
 import GroupDialog from './GroupDialog.vue'
@@ -774,6 +774,12 @@ onMounted(openFromLink);
             text="каскад"
             variant="muted"
             :tooltip="G.cascade"
+          />
+          <UiBadge
+            v-if="isDeviceGroup(g)"
+            text="устройство целиком"
+            variant="ok"
+            tooltip="группа устройства: ВЕСЬ трафик перечисленных IP уходит в этот пул. Стоит последней в списке - при совпадении назначений с другими группами побеждает она. Доступ к роутеру сохраняется всегда"
           />
           <UiBadge
             v-if="g.dnsZone"

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { GroupView, Rule } from '../../api/types'
 import {
   backupKind, cascadeOptions, cyclesValid, degradedText, dedupImportRules, dupsEntries, exportStamp, groupHasDup, importVerdict,
-  groupMatchCount, groupMatches, hideOffGroups, hideOffRules, hlSegs, normRuleValue, parseSources,
+  groupMatchCount, groupMatches, hideOffGroups, hideOffRules, hlSegs, isDeviceGroup, normRuleValue, parseSources,
   parseImportFile, presetRulesLine, showAllRules, srcBadge, srcListInitial,
   srcModeInitial, warnTitle, wireCascadeSel,
 } from './groupsLogic'
@@ -247,5 +247,17 @@ describe('чекер скрытия выключенного (80-док, бон�
     const baseAll = groups.filter((x) => groupMatches(x, 'выключенная'));
     expect(baseAll.map((x) => x.id)).toEqual(['off']);
     expect(hideOffGroups(baseAll, true)).toEqual([]);
+  });
+});
+
+describe('isDeviceGroup', () => {
+  const subnet = (r: string, enable = true): Rule => ({ id: 'r', type: 'subnet', rule: r, enable });
+  it('sources + статика 0.0.0.0/0 - группа устройства', () => {
+    expect(isDeviceGroup(g({ sources: ['192.168.1.50'], rules: [subnet('0.0.0.0/0')] }))).toBe(true);
+  });
+  it('узкая статика/без источников/выключенное правило - не устройство', () => {
+    expect(isDeviceGroup(g({ sources: ['192.168.1.50'], rules: [subnet('8.8.8.8/32')] }))).toBe(false);
+    expect(isDeviceGroup(g({ rules: [subnet('0.0.0.0/0')] }))).toBe(false);
+    expect(isDeviceGroup(g({ sources: ['192.168.1.50'], rules: [subnet('0.0.0.0/0', false)] }))).toBe(false);
   });
 });
