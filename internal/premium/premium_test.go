@@ -248,6 +248,11 @@ func TestGatewayRejectsFailureResponses(t *testing.T) {
 		if i == 6 {
 			client.HTTP.Timeout = 20 * time.Millisecond
 		}
+		if i == 7 {
+			// таймаут для «медленного» режима назад не вернули - на
+			// загруженном раннере 503 не успевал доехать и тест падал
+			client.HTTP.Timeout = 2 * time.Second
+		}
 		_, err := client.Countries(context.Background(), "synthetic-secret", "id", "")
 		if err == nil || strings.Contains(err.Error(), "synthetic-secret") {
 			t.Fatalf("failure mode %d accepted or leaked secret", i)
