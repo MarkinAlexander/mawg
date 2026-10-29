@@ -86,4 +86,23 @@ describe('LxInstallDialog (мультиисточник)', () => {
     await vi.waitFor(() => expect(dlg.text()).toContain('Установлено'))
     dlg.unmount()
   })
+
+  it('результат установки показывает источник (владелец путается, чьё ядро стоит)', async () => {
+    const f = stub({
+      '/system/check': { platform: 'openwrt', items: [{ id: 'singbox-lx', title: 'Ядро sing-box', installed: true, version: '1.14.2-lx.12', action: 'singbox-lx', actionLabel: 'обновить ядро', confirm: 'подтверждаю' }] },
+      '/cores/singbox/sources': sources,
+      '/system/install': { ok: true, output: '- установлено', source: 'Leadaxe/sing-box-lx', sourceTitle: 'sing-box-lx (оригинал Leadaxe)' },
+    })
+    vi.stubGlobal('fetch', f)
+    const dlg = mount(LxInstallDialog, { props: { open: false } })
+    await dlg.setProps({ open: true })
+    await vi.waitFor(() => expect(dlg.text()).toContain('Источник сборки'))
+    const install = dlg.findAll('button').find((b) => b.text() === 'обновить ядро')!
+    await install.trigger('click')
+    await vi.waitFor(() => {
+      expect(dlg.text()).toContain('Установлено')
+      expect(dlg.text()).toContain('источник: sing-box-lx (оригинал Leadaxe)')
+    })
+    dlg.unmount()
+  })
 })

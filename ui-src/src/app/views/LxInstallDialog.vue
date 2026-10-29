@@ -31,6 +31,7 @@ const dlg = ref<{
   backup: boolean
   ok: boolean
   out: string
+  sourceNote: string
 } | null>(null);
 
 const sources = ref<SingboxSourceInfo[]>([]);
@@ -89,7 +90,7 @@ watch(open, async (v) => {
     source: fresh.source || 'extended',
     flavor: 'plain',
     backup: fresh.action === 'singbox-lx-replace' && (fresh.backupBytes || 0) > 0 && (fresh.freeBytes || 0) > (fresh.backupBytes || 0) + 64 * 1048576,
-    ok: false, out: '',
+    ok: false, out: '', sourceNote: '',
   };
   sourcesLoaded.value = false;
   sources.value = [];
@@ -111,9 +112,9 @@ async function runInstall(payload: { id: string; flavor?: string; source?: strin
   if (dlg.value) dlg.value.phase = 'progress';
   try {
     const r = await sys.install(payload);
-    showResult(!!r.ok, r.output || '', r.ok ? '' : r.error || 'неизвестная ошибка');
+    showResult(!!r.ok, r.output || '', r.ok ? '' : r.error || 'неизвестная ошибка', r.sourceTitle || r.source || '');
   } catch (e) {
-    showResult(false, '', e instanceof Error ? e.message : String(e));
+    showResult(false, '', e instanceof Error ? e.message : String(e), '');
   }
 }
 
@@ -126,10 +127,11 @@ function installForm(): void {
   });
 }
 
-function showResult(ok: boolean, output: string, errText: string): void {
+function showResult(ok: boolean, output: string, errText: string, sourceNote: string): void {
   if (!dlg.value) return;
   dlg.value.ok = ok;
   dlg.value.out = (errText ? errText + '\n\n' : '') + output.trim();
+  dlg.value.sourceNote = sourceNote;
   dlg.value.phase = 'result';
   void sys.refresh();
   if (ok) emit('installed');
@@ -195,6 +197,12 @@ function showResult(ok: boolean, output: string, errText: string): void {
         >
           {{ dlg.ok ? 'Установлено' : 'Ошибка установки' }}
         </div>
+        <div
+          v-if="dlg.sourceNote"
+          class="rssrc"
+        >
+          источник: {{ dlg.sourceNote }}
+        </div>
         <div class="rsout">
           {{ dlg.out }}
         </div>
@@ -254,6 +262,11 @@ function showResult(ok: boolean, output: string, errText: string): void {
 }
 .rstitle.err {
   color: var(--err);
+}
+.rssrc {
+  font-size: 12.5px;
+  color: var(--dim);
+  margin-top: 2px;
 }
 .rsout {
   font: 11.5px/1.5 ui-monospace, monospace;
