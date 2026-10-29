@@ -66,6 +66,17 @@ beforeEach(() => {
 });
 
 describe('PoolCard - отображение', () => {
+  it('исключения пула: строка с адресами при списке, нет - без', () => {
+    const w = makeCard({ ...nativePool, settings: { ...nativePool.settings, excludes: ['203.0.113.9', '198.51.100.0/24'] } });
+    expect(w.text()).toContain('исключения');
+    expect(w.text()).toContain('203.0.113.9, 198.51.100.0/24');
+    w.unmount();
+
+    const w2 = makeCard(nativePool);
+    expect(w2.text()).not.toContain('исключения');
+    w2.unmount();
+  });
+
   it('нативный включённый: бейджи/подзаголовок/kv, кнопки ротации, конфигов-секция есть', () => {
     const w = makeCard(nativePool);
     expect(w.find('.card').exists()).toBe(true);
