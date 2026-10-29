@@ -36,6 +36,7 @@ type Manager struct {
 	mu       sync.Mutex
 	wrapper  bool                                 // в mangle OUTPUT видны чужие MR_*-цепочки (обёртка юзера)
 	mutating int                                  // глубина окна мутации: SyncHooks в нём молчит (см. beginMutate)
+	exclActive bool                               // исключения могли остаться в цепочках - синк продолжает вычищать (exclusions.go)
 	iptRun   func(args ...string) (string, error) // подменяется в тестах
 }
 
@@ -337,7 +338,13 @@ func (m *Manager) SyncHooks() {
 	}
 	casc := m.Store.Cascades()
 	routerPolicies := m.routerHookPolicies()
-	if len(casc) == 0 && len(routerPolicies) == 0 {
+	// исключения из обработки синхронятся независимо от каскадов
+	// (роутер без единого каскада тоже имеет право на исключения)
+	hasExcl := m.excludesPresent()
+	m.mu.Lock()
+	exclActive := m.exclActive
+	m.mu.Unlock()
+	if len(casc) == 0 && len(routerPolicies) == 0 && !hasExcl && !exclActive {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -396,6 +403,9 @@ func (m *Manager) SyncHooks() {
 				m.log("policy", "sources", "не пересобрал источники "+id+": "+err.Error())
 			}
 		}
+	}
+	if hasExcl {
+		m.syncExclusions(groups)
 	}
 }
 

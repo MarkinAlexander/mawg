@@ -159,6 +159,15 @@ func New(st *store.Store, b platform.Backend, mt *magitrickle.Client) *Engine {
 // Cascade - менеджер служебных групп-каскадов (nil без magitrickle).
 func (e *Engine) Cascade() *cascade.Manager { return e.casc }
 
+// SyncExclusions - немедленно применить исключения из обработки
+// (PUT-хендлеры исключений); тихо без magitrickle.
+func (e *Engine) SyncExclusions() {
+	if e.casc == nil {
+		return
+	}
+	e.casc.SyncExclusions()
+}
+
 func (e *Engine) applyAllowed(pool string) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()

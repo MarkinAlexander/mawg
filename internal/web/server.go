@@ -104,6 +104,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/v1/dns/zones", s.putDnsZones)
 	mux.HandleFunc("POST /api/v1/dns/zones/{id}/probe", s.postDnsZonesProbe)
 	mux.HandleFunc("PUT /api/v1/wanprobe", s.putWANProbe)
+	mux.HandleFunc("GET /api/v1/excludes", s.getExcludes)
+	mux.HandleFunc("PUT /api/v1/excludes", s.putExcludes)
 	mux.HandleFunc("GET /api/v1/rcitoken", s.getRCIToken)
 	mux.HandleFunc("PUT /api/v1/rcitoken", s.putRCIToken)
 	mux.HandleFunc("POST /api/v1/pools/{name}/rename", s.renamePool)
@@ -1621,6 +1623,15 @@ func (s *Server) updatePool(w http.ResponseWriter, r *http.Request) {
 			merged.EngineCore = ""
 		}
 	}
+	// Исключения пула (94-док): nil = не трогалось, [] = очистить.
+	if patch.Excludes != nil {
+		list, err := poolExcludesValid(patch.Excludes)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		merged.Excludes = list
+	}
 	// Каскад движка (detour) владельцем отвергнут: всё, заведённое через
 	// ядро, умирает вместе с ядром, а на OpenWrt без sing-box юзер вообще
 	// ничего не получит. Поле EngineDetour оставлено в схеме про запас -
@@ -1654,6 +1665,14 @@ func (s *Server) updatePool(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.UpdatePool(name, merged); err != nil {
 		writeErr(w, err)
 		return
+	}
+	if patch.Excludes != nil {
+		if len(merged.Excludes) == 0 {
+			s.store.LogEvent(name, "excludes", "исключения пула очищены")
+		} else {
+			s.store.LogEvent(name, "excludes", "исключения пула применены ("+fmt.Sprint(len(merged.Excludes))+"): "+strings.Join(merged.Excludes, ", "))
+		}
+		s.syncExclusionsNow()
 	}
 	if merged.SmartCascade != nil {
 		// служебная группа каскада - сразу при сохранении настроек,
