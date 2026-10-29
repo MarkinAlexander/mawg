@@ -42,7 +42,8 @@ async function makeView(dups: Rec = {}) {
     groups: GroupView[]
     dups: Rec
     cycles: { failCycles: number; restoreCycles: number }
-  } = { groups: groupsFixture(), dups, cycles: { failCycles: 2, restoreCycles: 2 } };
+    excludes: string[]
+  } = { groups: groupsFixture(), dups, cycles: { failCycles: 2, restoreCycles: 2 }, excludes: ['192.0.2.1/32'] };
   const ok = (x: unknown = { ok: true }) => new Response(JSON.stringify(x), { status: 200 });
   const f = vi.fn(async (url: string, init?: { method?: string; body?: string }) => {
     const u = url;
@@ -53,6 +54,14 @@ async function makeView(dups: Rec = {}) {
     if (u.endsWith('/mt/policy-cycles')) {
       if (m === 'PUT') data.cycles = body;
       return ok(data.cycles);
+    }
+    if (u.endsWith('/excludes')) {
+      if (m === 'PUT') {
+        const bad = (body.excludes as string[]).filter((x) => x === 'мусор');
+        if (bad.length) return new Response(JSON.stringify({ error: 'не похоже на IP или подсеть: мусор' }), { status: 400 });
+        data.excludes = body.excludes as string[];
+      }
+      return ok({ excludes: data.excludes });
     }
     if (u.endsWith('/mt/presets') && m === 'GET') {
       return ok({
@@ -346,6 +355,47 @@ describe('GroupsView - создание/удаление/гистерезис', 
     useConfirm().ok();
     await vi.waitFor(() => expect(block(w, 'g1').exists()).toBe(false));
     w.unmount();
+  });
+
+  it('исключения из обработки: предзаполнены, добавление пачкой, сохранить -> PUT; ошибка сервера -> тост и откат', async () => {
+    const { w, f } = await makeView();
+    // предзаполнены из GET
+    expect(w.find('.excls').text()).toContain('192.0.2.1/32');
+    const save = () => btnIn(w, 'сохранить список')[0];
+    expect(save().attributes('disabled')).toBeDefined(); // не изменено - выключена
+    // добавление пачкой: пробел/запятая/точка с запятой, дубликаты схлопываются
+    const input = w.find('.excls input');
+    await input.setValue('203.0.113.5, 198.51.100.0/24;192.0.2.1/32');
+    await btnIn(w, '+ добавить')[0].trigger('click');
+    expect(w.findAll('.exclitem').length).toBe(3);
+    // удаление кнопкой ✕ до сохранения: запись ушла, кнопка ожила
+    await w.findAll('.exclrm')[0].trigger('click');
+    await nextTick();
+    expect(w.findAll('.exclitem').length).toBe(2);
+    expect(save().attributes('disabled')).toBeUndefined();
+    await save().trigger('click');
+    await vi.waitFor(() => {
+      const put = f.mock.calls.find((c) => (c[0] as string).endsWith('/excludes') && c[1]?.method === 'PUT');
+      expect(JSON.parse(put![1]!.body as string)).toEqual({
+        excludes: ['203.0.113.5', '198.51.100.0/24'],
+      });
+    });
+    w.unmount();
+  });
+
+  it('исключения из обработки: мусорный адрес - 400, тост с текстом сервера, список откатился', async () => {
+    const { w: w2 } = await makeView();
+    const input2 = w2.find('.excls input');
+    await input2.setValue('мусор');
+    await btnIn(w2, '+ добавить')[0].trigger('click');
+    expect(w2.findAll('.exclitem').length).toBe(2);
+    await btnIn(w2, 'сохранить список')[0].trigger('click');
+    await vi.waitFor(() => {
+      expect(useToast().toasts.list.map((t) => t.text).some((t) => t.includes('не похоже на IP или подсеть: мусор'))).toBe(true);
+    });
+    // откат: черновик вернулся к серверному списку
+    await vi.waitFor(() => expect(w2.findAll('.exclitem').length).toBe(1));
+    w2.unmount();
   });
 
   it('гистерезис: предзаполнен из GET, кнопка активна после изменения, PUT + тост', async () => {

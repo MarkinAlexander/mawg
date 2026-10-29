@@ -45,6 +45,22 @@ const cooldown = ref('5');
 const keepalive = ref('25');
 const updateInt = ref('0');
 const fallback = ref('direct');
+// исключения пула (94-док): черновик + пачка через разделители
+const exclList = ref<string[]>([]);
+const exclNew = ref('');
+function exclAdd(): void {
+  const parts = exclNew.value
+    .split(/[\s,;]+/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+  for (const x of parts) {
+    if (!exclList.value.includes(x)) exclList.value.push(x);
+  }
+  exclNew.value = '';
+}
+function exclRemove(i: number): void {
+  exclList.value.splice(i, 1);
+}
 // умный каскад (86-док): Via - упорядоченный список (порядок = приоритет)
 const scOn = ref(false);
 const scVia = ref<string[]>([]);
@@ -200,6 +216,8 @@ watch(open, (v) => {
   if (isEng.value) void loadEngineNodes();
   const fb = p.settings.fallback || 'direct';
   fallback.value = fbOptions.value.some((o) => o.value === fb) ? fb : 'direct';
+  exclList.value = [...(p.settings.excludes || [])];
+  exclNew.value = '';
   const sc = p.settings.smartCascade;
   const scRet = sc?.return || {};
   scOn.value = !!(sc?.via && sc.via.length);
@@ -362,6 +380,7 @@ async function save(): Promise<void> {
         fallback: fallback.value,
         maxRttMs: rttOn.value ? +rtt.value || 0 : 0,
         updateIntervalH: updateInt.value === '' ? 0 : +updateInt.value || 0,
+        excludes: [...exclList.value],
         ...(isEng.value ? {
           // ядро шлём всегда явно: «singbox» = вернуть на sing-box
           engineCore: engineCore.value === 'mihomo' ? 'mihomo' : 'singbox',
@@ -646,6 +665,38 @@ async function save(): Promise<void> {
         v-if="fbHintText"
         :text="fbHintText"
       />
+      <div class="sect">
+        Исключения пула<UiHelp text="Эти адреса пул не обрабатывает - трафик на них и с них идёт напрямую, мимо туннеля (свои серверы за этим пулом и т.п.). Общий список на все пулы - на странице правил." />
+      </div>
+      <div
+        v-if="exclList.length"
+        class="excllist"
+      >
+        <span
+          v-for="(e, i) in exclList"
+          :key="e"
+          class="exclitem"
+        >
+          {{ e }}
+          <button
+            type="button"
+            class="exclrm"
+            title="убрать из списка"
+            @click="exclRemove(i)"
+          >✕</button>
+        </span>
+      </div>
+      <div class="hrow">
+        <UiInput
+          v-model="exclNew"
+          bare
+          placeholder="IP или подсеть; можно несколько через запятую/пробел"
+          @keydown.enter="exclAdd"
+        />
+        <UiButton @click="exclAdd">
+          + добавить
+        </UiButton>
+      </div>
       <template v-if="!isEng">
         <div class="sect">
           Умный каскад
@@ -786,5 +837,31 @@ async function save(): Promise<void> {
 .mend {
   color: var(--dim);
   font-size: 11px;
+}
+.excllist {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.exclitem {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 8px;
+}
+.exclrm {
+  background: none;
+  border: 0;
+  color: var(--dim);
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 12px;
+}
+.exclrm:hover {
+  color: var(--err);
 }
 </style>
