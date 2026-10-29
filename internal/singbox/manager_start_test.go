@@ -43,6 +43,9 @@ func TestStartSharedIfManaged(t *testing.T) {
 
 	// маркер есть, бинаря нет - честный отказ (снести ядро и звать сервис
 	// мы не умеем)
+	if err := os.MkdirAll(markerDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(markerDir, LXMarkerName), []byte("version=1.14.4-lx.25\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
