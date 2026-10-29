@@ -147,6 +147,46 @@ async function applyPreset(): Promise<void> {
 const cascadeOpen = ref(false);
 
 // --- гистерезис политик (легаси 1213-1246) ---
+// --- исключения из обработки (94-док): черновик + пачка через разделители ---
+const exclDraft = ref<string[]>([]);
+const exclNew = ref('');
+const exclSaving = ref(false);
+watch(
+  () => groups.state.excludes,
+  (v) => {
+    exclDraft.value = [...v];
+  },
+  { immediate: true },
+);
+const exclDirty = computed(() => JSON.stringify(exclDraft.value) !== JSON.stringify(groups.state.excludes));
+function exclAdd(): void {
+  const parts = exclNew.value
+    .split(/[\s,;]+/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+  for (const p of parts) {
+    if (!exclDraft.value.includes(p)) exclDraft.value.push(p);
+  }
+  exclNew.value = '';
+}
+function exclRemove(i: number): void {
+  exclDraft.value.splice(i, 1);
+}
+async function exclSave(): Promise<void> {
+  exclSaving.value = true;
+  try {
+    const list = await groups.saveExcludes([...exclDraft.value]);
+    exclDraft.value = [...list];
+    push('список исключений сохранён: ' + list.length);
+  } catch (e) {
+    push(e instanceof Error ? e.message : String(e), true);
+    await groups.loadExcludes();
+    exclDraft.value = [...groups.state.excludes];
+  } finally {
+    exclSaving.value = false;
+  }
+}
+
 const cycFail = ref('');
 const cycRestore = ref('');
 const cycSaving = ref(false);
@@ -616,6 +656,58 @@ onMounted(openFromLink);
         target="_blank"
         rel="noopener"
       >github.com/itdoginfo/allow-domains</a>{{ state.presets.sourceNote ? ' (' + state.presets.sourceNote + ')' : '' }}. Более точные и свежие списки - в репозитории источника.
+    </div>
+
+    <!-- исключения из обработки (94-док): глобальный список, действует
+         на все группы - включая добавленные позже - и на новые правила -->
+    <div class="excls">
+      <div class="exclhead">
+        <span class="muted">
+          Исключения из обработки<UiHelp text="Трафик на эти адреса и с этих адресов не заворачивается ни в один пул - всегда напрямую (свои серверы, вторые роутеры и т.п.). Действует на все группы, включая добавленные позже. Исключения только для одного пула - в его настройках." />
+        </span>
+        <span
+          v-if="groups.state.excludes.length"
+          class="muted"
+        >{{ groups.state.excludes.length }}</span>
+      </div>
+      <div
+        v-if="exclDraft.length"
+        class="excllist"
+      >
+        <span
+          v-for="(e, i) in exclDraft"
+          :key="e"
+          class="exclitem"
+        >
+          {{ e }}
+          <button
+            type="button"
+            class="exclrm"
+            title="убрать из списка"
+            @click="exclRemove(i)"
+          >✕</button>
+        </span>
+      </div>
+      <div class="crow">
+        <UiInput
+          v-model="exclNew"
+          bare
+          class="cname"
+          placeholder="IP или подсеть; можно несколько через запятую/пробел"
+          @keydown.enter="exclAdd"
+        />
+        <UiButton @click="exclAdd">
+          + добавить
+        </UiButton>
+        <UiButton
+          variant="primary"
+          :disabled="!exclDirty"
+          :busy="exclSaving"
+          @click="exclSave"
+        >
+          сохранить список
+        </UiButton>
+      </div>
     </div>
 
     <!-- гистерезис политик (легаси polFailCycles/polRestoreCycles) -
@@ -1584,5 +1676,41 @@ tr.drop-after td {
 }
 .muted {
   color: var(--dim);
+}
+.excls {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+.exclhead {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+.excllist {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.exclitem {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 8px;
+}
+.exclrm {
+  background: none;
+  border: 0;
+  color: var(--dim);
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 12px;
+}
+.exclrm:hover {
+  color: var(--err);
 }
 </style>

@@ -74,6 +74,26 @@ beforeEach(() => {
 });
 
 describe('PoolSettingsDialog', () => {
+  it('исключения пула: предзаполнены, добавить -> payload уносит список', async () => {
+    const exPool: PoolView = {
+      ...pool,
+      settings: { ...pool.settings, excludes: ['203.0.113.9'] },
+    };
+    const { dlg, f } = await makeDialog({ '/members': { members: [] } }, [exPool]);
+    await vi.waitFor(() => expect(dlg.text()).toContain('Исключения пула'));
+    expect(dlg.findAll('.exclitem').map((x) => x.text())).toContain('203.0.113.9 ✕');
+    const exInput = dlg.findAll('.hrow input').find((i) => (i.element as HTMLInputElement).placeholder.includes('IP или подсеть'))!;
+    await exInput.setValue('198.51.100.7');
+    await dlg.findAll('button').find((b) => b.text() === '+ добавить')!.trigger('click');
+    expect(dlg.findAll('.exclitem').length).toBe(2);
+    await btn(dlg, 'Сохранить')[0].trigger('click');
+    await vi.waitFor(() => {
+      const put = f.mock.calls.find((c) => (c[0] as string).endsWith('/pools/proton') && c[1]?.method === 'PUT');
+      expect(JSON.parse(put![1]!.body as string).excludes).toEqual(['203.0.113.9', '198.51.100.7']);
+    });
+    dlg.unmount();
+  });
+
   it('поля предзаполняются из пула, фоллбек-опции с пулами и интерфейсами, Сохранить -> PUT + rename', async () => {
     const { dlg, f } = await makeDialog({ '/members': { members: [{ name: 'a.conf', proto: 'awg', endpoint: '1.2.3.4', enabled: true, active: true }] } }, [pool, { ...pool, name: 'warp', device: 'nwg9', slot: 'nwg9' }]);
     // состав пула
@@ -104,6 +124,8 @@ describe('PoolSettingsDialog', () => {
         fallback: 'hold', maxRttMs: 350, updateIntervalH: 12,
         // умный каскад не настроен -> честное «выключено» (86-док)
         smartCascade: { via: [] },
+        // исключения пула (94-док): шлём всегда, пусто = очищено
+        excludes: [],
       });
     });
     dlg.unmount();

@@ -193,6 +193,9 @@ export interface PoolSettings {
   // умный каскад (86-док): при блокировке пула трафик заворачивается
   // через первый живой пул via, с возвратом по интервалу/расписанию/кнопке
   smartCascade?: SmartCascadeSettings
+  // исключения пула (94-док): адреса, которые этот пул не обрабатывает;
+  // общий список на все пулы - GET/PUT /excludes (страница правил)
+  excludes?: string[]
 }
 
 export interface SmartCascadeSettings {

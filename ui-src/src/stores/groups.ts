@@ -16,6 +16,7 @@ interface GroupsState {
   duplicates: Record<string, DupInfo[]>
   ifaces: MtIface[] // селекты интерфейсов (легаси MT_IFACES, опрос 60с)
   cycles: PolicyCycles | null // гистерезис политик (легаси loadPolicyCycles)
+  excludes: string[] // исключения из обработки (94-док): общий список
   presets: { list: PresetsRes['presets']; sourceUrl: string; sourceNote: string; loaded: boolean }
   backups: { list: BackupInfo[]; loaded: boolean }
   editing: number // глубина editingLock
@@ -33,6 +34,7 @@ const state = reactive<GroupsState>({
   duplicates: {},
   ifaces: [],
   cycles: null,
+  excludes: [],
   presets: { list: [], sourceUrl: '', sourceNote: '', loaded: false },
   backups: { list: [], loaded: false },
   editing: 0,
@@ -121,6 +123,19 @@ export function useGroups() {
     return r;
   }
 
+  // исключения из обработки (94-док): старт - молча, мутация - с вердиктом
+  async function loadExcludes(): Promise<void> {
+    try {
+      const r = await api<{ excludes: string[] }>('GET', '/excludes');
+      state.excludes = r.excludes || [];
+    } catch { /* список просто останется пустым */ }
+  }
+  async function saveExcludes(list: string[]): Promise<string[]> {
+    const r = await api<{ excludes: string[] }>('PUT', '/excludes', { excludes: list });
+    state.excludes = r.excludes || [];
+    return state.excludes;
+  }
+
   // пресеты (легаси loadPresets 2149: старт, без поллинга, ошибки молча)
   async function loadPresets(): Promise<void> {
     try {
@@ -185,6 +200,7 @@ export function useGroups() {
     void refreshDuplicates();
     void loadIfaces();
     void loadCycles();
+    void loadExcludes();
     if (timer) return;
     timer = setInterval(() => void refresh(), intervalMs);
     ifacesTimer = setInterval(() => void loadIfaces(), 60000);
@@ -277,6 +293,8 @@ export function useGroups() {
     loadIfaces,
     loadCycles,
     saveCycles,
+    loadExcludes,
+    saveExcludes,
     loadPresets,
     applyPreset,
     createCascade,
