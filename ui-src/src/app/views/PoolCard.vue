@@ -375,6 +375,9 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
         >{{ pool.lastError }}</span>
       </template>
       <b>ротаций<UiHelp :text="G.rotation" /></b><span>{{ pool.rotations }}</span>
+      <template v-if="pool.settings.excludes?.length">
+        <b>исключения<UiHelp text="Эти адреса пул не обрабатывает - трафик на них и с них идёт напрямую, мимо туннеля (свои серверы, вторые роутеры). Правка - в настройках пула (шестерёнка)." /></b><span>{{ pool.settings.excludes.join(', ') }}</span>
+      </template>
       <template v-if="smartShown">
         <b>каскад<UiHelp :text="G.smartCascade" /></b><span>
           {{ smart?.on ? `через ${smart.via}` : 'настроен, ждёт блокировки' }}<template v-if="smart?.lastDetail"> — {{ smart.lastDetail }}</template><template v-if="smart?.on && smartNext"> · следующая проверка прямого: {{ smartNext }}</template>
