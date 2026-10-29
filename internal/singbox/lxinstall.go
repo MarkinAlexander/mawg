@@ -372,7 +372,11 @@ type LXInstallResult struct {
 	Previous string `json:"previous,omitempty"`
 	Backup   string `json:"backup,omitempty"`
 	UpToDate bool   `json:"upToDate,omitempty"`
-	Log      string `json:"log"`
+	// источник установки (owner/repo и его Title) - панель показывает
+	// «источник: ...» после установки (владелец путается, чьё ядро стоит)
+	Source      string `json:"source,omitempty"`
+	SourceTitle string `json:"sourceTitle,omitempty"`
+	Log         string `json:"log"`
 }
 
 // InstallLXCore ставит lx-ядро из релиза: скачать ассет+SHA256SUMS,
@@ -427,6 +431,7 @@ func InstallLXCore(ctx context.Context, opts LXInstallOptions) (LXInstallResult,
 		return res, err
 	}
 	res.Tag = pick.Tag
+	res.Source, res.SourceTitle = pick.Source.String(), pick.Source.Title
 	step("релиз %s из %s: %s", pick.Tag, pick.Source, pick.Asset)
 
 	// чужое ядро не трогаем без согласия, отказ - до скачивания. «Чужое» =
@@ -653,6 +658,10 @@ func markerSource(dir string) string {
 // MarkerSource - источник последней установки для внешних пакетов
 // (provision: предвыбор источника в диалоге по репозиторию маркера).
 func MarkerSource(dir string) string { return markerSource(dir) }
+
+// MarkerVersion - версия из маркера последней установки (для provision:
+// когда бинарь есть, а version-запуск не уложился в таймаут).
+func MarkerVersion(dir string) string { return markerField(dir, "version") }
 
 // markerFlavor - профиль последней установки (flavor= в маркере): смена
 // plain/upx при той же версии - полноценная переустановка, а не «актуально».

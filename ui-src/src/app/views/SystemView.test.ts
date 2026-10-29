@@ -202,6 +202,26 @@ describe('SystemView - карточка «Система»', () => {
     w.unmount();
   });
 
+  it('источник сборки ядра sing-box - бейдж рядом с версией (92-док: владелец путается, чьё ядро стоит)', async () => {
+    let checkItems: SystemItem[] = [
+      { id: 'singbox-lx', title: 'Ядро sing-box', installed: true, version: '1.14.4-lx.25', statusText: '', source: 'lx' },
+    ];
+    const { w } = await makeView({
+      '/system/check': () => sysCheckPayload(checkItems),
+    });
+    const sysCard = () => w.findAll('.card').find((c) => c.text().includes('Проверка зависимостей'))!;
+    expect(sysCard().findAll('.uibadge').map((b) => b.text())).toContain('lx');
+    // сменился источник - бейдж перечитывается кнопкой «обновить»
+    checkItems = [
+      { id: 'singbox-lx', title: 'Ядро sing-box', installed: true, version: '1.14.4', statusText: '', source: 'upstream' },
+    ];
+    await btn(w, 'обновить')[0].trigger('click');
+    await vi.waitFor(() =>
+      expect(sysCard().findAll('.uibadge').map((b) => b.text())).toContain('апстрим'),
+    );
+    w.unmount();
+  });
+
   it('«обновить» перечитывает /system/check', async () => {
     const { w, f } = await makeView();
     const gets = () => f.mock.calls.filter((c) => (c[0] as string).endsWith('/system/check') && (c[1]?.method || 'GET') === 'GET').length;

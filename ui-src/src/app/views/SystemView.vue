@@ -74,6 +74,13 @@ const { confirm } = useConfirm();
 const { push } = useToast();
 
 const items = computed<SystemItem[]>(() => sys.state.data?.items ?? []);
+
+// источник сборки ядра sing-box (Item.Source) - бейдж рядом с версией:
+// владелец путается, чьё ядро стоит (92-док)
+const sourceLabels: Record<string, string> = {
+  extended: 'extended', lx: 'lx', 'lx-own': 'lx-own', upstream: 'апстрим',
+};
+const sourceLabel = (s: string): string => sourceLabels[s] || s;
 const columns: UiTableColumn[] = [
   { key: 'title', label: 'компонент' },
   { key: 'version', label: 'версия' },
@@ -314,6 +321,11 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
       </template>
       <template #cell-version="{ row }">
         <span class="ver">{{ row.version || '' }}</span>
+        <UiBadge
+          v-if="row.source"
+          :text="sourceLabel(row.source)"
+          variant="info"
+        />
       </template>
       <template #cell-state="{ row }">
         <UiBadge

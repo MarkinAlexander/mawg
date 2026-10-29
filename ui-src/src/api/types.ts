@@ -521,6 +521,9 @@ export interface InstallRes {
   ok: boolean
   output?: string
   error?: string
+  // ядро sing-box: источник установки - диалог показывает «источник: ...»
+  source?: string
+  sourceTitle?: string
 }
 
 // ядро VPN для карточки «Ядра VPN» (GET /cores): lifecycle-менеджмент
