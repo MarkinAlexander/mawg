@@ -116,6 +116,35 @@ func TestLxCoreItemStates(t *testing.T) {
 	if !strings.Contains(item.Confirm, "не установлено") {
 		t.Fatalf("confirm: %q", item.Confirm)
 	}
+	if item.ActionLabel != "установить ядро" {
+		t.Fatalf("метка установки должна быть нейтральной к источнику: %+v", item)
+	}
+
+	// бинарь есть, version-запуск не удался, но маркер знает версию:
+	// честная версия нашей установки вместо «не читается» (инцидент
+	// Кинетика 29.10 - version-запуск попал на занятое окно)
+	withFS(t, 63607828, 26214400*1024, true)
+	oldVer, oldSrc := markerVersionOf, markerSourceOf
+	markerVersionOf = func(string) string { return "1.14.4-lx.25" }
+	markerSourceOf = func(string) string { return "Leadaxe/sing-box-lx" }
+	t.Cleanup(func() { markerVersionOf, markerSourceOf = oldVer, oldSrc })
+	item = lxCoreItem(fakeRunner{}.run, "keenetic")
+	if !item.Installed || item.Version != "1.14.4-lx.25" || item.StatusText != "из маркера" {
+		t.Fatalf("фолбэк версии из маркера: %+v", item)
+	}
+	if item.Source != "lx" || item.ActionLabel != "переустановить ядро" {
+		t.Fatalf("источник/метка из маркера: %+v", item)
+	}
+	if !strings.Contains(item.Confirm, "1.14.4-lx.25") {
+		t.Fatalf("confirm должен называть версию из маркера: %q", item.Confirm)
+	}
+
+	// маркера нет - прежний честный статус, метка нейтральная
+	markerVersionOf = func(string) string { return "" }
+	item = lxCoreItem(fakeRunner{}.run, "keenetic")
+	if item.Installed || item.StatusText != "файл есть, версия не читается (роутер занят?)" || item.ActionLabel != "переустановить ядро" {
+		t.Fatalf("версия не читается без маркера: %+v", item)
+	}
 
 	// openwrt-пути
 	withFS(t, 63607828, 26214400*1024, true)
