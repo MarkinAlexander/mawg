@@ -203,6 +203,9 @@ func (s *Server) postCorePower(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if _, err := s.applyEngine(); err != nil {
+			// молчаливый отказ вводил в заблуждение (инцидент 29.10:
+			// флаг снят, сервис мёртв, в журнале пусто)
+			log("движок не включён: "+err.Error())
 			writeErr(w, err)
 			return
 		}
@@ -220,6 +223,7 @@ func (s *Server) postCorePower(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = s.store.SetEngineDisabled(false)
 		if _, err := s.applyEngine(); err != nil {
+			log("движок не перезапущен: "+err.Error())
 			writeErr(w, err)
 			return
 		}
