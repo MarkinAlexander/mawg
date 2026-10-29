@@ -46,6 +46,9 @@ func (s *Server) sb() (*singbox.Manager, error) {
 		LogEvent: func(pool, kind, msg string) { s.store.LogEvent(pool, kind, msg) }}
 	if mode == "shared" {
 		cfg.SharedDir, cfg.SharedInit = s.sharedPaths()
+		// маркер установки ядра: разрешает mawg стартовать остановленный
+		// сервис в Apply (старт-if-managed, слово владельца 2026-10-29)
+		cfg.MarkerDir = singbox.LXTargetForPlatform(s.backend.Name()).MarkerDir
 	}
 	m, err := singbox.NewManagerConfig(filepath.Join(s.store.Base(), "singbox"), cfg)
 	if err != nil {

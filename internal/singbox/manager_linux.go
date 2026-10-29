@@ -30,6 +30,7 @@ type Manager struct {
 	Mode            string
 	SharedDir       string
 	SharedInit      string
+	MarkerDir       string // каталог маркера .installed-by-mawg (RunConfig): разрешает старт сервиса
 	webPort         int
 	sharedClash     int
 	resolverTag     string // тег нашего dns-сервера во фрагменте (свободный у чужого конфига)
@@ -48,6 +49,7 @@ type RunConfig struct {
 	Mode        string
 	SharedDir   string
 	SharedInit  string
+	MarkerDir   string // каталог маркера установки ядра (.installed-by-mawg)
 	SharedClash int
 	WebPort     int // панель mawg: её порт тоже занят и не отдается чужим inbound'ам
 	// LogEvent - журнал событий панели (pool/kind/message): менеджер
@@ -73,9 +75,9 @@ func NewManagerConfig(dir string, cfg RunConfig) (*Manager, error) {
 	}
 	m := &Manager{eng: eng, Dir: dir, MixedPort: 2281, ClashPort: 2291,
 		Mode: mode, SharedDir: cfg.SharedDir, SharedInit: cfg.SharedInit,
-		sharedClash: cfg.SharedClash, webPort: cfg.WebPort, logEvent: cfg.LogEvent,
+		MarkerDir: cfg.MarkerDir, sharedClash: cfg.SharedClash, webPort: cfg.WebPort, logEvent: cfg.LogEvent,
 		lastRotate: map[string]time.Time{},
-		statuses: map[string]*PoolStatus{}, nodeCooldown: map[string]time.Time{}}
+		statuses:   map[string]*PoolStatus{}, nodeCooldown: map[string]time.Time{}}
 	m.probeLoopStop = make(chan struct{})
 	go m.probeLoop()
 	return m, nil
@@ -612,6 +614,56 @@ func (m *Manager) restartShared(timeout time.Duration) error {
 	return m.waitClash(timeout)
 }
 
+// startShared - старт остановленного shared-сервиса (init-скрипт start).
+func (m *Manager) startShared(timeout time.Duration) error {
+	if m.SharedInit == "" {
+		return fmt.Errorf("init-скрипт чужого ядра не задан")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, m.SharedInit, "start").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("старт %s не удался: %s", m.SharedInit, strings.TrimSpace(string(out)))
+	}
+	return m.waitClash(timeout)
+}
+
+// WaitShared - ждёт появления процесса чужого сервиса (pidof) до дедлайна:
+// после install-рестарта на mipsle сервис грузится секунды, а Apply должен
+// видеть живой процесс (инцидент Кинетика 2026-10-29).
+func (m *Manager) WaitShared(timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		if m.sharedAlive() {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+// startSharedIfManaged - сервис стоит, но ядро ставили из mawg (маркер):
+// поднимаем его сами (слово владельца 2026-10-29: позиция «чужой сервис не
+// трогаем» устарела - mawg сам ставит и рестартит это ядро). Без маркера -
+// прежний отказ: чужие/подкоп-установки не трогаем.
+func (m *Manager) startSharedIfManaged(timeout time.Duration) error {
+	if m.MarkerDir == "" || !markerExists(m.MarkerDir) {
+		return fmt.Errorf("процесс чужого ядра не запущен - не буду стартовать чужой сервис из mawg, запустите %s", m.SharedInit)
+	}
+	if _, err := os.Stat(m.eng.Bin); err != nil {
+		return fmt.Errorf("маркер mawg есть, но %s не найден - запустите сервис вручную", m.eng.Bin)
+	}
+	if m.logEvent != nil {
+		m.logEvent("singbox", "power", "сервис sing-box остановлен, ядро установлено mawg - запускаю "+m.SharedInit)
+	}
+	if err := m.startShared(timeout); err != nil {
+		return fmt.Errorf("ядро установлено mawg, но сервис не стартовал: %v", err)
+	}
+	return nil
+}
+
 // SharedAlive - жив ли чужой процесс shared-сервиса (для web: решает,
 // рестартить ли сервис после подмены бинаря ядра).
 func (m *Manager) SharedAlive() bool { return m.sharedAlive() }
@@ -865,7 +917,9 @@ func (m *Manager) applyShared(runnable []PoolSpec, skipped []string) ([]string, 
 		}
 	}
 	if !m.sharedAlive() {
-		return skipped, fmt.Errorf("процесс чужого ядра не запущен - не буду стартовать чужой сервис из mawg, запустите %s", m.SharedInit)
+		if err := m.startSharedIfManaged(45 * time.Second); err != nil {
+			return skipped, err
+		}
 	}
 	m.backupShared()
 	prev, prevErr := os.ReadFile(m.fragmentPath())

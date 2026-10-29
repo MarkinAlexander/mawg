@@ -14,6 +14,7 @@ type RunConfig struct {
 	Mode        string
 	SharedDir   string
 	SharedInit  string
+	MarkerDir   string
 	SharedClash int
 	WebPort     int
 	LogEvent    func(pool, kind, msg string)
@@ -53,8 +54,11 @@ func (m *Manager) Apply(pools []PoolSpec) ([]string, error) {
 	return nil, fmt.Errorf("движок sing-box доступен только на роутере")
 }
 func (m *Manager) Status() Status    { return Status{} }
-func (m *Manager) SharedAlive() bool  { return false }
+func (m *Manager) SharedAlive() bool { return false }
 func (m *Manager) PatchNote() string { return "" }
+
+// WaitShared - заглушка не-Linux сборки: на роутере ждёт pidof чужого сервиса.
+func (m *Manager) WaitShared(timeout time.Duration) bool { return false }
 
 func (m *Manager) SetCacheFile(mode string) (string, error) {
 	return "", fmt.Errorf("движок sing-box доступен только на роутере")

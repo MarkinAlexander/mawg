@@ -70,13 +70,20 @@ func (s *Server) installLXCore(w http.ResponseWriter, r *http.Request, flavor st
 			// живом сервисе - рестарт; с нуля - просто start.
 			if s.store.SingboxMode() == "shared" {
 				_, initScript := s.sharedPaths()
+				mgr, mgrErr := s.sb()
 				action := "start"
-				if mgr, err := s.sb(); err == nil && mgr.SharedAlive() {
+				if mgrErr == nil && mgr.SharedAlive() {
 					action = "restart"
 				}
 				out, err := exec.Command(initScript, action).CombinedOutput()
 				if err != nil {
 					s.store.LogEvent("system", "lxcore", "сервис sing-box не перезапущен ("+initScript+" "+action+"): "+firstLine(string(out)))
+				}
+				// сервис на mipsle поднимается секунды (100-МБ бинарь с
+				// USB): инцидент 29.10 - движок успевал раньше процесса
+				// и отказывал «не буду стартовать чужой сервис»
+				if mgrErr == nil && !mgr.WaitShared(30 * time.Second) {
+					s.store.LogEvent("singbox", "power", "сервис sing-box не поднялся за 30с после установки ядра - Apply поднимет его сам (маркер mawg)")
 				}
 			}
 			skipped, err := s.applyEngine()
@@ -92,6 +99,7 @@ func (s *Server) installLXCore(w http.ResponseWriter, r *http.Request, flavor st
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true, "output": res.Log, "upToDate": res.UpToDate, "version": res.Version, "backup": res.Backup,
+		"source": res.Source, "sourceTitle": res.SourceTitle,
 	})
 }
 
