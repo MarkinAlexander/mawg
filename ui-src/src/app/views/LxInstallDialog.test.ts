@@ -105,4 +105,32 @@ describe('LxInstallDialog (мультиисточник)', () => {
     })
     dlg.unmount()
   })
+
+  it('пока источники грузятся: спиннер и заблокированная кнопка, селект предзаполнен фолбэком (не «—»)', async () => {
+    let release!: (v?: unknown) => void
+    const gate = new Promise((res) => { release = res })
+    const f = vi.fn(async (url: string) => {
+      if ((url as string).endsWith('/cores/singbox/sources')) {
+        await gate
+        return new Response(JSON.stringify(sources), { status: 200 })
+      }
+      if ((url as string).endsWith('/system/check')) {
+        return new Response(JSON.stringify({ platform: 'openwrt', items: [{ id: 'singbox-lx', title: 'Ядро sing-box', installed: true, version: '1.14.2-lx.12', action: 'singbox-lx', actionLabel: 'обновить ядро', confirm: 'подтверждаю' }] }), { status: 200 })
+      }
+      return new Response('{}', { status: 200 })
+    })
+    vi.stubGlobal('fetch', f)
+    const dlg = mount(LxInstallDialog, { props: { open: false } })
+    await dlg.setProps({ open: true })
+    await vi.waitFor(() => expect(dlg.text()).toContain('источники уточняются'))
+    expect(dlg.find('.spin').exists()).toBe(true)
+    // фолбэк уже в селекте - выбранного источника видно сразу
+    expect(dlg.findAll('.psel-btn')[0].text()).toContain('sing-box-extended')
+    const submit = dlg.findAll('button').find((b) => b.text() === 'обновить ядро')!
+    expect(submit!.attributes('disabled')).toBeDefined()
+    release()
+    await vi.waitFor(() => expect(dlg.text()).not.toContain('источники уточняются'))
+    expect(dlg.findAll('button').find((b) => b.text() === 'обновить ядро')!.attributes('disabled')).toBeUndefined()
+    dlg.unmount()
+  })
 })
