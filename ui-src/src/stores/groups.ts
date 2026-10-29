@@ -17,6 +17,7 @@ interface GroupsState {
   ifaces: MtIface[] // селекты интерфейсов (легаси MT_IFACES, опрос 60с)
   cycles: PolicyCycles | null // гистерезис политик (легаси loadPolicyCycles)
   excludes: string[] // исключения из обработки (94-док): общий список
+  excludesLoaded: boolean
   presets: { list: PresetsRes['presets']; sourceUrl: string; sourceNote: string; loaded: boolean }
   backups: { list: BackupInfo[]; loaded: boolean }
   editing: number // глубина editingLock
@@ -35,6 +36,7 @@ const state = reactive<GroupsState>({
   ifaces: [],
   cycles: null,
   excludes: [],
+  excludesLoaded: false,
   presets: { list: [], sourceUrl: '', sourceNote: '', loaded: false },
   backups: { list: [], loaded: false },
   editing: 0,
@@ -128,6 +130,7 @@ export function useGroups() {
     try {
       const r = await api<{ excludes: string[] }>('GET', '/excludes');
       state.excludes = r.excludes || [];
+      state.excludesLoaded = true;
     } catch { /* список просто останется пустым */ }
   }
   async function saveExcludes(list: string[]): Promise<string[]> {

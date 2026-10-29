@@ -45,9 +45,14 @@ const cooldown = ref('5');
 const keepalive = ref('25');
 const updateInt = ref('0');
 const fallback = ref('direct');
-// исключения пула (94-док): черновик + пачка через разделители
+// исключения пула (94-док): черновик + пачка через разделители.
+// exclInit - что было при открытии: payload несёт excludes ТОЛЬКО когда
+// секцию меняли - иначе любое сохранение настроек стирало бы список
+// при несросшемся предзаполнении (живой кейс Кинетика 29.10)
 const exclList = ref<string[]>([]);
+const exclInit = ref('[]');
 const exclNew = ref('');
+const exclDirty = computed(() => JSON.stringify(exclList.value) !== exclInit.value);
 function exclAdd(): void {
   const parts = exclNew.value
     .split(/[\s,;]+/)
@@ -217,6 +222,7 @@ watch(open, (v) => {
   const fb = p.settings.fallback || 'direct';
   fallback.value = fbOptions.value.some((o) => o.value === fb) ? fb : 'direct';
   exclList.value = [...(p.settings.excludes || [])];
+  exclInit.value = JSON.stringify(exclList.value);
   exclNew.value = '';
   const sc = p.settings.smartCascade;
   const scRet = sc?.return || {};
@@ -380,7 +386,7 @@ async function save(): Promise<void> {
         fallback: fallback.value,
         maxRttMs: rttOn.value ? +rtt.value || 0 : 0,
         updateIntervalH: updateInt.value === '' ? 0 : +updateInt.value || 0,
-        excludes: [...exclList.value],
+        ...(exclDirty.value ? { excludes: [...exclList.value] } : {}),
         ...(isEng.value ? {
           // ядро шлём всегда явно: «singbox» = вернуть на sing-box
           engineCore: engineCore.value === 'mihomo' ? 'mihomo' : 'singbox',
