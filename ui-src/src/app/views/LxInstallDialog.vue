@@ -93,11 +93,16 @@ watch(open, async (v) => {
     ok: false, out: '', sourceNote: '',
   };
   sourcesLoaded.value = false;
-  sources.value = [];
-  const list = await sys.coreSources();
-  if (list.length > 0) sources.value = list;
-  else sources.value = fallbackSources;
-  sourcesLoaded.value = true;
+  // фолбэк сразу: селект никогда не «—» (слово владельца 2026-10-29:
+  // «списка ядер первое время может не быть»); живой дискавери заменит
+  // список, когда ответит
+  sources.value = fallbackSources;
+  try {
+    const list = await sys.coreSources();
+    if (list.length > 0) sources.value = list;
+  } finally {
+    sourcesLoaded.value = true;
+  }
 });
 
 watch(() => dlg.value?.source, (id) => {
@@ -166,10 +171,13 @@ function showResult(ok: boolean, output: string, errText: string, sourceNote: st
           />
           <UiHelp :text="G.checksum" />
         </div>
-        <UiHint
+        <div
           v-if="!sourcesLoaded"
-          text="источники уточняются (GitHub)..."
-        />
+          class="srcload"
+        >
+          <span class="spin" />
+          источники уточняются (GitHub)...
+        </div>
         <UiSwitch
           v-if="isLxReplace && (dlg.item?.backupBytes || 0) > 0"
           :model-value="dlg.backup"
@@ -215,6 +223,7 @@ function showResult(ok: boolean, output: string, errText: string, sourceNote: st
         </UiButton>
         <UiButton
           variant="primary"
+          :disabled="!sourcesLoaded"
           @click="installForm"
         >
           {{ dlg?.item?.actionLabel || 'Установить' }}
@@ -267,6 +276,13 @@ function showResult(ok: boolean, output: string, errText: string, sourceNote: st
   font-size: 12.5px;
   color: var(--dim);
   margin-top: 2px;
+}
+.srcload {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--dim);
 }
 .rsout {
   font: 11.5px/1.5 ui-monospace, monospace;

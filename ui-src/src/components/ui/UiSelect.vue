@@ -31,6 +31,28 @@ const root = ref<HTMLElement | null>(null)
 
 const selected = computed(() => props.options.find((o) => o.value === props.modelValue))
 
+// высота дропдауна по свободному месту ЭКРАНА под кнопкой (слово владельца
+// 2026-10-29: список ядер в модалке установки скроллился на жёстких 340px,
+// хотя места было много); если снизу тесно, а сверху много - раскрываемся
+// вверх. Границы 200/520: не мельчаем и не съедаем весь экран.
+const listMax = ref('')
+const dropUp = ref(false)
+
+function syncListBox() {
+  const btn = root.value?.querySelector('.psel-btn')
+  if (!btn) return
+  const r = btn.getBoundingClientRect()
+  const below = window.innerHeight - r.bottom - 8
+  const above = r.top - 8
+  dropUp.value = below < 220 && above > below
+  listMax.value = `${Math.round(Math.max(200, Math.min(dropUp.value ? above : below, 520)))}px`
+}
+
+function toggle() {
+  open.value = !open.value
+  if (open.value) syncListBox()
+}
+
 function onDocPointerDown(e: PointerEvent) {
   if (open.value && root.value && !root.value.contains(e.target as Node)) open.value = false
 }
@@ -68,13 +90,15 @@ function pick(o: UiSelectOption) {
         :class="{ on: open }"
         :disabled="props.disabled || props.busy"
         :title="selected?.label ?? props.tooltip"
-        @click="open = !open"
+        @click="toggle"
       >
         {{ selected?.label ?? '—' }}
       </button>
       <div
         v-if="open"
         class="psel-list"
+        :class="{ up: dropUp }"
+        :style="listMax ? { maxHeight: listMax } : undefined"
       >
         <button
           v-for="o in props.options"
@@ -123,13 +147,15 @@ function pick(o: UiSelectOption) {
             :class="{ on: open }"
             :disabled="props.disabled || props.busy"
             :title="selected?.label ?? props.tooltip"
-            @click="open = !open"
+            @click="toggle"
           >
             {{ selected?.label ?? '—' }}
           </button>
           <div
             v-if="open"
             class="psel-list"
+            :class="{ up: dropUp }"
+            :style="listMax ? { maxHeight: listMax } : undefined"
           >
             <button
               v-for="o in props.options"
@@ -242,6 +268,11 @@ function pick(o: UiSelectOption) {
   /* на телефоне max-content (до 460) шире экрана и список уезжает за
      край - клемпим по вьюпорту, длинные опции переносятся на строки */
   max-width: min(460px, calc(100vw - 24px));
+}
+/* снизу тесно, сверху много - раскрываемся вверх (maxHeight ставит JS) */
+.psel-list.up {
+  top: auto;
+  bottom: calc(100% + 2px);
 }
 .psel-item {
   display: flex;
