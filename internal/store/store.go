@@ -401,6 +401,23 @@ func (s *Store) SetDnsZones(list []DnsZone) error {
 	s.root.Settings.DnsZones = list
 	return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
 }
+// Excludes - глобальный список исключений из обработки (94-док):
+// каноничные IPv4/CIDR, трафик на них и с них не маркируется группами.
+func (s *Store) Excludes() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.root.Settings.Excludes...)
+}
+
+func (s *Store) SetExcludes(list []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if list == nil {
+		list = []string{}
+	}
+	s.root.Settings.Excludes = list
+	return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
+}
 
 // GroupPolicy - политика поведения группы при отвале интерфейса.
 func (s *Store) GroupPolicy(id string) GroupPolicy {
