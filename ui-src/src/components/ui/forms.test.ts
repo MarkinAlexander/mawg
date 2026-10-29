@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { h } from 'vue'
 import { mount } from '@vue/test-utils'
 import UiCheckbox from './UiCheckbox.vue'
@@ -180,6 +180,30 @@ describe('UiSelect', () => {
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
     await w.vm.$nextTick()
     expect(w.find('.psel-list').exists()).toBe(false)
+  })
+
+  it('при замере геометрии список в координатах экрана (fixed, не скроллит модалку); скролл закрывает', async () => {
+    const w = mount(UiSelect, { props: { modelValue: 'proton', options: OPTS, label: 'пул' } })
+    const btn = w.find('.psel-btn').element as HTMLElement
+    btn.getBoundingClientRect = () =>
+      ({ top: 400, bottom: 430, left: 40, right: 360, width: 320, height: 30, x: 40, y: 400, toJSON: () => ({}) } as DOMRect)
+    vi.stubGlobal('innerHeight', 900)
+    vi.stubGlobal('innerWidth', 1280)
+    await w.find('.psel-btn').trigger('click')
+    await w.vm.$nextTick()
+    const list = w.find('.psel-list').element as HTMLElement
+    // место снизу 900-430-8=462 -> список фиксирован под кнопкой, высота по месту
+    expect(list.style.position).toBe('fixed')
+    expect(list.style.top).toBe('432px')
+    expect(list.style.left).toBe('40px')
+    expect(list.style.maxHeight).toBe('462px')
+    expect(list.style.minWidth).toBe('320px')
+    // скролл в любом контейнере (capture) закрывает: якорь уезжает
+    window.dispatchEvent(new Event('scroll'))
+    await w.vm.$nextTick()
+    expect(w.find('.psel-list').exists()).toBe(false)
+    vi.unstubAllGlobals()
+    w.unmount()
   })
 
   it('клик вне закрывает список', async () => {
