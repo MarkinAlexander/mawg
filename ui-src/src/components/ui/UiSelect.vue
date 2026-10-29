@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import UiField from './UiField.vue'
 
 // Кастомный дропдаун в стиле legacy .psel: нативный select не умеет
@@ -31,26 +31,44 @@ const root = ref<HTMLElement | null>(null)
 
 const selected = computed(() => props.options.find((o) => o.value === props.modelValue))
 
-// высота дропдауна по свободному месту ЭКРАНА под кнопкой (слово владельца
-// 2026-10-29: список ядер в модалке установки скроллился на жёстких 340px,
-// хотя места было много); если снизу тесно, а сверху много - раскрываемся
-// вверх. Границы 200/520: не мельчаем и не съедаем весь экран.
-const listMax = ref('')
-const dropUp = ref(false)
-
+// Список рисуется в координатах ЭКРАНА (position:fixed, размеры по месту
+// под кнопкой): абсолютный дропдаун внутри модалки вылезал за её нижний
+// край и заставлял её скроллиться, даже когда на экране место было
+// (слово владельца 2026-10-29). Границы высоты 200-520px: не мельчаем и
+// не съедаем экран; если снизу тесно, а сверху много - раскрываемся вверх.
 function syncListBox() {
-  const btn = root.value?.querySelector('.psel-btn')
-  if (!btn) return
+  const btn = root.value?.querySelector('.psel-btn') as HTMLElement | null
+  const list = root.value?.querySelector('.psel-list') as HTMLElement | null
+  if (!btn || !list) return
   const r = btn.getBoundingClientRect()
+  if (r.top === 0 && r.bottom === 0) return // замера нет (jsdom) - css-дефолт
   const below = window.innerHeight - r.bottom - 8
   const above = r.top - 8
-  dropUp.value = below < 220 && above > below
-  listMax.value = `${Math.round(Math.max(200, Math.min(dropUp.value ? above : below, 520)))}px`
+  const up = below < 220 && above > below
+  list.style.position = 'fixed'
+  list.style.left = `${Math.round(r.left)}px`
+  list.style.top = up ? 'auto' : `${Math.round(r.bottom + 2)}px`
+  list.style.bottom = up ? `${Math.round(window.innerHeight - r.top + 2)}px` : 'auto'
+  list.style.maxHeight = `${Math.round(Math.max(200, Math.min(up ? above : below, 520)))}px`
+  if (r.width > 0) list.style.minWidth = `${Math.round(r.width)}px`
+  // не вылезать за правый край (кнопка у правой границы): сдвиг влево
+  const lr = list.getBoundingClientRect()
+  const overRight = lr.right - (window.innerWidth - 8)
+  if (overRight > 0) list.style.left = `${Math.max(8, r.left - overRight)}px`
 }
 
-function toggle() {
+async function toggle() {
   open.value = !open.value
-  if (open.value) syncListBox()
+  if (open.value) {
+    await nextTick()
+    syncListBox()
+  }
+}
+
+// список в экранных координатах: при скролле/ресайзе якорь уезжает -
+// закрываем (стандарт дропдаунов)
+function onViewportChange() {
+  if (open.value) open.value = false
 }
 
 function onDocPointerDown(e: PointerEvent) {
@@ -62,10 +80,14 @@ function onDocKeydown(e: KeyboardEvent) {
 onMounted(() => {
   document.addEventListener('pointerdown', onDocPointerDown)
   document.addEventListener('keydown', onDocKeydown)
+  window.addEventListener('scroll', onViewportChange, true)
+  window.addEventListener('resize', onViewportChange)
 })
 onBeforeUnmount(() => {
   document.removeEventListener('pointerdown', onDocPointerDown)
   document.removeEventListener('keydown', onDocKeydown)
+  window.removeEventListener('scroll', onViewportChange, true)
+  window.removeEventListener('resize', onViewportChange)
 })
 
 function pick(o: UiSelectOption) {
@@ -97,8 +119,6 @@ function pick(o: UiSelectOption) {
       <div
         v-if="open"
         class="psel-list"
-        :class="{ up: dropUp }"
-        :style="listMax ? { maxHeight: listMax } : undefined"
       >
         <button
           v-for="o in props.options"
@@ -154,8 +174,6 @@ function pick(o: UiSelectOption) {
           <div
             v-if="open"
             class="psel-list"
-            :class="{ up: dropUp }"
-            :style="listMax ? { maxHeight: listMax } : undefined"
           >
             <button
               v-for="o in props.options"
@@ -252,6 +270,9 @@ function pick(o: UiSelectOption) {
   opacity: 0.55;
   cursor: default;
 }
+/* Дефолт (absolute под кнопкой) - пока JS не измерил геометрию; при
+   открытии syncListBox переводит список в position:fixed по координатам
+   экрана, чтобы не скроллить родителей (модалку/карточки) */
 .psel-list {
   position: absolute;
   top: calc(100% + 2px);
@@ -268,11 +289,6 @@ function pick(o: UiSelectOption) {
   /* на телефоне max-content (до 460) шире экрана и список уезжает за
      край - клемпим по вьюпорту, длинные опции переносятся на строки */
   max-width: min(460px, calc(100vw - 24px));
-}
-/* снизу тесно, сверху много - раскрываемся вверх (maxHeight ставит JS) */
-.psel-list.up {
-  top: auto;
-  bottom: calc(100% + 2px);
 }
 .psel-item {
   display: flex;
