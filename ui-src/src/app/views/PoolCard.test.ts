@@ -5,6 +5,7 @@ import { nextTick } from 'vue'
 import PoolCard from './PoolCard.vue'
 import { UiSwitch } from '../../components/ui'
 import { useConfirm } from '../../stores/confirm'
+import { useGroups } from '../../stores/groups'
 import { useStatus } from '../../stores/status'
 import { useToast } from '../../stores/toast'
 import type { PoolView, Status } from '../../api/types'
@@ -73,8 +74,16 @@ describe('PoolCard - отображение', () => {
     w.unmount();
 
     const w2 = makeCard(nativePool);
-    expect(w2.text()).not.toContain('исключения');
+    expect(w2.find('.kv').text()).not.toContain('исключения');
     w2.unmount();
+  });
+
+  it('исключения: общие показываются на карточке с пометкой «общие»', async () => {
+    useGroups().state.excludes = ['192.0.2.9/32'];
+    useGroups().state.excludesLoaded = true;
+    const w = makeCard(nativePool);
+    await vi.waitFor(() => expect(w.text()).toContain('общие: 192.0.2.9/32'));
+    w.unmount();
   });
 
   it('нативный включённый: бейджи/подзаголовок/kv, кнопки ротации, конфигов-секция есть', () => {

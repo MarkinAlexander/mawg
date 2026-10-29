@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { UiBadge, UiButton, UiCard, UiHelp, UiHint, UiIcon, UiInput, UiSelect, type UiSelectOption, UiSwitch } from '../../components/ui'
 import { useConfirm } from '../../stores/confirm'
+import { useGroups } from '../../stores/groups'
 import { useStatus } from '../../stores/status'
 import { usePoolActions, type PoolAct } from '../../stores/pools'
 import { useToast } from '../../stores/toast'
@@ -31,6 +32,20 @@ const a = usePoolActions();
 const secrets = useSecrets();
 
 const busy = ref(''); // «name:act» - одна busy-кнопка за раз (легаси withBusy)
+// исключения (94-док): пуловые - из настроек пула, общие - из глобального
+// списка (действуют на все пулы); на карточке видно объединение
+const groups = useGroups();
+onMounted(() => {
+  if (!groups.state.excludesLoaded) void groups.loadExcludes();
+});
+const exclOwn = computed(() => props.pool.settings.excludes || []);
+const exclGlobal = computed(() => (groups.state.excludes || []).filter((x) => !exclOwn.value.includes(x)));
+const exclRow = computed(() => {
+  const parts: string[] = [];
+  if (exclOwn.value.length) parts.push(exclOwn.value.join(', '));
+  if (exclGlobal.value.length) parts.push('общие: ' + exclGlobal.value.join(', '));
+  return parts.join(' + ');
+});
 const premiumBusy = ref(false);
 
 async function run(key: string, fn: () => Promise<void>): Promise<void> {
@@ -375,8 +390,8 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
         >{{ pool.lastError }}</span>
       </template>
       <b>ротаций<UiHelp :text="G.rotation" /></b><span>{{ pool.rotations }}</span>
-      <template v-if="pool.settings.excludes?.length">
-        <b>исключения<UiHelp text="Эти адреса пул не обрабатывает - трафик на них и с них идёт напрямую, мимо туннеля (свои серверы, вторые роутеры). Правка - в настройках пула (шестерёнка)." /></b><span>{{ pool.settings.excludes.join(', ') }}</span>
+      <template v-if="exclRow">
+        <b>исключения<UiHelp text="Эти адреса пул не обрабатывает - трафик на них и с них идёт напрямую, мимо туннеля (свои серверы, вторые роутеры). Свои - в настройках пула (шестерёнка), «общие» - в списке исключений на странице правил: они действуют на все пулы." /></b><span>{{ exclRow }}</span>
       </template>
       <template v-if="smartShown">
         <b>каскад<UiHelp :text="G.smartCascade" /></b><span>
