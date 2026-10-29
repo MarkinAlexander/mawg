@@ -19,7 +19,11 @@ const (
 )
 
 func (s *Server) getExcludes(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"excludes": s.store.Excludes()})
+	list := s.store.Excludes()
+	if list == nil {
+		list = []string{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"excludes": list})
 }
 
 func (s *Server) putExcludes(w http.ResponseWriter, r *http.Request) {
