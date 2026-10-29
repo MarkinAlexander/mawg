@@ -32,6 +32,10 @@ const dlg = ref<{
   ok: boolean
   out: string
   sourceNote: string
+  // что стояло при открытии: кнопка установки оживает только когда
+  // выбрано изменение (слово владельца 2026-10-29)
+  initSource: string
+  initFlavor: string
 } | null>(null);
 
 const sources = ref<SingboxSourceInfo[]>([]);
@@ -73,6 +77,24 @@ const backupText = computed(() => {
 });
 const dlgTitle = computed(() => (dlg.value?.item ? `${dlg.value.item.actionLabel || 'Установить'} - ядро sing-box` : ''));
 
+// установка доступна, когда есть что делать: грузятся источники - нет;
+// замена чужого/переустановка - всегда; обновление - сменился источник или
+// профиль ЛИБО у выбранного источника вышел релиз новее установленного
+const canInstall = computed(() => {
+  const d = dlg.value;
+  if (!d) return false;
+  if (!sourcesLoaded.value) return false;
+  if (d.item?.action !== 'singbox-lx') return true;
+  if (d.source !== d.initSource || d.flavor !== d.initFlavor) return true;
+  const latest = (sources.value.find((s) => s.id === d.source)?.latest || '').replace(/^v/, '');
+  return latest !== '' && latest !== (d.item.version || '');
+});
+const installTooltip = computed(() =>
+  sourcesLoaded.value
+    ? 'изменений не выбрано: источник и профиль совпадают с установленным ядром, свежего релиза нет'
+    : 'источники ещё загружаются с GitHub...',
+);
+
 watch(open, async (v) => {
   if (!v) return;
   // предмет установки должен быть свежим (легаси installComp перечитывал
@@ -91,6 +113,7 @@ watch(open, async (v) => {
     flavor: 'plain',
     backup: fresh.action === 'singbox-lx-replace' && (fresh.backupBytes || 0) > 0 && (fresh.freeBytes || 0) > (fresh.backupBytes || 0) + 64 * 1048576,
     ok: false, out: '', sourceNote: '',
+    initSource: fresh.source || 'extended', initFlavor: 'plain',
   };
   sourcesLoaded.value = false;
   // фолбэк сразу: селект никогда не «—» (слово владельца 2026-10-29:
@@ -223,7 +246,8 @@ function showResult(ok: boolean, output: string, errText: string, sourceNote: st
         </UiButton>
         <UiButton
           variant="primary"
-          :disabled="!sourcesLoaded"
+          :disabled="!canInstall"
+          :tooltip="installTooltip"
           @click="installForm"
         >
           {{ dlg?.item?.actionLabel || 'Установить' }}

@@ -133,4 +133,28 @@ describe('LxInstallDialog (мультиисточник)', () => {
     expect(dlg.findAll('button').find((b) => b.text() === 'обновить ядро')!.attributes('disabled')).toBeUndefined()
     dlg.unmount()
   })
+
+  it('кнопка включена только при выбранном изменении: тот же источник и та же версия - выключена', async () => {
+    const f = stub({
+      '/system/check': { platform: 'openwrt', items: [{ id: 'singbox-lx', title: 'Ядро sing-box', installed: true, version: '1.14.2-lx.12', action: 'singbox-lx', actionLabel: 'обновить ядро', confirm: 'подтверждаю', source: 'lx' }] },
+      '/cores/singbox/sources': sources, // lx latest v1.14.2-lx.12 - совпадает с установленной
+      '/system/install': { ok: true, output: '- ok' },
+    })
+    vi.stubGlobal('fetch', f)
+    const dlg = mount(LxInstallDialog, { props: { open: false } })
+    await dlg.setProps({ open: true })
+    const submit = () => dlg.findAll('button').find((b) => b.text() === 'обновить ядро')!
+    // диалог открылся, источники загрузились: изменение не выбрано - выключена
+    await vi.waitFor(() => expect(submit()).toBeTruthy())
+    await vi.waitFor(() => expect(submit().attributes('disabled')).toBeDefined())
+    expect(submit().attributes('title')).toContain('изменений не выбрано')
+    // сменили источник - изменение выбрано, кнопка ожила
+    await dlg.findAll('.psel-btn')[0].trigger('click')
+    await nextTick()
+    const up = dlg.findAll('.psel-item').find((o) => o.text().includes('официальный апстрим'))!
+    await up.trigger('click')
+    await nextTick()
+    expect(submit().attributes('disabled')).toBeUndefined()
+    dlg.unmount()
+  })
 })
