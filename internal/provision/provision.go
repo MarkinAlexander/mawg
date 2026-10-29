@@ -391,7 +391,8 @@ func parseBinVersion(out string) string {
 }
 
 // markerSourceOf - репозиторий из маркера установки ядра sing-box.
-func markerSourceOf(markerDir string) string {
+// Переменные (не функции) для тестов: реальные файлы /opt на машине теста нет.
+var markerSourceOf = func(markerDir string) string {
 	if data, err := os.ReadFile(filepath.Join(markerDir, singbox.LXMarkerName)); err == nil {
 		for _, line := range strings.Split(string(data), "\n") {
 			if v, ok := strings.CutPrefix(strings.TrimSpace(line), "source="); ok {
@@ -401,6 +402,10 @@ func markerSourceOf(markerDir string) string {
 	}
 	return ""
 }
+
+// markerVersionOf - версия из маркера (фолбэк, когда version-запуск ядра
+// не уложился в таймаут, инцидент Кинетика 2026-10-29).
+var markerVersionOf = singbox.MarkerVersion
 
 // mihomoCoreItem - пункт «ядро mihomo» в таблице зависимостей: версия,
 // статус и кнопка установки/обновления (установка идёт кодом
@@ -492,14 +497,26 @@ func lxCoreItem(run Runner, platform string) Item {
 		// бинарь стоит, но version-запуск не уложился в таймаут (upx-
 		// распаковка на загруженном роутере) - показывать «не установлен»
 		// и звать ставить заново было враньём, владельца это сбило
-		item.StatusText = "файл есть, версия не читается (роутер занят?)"
 		item.Action = "singbox-lx"
-		item.ActionLabel = "переустановить lx"
-		item.Confirm = "Ядро sing-box стоит, но версию прочитать не удалось - вероятно, роутер был занят и запуск не уложился в таймаут. Переустановка заменит бинарь нашей сборкой. " + confirm
+		item.ActionLabel = "переустановить ядро"
+		if mv := markerVersionOf(markerDir); mv != "" {
+			// инцидент 29.10: version-запуск попал на занятое окно -
+			// версия из маркера нашей установки честнее «не читается»
+			item.Installed = true
+			item.Version = mv
+			item.StatusText = "из маркера"
+			if id, ok := singbox.SourceIDByRepo(markerSourceOf(markerDir)); ok {
+				item.Source = id
+			}
+			item.Confirm = fmt.Sprintf("Ядро sing-box стоит, версию %s прочитать не удалось (роутер был занят) - показана версия из маркера установки mawg. Переустановка заменит бинарь нашей сборкой. ", mv) + confirm
+		} else {
+			item.StatusText = "файл есть, версия не читается (роутер занят?)"
+			item.Confirm = "Ядро sing-box стоит, но версию прочитать не удалось - вероятно, роутер был занят и запуск не уложился в таймаут. Переустановка заменит бинарь нашей сборкой. " + confirm
+		}
 	case ver == "":
 		item.StatusText = "не установлен"
 		item.Action = "singbox-lx"
-		item.ActionLabel = "установить lx"
+		item.ActionLabel = "установить ядро"
 		item.Confirm = "Сейчас ядро sing-box не установлено. " + confirm
 	case strings.Contains(ver, "-lx."), strings.Contains(ver, "-extended-"), marked:
 		// наша установка любого источника (маркер) либо сборка семейства
