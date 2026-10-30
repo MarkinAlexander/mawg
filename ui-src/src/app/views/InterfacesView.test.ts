@@ -2,10 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, h } from 'vue'
 import { DOMWrapper, mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
+import { createRouter, createWebHashHistory } from 'vue-router'
 import InterfacesView from './InterfacesView.vue'
 import { ConfirmHost, UiSwitch } from '../../components/ui'
 import { useConfirm } from '../../stores/confirm'
 import { useIfaces } from '../../stores/ifaces'
+import { useStatus } from '../../stores/status'
 import { useToast } from '../../stores/toast'
 import type { IfaceInfo } from '../../api/types'
 
@@ -36,13 +38,18 @@ const defaultRoutes = () => ({
 async function makeView(routes: Record<string, unknown | ((init?: { method?: string; body?: string }) => unknown)> = {}) {
   const f = apiStub({ ...defaultRoutes(), ...routes });
   vi.stubGlobal('fetch', f);
-  const w = mount(defineComponent(() => () => [h(InterfacesView), h(ConfirmHost)]));
+  // deep-link ?pool= (97-док): InterfacesView ведёт роутер сам
+  const router = createRouter({
+    history: createWebHashHistory(),
+    routes: [{ path: '/next/:id', component: { template: '<div />' } }],
+  });
+  const w = mount(defineComponent(() => () => [h(InterfacesView), h(ConfirmHost)]), { global: { plugins: [router] } });
   await vi.waitFor(() => expect(useIfaces().state.loaded).toBe(true));
   // WAN-форма заполняется асинхронно из GET /wanprobe - ждём её разрешения,
   // иначе fillWan перетирает действия теста задним числом
   await vi.waitFor(() => expect(useIfaces().state.wanLoaded).toBe(true));
   await nextTick();
-  return { w, f };
+  return { w, f, router };
 }
 
 const ifCard = (w: ReturnType<typeof mount>) => w.findAll('.card').find((c) => c.text().includes('Интерфейсы роутера'))!;
@@ -61,6 +68,8 @@ beforeEach(() => {
   state.wan = { enabled: false, probe: null };
   state.wanLoaded = false;
   useIfaces().stop();
+  useStatus().stop();
+  useStatus().state.data = null;
   useConfirm().cancel();
   useToast().toasts.list.splice(0);
 });
@@ -289,5 +298,34 @@ describe('InterfacesView - проверка канала провайдера', 
     expect(useToast().toasts.list.map((t) => t.text)).toContain('Укажите цель проверки канала');
     expect(f.mock.calls.filter((c) => (c[0] as string).endsWith('/wanprobe') && c[1]?.method === 'PUT')).toHaveLength(0);
     w.unmount();
+  });
+});
+
+describe('InterfacesView - deep-link ?pool= (97-док)', () => {
+  it('скролл к карточке пула, запрос чистится (F5 не переоткроет)', async () => {
+    const scroll = vi.fn();
+    (Element.prototype as unknown as { scrollIntoView: unknown }).scrollIntoView = scroll;
+    const poolView = {
+      name: 'proton', platform: 'openwrt', device: 'nwg0', mode: 'up', activeFile: '',
+      activeEndpoint: '', lastResult: '', lastError: '', rotations: 0, disabled: false,
+      consecFails: 0, settings: {}, configs: [], premium: { imported: false, countries: [] }, protos: [],
+    };
+    const { w, router } = await makeView({
+      '/status': { version: 'v', platform: 'openwrt', backendName: 'openwrt', authEnabled: false, nativeAWG3: false, mtSources: true, pools: [poolView] },
+    });
+    // getElementById видит только присоединённое дерево (грабля jsdom):
+    // переносим отрисованный DOM в документ
+    document.body.appendChild(w.element);
+    await router.push({ path: '/next/interfaces', query: { pool: 'proton' } });
+    // пулы приходят из /status: перечитываем - стор увидит пул,
+    // deep-link заскроллит и почистит запрос
+    await useStatus().refresh();
+    await vi.waitFor(() => expect(router.currentRoute.value.query.pool).toBeUndefined());
+    expect(scroll).toHaveBeenCalled();
+    // карточка пула реально в DOM с якорем
+    expect(w.find('#card-pool-proton').exists()).toBe(true);
+    const host = w.element;
+    w.unmount();
+    host.remove();
   });
 });

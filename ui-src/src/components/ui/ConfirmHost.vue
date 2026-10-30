@@ -5,8 +5,10 @@ import UiDialog from './UiDialog.vue'
 
 // Хост промис-подтверждения (замена legacy askModal): рендерит стор
 // confirm через UiDialog. info-режим - без «Отмены», ярлык «Закрыть»
-// уже подставлен стором. Монтируется один раз в NextLayout.
-const { state, ok, cancel } = useConfirm()
+// уже подставлен стором. altLabel - третья кнопка (confirmChoice,
+// 97-док: выбор судьбы устройств при удалении пула). Монтируется один
+// раз в NextLayout.
+const { state, ok, alt, cancel } = useConfirm()
 </script>
 
 <template>
@@ -24,6 +26,13 @@ const { state, ok, cancel } = useConfirm()
         @click="cancel()"
       >
         Отмена
+      </UiButton>
+      <UiButton
+        v-if="state.altLabel"
+        variant="primary"
+        @click="alt()"
+      >
+        {{ state.altLabel }}
       </UiButton>
       <UiButton
         variant="primary"

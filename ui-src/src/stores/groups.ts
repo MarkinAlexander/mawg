@@ -4,7 +4,7 @@
 // Мутации - тонкие обёртки: вызов API + force-refresh.
 import { reactive } from 'vue'
 import { api } from '../api/client'
-import type { BackupInfo, DupInfo, DuplicatesRes, GroupPolicy, GroupView, ImportRulesRes, MtGroupsRes, MtIface, PolicyCycles, PresetsRes } from '../api/types'
+import type { BackupInfo, DeviceBinding, DupInfo, DuplicatesRes, GroupPolicy, GroupView, ImportRulesRes, MtGroupsRes, MtIface, PolicyCycles, PresetsRes } from '../api/types'
 
 interface GroupsState {
   loaded: boolean
@@ -18,6 +18,8 @@ interface GroupsState {
   cycles: PolicyCycles | null // гистерезис политик (легаси loadPolicyCycles)
   excludes: string[] // исключения из обработки (94-док): общий список
   excludesLoaded: boolean
+  bindings: DeviceBinding[] // реестр «пул ↔ устройство» (97-док)
+  bindingsLoaded: boolean
   presets: { list: PresetsRes['presets']; sourceUrl: string; sourceNote: string; loaded: boolean }
   backups: { list: BackupInfo[]; loaded: boolean }
   editing: number // глубина editingLock
@@ -37,6 +39,8 @@ const state = reactive<GroupsState>({
   cycles: null,
   excludes: [],
   excludesLoaded: false,
+  bindings: [],
+  bindingsLoaded: false,
   presets: { list: [], sourceUrl: '', sourceNote: '', loaded: false },
   backups: { list: [], loaded: false },
   editing: 0,
@@ -139,6 +143,16 @@ export function useGroups() {
     return state.excludes;
   }
 
+  // реестр «пул ↔ устройство через пул» (97-док): ленивая догрузка,
+  // как excludes (PoolCard/настройки пула показывают устройства)
+  async function loadBindings(): Promise<void> {
+    try {
+      const r = await api<{ bindings: DeviceBinding[] }>('GET', '/device-bindings');
+      state.bindings = r.bindings || [];
+      state.bindingsLoaded = true;
+    } catch { /* реестр просто останется пустым */ }
+  }
+
   // пресеты (легаси loadPresets 2149: старт, без поллинга, ошибки молча)
   async function loadPresets(): Promise<void> {
     try {
@@ -226,10 +240,18 @@ export function useGroups() {
     return g;
   }
   // группа «устройство целиком через пул» (88+: sources + 0.0.0.0/0,
-  // ставится последней в списке - побеждает при пересечениях)
-  async function createDeviceGroup(body: { pool: string; name?: string; ips: string[] }): Promise<void> {
+  // ставится последней в списке - побеждает при пересечениях).
+  // confirm - подтверждение коллизии адресов (97-док, 409 с сервера)
+  async function createDeviceGroup(body: { pool: string; name?: string; ips: string[]; confirm?: boolean }): Promise<void> {
     await api('POST', '/mt/device-group', body);
     await refresh(true);
+    await loadBindings();
+  }
+  // снять привязку устройства: удалить MT-группу + запись реестра
+  async function deleteDeviceGroup(name: string): Promise<void> {
+    await api('DELETE', `/mt/device-group/${encodeURIComponent(name)}`);
+    await refresh(true);
+    await loadBindings();
   }
   async function updateGroup(id: string, body: { name?: string; color?: string; interface?: string; sources?: string[] }): Promise<void> {
     await api('PUT', `/mt/groups/${encodeURIComponent(id)}`, body);
@@ -298,6 +320,8 @@ export function useGroups() {
     saveCycles,
     loadExcludes,
     saveExcludes,
+    loadBindings,
+    deleteDeviceGroup,
     loadPresets,
     applyPreset,
     createCascade,

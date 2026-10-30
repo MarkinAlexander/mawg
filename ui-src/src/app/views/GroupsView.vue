@@ -43,8 +43,19 @@ const secrets = useSecrets();
 onMounted(() => {
   groups.start(30000); // легаси: setInterval(refreshRules, 30000)
   void groups.loadPresets(); // легаси loadPresets() на старте, без поллинга
+  if (!groups.state.bindingsLoaded) void groups.loadBindings(); // реестр устройств (97-док)
 });
 onBeforeUnmount(() => groups.stop());
+
+// бейдж «устройство целиком» кликабелен, когда пул связки известен
+// (97-док): переход к карточке своего пула на «Интерфейсах»
+function devPoolOf(g: GroupView): string {
+  const b = groups.state.bindings.find((x) => x.name === g.name);
+  return b ? b.pool : '';
+}
+function goPool(pool: string): void {
+  void router.push({ path: '/next/interfaces', query: { pool } });
+}
 
 function enabledRulesCount(g: GroupView): number {
   return (g.rules || []).filter((r) => r.enable).length;
@@ -882,8 +893,20 @@ onMounted(openFromLink);
             variant="muted"
             :tooltip="G.cascade"
           />
+          <button
+            v-if="isDeviceGroup(g) && devPoolOf(g)"
+            type="button"
+            class="devlink"
+            :title="'группа устройства: ВЕСЬ трафик перечисленных IP уходит в пул ' + devPoolOf(g) + '. Клик - к карточке пула'"
+            @click="goPool(devPoolOf(g))"
+          >
+            <UiBadge
+              text="устройство целиком"
+              variant="ok"
+            />
+          </button>
           <UiBadge
-            v-if="isDeviceGroup(g)"
+            v-else-if="isDeviceGroup(g)"
             text="устройство целиком"
             variant="ok"
             tooltip="группа устройства: ВЕСЬ трафик перечисленных IP уходит в этот пул. Стоит последней в списке - при совпадении назначений с другими группами побеждает она. Доступ к роутеру сохраняется всегда"
@@ -1457,6 +1480,16 @@ onMounted(openFromLink);
   color: var(--warn);
   display: inline-flex;
   cursor: help;
+}
+/* кликабельный бейдж «устройство целиком» -> карточка пула (97-док):
+   кнопка без собственной хромированной отделки, вид бейджа не меняем */
+.devlink {
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  line-height: 1;
+  font: inherit;
 }
 .ifaceb {
   display: inline-flex;

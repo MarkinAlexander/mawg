@@ -5,6 +5,7 @@ import PoolSettingsDialog from './PoolSettingsDialog.vue'
 import { UiOrderList } from '../../components/ui'
 import { useCaptcha } from '../../stores/captcha'
 import { useConfirm } from '../../stores/confirm'
+import { useGroups } from '../../stores/groups'
 import { useIfaces } from '../../stores/ifaces'
 import { useStatus } from '../../stores/status'
 import { useToast } from '../../stores/toast'
@@ -447,6 +448,57 @@ describe('PoolSettingsDialog - умный каскад (86-док)', () => {
     expect(dlg.text()).toContain('Интервал проверки, часов');
     const inputs = dlg.findAll('input');
     expect(inputs.map((i) => (i.element as HTMLInputElement).value)).toContain('4');
+    dlg.unmount();
+  });
+});
+
+describe('PoolSettingsDialog - устройства через пул (97-док)', () => {
+  it('чипы из реестра связок, «+ привязать» -> POST /mt/device-group', async () => {
+    const binding = { pool: 'proton', ips: ['192.168.0.82/32'], name: 'Устройство: 192.168.0.82' };
+    useGroups().state.bindings = [binding];
+    const { dlg, f } = await makeDialog({
+      '/members': { members: [] },
+      '/device-bindings': { bindings: [binding] },
+    }, [pool]);
+    await vi.waitFor(() => expect(dlg.text()).toContain('Устройства через пул'));
+    expect(dlg.findAll('.exclitem').map((x) => x.text())).toContain('192.168.0.82/32 ✕');
+    const devInput = dlg.findAll('.hrow input').find((i) => (i.element as HTMLInputElement).placeholder.includes('IP устройства'))!;
+    await devInput.setValue('192.168.0.83');
+    await dlg.findAll('button').find((b) => b.text() === '+ привязать')!.trigger('click');
+    await vi.waitFor(() => {
+      const post = f.mock.calls.find((c) => (c[0] as string).endsWith('/mt/device-group'));
+      expect(JSON.parse(post![1]!.body as string)).toEqual({ pool: 'proton', ips: ['192.168.0.83'] });
+    });
+    dlg.unmount();
+  });
+
+  it('кривой адрес - честная ошибка, POST не уходит', async () => {
+    useGroups().state.bindings = [];
+    const { dlg, f } = await makeDialog({ '/members': { members: [] }, '/device-bindings': { bindings: [] } }, [pool]);
+    await vi.waitFor(() => expect(dlg.text()).toContain('Устройства через пул'));
+    const devInput = dlg.findAll('.hrow input').find((i) => (i.element as HTMLInputElement).placeholder.includes('IP устройства'))!;
+    await devInput.setValue('носитель');
+    await dlg.findAll('button').find((b) => b.text() === '+ привязать')!.trigger('click');
+    await vi.waitFor(() =>
+      expect(useToast().toasts.list.some((t) => t.text.includes('Не похоже на IP'))).toBe(true));
+    expect(f.mock.calls.some((c) => (c[0] as string).endsWith('/mt/device-group'))).toBe(false);
+    dlg.unmount();
+  });
+
+  it('✕ на чипе: подтверждение -> DELETE /mt/device-group/<имя>', async () => {
+    useGroups().state.bindings = [{ pool: 'proton', ips: ['192.168.0.82/32'], name: 'Устройство: 192.168.0.82' }];
+    const { dlg, f } = await makeDialog({ '/members': { members: [] }, '/device-bindings': { bindings: [] } }, [pool]);
+    await vi.waitFor(() => expect(dlg.findAll('.exclitem').length).toBe(1));
+    await dlg.find('.exclrm').trigger('click');
+    await nextTick();
+    expect(useConfirm().state.open).toBe(true);
+    expect(useConfirm().state.text).toContain('Устройство: 192.168.0.82');
+    expect(useConfirm().state.text).toContain('напрямую');
+    useConfirm().ok();
+    await vi.waitFor(() => {
+      const del = f.mock.calls.find((c) => (c[0] as string).includes('/mt/device-group/') && c[1]?.method === 'DELETE');
+      expect(del).toBeTruthy();
+    });
     dlg.unmount();
   });
 });

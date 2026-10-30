@@ -41,8 +41,13 @@ export function usePoolActions() {
     later();
   }
 
-  async function del(name: string): Promise<void> {
-    await api('DELETE', `/pools/${encodeURIComponent(name)}`);
+  // удаление пула (слово владельца 30.10): devices - судьба групп его
+  // устройств (97-док): delete - удалить вместе с пулом, direct -
+  // оставить выключенными (устройства идут напрямую, без интернета
+  // никто не остаётся); пусто = серверный дефолт direct
+  async function del(name: string, devices?: 'delete' | 'direct'): Promise<void> {
+    const q = devices ? `?devices=${devices}` : '';
+    await api('DELETE', `/pools/${encodeURIComponent(name)}${q}`);
     void refresh();
   }
 

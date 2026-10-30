@@ -25,7 +25,7 @@ const props = defineProps<{ pool: PoolView }>();
 defineEmits<{ settings: [] }>();
 
 const { state: status, refresh: refreshStatus } = useStatus();
-const { confirm } = useConfirm();
+const { confirm, confirmChoice } = useConfirm();
 const { push } = useToast();
 const a = usePoolActions();
 // приватный режим: скрываем адреса из конфигов, а не все места подряд
@@ -37,6 +37,7 @@ const busy = ref(''); // «name:act» - одна busy-кнопка за раз (
 const groups = useGroups();
 onMounted(() => {
   if (!groups.state.excludesLoaded) void groups.loadExcludes();
+  if (!groups.state.bindingsLoaded) void groups.loadBindings(); // 97-док
 });
 const exclOwn = computed(() => props.pool.settings.excludes || []);
 const exclGlobal = computed(() => (groups.state.excludes || []).filter((x) => !exclOwn.value.includes(x)));
@@ -46,6 +47,12 @@ const exclRow = computed(() => {
   if (exclGlobal.value.length) parts.push('общие: ' + exclGlobal.value.join(', '));
   return parts.join(' + ');
 });
+// устройства через пул (97-док): связки этого пула из реестра -
+// строка «устройства» по образцу строки «исключения» (4b1695f)
+const devRow = computed(() =>
+  (groups.state.bindings || []).filter((b) => b.pool === props.pool.name));
+const devRowText = computed(() =>
+  devRow.value.map((b) => b.ips.join(', ')).join(', '));
 const premiumBusy = ref(false);
 
 async function run(key: string, fn: () => Promise<void>): Promise<void> {
@@ -97,6 +104,20 @@ async function checkNow(): Promise<void> {
 const probing = ref(false);
 
 async function delPool(): Promise<void> {
+  // есть устройства через пул - выбор судьбы их групп (слово владельца
+  // 30.10: «удаление пула должно удалять группу, а если пользователь не
+  // удаляет - перевести на директ»: суть mawg - не лишать интернета)
+  if (devRow.value.length) {
+    const choice = await confirmChoice({
+      title: 'Удаление пула с устройствами',
+      text: `Удалить пул ${props.pool.name}? Через него ходят устройства: ${devRowText.value}.\n\n«Удалить пул и устройства» - их группы удалятся вместе с пулом.\n«Оставить напрямую» - группы останутся, но выключатся: устройства пойдут напрямую, без интернета никто не останется.`,
+      okLabel: 'Удалить пул и устройства',
+      altLabel: 'Оставить напрямую',
+    });
+    if (!choice) return;
+    void run(`${props.pool.name}:del`, () => a.del(props.pool.name, choice === 'ok' ? 'delete' : 'direct'));
+    return;
+  }
   const ok = await confirm({
     title: 'Удаление пула',
     text: `Удалить пул ${props.pool.name}? Интерфейс будет выключен, конфиги удалены из mawg.`,
@@ -392,6 +413,9 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
       <b>ротаций<UiHelp :text="G.rotation" /></b><span>{{ pool.rotations }}</span>
       <template v-if="exclRow">
         <b>исключения<UiHelp text="Эти адреса пул не обрабатывает - трафик на них и с них идёт напрямую, мимо туннеля (свои серверы, вторые роутеры). Свои - в настройках пула (шестерёнка), «общие» - в списке исключений на странице правил: они действуют на все пулы." /></b><span>{{ exclRow }}</span>
+      </template>
+      <template v-if="devRowText">
+        <b>устройства<UiHelp :text="G.deviceBinding" /></b><span>{{ devRowText }}</span>
       </template>
       <template v-if="smartShown">
         <b>каскад<UiHelp :text="G.smartCascade" /></b><span>
