@@ -94,24 +94,33 @@ watch(
   },
 );
 
-// ядро движкового пула (88-док): выбор появляется, только когда mihomo
-// установлен на роутере; дефолт - sing-box, как у всех прежних пулов
+// ядро движкового пула (88-док + 95-док): mihomo - второй движок;
+// выбор появляется у всех источников с WG/AWG/прокси-узлами, когда
+// установлен хоть один движок - WG/AWG можно увести в движок и при
+// рабочем нативе (старые Кинетики, слово владельца 30.10)
 const engineCore = ref('');
 const mihomoAvailable = computed(() => !!status.data?.engines?.mihomo?.available);
+const singboxAvailable = computed(() => !!status.data?.engines?.singbox?.available);
 const showCoreSelect = computed(
   () =>
-    mihomoAvailable.value &&
     mode.value === 'link' &&
     !!inspectRes.value &&
     !inspectRes.value.error &&
     !inspectRes.value.amnezia &&
-    (inspectRes.value.native ?? 0) === 0 &&
-    (inspectRes.value.engine ?? 0) > 0,
+    ((inspectRes.value.native ?? 0) > 0 || (inspectRes.value.engine ?? 0) > 0) &&
+    (singboxAvailable.value || mihomoAvailable.value),
 );
-const coreOptions: UiSelectOption[] = [
-  { value: '', label: 'sing-box' },
-  { value: 'mihomo', label: 'mihomo (Clash.Meta)' },
-];
+const coreOptions = computed<UiSelectOption[]>(() => {
+  const opts: UiSelectOption[] = [];
+  if (singboxAvailable.value) opts.push({ value: '', label: 'sing-box' });
+  if (mihomoAvailable.value) opts.push({ value: 'mihomo', label: 'mihomo (Clash.Meta)' });
+  return opts;
+});
+watch(coreOptions, (opts) => {
+  if (!opts.some((o) => o.value === engineCore.value)) {
+    engineCore.value = opts[0]?.value || '';
+  }
+});
 
 // --- cfg-режим: конфиги сразу в диалоге (слово владельца 30.10) ---
 // файлы разбираем на клиенте (снифф AWG 3.x по полям конфига), сервер
@@ -119,7 +128,6 @@ const coreOptions: UiSelectOption[] = [
 // сохранит, движковый пул создаётся сразу с ядром из установленных
 const files = ref<File[]>([]);
 const cfgEngine = ref(''); // '' = нативный Wireguard, singbox|mihomo
-const singboxAvailable = computed(() => !!status.data?.engines?.singbox?.available);
 const anyEngine = computed(() => singboxAvailable.value || mihomoAvailable.value);
 const awg3Sniffed = ref(false);
 const awg3Files = ref(0);
@@ -627,7 +635,7 @@ const fallbackOptions: UiSelectOption[] = [
           v-model="engineCore"
           :options="coreOptions"
           label="Ядро движка"
-          hint="Второе ядро mihomo (Clash.Meta) - альтернатива sing-box для vless/vmess/trojan-пулов; tun, пробы и ротация работают так же."
+          hint="Альтернатива нативному Wireguard: конфиги пойдут через движок (tun, пробы и ротация так же). Полезно на старых прошивках, где wireguard работает плохо."
         />
         <UiBanner
           v-if="offerInstall"

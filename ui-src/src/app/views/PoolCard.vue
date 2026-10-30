@@ -623,6 +623,27 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
         Конфиги ({{ (pool.configs || []).length }})<UiHelp :text="G.rotation" />
       </summary>
       <UiHint text="порядок списка = приоритет ротации, выше = раньше" />
+      <!-- зона добавления - НАД списком: с десятками конфигов её
+           не надо искать в самом низу (слово владельца 30.10) -->
+      <div
+        v-if="!premium.imported"
+        class="drop"
+        :class="{ hover: dragOver }"
+        @click="pickFiles"
+        @dragover.prevent="dragOver = true"
+        @dragleave="dragOver = false"
+        @drop.prevent="onDrop"
+      >
+        перетащите .conf / .zip или нажмите
+      </div>
+      <input
+        ref="fileInput"
+        type="file"
+        multiple
+        accept=".conf,.zip"
+        style="display: none"
+        @change="onFiles"
+      >
       <div class="cfglist">
         <div
           v-for="(c, i) in pool.configs || []"
@@ -731,25 +752,6 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
           </span>
         </div>
       </div>
-      <div
-        v-if="!premium.imported"
-        class="drop"
-        :class="{ hover: dragOver }"
-        @click="pickFiles"
-        @dragover.prevent="dragOver = true"
-        @dragleave="dragOver = false"
-        @drop.prevent="onDrop"
-      >
-        перетащите .conf / .zip или нажмите
-      </div>
-      <input
-        ref="fileInput"
-        type="file"
-        multiple
-        accept=".conf,.zip"
-        style="display: none"
-        @change="onFiles"
-      >
     </details>
   </UiCard>
 
