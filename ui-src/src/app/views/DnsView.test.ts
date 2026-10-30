@@ -904,3 +904,168 @@ describe('DnsView - keenetic: совет «Усилить DNS» (71-док §3.2
     w.unmount();
   });
 });
+
+describe('DnsView - keenetic: честные формулировки DNS-механизма (98-док)', () => {
+  function stub98(own: { doh: unknown[]; dot: unknown[]; udp: unknown[] }): void {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.endsWith('/dns/state')) {
+        return new Response(JSON.stringify({
+          platform: 'keenetic',
+          dnsmasq: { servers: [], inMT: false, noresolv: false, strict: false },
+          mt: { upstream: '8.8.8.8:53', remap53: true },
+        }), { status: 200 });
+      }
+      if (url.endsWith('/dns/keenetic/own')) {
+        return new Response(JSON.stringify(own), { status: 200 });
+      }
+      if (url.endsWith('/dns/upstreams') || url.endsWith('/dns/policy')) {
+        return new Response(JSON.stringify({ capable: false, policy: { enabled: false } }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    }));
+  }
+
+  it('серверов нет: warn-баннер «не осталось ни одного DNS-сервера» + хинт про роутер', async () => {
+    // кейс пользователя: ndm без единого апстрима - локалка жива (MT),
+    // а сам роутер оглох; панель обязана это честно показать
+    stub98({ doh: [], dot: [], udp: [] });
+    const w = mount(DnsView);
+    await vi.waitFor(() => expect(w.find('#card-dns').text()).toContain('записей не найдено'));
+
+    const hint = w.find('#card-dns').text();
+    expect(hint).toContain('Без хотя бы одного сервера');
+    expect(hint).toContain('hostname-эндпоинты пулов');
+
+    const banner = w.find('#card-dns .uibanner.k-warn');
+    expect(banner.exists()).toBe(true);
+    expect(banner.text()).toContain('не осталось ни одного DNS-сервера');
+    expect(banner.text()).toContain('например WARP');
+
+    // совета-карточки при нуле серверов нет (она про имеющиеся записи)
+    expect(w.find('#card-dns-advice').exists()).toBe(false);
+    w.unmount();
+  });
+
+  it('серверы есть: баннера нет, совет объясняет зоны ответственности', async () => {
+    stub98({ doh: [{ uri: 'https://dns.google/dns-query', format: 'dnsm' }], dot: [], udp: [] });
+    const w = mount(DnsView);
+    await vi.waitFor(() => expect(w.find('#card-dns-advice').exists()).toBe(true));
+
+    expect(w.find('#card-dns .uibanner.k-warn').exists()).toBe(false);
+    const advice = w.find('#card-dns-advice').text();
+    expect(advice).toContain('Эти записи обслуживает сам роутер');
+    expect(advice).toContain('Домашние устройства их не видят');
+    w.unmount();
+  });
+});
+
+describe('DnsView - keenetic: DNS самого роутера (98-док)', () => {
+  type KeenDNSState = { mode: string; spare?: string; iface?: string; applied?: string; live: boolean };
+
+  function stubRouterDNS(state: KeenDNSState | null, capture?: { put?: unknown }) {
+    vi.stubGlobal('fetch', vi.fn(async (url: string, opts?: RequestInit) => {
+      if (url.endsWith('/dns/keenetic/dns')) {
+        if ((opts?.method ?? 'GET') === 'PUT') {
+          if (capture) capture.put = JSON.parse(String(opts?.body));
+          const sent = JSON.parse(String(opts?.body));
+          const applied = sent.mode === 'off' ? '' : sent.mode === 'mt' ? '127.0.0.1 3553' : `8.8.8.8 "" on ISP`;
+          return new Response(JSON.stringify({
+            ok: true,
+            state: { mode: sent.mode, spare: sent.spare, iface: sent.iface, applied: applied || undefined, live: applied !== '' },
+          }), { status: 200 });
+        }
+        if (state === null) {
+          return new Response(JSON.stringify({ error: 'режим есть только на Keenetic' }), { status: 501 });
+        }
+        return new Response(JSON.stringify(state), { status: 200 });
+      }
+      if (url.endsWith('/dns/state')) {
+        return new Response(JSON.stringify({
+          platform: 'keenetic',
+          dnsmasq: { servers: [], inMT: false, noresolv: false, strict: false },
+          mt: { upstream: '8.8.8.8:53', remap53: true },
+        }), { status: 200 });
+      }
+      if (url.endsWith('/dns/keenetic/own')) {
+        return new Response(JSON.stringify({ doh: [{ uri: 'https://dns.google/dns-query', format: 'dnsm' }], dot: [], udp: [] }), { status: 200 });
+      }
+      if (url.endsWith('/dns/upstreams') || url.endsWith('/dns/policy')) {
+        return new Response(JSON.stringify({ capable: false, policy: { enabled: false } }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    }));
+  }
+
+  it('не-Кинетик (501) - карточки нет', async () => {
+    stubRouterDNS(null);
+    const w = mount(DnsView);
+    await vi.waitFor(() => expect(w.find('#card-dns').text()).toContain('Перехват DNS'));
+    await vi.waitFor(() => expect(w.find('#card-dns').text()).toContain('Собственные серверы Keenetic'));
+    expect(w.find('#card-dns-router').exists()).toBe(false);
+    w.unmount();
+  });
+
+  it('режим как есть: селект, согласие гейтит кнопку, PUT уходит с confirm:true', async () => {
+    const capture: { put?: unknown } = {};
+    stubRouterDNS({ mode: '', live: false }, capture);
+    const w = mount(DnsView);
+    await vi.waitFor(() => expect(w.find('#card-dns-router').exists()).toBe(true));
+    const card = w.find('#card-dns-router');
+    expect(card.text()).toContain('DNS самого роутера');
+    expect(card.text()).toContain('Как есть - панель не пишет в Keenetic');
+
+    // без правок кнопка недоступна
+    const apply = () => card.findAll('button').find((b) => b.text() === 'Применить')!;
+    expect(apply().attributes('disabled')).toBeDefined();
+
+    // выбираем spare через кастомный селект (GOTCHAS: триггер .psel-btn)
+    const modeBtn = card.findAll('.psel-btn').find((b) => b.text().includes('Как есть'));
+    await modeBtn!.trigger('click');
+    await nextTick();
+    await card.findAll('.psel-item').find((o) => o.text().includes('Страховочный сервер'))!.trigger('click');
+    await nextTick();
+    expect(apply().attributes('disabled')).toBeDefined();
+
+    // галочка согласия - кнопка оживает, PUT с confirm:true
+    await card.find('.uiswitch input').setValue(true);
+    await nextTick();
+    expect(apply().attributes('disabled')).toBeUndefined();
+    await apply().trigger('click');
+    await vi.waitFor(() => {
+      expect(capture.put).toEqual({ mode: 'spare', spare: '', iface: '', confirm: true });
+    });
+    // стейт перечитан: applied-строка в карточке
+    await vi.waitFor(() => expect(card.text()).toContain('ip name-server 8.8.8.8 "" on ISP'));
+    expect(card.text()).toContain('живёт');
+    w.unmount();
+  });
+
+  it('запись стоит: строка applied + кнопка «Убрать запись» уходит с mode:off без согласия', async () => {
+    const capture: { put?: unknown } = {};
+    stubRouterDNS({ mode: 'spare', spare: '8.8.8.8', iface: 'ISP', applied: '8.8.8.8 "" on ISP', live: true }, capture);
+    const w = mount(DnsView);
+    await vi.waitFor(() => expect(w.find('#card-dns-router').text()).toContain('ip name-server 8.8.8.8 "" on ISP'));
+
+    const remove = w.findAll('#card-dns-router button').find((b) => b.text() === 'Убрать запись')!;
+    await remove.trigger('click');
+    await vi.waitFor(() => {
+      expect(capture.put).toEqual({ mode: 'off', spare: '8.8.8.8', iface: 'ISP', confirm: true });
+    });
+    w.unmount();
+  });
+
+  it('режим MT: warn-баннер о зависимости от MT', async () => {
+    stubRouterDNS({ mode: '', live: false });
+    const w = mount(DnsView);
+    await vi.waitFor(() => expect(w.find('#card-dns-router').exists()).toBe(true));
+    const card = w.find('#card-dns-router');
+    const modeBtn = card.findAll('.psel-btn').find((b) => b.text().includes('Как есть'));
+    await modeBtn!.trigger('click');
+    await nextTick();
+    await card.findAll('.psel-item').find((o) => o.text().includes('Через MagiTrickle'))!.trigger('click');
+    await nextTick();
+    expect(card.find('.uibanner.k-warn').exists()).toBe(true);
+    expect(card.text()).toContain('умер MT - умер резолв');
+    w.unmount();
+  });
+});

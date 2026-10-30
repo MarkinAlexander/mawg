@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { UiBadge, UiBanner, UiButton, UiCard, UiDialog, UiHelp, UiHint, UiIcon, UiInput, UiSelect, type UiSelectOption, UiSwitch, UiTextarea } from '../../components/ui';
 import { api } from '../../api/client';
-import type { DnsProbeRow, DnsState, DnsPolicyRes, DnsUpstream, DnsUpstreamsRes, DnsZone, DnsZonesRes, KeeneticOwn } from '../../api/types';
+import type { DnsProbeRow, DnsState, DnsPolicyRes, DnsUpstream, DnsUpstreamsRes, DnsZone, DnsZonesRes, KeeneticDNSState, KeeneticOwn } from '../../api/types';
 import { durToSec, healthFieldValid } from './dnsLogic';
 import { G } from '../glossary';
 import { useStatus } from '../../stores/status';
@@ -77,6 +77,80 @@ async function loadOwn(): Promise<void> {
 watch(isKeen, (v) => {
   if (v && !ownLoaded.value) void loadOwn();
 }, { immediate: true });
+
+// --- DNS самого роутера (98-док): историческая граница «панель в ndm не
+// пишет» остаётся дефолтом, но ndm без единого апстрима оглохнет (кейс
+// 31.10: галки «игнорировать провайдера» + стёртый DoH = ноль запросов при
+// живой локалке). По явному согласию панель пишет одну запись ip
+// name-server - страховочный сервер или MT:3553; рестор - снятие ровно
+// этой записи. Согласие двуслойное: галочка + confirm-диалог. ---
+const keenDNS = ref<KeeneticDNSState | null>(null);
+const kdbMode = ref<'off' | 'spare' | 'mt'>('off');
+const kdbSpare = ref('');
+const kdbIface = ref('');
+const kdbConsent = ref(false);
+const kdbBusy = ref(false);
+
+async function loadKeenDNS(): Promise<void> {
+  try {
+    const st = await api<KeeneticDNSState>('GET', '/dns/keenetic/dns');
+    keenDNS.value = st;
+    kdbMode.value = (st.mode || 'off') as 'off' | 'spare' | 'mt';
+    kdbSpare.value = st.spare || '';
+    kdbIface.value = st.iface || '';
+  } catch {
+    keenDNS.value = null; // не-Кинетик/ошибка - карточки не будет
+  }
+}
+watch(isKeen, (v) => {
+  if (v && keenDNS.value === null) void loadKeenDNS();
+}, { immediate: true });
+
+const kdbModeOptions = computed<UiSelectOption[]>(() => [
+  { value: 'off', label: 'Как есть - панель не пишет в Keenetic' },
+  { value: 'spare', label: 'Страховочный сервер из MAWG' },
+  { value: 'mt', label: 'Через MagiTrickle (каскад MAWG)' },
+]);
+
+const kdbDirty = computed(() => {
+  const st = keenDNS.value;
+  if (!st) return false;
+  if (kdbMode.value !== (st.mode || 'off')) return true;
+  if (kdbMode.value === 'spare') {
+    return kdbSpare.value !== (st.spare || '') || kdbIface.value !== (st.iface || '');
+  }
+  return false;
+});
+
+async function applyKeenDNS(mode: 'off' | 'spare' | 'mt'): Promise<void> {
+  if (kdbBusy.value) return;
+  if (mode !== 'off' && !kdbConsent.value) return;
+  const what = mode === 'off'
+    ? 'Запись панели будет снята из настроек Keenetic. Собственные записи Keenetic не трогаются.'
+    : mode === 'spare'
+      ? `В настройки Keenetic будет записан DNS-сервер ${kdbSpare.value.trim() || '(не задан)'}${kdbIface.value.trim() ? ` на подключении ${kdbIface.value.trim()}` : ''}. Обратно - режим «Как есть».`
+      : 'DNS роутера встанет в зависимость от MagiTrickle: умер MT - умер резолв самого роутера. Из «Резервных серверов» будут вычищены петлевые адреса (127.0.0.1:53 и собственный IP) - иначе петля ndm→MT→ndm.';
+  const ok = await confirm({ title: 'Изменить DNS самого роутера?', text: what, okLabel: 'Применить' });
+  if (!ok) return;
+  kdbBusy.value = true;
+  try {
+    const res = await api<{ ok: boolean; state: KeeneticDNSState }>('PUT', '/dns/keenetic/dns', {
+      mode,
+      spare: kdbSpare.value.trim(),
+      iface: kdbIface.value.trim(),
+      confirm: true,
+    });
+    keenDNS.value = res.state;
+    kdbMode.value = (res.state.mode || 'off') as 'off' | 'spare' | 'mt';
+    kdbConsent.value = false;
+    push(mode === 'off' ? 'DNS роутера: запись панели снята' : 'DNS роутера: применено');
+    void loadOwn(); // баннер «не осталось серверов» может уйти
+  } catch (e) {
+    push(e instanceof Error ? e.message : String(e), true);
+  } finally {
+    kdbBusy.value = false;
+  }
+}
 
 const ownRows = computed(() => {
   if (!own.value) return [];
@@ -754,7 +828,7 @@ function a2key(z: DnsZone, i: number): string {
         class="kv"
       >
         <template v-if="isKeen">
-          <b>Перехват DNS<UiHelp text="Весь DNS-трафик домашних устройств и самого роутера принудительно заворачивается в MagiTrickle (цепочка MT_DNSOR) - защита работает даже для техники, которой вручную вписан чужой DNS." /></b>
+          <b>Перехват DNS<UiHelp text="DNS-запросы домашних устройств на адрес роутера уходят в MagiTrickle (цепочка MT_DNSOR, порт 53 → 3553) - дальше их ведёт каскад «Резервных серверов» ниже. Запросы, адресованные самому роутеру, тоже перехватываются (форк rev9+), но собственные запросы роутера к его серверам идут мимо перехвата. Техника с чужим DNS напрямую (8.8.8.8 на устройстве) не перехватывается вовсе - публичные резолверы уводит в туннель группа dns-tunnel, если она настроена." /></b>
           <span>
             <UiBadge
               :text="state.mt.remap53 ? 'работает' : 'не найдено'"
@@ -782,7 +856,7 @@ function a2key(z: DnsZone, i: number): string {
           </span>
           <b>Кэш адресов<UiHelp text="Память недавних ответов DNS: повторные сайты открываются быстрее, короткие сбои сервера не замечаются." /></b>
           <span class="muted">{{ state.dnsmasq.cacheSize != null ? `${state.dnsmasq.cacheSize} записей` : 'не задан' }}</span>
-          <b>Перенаправление<UiHelp text="Весь DNS-трафик домашних устройств (порт 53) принудительно идёт через модуль MT - защита работает даже для техники, которой вручную вписали чужой DNS." /></b>
+          <b>Перенаправление<UiHelp text="DNS-запросы домашних устройств на адрес роутера (порт 53) принудительно идут через модуль MT. Техника с чужим DNS напрямую (8.8.8.8 на устройстве) не перехватывается - публичные резолверы уводит в туннель группа dns-tunnel, если она настроена." /></b>
           <span>
             <UiBadge
               :text="state.mt.remap53 ? 'весь :53 → MT' : 'не найдено'"
@@ -797,7 +871,12 @@ function a2key(z: DnsZone, i: number): string {
       </div>
       <UiHint
         v-if="state && isKeen"
-        text="Собственные серверы Keenetic панель не меняет - управляемая часть одна: резервные серверы MagiTrickle ниже."
+        text="Собственные серверы Keenetic панель не меняет - они обслуживают сам роутер: обновления, opkg и hostname-эндпоинты пулов (например WARP) резолвит именно он. Без хотя бы одного сервера (простой UDP или DoH/DoT) роутер оглохнет, даже если домашние устройства работают. Управляемая часть DNS - резервные серверы MagiTrickle ниже (домашние устройства)."
+      />
+      <UiBanner
+        v-if="state && isKeen && ownAdvice && !ownAdvice.encrypted && !ownAdvice.udpCount"
+        kind="warn"
+        text="На самом Keenetic не осталось ни одного DNS-сервера: системный резолвер роутера не может отправить ни одного запроса - обновления, opkg и поднятие пулов с доменными эндпоинтами (например WARP) не работают. Добавьте в Keenetic хотя бы один сервер (простой UDP или DoH); домашние устройства при этом продолжают работать - их DNS ведёт MagiTrickle."
       />
 
       <UiCard
@@ -809,6 +888,9 @@ function a2key(z: DnsZone, i: number): string {
       >
         <UiHint text="Зоны ответственности: записи Keenetic - ваши (список ниже), панель ими не управляет. Панель ведёт только резервные серверы MagiTrickle - они ниже и обновляются автоматически." />
         <ul class="advice">
+          <li>
+            Эти записи обслуживает сам роутер: обновления, opkg, поднятие туннелей с доменными адресами. Домашние устройства их не видят - их DNS ведёт MagiTrickle («Резервные серверы» ниже).
+          </li>
           <li v-if="ownAdvice.encrypted">
             Шифрованный DNS (DoH/DoT) настроен - ответы по нему подменить нельзя, это основа. Keenetic умеет держать DoH, DoT и простые серверы одновременно.
           </li>
@@ -833,6 +915,68 @@ function a2key(z: DnsZone, i: number): string {
           kind="err"
           text="Проверка увидела подмену ответов на простых UDP-серверах - при такой сети простые серверы отдают неверные адреса, полагаться на них нельзя."
         />
+      </UiCard>
+
+      <UiCard
+        v-if="isKeen && keenDNS"
+        id="card-dns-router"
+        class="dnscard"
+        title="DNS самого роутера"
+        subtitle="режим управления ndm - только по явному согласию"
+      >
+        <UiHint text="Сам роутер резолвит через собственные серверы Keenetic: обновления, opkg, поднятие пулов с доменными адресами (например WARP). Панель может записать одну запись ip name-server - страховочный сервер или перевод роутера на каскад MagiTrickle. Режим «Как есть» снимает ровно запись панели; ваши записи не трогаются." />
+        <UiSelect
+          v-model="kdbMode"
+          :options="kdbModeOptions"
+          label="Режим DNS роутера"
+        />
+        <template v-if="kdbMode === 'spare'">
+          <div class="hrow">
+            <UiInput
+              v-model="kdbSpare"
+              label="Сервер (IP[:порт])"
+              placeholder="8.8.8.8"
+            />
+            <UiInput
+              v-model="kdbIface"
+              label="Подключение (опционально)"
+              placeholder="обычно ISP"
+            />
+          </div>
+          <UiHint text="Только IP-адрес (имя ndm резолвить нечем). Подключение - привязка записи к интерфейсу (обычно ISP / Кабель Ethernet), пусто - глобально." />
+        </template>
+        <UiBanner
+          v-if="kdbMode === 'mt'"
+          kind="warn"
+          text="DNS роутера встанет в зависимость от MagiTrickle: умер MT - умер резолв самого роутера (панель будет его рестартовать). Из «Резервных серверов» будут вычищены петлевые адреса (127.0.0.1:53 и собственный IP) - иначе петля ndm→MT→ndm."
+        />
+        <UiSwitch
+          v-model="kdbConsent"
+          label="Я понимаю, что делаю: панель запишет ip name-server в настройки Keenetic"
+        />
+        <div class="btnrow">
+          <UiButton
+            :busy="kdbBusy"
+            :disabled="!kdbDirty || (kdbMode !== 'off' && !kdbConsent)"
+            @click="applyKeenDNS(kdbMode)"
+          >
+            Применить
+          </UiButton>
+        </div>
+        <template v-if="keenDNS.applied">
+          <b>Записано в ndm<UiHelp text="Единственная запись, которую панель поставила в настройки Keenetic (ip name-server). Бейдж «живёт» - запись реально стоит в running-config. Кнопка снимает её; собственные записи Keenetic при этом не трогаются." /></b>
+          <span>
+            <code class="mono">ip name-server {{ keenDNS.applied }}</code>
+            <UiBadge
+              :text="keenDNS.live ? 'живёт' : 'не найдено'"
+              :variant="keenDNS.live ? 'ok' : 'warn'"
+            />
+            <UiButton
+              :busy="kdbBusy"
+              @click="applyKeenDNS('off')"
+            >Убрать запись</UiButton>
+          </span>
+        </template>
       </UiCard>
 
       <template v-if="state && isKeen">

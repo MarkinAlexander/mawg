@@ -347,6 +347,18 @@ export interface KeeneticOwn {
   v6?: { interface: string; servers: string[] }[]
 }
 
+// GET/PUT /dns/keenetic/dns: режим «DNS самого роутера» (98-док). По
+// явному согласию mawg пишет в ndm одну запись ip name-server
+// (страховочный сервер или MT:3553); applied - что записано (аргументы
+// RCI после "ip name-server"), по ней же рестор.
+export interface KeeneticDNSState {
+  mode: 'off' | 'spare' | 'mt' | ''
+  spare?: string
+  iface?: string
+  applied?: string
+  live: boolean
+}
+
 // GET /dns/state: состояние DNS-стека роутера (46-док §3).
 // platform: "openwrt" - полный разрез (dnsmasq/кэш/перенаправление);
 // "keenetic" - только перехват MT_DNSOR + апстримы MT (71-док: свои

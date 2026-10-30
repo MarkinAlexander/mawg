@@ -498,6 +498,29 @@ type Settings struct {
 	// связь по имени группы + составу. Заполняется при создании/правке
 	// группы устройства, сверкой по снапшоту MT и бэкфиллом старых.
 	DeviceBindings []DeviceBinding `json:"deviceBindings,omitempty"`
+	// KeeneticDNS - режим «DNS самого роутера» на Keenetic (98-док):
+	// исторически панель в ndm не пишет (дизайн-слово 69-док §5), но ndm
+	// без единого апстрима оглохнет (кейс 31.10: галки «игнорировать
+	// провайдера» + стёртый DoH). По ЯВНОМУ согласию пользователя mawg
+	// пишет в ndm одну запись ip name-server (страховочный сервер или
+	// MT:3553) и снимает её при выключении; Applied - что записано
+	// (аргументы RCI после "ip name-server", по ним же рестор).
+	KeeneticDNS KeeneticDNS `json:"keeneticDns,omitempty"`
+}
+
+// KeeneticDNS - режим «DNS самого роутера» (Settings.KeeneticDNS).
+type KeeneticDNS struct {
+	// Mode - off (панель не пишет), spare (страховочный сервер), mt
+	// (DNS роутера через каскад MagiTrickle).
+	Mode string `json:"mode"`
+	// Spare - страховочный сервер режима spare (IP[:порт]).
+	Spare string `json:"spare,omitempty"`
+	// Iface - подключение для записи name-server (пусто = глобально).
+	Iface string `json:"iface,omitempty"`
+	// Applied - что реально записано в ndm (аргументы после
+	// "ip name-server", например `8.8.8.8 "" on ISP`); рестор = no по
+	// этой же строке.
+	Applied string `json:"applied,omitempty"`
 }
 
 // DeviceBinding - запись реестра «пул ↔ устройство» (97-док): устройство

@@ -98,14 +98,15 @@ func Collect(r Runner, mtConfigPath string) (State, error) {
 			st.MT.Upstream, st.MT.Upstreams = ParseMTUpstreams(string(data))
 		}
 	}
-	st.Self = selfIPs()
+	st.Self = SelfIPs()
 	return st, nil
 }
 
-// selfIPs - собственные IPv4 адреса роутера (mawg живёт на нём же):
+// SelfIPs - собственные IPv4 адреса роутера (mawg живёт на нём же):
 // без шела, из интерфейсов процесса. Loopback не входит - он и так в
-// петлезащите отдельно.
-func selfIPs() []string {
+// петлезащите отдельно. Экспортирован для веб-гардов (петля ndm->MT
+// в режиме «DNS роутера через MagiTrickle», 98-док).
+func SelfIPs() []string {
 	ifaces, err := net.Interfaces()
 	if err != nil {
 		return nil

@@ -93,6 +93,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/dns/probe/servers", s.dnsProbeServersGet)
 	mux.HandleFunc("PUT /api/v1/dns/probe/servers", s.dnsProbeServersSet)
 	mux.HandleFunc("GET /api/v1/dns/keenetic/own", s.dnsKeeneticOwn)
+	mux.HandleFunc("GET /api/v1/dns/keenetic/dns", s.keeneticDNSGet)
+	mux.HandleFunc("PUT /api/v1/dns/keenetic/dns", s.keeneticDNSSet)
 	mux.HandleFunc("GET /api/v1/dns/state", s.dnsState)
 	mux.HandleFunc("POST /api/v1/dns/dnsmasq", s.dnsDnsmasq)
 	mux.HandleFunc("GET /api/v1/dns/upstreams", s.dnsUpstreams)

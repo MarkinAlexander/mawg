@@ -30,6 +30,9 @@ type fakeMT struct {
 	groupPuts    []string // тела bulk/single PUT групп
 	groupsDelete []string // id удалённых групп
 	zonePuts     []string // тела PUT /dns/zones
+	// loopUpstream - добавить петлевой 127.0.0.1:53 в начало списка
+	// (тесты режима «DNS роутера через MT», 98-док)
+	loopUpstream bool
 }
 
 func defaultFakeHealth() map[string]any {
@@ -44,13 +47,17 @@ func (f *fakeMT) snapshot() map[string]any {
 	if health == nil {
 		health = defaultFakeHealth()
 	}
+	ups := []map[string]any{
+		{"address": "8.8.8.8:53", "alive": true, "active": true, "fails": 0, "oks": 5, "lastSwap": "0001-01-01T00:00:00Z"},
+		{"address": "77.88.8.8:53", "alive": false, "active": false, "fails": 3, "oks": 0, "lastSwap": "2026-10-16T10:00:00Z", "reason": "подмена: канонических адресов нет"},
+	}
+	if f.loopUpstream {
+		ups = append([]map[string]any{{"address": "127.0.0.1:53", "alive": true, "active": false, "fails": 0, "oks": 1, "lastSwap": "0001-01-01T00:00:00Z"}}, ups...)
+	}
 	return map[string]any{
 		"available": true,
 		"health":    health,
-		"upstreams": []map[string]any{
-			{"address": "8.8.8.8:53", "alive": true, "active": true, "fails": 0, "oks": 5, "lastSwap": "0001-01-01T00:00:00Z"},
-			{"address": "77.88.8.8:53", "alive": false, "active": false, "fails": 3, "oks": 0, "lastSwap": "2026-10-16T10:00:00Z", "reason": "подмена: канонических адресов нет"},
-		},
+		"upstreams": ups,
 	}
 }
 

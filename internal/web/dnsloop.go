@@ -20,10 +20,21 @@ import (
 // loopRiskUpstreams - подмножество addrs, замыкающее петлю при текущем
 // состоянии DNS-стека (правило не-Кинетик: на Keenetic dnsmasq нулевой,
 // а 127.0.0.1:53 - системный резолвер; лишние uci-вызовы на проде тоже
-// не нужны).
+// не нужны). Исключение - режим «DNS роутера через MagiTrickle» (98-док):
+// ndm кормится от MT:3553, петлевой адрес (127.0.0.1:53/свой IP:53) в
+// списке замыкает ndm->MT->ndm - в этом режиме правило как на OpenWrt.
 func (s *Server) loopRiskUpstreams(addrs []string) []string {
 	if s.backend.Name() == store.PlatformKeenetic {
-		return nil
+		if s.store.KeeneticDNS().Mode != "mt" {
+			return nil
+		}
+		var risky []string
+		for _, a := range addrs {
+			if dnsmasqLoopHost(a, dnsmgr.SelfIPs()) {
+				risky = append(risky, a)
+			}
+		}
+		return risky
 	}
 	run, ok := s.dnsRunner()
 	if !ok {

@@ -26,6 +26,9 @@ type Fake struct {
 	// ShellFn - сценарный шелл для ShellRunner (DNS-менеджер в тестах):
 	// ключ - подстрока скрипта, значение - вывод; nil функция = ошибка.
 	ShellFn func(script string) (string, error)
+	// NameOverride - имя платформы для тестов платформенных ветвлений
+	// ("keenetic" и пр.); пусто = "fake".
+	NameOverride string
 }
 
 type DevProbe struct {
@@ -43,7 +46,12 @@ func New() *Fake {
 	}
 }
 
-func (f *Fake) Name() string  { return "fake" }
+func (f *Fake) Name() string {
+	if f.NameOverride != "" {
+		return f.NameOverride
+	}
+	return "fake"
+}
 func (f *Fake) Detect() error { return nil }
 
 func (f *Fake) Slots() ([]platform.SlotInfo, error) {

@@ -1383,3 +1383,19 @@ func writeAtomically(path string, data []byte) error {
 	}
 	return os.Rename(tmp, path)
 }
+
+// KeeneticDNS - режим «DNS самого роутера» на Keenetic (Settings.
+// KeeneticDNS, 98-док): по явному согласию пользователя mawg пишет в ndm
+// одну запись ip name-server и снимает её при выключении.
+func (s *Store) KeeneticDNS() KeeneticDNS {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.root.Settings.KeeneticDNS
+}
+
+func (s *Store) SetKeeneticDNS(v KeeneticDNS) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.root.Settings.KeeneticDNS = v
+	return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
+}
