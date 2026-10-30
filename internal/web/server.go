@@ -165,6 +165,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/mt/presets", s.mtGetPresets)
 	mux.HandleFunc("POST /api/v1/mt/groups", s.mtCreateGroup)
 	mux.HandleFunc("POST /api/v1/mt/device-group", s.mtCreateDeviceGroup)
+	mux.HandleFunc("DELETE /api/v1/mt/device-group/{name}", s.mtDeleteDeviceGroup)
+	mux.HandleFunc("GET /api/v1/device-bindings", s.getDeviceBindings)
 	mux.HandleFunc("PUT /api/v1/mt/groups/{id}", s.mtUpdateGroup)
 	mux.HandleFunc("POST /api/v1/mt/groups/order", s.mtGroupsOrder)
 	mux.HandleFunc("POST /api/v1/mt/groups/import", s.mtImportGroups)
@@ -1739,6 +1741,17 @@ func (s *Server) updatePool(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) deletePool(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+	// судьба групп устройств пула (97-док, слово владельца 30.10):
+	// «удаление пула должно удалять группу, а если пользователь не
+	// удаляет - перевести на директ». Дефолт direct: выключенная группа
+	// не маркирует - устройства идут напрямую, а не в мёртвый интерфейс.
+	devices := r.URL.Query().Get("devices")
+	switch devices {
+	case "", "delete", "direct":
+	default:
+		writeErr(w, fmt.Errorf("неизвестный режим устройств %q (delete|direct)", devices))
+		return
+	}
 	wasEngine := s.engineEnabled(r)
 	var err error
 	if wasEngine {
@@ -1756,6 +1769,11 @@ func (s *Server) deletePool(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.cascSyncPool(name) // каскады с этим источником погасятся
+	warn := s.deletePoolDeviceGroups(r.Context(), name, devices)
+	if warn != nil {
+		writeJSON(w, http.StatusOK, map[string]string{"ok": "deleted", "warning": warn.Error()})
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "deleted"})
 }
 
@@ -2148,6 +2166,11 @@ type mtSnapshot struct {
 	groups  []magitrickle.Group
 	titles  map[string]string
 	err     error
+	// bindReconciled - хеш снапшота, по которому реестр устройств уже
+	// сверён (97-док): сверка не должна дёргать config.json на каждый
+	// поллинг без изменений.
+	bindReconciled [sha256.Size]byte
+	bindDone       bool
 }
 
 // mtSnapshotCached - свежие группы + заголовки слотов. Сырой JSON групп
@@ -2264,6 +2287,16 @@ func (s *Server) mtGetGroups(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"available": false, "error": err.Error()})
 		return
+	}
+	// сверка реестра устройств со снапшотом (97-док) - только по
+	// изменившемуся снапшоту, чтобы не дёргать config.json каждым поллингом
+	s.mtCacheMu.Lock()
+	if s.mtCache != nil && (!s.mtCache.bindDone || s.mtCache.bindReconciled != s.mtCache.rawHash) {
+		s.mtCache.bindReconciled, s.mtCache.bindDone = s.mtCache.rawHash, true
+		s.mtCacheMu.Unlock()
+		s.reconcileDeviceBindings(groups)
+	} else {
+		s.mtCacheMu.Unlock()
 	}
 	type groupView struct {
 		magitrickle.Group
@@ -2421,6 +2454,7 @@ func (s *Server) mtUpdateGroup(w http.ResponseWriter, r *http.Request) {
 		Color     string    `json:"color"`
 		Interface string    `json:"interface"`
 		Sources   *[]string `json:"sources"`
+		Confirm   bool      `json:"confirm"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, err)
@@ -2440,6 +2474,36 @@ func (s *Server) mtUpdateGroup(w http.ResponseWriter, r *http.Request) {
 		if _, isCasc := s.store.CascadeByGroup(id); isCasc {
 			writeErr(w, fmt.Errorf("интерфейс каскадной группы задается при создании каскада"))
 			return
+		}
+	}
+	// правка источников группы устройства - те же коллизии, что при
+	// создании (97-док): 409 + подтверждение, свою запись не считаем
+	if req.Sources != nil {
+		groups, err := s.mtClient().GroupsWithRules(r.Context())
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		for _, g := range groups {
+			if g.ID != id || !deviceGroupOf(g) {
+				continue
+			}
+			iface := g.Interface
+			if req.Interface != "" {
+				iface = req.Interface
+			}
+			if pool := s.poolNameByDevice(iface); pool != "" {
+				conflicts := findBindingConflicts(s.store.DeviceBindings(), s.store.Excludes(), pool, sources)
+				if len(conflicts) > 0 && !req.Confirm {
+					bindingConflicts409(w, conflicts)
+					return
+				}
+				if len(conflicts) > 0 {
+					s.store.LogEvent("rules", "device-bindings", fmt.Sprintf(
+						"коллизия адресов подтверждена вручную (правка %q): %s", g.Name, strings.Join(sources, ", ")))
+				}
+			}
+			break
 		}
 	}
 	found := false
@@ -2473,6 +2537,23 @@ func (s *Server) mtUpdateGroup(w http.ResponseWriter, r *http.Request) {
 	if !found {
 		http.NotFound(w, r)
 		return
+	}
+	// зеркало связки вслед за правкой (97-док): состав/интерфейс могли
+	// измениться; не-device или неизвестный пул - записи быть не должно
+	if req.Sources != nil || req.Interface != "" {
+		if groups, err := s.mtClient().GroupsWithRules(r.Context()); err == nil {
+			for _, g := range groups {
+				if g.ID != id {
+					continue
+				}
+				if pool := s.poolNameByDevice(g.Interface); deviceGroupOf(g) && pool != "" {
+					s.deviceBindingUpsert(pool, g.Name, g.Sources)
+				} else {
+					s.deviceBindingRemove(g.Name)
+				}
+				break
+			}
+		}
 	}
 	s.store.LogEvent("rules", "magitrickle", "изменена группа "+req.Name)
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "updated"})
@@ -2648,6 +2729,9 @@ func (s *Server) mtDeleteGroup(w http.ResponseWriter, r *http.Request) {
 		_ = c.HookRemove(r.PathValue("id"))
 	}
 	_ = s.store.SetGroupPolicy(r.PathValue("id"), nil)
+	// запись реестра устройств - тоже след группы (97-док): реестр хранит
+	// имена, id разрешаем по кэшу снапшота; мимо кэша снимет сверка
+	s.deviceBindingRemoveByID(r.PathValue("id"))
 	s.store.LogEvent("rules", "magitrickle", "удалена группа "+r.PathValue("id"))
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "deleted"})
 }

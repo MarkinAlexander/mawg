@@ -111,13 +111,17 @@ func routerIPv4s() []net.IP {
 	return out
 }
 
-// mtCreateDeviceGroup - POST /api/v1/mt/device-group {pool, name?, ips[]}:
-// создать группу устройства и поставить её последней (сильнейшая позиция).
+// mtCreateDeviceGroup - POST /api/v1/mt/device-group {pool, name?, ips[],
+// confirm?}: создать группу устройства и поставить её последней
+// (сильнейшая позиция). Коллизии адресов (другой пул / глобальные
+// исключения) - 409 со списком и подтверждением, не запрет (слово
+// владельца 30.10, паттерн петлезащиты DnsView).
 func (s *Server) mtCreateDeviceGroup(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Pool string   `json:"pool"`
-		Name string   `json:"name"`
-		IPs  []string `json:"ips"`
+		Pool    string   `json:"pool"`
+		Name    string   `json:"name"`
+		IPs     []string `json:"ips"`
+		Confirm bool     `json:"confirm"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Pool == "" {
 		writeErr(w, fmt.Errorf("нужен pool и хотя бы один IP устройства"))
@@ -153,6 +157,17 @@ func (s *Server) mtCreateDeviceGroup(w http.ResponseWriter, r *http.Request) {
 	if name == "" {
 		name = deviceGroupName(sources[0], len(sources))
 	}
+	// коллизии адресов между пулами и с глобальными исключениями
+	// (97-док): 409 + подтверждение, предупреждаем именами пулов
+	conflicts := findBindingConflicts(s.store.DeviceBindings(), s.store.Excludes(), pool.Name, sources)
+	if len(conflicts) > 0 && !req.Confirm {
+		bindingConflicts409(w, conflicts)
+		return
+	}
+	if len(conflicts) > 0 {
+		s.store.LogEvent("rules", "device-bindings", fmt.Sprintf(
+			"коллизия адресов подтверждена вручную: %s -> пул %s", strings.Join(sources, ", "), pool.Name))
+	}
 	client := s.mtClient()
 	if err := client.EnsureHealthy(r.Context()); err != nil {
 		writeErr(w, err)
@@ -179,6 +194,8 @@ func (s *Server) mtCreateDeviceGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	client.RefreshShadow(r.Context())
+	// зеркало связки в реестре (97-док): карточка пула и коллизии
+	s.deviceBindingUpsert(pool.Name, name, sources)
 	s.store.LogEvent("rules", "magitrickle", fmt.Sprintf(
 		"группа устройства %q: весь трафик %d адрес(ов) через пул %s (%s)", name, len(sources), pool.Name, g.Interface))
 	// созданную группу (с id от MT) возвращаем перечитыванием
