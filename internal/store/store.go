@@ -401,6 +401,24 @@ func (s *Store) SetDnsZones(list []DnsZone) error {
 	s.root.Settings.DnsZones = list
 	return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
 }
+
+// DeviceBindings - реестр «пул ↔ устройство через пул» (97-док): записи
+// о связках устройство->MT-группа->пул для карточек пулов и коллизий.
+func (s *Store) DeviceBindings() []DeviceBinding {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]DeviceBinding(nil), s.root.Settings.DeviceBindings...)
+}
+
+func (s *Store) SetDeviceBindings(list []DeviceBinding) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if list == nil {
+		list = []DeviceBinding{}
+	}
+	s.root.Settings.DeviceBindings = list
+	return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
+}
 // Excludes - глобальный список исключений из обработки (94-док):
 // каноничные IPv4/CIDR, трафик на них и с них не маркируется группами.
 func (s *Store) Excludes() []string {
