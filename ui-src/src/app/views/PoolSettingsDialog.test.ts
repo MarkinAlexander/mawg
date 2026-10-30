@@ -94,6 +94,28 @@ describe('PoolSettingsDialog', () => {
     dlg.unmount();
   });
 
+  it('исключения выключены флагом (95-док): плашка, добавить disabled, payload без excludes', async () => {
+    const exPool: PoolView = {
+      ...pool,
+      settings: { ...pool.settings, excludes: ['203.0.113.9'] },
+    };
+    const { dlg, f } = await makeDialog({ '/members': { members: [] } }, [exPool], { excludesDisabled: true });
+    await vi.waitFor(() => expect(dlg.text()).toContain('Исключения пула'));
+    expect(dlg.text()).toContain('Исключения временно выключены: разбираемся со странным ростом нагрузки на CPU');
+    // предзаполнение видно (список на месте), контролы погашены
+    expect(dlg.findAll('.exclitem').map((x) => x.text())).toContain('203.0.113.9 ✕');
+    expect(dlg.findAll('button').find((b) => b.text() === '+ добавить')!.attributes('disabled')).toBeDefined();
+    const exInput = dlg.findAll('.hrow input').find((i) => (i.element as HTMLInputElement).placeholder.includes('IP или подсеть'))!;
+    expect((exInput.element as HTMLInputElement).disabled).toBe(true);
+    // сохранение не уносит excludes: секция не могла стать dirty
+    await btn(dlg, 'Сохранить')[0].trigger('click');
+    await vi.waitFor(() => {
+      const put = f.mock.calls.find((c) => (c[0] as string).endsWith('/pools/proton') && c[1]?.method === 'PUT');
+      expect(JSON.parse(put![1]!.body as string).excludes).toBeUndefined();
+    });
+    dlg.unmount();
+  });
+
   it('поля предзаполняются из пула, фоллбек-опции с пулами и интерфейсами, Сохранить -> PUT + rename', async () => {
     const { dlg, f } = await makeDialog({ '/members': { members: [{ name: 'a.conf', proto: 'awg', endpoint: '1.2.3.4', enabled: true, active: true }] } }, [pool, { ...pool, name: 'warp', device: 'nwg9', slot: 'nwg9' }]);
     // состав пула

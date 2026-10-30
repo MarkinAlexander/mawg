@@ -18,6 +18,11 @@ const (
 	maxPoolExcludes   = 64
 )
 
+// exclDisabledMsg - текст гейта выключенного функционала (95-док, слово
+// владельца 30.10): одинаковый для 503 PUT /excludes и 400 excludes в
+// PUT /pools/{name}.
+const exclDisabledMsg = "исключения временно выключены в связи со странным ростом нагрузки на CPU (разбираемся)"
+
 func (s *Server) getExcludes(w http.ResponseWriter, r *http.Request) {
 	list := s.store.Excludes()
 	if list == nil {
@@ -27,6 +32,10 @@ func (s *Server) getExcludes(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) putExcludes(w http.ResponseWriter, r *http.Request) {
+	if s.store.ExcludesDisabled() {
+		http.Error(w, exclDisabledMsg, http.StatusServiceUnavailable)
+		return
+	}
 	var req struct {
 		Excludes []string `json:"excludes"`
 	}
@@ -46,6 +55,33 @@ func (s *Server) putExcludes(w http.ResponseWriter, r *http.Request) {
 	s.store.LogEvent("rules", "excludes", exclEventMsg(list))
 	s.syncExclusionsNow()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "excludes": list})
+}
+
+// getExcludesDisabled/putExcludesDisabled - выключатель функционала
+// исключений (95-док): флаг в Settings, списки не трогаются. Состояние
+// наружу дублируется полем excludesDisabled в /status (для UI).
+func (s *Server) getExcludesDisabled(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]bool{"disabled": s.store.ExcludesDisabled()})
+}
+
+func (s *Server) putExcludesDisabled(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Disabled bool `json:"disabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, err)
+		return
+	}
+	if err := s.store.SetExcludesDisabled(req.Disabled); err != nil {
+		writeErr(w, err)
+		return
+	}
+	if req.Disabled {
+		s.store.LogEvent("settings", "excludes", "исключения временно выключены: разбираемся со странным ростом нагрузки на CPU")
+	} else {
+		s.store.LogEvent("settings", "excludes", "исключения снова включены")
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true, "disabled": req.Disabled})
 }
 
 // normalizeExcludes - канонизация и лимит: CIDR как есть (каноничная

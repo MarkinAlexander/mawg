@@ -5,6 +5,7 @@ package web
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -130,6 +131,100 @@ func TestPoolExcludesUpdate(t *testing.T) {
 	p, _ = st.Pool("proton")
 	if len(p.Settings.Excludes) != 0 {
 		t.Fatalf("очистка не сработала: %v", p.Settings.Excludes)
+	}
+}
+
+// Гейт выключенного функционала (95-док, слово владельца 30.10):
+// PUT /excludes -> 503 с текстом владельца, GET отдаёт список как было;
+// excludes в PUT /pools/{name} -> 400 (без поля - ок); переключатель
+// пишет флаг и событие; /status несёт флаг для UI.
+func TestExcludesDisabledGate(t *testing.T) {
+	srv, _, st := zonesServer(t, "0.8.2-rev15-mawg-dev")
+
+	if code, out := excludesPut(t, srv, `{"excludes":["192.0.2.7"]}`); code != http.StatusOK {
+		t.Fatalf("код %d: %v", code, out)
+	}
+	if err := st.SetExcludesDisabled(true); err != nil {
+		t.Fatal(err)
+	}
+
+	// PUT глобального списка -> 503 с текстом гейта
+	req, err := http.NewRequest(http.MethodPut, srv.URL+"/api/v1/excludes", strings.NewReader(`{"excludes":[]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("код %d: %s", resp.StatusCode, body)
+	}
+	if !strings.Contains(string(body), "ростом нагрузки на CPU") {
+		t.Fatalf("текст гейта: %s", body)
+	}
+	if got := excludesGet(t, srv); len(got) != 1 || got[0] != "192.0.2.7/32" {
+		t.Fatalf("отказанный PUT затёр список: %v", got)
+	}
+
+	// excludes в PUT пула -> 400, список пула не тронут; без поля - ок
+	code, out := zonesPut(t, srv.URL+"/api/v1/pools/proton", `{"excludes":["203.0.113.9"]}`)
+	if code != http.StatusBadRequest {
+		t.Fatalf("пул: код %d: %v", code, out)
+	}
+	if msg, _ := out["error"].(string); msg != "" && !strings.Contains(msg, "CPU") {
+		t.Fatalf("текст в JSON: %v", out)
+	}
+	if p, _ := st.Pool("proton"); len(p.Settings.Excludes) != 0 {
+		t.Fatalf("пуловые исключения записались: %v", p.Settings.Excludes)
+	}
+	if code, out = zonesPut(t, srv.URL+"/api/v1/pools/proton", `{"checkIntervalSec":41}`); code != http.StatusOK {
+		t.Fatalf("PUT без excludes: код %d: %v", code, out)
+	}
+
+	// /status несёт флаг
+	resp2, err := http.Get(srv.URL + "/api/v1/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var status struct {
+		ExcludesDisabled bool `json:"excludesDisabled"`
+	}
+	if err := json.NewDecoder(resp2.Body).Decode(&status); err != nil {
+		t.Fatal(err)
+	}
+	resp2.Body.Close()
+	if !status.ExcludesDisabled {
+		t.Fatal("/status не отдал excludesDisabled")
+	}
+
+	// переключатель: событие в журнал + обратное включение
+	code, out = zonesPut(t, srv.URL+"/api/v1/excludes/disabled", `{"disabled":false}`)
+	if code != http.StatusOK {
+		t.Fatalf("переключатель: код %d: %v", code, out)
+	}
+	if st.ExcludesDisabled() {
+		t.Fatal("флаг не снялся")
+	}
+	found := false
+	for _, e := range st.Events() {
+		if e.Pool == "settings" && e.Kind == "excludes" && strings.Contains(e.Message, "снова включены") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("нет события о выключателе")
+	}
+
+	// после снятия флага PUT снова работает
+	if code, out := excludesPut(t, srv, `{"excludes":["192.0.2.8"]}`); code != http.StatusOK {
+		t.Fatalf("код %d: %v", code, out)
+	}
+	if got := excludesGet(t, srv); len(got) != 1 || got[0] != "192.0.2.8/32" {
+		t.Fatalf("после включения фичи список не применился: %v", got)
 	}
 }
 

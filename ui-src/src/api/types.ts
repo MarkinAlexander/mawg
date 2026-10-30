@@ -287,6 +287,9 @@ export interface Status {
   authEnabled: boolean
   nativeAWG3: boolean
   mtSources: boolean
+  // функционал исключений выключен (95-док, слово владельца 30.10):
+  // UI гасит блоки исключений плашкой и disabled-кнопками
+  excludesDisabled?: boolean
   pools: PoolView[]
   engine?: EngineInfo
   // ядра движков (88-док): singbox (копия engine) и mihomo;

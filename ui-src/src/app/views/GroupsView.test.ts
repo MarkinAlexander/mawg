@@ -398,6 +398,21 @@ describe('GroupsView - создание/удаление/гистерезис', 
     w2.unmount();
   });
 
+  it('исключения выключены флагом (95-док): плашка, кнопки disabled, PUT не уходит', async () => {
+    useStatus().state.data = {
+      version: 'v', platform: 'openwrt', backendName: 'openwrt', authEnabled: false,
+      nativeAWG3: false, mtSources: true, excludesDisabled: true, pools: [],
+    };
+    const { w, f } = await makeView();
+    expect(w.text()).toContain('Исключения временно выключены: разбираемся со странным ростом нагрузки на CPU');
+    expect(btnIn(w, '+ добавить')[0].attributes('disabled')).toBeDefined();
+    expect(btnIn(w, 'сохранить список')[0].attributes('disabled')).toBeDefined();
+    expect((w.find('.excls input').element as HTMLInputElement).disabled).toBe(true);
+    expect(w.findAll('.exclrm')[0].attributes('disabled')).toBeDefined();
+    expect(f.mock.calls.some((c) => (c[0] as string).endsWith('/excludes') && c[1]?.method === 'PUT')).toBe(false);
+    w.unmount();
+  });
+
   it('гистерезис: предзаполнен из GET, кнопка активна после изменения, PUT + тост', async () => {
     const { w, f } = await makeView();
     const nums = w.findAll('.cnum input');

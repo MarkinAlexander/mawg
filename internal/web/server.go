@@ -106,6 +106,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/v1/wanprobe", s.putWANProbe)
 	mux.HandleFunc("GET /api/v1/excludes", s.getExcludes)
 	mux.HandleFunc("PUT /api/v1/excludes", s.putExcludes)
+	mux.HandleFunc("GET /api/v1/excludes/disabled", s.getExcludesDisabled)
+	mux.HandleFunc("PUT /api/v1/excludes/disabled", s.putExcludesDisabled)
 	mux.HandleFunc("GET /api/v1/rcitoken", s.getRCIToken)
 	mux.HandleFunc("PUT /api/v1/rcitoken", s.putRCIToken)
 	mux.HandleFunc("POST /api/v1/pools/{name}/rename", s.renamePool)
@@ -527,14 +529,18 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 		NativeAWG3 bool `json:"nativeAWG3"`
 		// MtSources - подключённый MT понимает поле sources (форк rev3+).
 		// Детект и гейтинг - см. mtversion.go.
-		MtSources bool           `json:"mtSources"`
-		Pools     []poolView     `json:"pools"`
+		MtSources bool `json:"mtSources"`
+		// ExcludesDisabled - функционал исключений выключен (95-док,
+		// слово владельца 30.10): UI гасит блоки исключений.
+		ExcludesDisabled bool         `json:"excludesDisabled"`
+		Pools            []poolView   `json:"pools"`
 		Engine    map[string]any `json:"engine,omitempty"`
 		// Engines - состояние по ядрам (88-док): singbox (копия Engine
 		// для совместимости) и mihomo. available:false - ядро не установлено.
 		Engines map[string]map[string]any `json:"engines,omitempty"`
 	}{Version: s.version, Platform: s.backend.Name(), BackendName: s.backend.Name(),
-		AuthEnabled: s.auth == nil || s.auth.Enabled, NativeAWG3: s.nativeAWG3(), MtSources: s.mtSourcesCapable(r.Context()), Pools: []poolView{}}
+		AuthEnabled: s.auth == nil || s.auth.Enabled, NativeAWG3: s.nativeAWG3(), MtSources: s.mtSourcesCapable(r.Context()),
+		ExcludesDisabled: s.store.ExcludesDisabled(), Pools: []poolView{}}
 
 	for _, p := range pools {
 		st := s.store.State(p.Name)
@@ -1624,6 +1630,12 @@ func (s *Server) updatePool(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// Исключения пула (94-док): nil = не трогалось, [] = очистить.
+	// При выключенном функционале (95-док) поле отклоняется - nil
+	// («не трогать») остаётся легальным.
+	if patch.Excludes != nil && s.store.ExcludesDisabled() {
+		writeErr(w, errors.New(exclDisabledMsg))
+		return
+	}
 	if patch.Excludes != nil {
 		list, err := poolExcludesValid(patch.Excludes)
 		if err != nil {

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { UiBadge, UiButton, UiDialog, UiHelp, UiHint, UiInput, UiOrderList, UiSelect, type UiSelectOption, UiSwitch, UiTextarea } from '../../components/ui'
+import { UiBadge, UiBanner, UiButton, UiDialog, UiHelp, UiHint, UiInput, UiOrderList, UiSelect, type UiSelectOption, UiSwitch, UiTextarea } from '../../components/ui'
 import { useIfaces } from '../../stores/ifaces'
 import { usePoolActions } from '../../stores/pools'
 import { useStatus } from '../../stores/status'
@@ -52,6 +52,10 @@ const fallback = ref('direct');
 const exclList = ref<string[]>([]);
 const exclInit = ref('[]');
 const exclNew = ref('');
+// функционал выключен флагом (95-док, слово владельца 30.10): секция
+// гасится плашкой и disabled-контролами; dirty-гейт и так не пустил бы
+// excludes в payload, пока секцию не меняли
+const excludesDisabled = computed(() => !!status.data?.excludesDisabled);
 const exclDirty = computed(() => JSON.stringify(exclList.value) !== exclInit.value);
 function exclAdd(): void {
   const parts = exclNew.value
@@ -674,6 +678,11 @@ async function save(): Promise<void> {
       <div class="sect">
         Исключения пула<UiHelp text="Эти адреса пул не обрабатывает - трафик на них и с них идёт напрямую, мимо туннеля (свои серверы за этим пулом и т.п.). Общий список на все пулы - на странице правил." />
       </div>
+      <UiBanner
+        v-if="excludesDisabled"
+        kind="warn"
+        text="Исключения временно выключены: разбираемся со странным ростом нагрузки на CPU"
+      />
       <div
         v-if="exclList.length"
         class="excllist"
@@ -688,6 +697,7 @@ async function save(): Promise<void> {
             type="button"
             class="exclrm"
             title="убрать из списка"
+            :disabled="excludesDisabled"
             @click="exclRemove(i)"
           >✕</button>
         </span>
@@ -697,9 +707,13 @@ async function save(): Promise<void> {
           v-model="exclNew"
           bare
           placeholder="IP или подсеть; можно несколько через запятую/пробел"
+          :disabled="excludesDisabled"
           @keydown.enter="exclAdd"
         />
-        <UiButton @click="exclAdd">
+        <UiButton
+          :disabled="excludesDisabled"
+          @click="exclAdd"
+        >
           + добавить
         </UiButton>
       </div>
