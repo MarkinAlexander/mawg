@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import {
   UiBadge, UiButton, UiCard, UiDialog, UiHelp, UiHint, UiIcon, UiInput,
   UiSelect, type UiSelectOption, UiSwitch,
@@ -55,6 +56,22 @@ onBeforeUnmount(() => {
   ifaces.stop();
   bundles.stop();
 });
+
+// deep-link (97-док): /next/interfaces?pool=<имя> - скролл к карточке
+// своего пула (клик по бейджу «устройство целиком» в списке групп);
+// запрос чистится сразу - F5 не переоткроет. Ждём /status с пулами;
+// instant-скролл (smooth в webview IAB ноопит).
+const route = useRoute();
+const router = useRouter();
+function openFromLink(): void {
+  const pool = route.query.pool;
+  if (typeof pool !== 'string' || !pool) return;
+  if (!(pools.value || []).some((p) => p.name === pool)) return;
+  void router.replace({ query: { ...route.query, pool: undefined } });
+  const el = document.getElementById('card-pool-' + pool);
+  if (el) el.scrollIntoView({ behavior: 'instant', block: 'start' });
+}
+watch([() => route.query.pool, pools], () => openFromLink(), { flush: 'post' });
 
 async function delBundle(b: BundleView): Promise<void> {
   const ok = await confirm({
@@ -258,12 +275,18 @@ async function saveWan(): Promise<void> {
       + интерфейс
     </UiButton>
   </div>
-  <PoolCard
+  <!-- PoolCard - фрагмент (карточка + диалог): якорь deep-link ?pool=
+       (97-док) - обёртка, не fallthrough -->
+  <div
     v-for="p in pools"
+    :id="'card-pool-' + p.name"
     :key="p.name"
-    :pool="p"
-    @settings="settingsFor = p.name"
-  />
+  >
+    <PoolCard
+      :pool="p"
+      @settings="settingsFor = p.name"
+    />
+  </div>
 
   <!-- id - якорь поиска (search.ts): генератор WARP, 77-док -->
   <UiCard

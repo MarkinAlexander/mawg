@@ -62,6 +62,9 @@ beforeEach(() => {
   const s = useStatus();
   s.stop();
   s.state.data = null;
+  const g = useGroups();
+  g.state.bindings = [];
+  g.state.bindingsLoaded = false;
   useConfirm().cancel();
   useToast().toasts.list.splice(0);
 });
@@ -270,6 +273,53 @@ describe('PoolCard - мутации', () => {
       expect(del).toBeTruthy();
     });
     card.unmount();
+  });
+
+  it('устройства (97-док): строка при связках реестра, нет - без', () => {
+    useGroups().state.bindings = [{ pool: 'proton', ips: ['192.168.0.82/32'], name: 'Устройство: 192.168.0.82' }];
+    const w = makeCard(nativePool);
+    expect(w.find('.kv').text()).toContain('устройства');
+    expect(w.find('.kv').text()).toContain('192.168.0.82/32');
+    w.unmount();
+
+    useGroups().state.bindings = [];
+    const w2 = makeCard(nativePool);
+    expect(w2.find('.kv').text()).not.toContain('устройства');
+    w2.unmount();
+  });
+
+  it('удаление пула с устройствами (слово владельца 30.10): выбор судьбы -> ?devices=', async () => {
+    useGroups().state.bindings = [{ pool: 'proton', ips: ['192.168.0.82/32'], name: 'Устройство: 192.168.0.82' }];
+    const f = stub();
+    vi.stubGlobal('fetch', f);
+    const card = makeCard(nativePool);
+    await btn(card, 'удалить пул')[0].trigger('click');
+    await nextTick();
+    // диалог выбора: главная кнопка - удалить вместе с устройствами,
+    // третья - оставить напрямую; текст объясняет последствия
+    expect(useConfirm().state.altLabel).toBe('Оставить напрямую');
+    expect(useConfirm().state.okLabel).toBe('Удалить пул и устройства');
+    expect(useConfirm().state.text).toContain('192.168.0.82/32');
+    expect(useConfirm().state.text).toContain('напрямую');
+    useConfirm().alt();
+    await vi.waitFor(() => {
+      const del = f.mock.calls.find((c) => (c[0] as string).includes('/pools/proton') && c[1]?.method === 'DELETE');
+      expect((del![0] as string).endsWith('/pools/proton?devices=direct')).toBe(true);
+    });
+    card.unmount();
+
+    const f2 = stub();
+    vi.stubGlobal('fetch', f2);
+    useGroups().state.bindings = [{ pool: 'proton', ips: ['192.168.0.82/32'], name: 'x' }];
+    const card2 = makeCard(nativePool);
+    await btn(card2, 'удалить пул')[0].trigger('click');
+    await nextTick();
+    useConfirm().ok();
+    await vi.waitFor(() => {
+      const del = f2.mock.calls.find((c) => (c[0] as string).includes('/pools/proton') && c[1]?.method === 'DELETE');
+      expect((del![0] as string).endsWith('/pools/proton?devices=delete')).toBe(true);
+    });
+    card2.unmount();
   });
 
   it('конфиги: тумблер/стрелки/удаление шлют правильные тела; активная строка зелёная, cooldown-бейдж', async () => {

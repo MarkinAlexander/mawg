@@ -153,6 +153,8 @@ beforeEach(() => {
   state.duplicates = {};
   state.ifaces = [];
   state.cycles = null;
+  state.bindings = [];
+  state.bindingsLoaded = false;
   state.presets = { list: [], sourceUrl: '', sourceNote: '', loaded: false };
   state.available = true;
   state.loaded = false;
@@ -722,6 +724,38 @@ describe('GroupsView - скрытие выключенного (80-док, бо�
     await w.find('.offrules input[type="checkbox"]').setValue(true);
     await nextTick();
     expect(block(w, 'g1').text()).toContain('все правила выключены и скрыты');
+    w.unmount();
+  });
+});
+
+describe('GroupsView - бейдж «устройство целиком» к карточке пула (97-док)', () => {
+  it('клик по бейджу ведёт на /next/interfaces?pool=<пул связки>; без записи - некликабельный', async () => {
+    const { w, data, router } = await makeView();
+    data.groups.push(
+      {
+        id: 'gdev', name: 'Устройство: 192.168.1.50', interface: 'nwg0', enable: true,
+        sources: ['192.168.1.50'],
+        rules: [{ id: 'r5', type: 'subnet', rule: '0.0.0.0/0', enable: true }],
+      },
+      {
+        id: 'gdev2', name: 'Устройство: 10.9.9.9', interface: 'nwg0', enable: true,
+        sources: ['10.9.9.9'],
+        rules: [{ id: 'r6', type: 'subnet', rule: '0.0.0.0/0', enable: true }],
+      },
+    );
+    useGroups().state.bindings = [
+      { pool: 'proton', ips: ['192.168.1.50/32'], name: 'Устройство: 192.168.1.50' },
+    ];
+    await useGroups().refresh(true);
+    await nextTick();
+    const linked = block(w, 'gdev').find('button.devlink');
+    expect(linked.exists()).toBe(true);
+    await linked.trigger('click');
+    await vi.waitFor(() => expect(router.currentRoute.value.fullPath).toContain('pool=proton'));
+    // связки нет - бейдж обычный, не кнопка
+    const plain = block(w, 'gdev2');
+    expect(plain.find('button.devlink').exists()).toBe(false);
+    expect(plain.text()).toContain('устройство целиком');
     w.unmount();
   });
 });

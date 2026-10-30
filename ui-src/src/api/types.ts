@@ -52,6 +52,15 @@ export interface GroupView extends Group {
   interfaceTitle?: string
 }
 
+// запись реестра «пул ↔ устройство через пул» (97-док): зеркало
+// MT-группы устройства; ID группы не хранится - связь по имени
+export interface DeviceBinding {
+  pool: string
+  ips: string[]
+  name: string
+  created?: string
+}
+
 export interface MtGroupsRes {
   available: boolean
   groups: GroupView[]

@@ -7,7 +7,9 @@ import { useStatus } from '../../stores/status'
 import { useCaptcha } from '../../stores/captcha'
 import { useConfirm } from '../../stores/confirm'
 import { useToast } from '../../stores/toast'
-import type { PoolMember, PoolView } from '../../api/types'
+import { useGroups } from '../../stores/groups'
+import { ApiError } from '../../api/client'
+import type { DeviceBinding, PoolMember, PoolView } from '../../api/types'
 import { fallbackHint } from './poolsLogic'
 import { addrSecretIn, hostOf } from '../secrets'
 import { G } from '../glossary'
@@ -69,6 +71,65 @@ function exclAdd(): void {
 }
 function exclRemove(i: number): void {
   exclList.value.splice(i, 1);
+}
+// устройства через пул (97-док): реестр связок - чипы адресов с ✕
+// (снять привязку = удалить MT-группу), добавление сразу в MT (каждая
+// операция - запись групп). Коллизия адреса - 409 сервера + подтверждение
+// (паттерн петлезащиты DnsView, как в DeviceGroupDialog)
+const groups = useGroups();
+const devList = computed(() => groups.state.bindings.filter((b) => b.pool === props.poolName));
+const devNew = ref('');
+const devBusy = ref(false);
+const devIpRe = /^\d{1,3}(\.\d{1,3}){3}(\/\d{1,2})?$/;
+function devParse(): string[] {
+  const parts = devNew.value.split(/[\s,;]+/).map((x) => x.trim()).filter(Boolean);
+  if (!parts.length) return [];
+  const bad = parts.filter((x) => !devIpRe.test(x));
+  if (bad.length) {
+    push('Не похоже на IP/подсеть: ' + bad.join(', '), true);
+    return [];
+  }
+  return parts;
+}
+async function devAdd(): Promise<void> {
+  const ips = devParse();
+  if (!ips.length || devBusy.value) return;
+  devBusy.value = true;
+  try {
+    try {
+      await groups.createDeviceGroup({ pool: props.poolName, ips });
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409) {
+        const ok = await confirm({ title: 'Адреса уже заняты', text: e.message, okLabel: 'Всё равно привязать' });
+        if (!ok) return;
+        await groups.createDeviceGroup({ pool: props.poolName, ips, confirm: true });
+      } else {
+        push(e instanceof Error ? e.message : String(e), true);
+        return;
+      }
+    }
+    push(`Устройства привязаны: весь трафик ${ips.length === 1 ? 'адреса' : 'адресов'} идёт через пул ${props.poolName}`);
+    devNew.value = '';
+  } finally {
+    devBusy.value = false;
+  }
+}
+async function devRemove(b: DeviceBinding): Promise<void> {
+  const ok = await confirm({
+    title: 'Снять привязку устройства?',
+    text: `Группа «${b.name}» будет удалена: ${b.ips.join(', ')} больше не пойдут через пул ${b.pool} - трафик этих устройств вернётся напрямую.`,
+    okLabel: 'Снять привязку',
+  });
+  if (!ok || devBusy.value) return;
+  devBusy.value = true;
+  try {
+    await groups.deleteDeviceGroup(b.name);
+    push('Привязка снята: устройства идут напрямую');
+  } catch (e) {
+    push(e instanceof Error ? e.message : String(e), true);
+  } finally {
+    devBusy.value = false;
+  }
 }
 // умный каскад (86-док): Via - упорядоченный список (порядок = приоритет)
 const scOn = ref(false);
@@ -242,6 +303,7 @@ watch(open, (v) => {
   premCountry.value = p.premium?.country || '';
   void loadMembers();
   void loadFreeConf(p);
+  void groups.loadBindings(); // реестр устройств - свежим к открытию
 });
 
 async function loadMembers(): Promise<void> {
@@ -717,6 +779,43 @@ async function save(): Promise<void> {
           + добавить
         </UiButton>
       </div>
+      <div class="sect">
+        Устройства через пул<UiHelp :text="G.deviceBinding" />
+      </div>
+      <div
+        v-if="devList.length"
+        class="excllist"
+      >
+        <span
+          v-for="b in devList"
+          :key="b.name"
+          class="exclitem"
+        >
+          {{ b.ips.join(', ') }}
+          <button
+            type="button"
+            class="exclrm"
+            title="снять привязку: группа удаляется, трафик устройств пойдёт напрямую"
+            @click="devRemove(b)"
+          >✕</button>
+        </span>
+      </div>
+      <div class="hrow">
+        <UiInput
+          v-model="devNew"
+          bare
+          placeholder="IP устройства (несколько через запятую/пробел)"
+          @keydown.enter="devAdd"
+        />
+        <UiButton
+          :busy="devBusy"
+          :disabled="devBusy"
+          @click="devAdd"
+        >
+          + привязать
+        </UiButton>
+      </div>
+      <UiHint text="Весь трафик перечисленных адресов уйдёт в этот пул целиком (группа «Устройство: …» в списке групп). Один адрес может быть привязан только к одному пулу; адрес из глобальных исключений привязкой не оживить." />
       <template v-if="!isEng">
         <div class="sect">
           Умный каскад
