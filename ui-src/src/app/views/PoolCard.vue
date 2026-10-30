@@ -614,12 +614,15 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
     </div>
 
     <details
-      v-if="!isEng"
       class="cfg"
       :open="cfgOpen"
       @toggle="cfgOpen = ($event.target as HTMLDetailsElement).open"
     >
-      <summary title="порядок конфигов = приоритет ротации">
+      <summary
+        :title="isEng
+          ? 'конфиги WG/AWG едут wireguard-эндпоинтами движка; порядок = приоритет, включённость учитывается'
+          : 'порядок конфигов = приоритет ротации'"
+      >
         Конфиги ({{ (pool.configs || []).length }})<UiHelp :text="G.rotation" />
       </summary>
       <UiHint text="порядок списка = приоритет ротации, выше = раньше" />
@@ -707,7 +710,9 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
             </template>
             <UiButton
               variant="icon"
-              tooltip="сделать активным: переключить интерфейс на этот конфиг"
+              :tooltip="isEng
+                ? 'подкинуть движку этот конфиг: пересборка с ним (один активный, как ротация нативных)'
+                : 'сделать активным: переключить интерфейс на этот конфиг'"
               :disabled="c.file === pool.activeFile"
               :busy="busy === `${c.file}:activate`"
               @click="cfgAct(`${c.file}:activate`, async () => {
