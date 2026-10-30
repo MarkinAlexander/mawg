@@ -258,6 +258,60 @@ func (s *Server) createPoolFromNodes(w http.ResponseWriter, r *http.Request, req
 	}
 
 	if len(ncs) > 0 {
+		// Явный выбор ядра при нативно-возможных конфигах (слово
+		// владельца 30.10): WG/AWG можно увести в движок и когда натив
+		// формально работает - старые Кинетики, где wireguard еле дышит.
+		// Пустой engineCore = нативный путь как раньше.
+		forcedCore := ""
+		if req.EngineCore == "singbox" || req.EngineCore == engineCoreMihomo {
+			forced, _, err := s.awg3CorePick(req.EngineCore)
+			if err != nil {
+				writeErr(w, fmt.Errorf("ядро %s недоступно: %v", map[string]string{"singbox": "sing-box", "mihomo": "mihomo"}[req.EngineCore], err))
+				return
+			}
+			forcedCore = forced
+		} else if req.EngineCore != "" {
+			writeErr(w, fmt.Errorf("engineCore: singbox|mihomo"))
+			return
+		}
+		if forcedCore != "" || req.EngineCore == "singbox" {
+			settings := store.PoolSettings{
+				Platform: s.backend.Name(), Fallback: req.Fallback, ProbeHost: req.ProbeHost,
+				Source: req.Source, EngineMode: engineMode, Amnezia: storeAmnezia(amnezia),
+			}
+			if forcedCore != "" {
+				settings.EngineCore = forcedCore
+			}
+			if err := s.validFallback(req.Name, settings.Fallback); err != nil {
+				writeErr(w, err)
+				return
+			}
+			pool, err := s.claimTun(settings, req.Name)
+			if err != nil {
+				writeErr(w, err)
+				return
+			}
+			added, dupes, err := s.store.AddConfigs(pool.Name, ncs)
+			if err != nil {
+				writeErr(w, err)
+				return
+			}
+			coreName := map[bool]string{true: "mihomo", false: "sing-box"}[pool.Settings.EngineCore == engineCoreMihomo]
+			plan.Pool = pool.Name
+			plan.Tun = pool.Settings.TunName
+			plan.Added = added
+			plan.Duplicates = dupes
+			plan.Engine = engineNodes
+			plan.Warnings = append(plan.Warnings, "Конфиги идут через движок "+coreName+" (нативный путь отключён выбором ядра).")
+			s.store.LogEvent(pool.Name, "applied", fmt.Sprintf("пул на движке %s из источника: %d конфигов", coreName, added))
+			if p, ok := s.store.Pool(pool.Name); ok && len(p.Configs) > 0 {
+				_ = s.engine.SetActive(pool.Name, p.Configs[0].File)
+			}
+			s.applyEngineWarn(&plan)
+			s.cascSyncPool(req.Name)
+			writeJSON(w, http.StatusOK, plan)
+			return
+		}
 		settings, err := s.poolSettingsFromReq(req, false)
 		if err != nil {
 			writeErr(w, err)
