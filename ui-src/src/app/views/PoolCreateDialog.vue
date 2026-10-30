@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { UiBadge, UiBanner, UiButton, UiDialog, UiHelp, UiHint, UiInput, UiSelect, type UiSelectOption, UiTextarea } from '../../components/ui'
 import { useStatus } from '../../stores/status'
 import { usePoolActions } from '../../stores/pools'
 import { useCaptcha } from '../../stores/captcha'
 import { useToast } from '../../stores/toast'
 import type { LinkInspect, SourcePlan } from '../../api/types'
+import type { CreatePoolBody } from '../../stores/pools'
 import { inspectLine, planView, protoGate, slotGate, slotOptions } from './poolsLogic'
 import LxInstallDialog from './LxInstallDialog.vue'
 import { addrSecretIn } from '../secrets'
@@ -53,6 +55,10 @@ watch(open, (v) => {
     inspectErr.value = '';
     plan.value = null;
     done.value = false;
+    files.value = [];
+    cfgEngine.value = '';
+    awg3Sniffed.value = false;
+    awg3Files.value = 0;
     void loadSlots();
   }
 });
@@ -106,6 +112,66 @@ const coreOptions: UiSelectOption[] = [
   { value: '', label: 'sing-box' },
   { value: 'mihomo', label: 'mihomo (Clash.Meta)' },
 ];
+
+// --- cfg-режим: конфиги сразу в диалоге (слово владельца 30.10) ---
+// файлы разбираем на клиенте (снифф AWG 3.x по полям конфига), сервер
+// остаётся последней инстанцией: нативный пул движковый конфиг не
+// сохранит, движковый пул создаётся сразу с ядром из установленных
+const files = ref<File[]>([]);
+const cfgEngine = ref(''); // '' = нативный Wireguard, singbox|mihomo
+const singboxAvailable = computed(() => !!status.data?.engines?.singbox?.available);
+const anyEngine = computed(() => singboxAvailable.value || mihomoAvailable.value);
+const awg3Sniffed = ref(false);
+const awg3Files = ref(0);
+// AWG 3.x в дикой природе: HPKey/Paddng/Dr/Dt и хвост диапазонов;
+// 2.0-поля (jc/jmin/h1) сюда не попадают - натив их поднимает сам
+const AWG3_SNIFF_RE = /hpkey|paddng|rekeyafter|rekeytimeout|rejectafter|keepalivetimeout|maxhandshakeattempts|randomtrailers|disablecookies/i;
+// Blob.text() есть не во всех средах (jsdom тестов) - FileReader-фолбэк
+function fileText(f: File): Promise<string> {
+  if (typeof f.text === 'function') return f.text();
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(String(r.result || ''));
+    r.onerror = () => rej(r.error);
+    r.readAsText(f);
+  });
+}
+async function sniffFiles(list: File[]): Promise<void> {
+  let hits = 0;
+  for (const f of list) {
+    if (!/\.conf$/i.test(f.name)) continue;
+    try {
+      const text = await fileText(f);
+      if (AWG3_SNIFF_RE.test(text)) hits++;
+    } catch {
+      // нечитаемый файл - решит сервер при загрузке
+    }
+  }
+  awg3Files.value = hits;
+  awg3Sniffed.value = hits > 0;
+  if (awg3Sniffed.value && anyEngine.value && !cfgEngine.value) {
+    cfgEngine.value = singboxAvailable.value ? 'singbox' : 'mihomo';
+  }
+}
+function setFiles(list: FileList | null): void {
+  files.value = Array.from(list || []);
+  cfgEngine.value = '';
+  void sniffFiles(files.value);
+}
+const cfgCoreOptions = computed<UiSelectOption[]>(() => {
+  const opts: UiSelectOption[] = [{ value: '', label: 'нативный Wireguard (слот)' }];
+  if (singboxAvailable.value) opts.push({ value: 'singbox', label: 'движок sing-box' });
+  if (mihomoAvailable.value) opts.push({ value: 'mihomo', label: 'движок mihomo (Clash.Meta)' });
+  return opts;
+});
+const awg3Blocked = computed(
+  () => mode.value === 'cfg' && awg3Sniffed.value && !anyEngine.value,
+);
+const router = useRouter();
+function openRouter(path: string): void {
+  open.value = false;
+  void router.push(path);
+}
 
 let inspectTimer: ReturnType<typeof setTimeout> | null = null;
 let inspectSeq = 0;
@@ -256,11 +322,20 @@ function finishPlan(p: SourcePlan): void {
 }
 
 async function create(): Promise<void> {
-  const body: { name: string; fallback: string; keeneticSlot?: string; openwrtProto?: string } = {
+  const body: CreatePoolBody & { name: string; fallback: string; keeneticSlot?: string; openwrtProto?: string } = {
     name: name.value.trim(),
     fallback: fallback.value,
   };
-  if (isKeenetic.value && mode.value !== 'free') {
+  if (awg3Blocked.value) {
+    push('Конфиги AmneziaWG 3.x требуют движок: ни sing-box, ни mihomo не установлены - установите ядро в «Система -> Зависимости»', true);
+    return;
+  }
+  const enginePool = mode.value === 'cfg' && cfgEngine.value !== '';
+  if (enginePool) {
+    body.engineMode = 'singbox';
+    body.engineCore = cfgEngine.value === 'mihomo' ? 'mihomo' : '';
+  }
+  if (isKeenetic.value && mode.value !== 'free' && !enginePool) {
     if (!slot.value) {
       push(slotsLoading.value ? 'Слоты ещё загружаются, секунду' : 'Слоты недоступны', true);
       return;
@@ -278,13 +353,22 @@ async function create(): Promise<void> {
     }
     body.keeneticSlot = slot.value;
   }
-  if (platform.value === 'openwrt') body.openwrtProto = proto.value;
+  if (platform.value === 'openwrt' && !enginePool) body.openwrtProto = proto.value;
   if (mode.value === 'cfg') {
+    const picked = [...files.value];
     await withBusy(async () => {
       try {
         await a.create(body);
+        if (picked.length) {
+          const r = await a.upload(body.name, picked);
+          const bad = [...(r.errors || [])];
+          if (r.added) push(`Пул ${body.name} создан, конфиги загружены: ${r.added}`);
+          else push(`Пул ${body.name} создан, но конфиги не загрузились`, true);
+          for (const e of bad) push(e, true);
+        } else {
+          push(enginePool ? `Пул ${body.name} создан на движке (пустой)` : `Пул ${body.name} создан`);
+        }
         open.value = false;
-        push(`Пул ${body.name} создан`);
       } catch (e) {
         push(e instanceof Error ? e.message : String(e), true);
       }
@@ -428,9 +512,52 @@ const fallbackOptions: UiSelectOption[] = [
         placeholder="proton"
         tooltip="строчная латиница, цифры и дефисы, начинается с буквы, до 15 символов"
       />
+      <template v-if="mode === 'cfg'">
+        <div
+          class="cfgdrop"
+          @dragover.prevent
+          @drop.prevent="setFiles($event.dataTransfer?.files || null)"
+        >
+          <label class="cfgdrop-btn">
+            <input
+              type="file"
+              multiple
+              accept=".conf,.zip"
+              class="visually-hidden-input"
+              @change="setFiles(($event.target as HTMLInputElement).files)"
+            >
+            перетащите .conf / .zip сюда или выберите файлы
+          </label>
+          <span
+            v-if="files.length"
+            class="cfglist"
+          >{{ files.map((f) => f.name).join(', ') }}</span>
+        </div>
+        <UiBanner
+          v-if="awg3Blocked"
+          kind="warn"
+          text="В конфигах есть AmneziaWG 3.x: ни sing-box, ни mihomo не установлены - такой пул работать не будет. Установите движок в «Система -> Зависимости»."
+        >
+          <UiButton
+            variant="primary"
+            @click="openRouter('/next/system')"
+          >
+            Открыть «Система -> Зависимости»
+          </UiButton>
+        </UiBanner>
+        <UiSelect
+          v-else-if="anyEngine"
+          v-model="cfgEngine"
+          :options="cfgCoreOptions"
+          label="Ядро пула"
+          :hint="awg3Sniffed
+            ? 'Обнаружены конфиги AmneziaWG 3.x (' + awg3Files + '): нативный слот их не поднимет - выбранное ядро обязательно'
+            : 'пустой пул на движке: конфиги (включая AWG 3.x) можно загружать после создания'"
+        />
+      </template>
       <div class="hrow">
         <UiSelect
-          v-if="isKeenetic && mode !== 'free'"
+          v-if="isKeenetic && mode !== 'free' && !(mode === 'cfg' && cfgEngine !== '')"
           v-model="slot"
           :options="slotPickOptions"
           label="Слот Keenetic"
@@ -455,7 +582,7 @@ const fallbackOptions: UiSelectOption[] = [
         :text="slotsErr"
       />
       <UiSelect
-        v-if="platform === 'openwrt' && mode === 'cfg'"
+        v-if="platform === 'openwrt' && mode === 'cfg' && cfgEngine === ''"
         v-model="proto"
         :options="protoOptions"
         label="Протокол (OpenWrt)"
@@ -568,6 +695,32 @@ const fallbackOptions: UiSelectOption[] = [
 </template>
 
 <style scoped>
+.cfgdrop {
+  margin-top: 6px;
+  border: 1px dashed var(--bd, #3a4048);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.cfgdrop-btn {
+  cursor: pointer;
+  color: var(--acc, #4da3ff);
+}
+.visually-hidden-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  overflow: hidden;
+}
+.cfglist {
+  color: var(--mut, #8a8f98);
+  font-size: 12px;
+  word-break: break-all;
+}
 .modes {
   display: flex;
   gap: 6px;
