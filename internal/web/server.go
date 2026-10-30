@@ -1859,6 +1859,16 @@ func (s *Server) uploadConfigs(w http.ResponseWriter, r *http.Request) {
 	// Движковый пул: конфиги WG/AWG едут wireguard-эндпоинтами движка
 	// (engineSpecs) - пересобираем сразу, чтобы конфиг появился живьём.
 	if pool, ok := s.store.Pool(name); ok && pool.Settings.EngineMode == engineMode && added > 0 {
+		if st := s.store.State(name); st.ActiveFile == "" {
+			for _, c := range pool.Configs {
+				if c.Enabled {
+					s.store.MutateState(name, func(state *store.PoolState) {
+						state.ActiveFile = c.File
+					})
+					break
+				}
+			}
+		}
 		if _, err := s.applyEngine(); err != nil {
 			warnings = append(warnings, "движок не пересобран после загрузки: "+err.Error())
 		}

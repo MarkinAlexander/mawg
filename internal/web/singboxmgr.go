@@ -149,13 +149,17 @@ func (s *Server) enginePoolActivate(name, file string) error {
 	s.store.MutateState(name, func(st *store.PoolState) {
 		delete(st.Cooldowns, file)
 	})
-	if _, err := s.applyEngine(); err != nil {
-		return err
-	}
+	// выбор активного персистится ДО пересборки: неудавшаяся сборка
+	// (например, движок не поднят) не должна терять выбор - догонят
+	// циклы EngineConfigRotateLoop/следующие пересборки
 	s.store.MutateState(name, func(st *store.PoolState) {
 		st.ActiveFile = file
 		st.LastError = ""
 	})
+	if _, err := s.applyEngine(); err != nil {
+		s.store.LogEvent(name, "applied", "движковый пул: конфиг → "+file+", пересборка не удалась: "+err.Error())
+		return err
+	}
 	s.store.LogEvent(name, "applied", "движковый пул: активный конфиг → "+file)
 	return nil
 }
