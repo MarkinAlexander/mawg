@@ -1507,6 +1507,10 @@ func (s *Server) createPool(w http.ResponseWriter, r *http.Request) {
 		OpenwrtProto string `json:"openwrtProto"`
 		Fallback     string `json:"fallback"`
 		ProbeHost    string `json:"probeHost"`
+		// Пустой пул сразу на движке (слово владельца 30.10): конфиги
+		// можно лить после создания - движок крутит их и AWG 3.x.
+		EngineMode string `json:"engineMode"`
+		EngineCore string `json:"engineCore"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, err)
@@ -1518,11 +1522,41 @@ func (s *Server) createPool(w http.ResponseWriter, r *http.Request) {
 		Fallback:     req.Fallback,
 		ProbeHost:    req.ProbeHost,
 	}
+	if req.EngineMode != "" {
+		if req.EngineMode != engineMode {
+			writeErr(w, fmt.Errorf("engineMode: пусто или %q", engineMode))
+			return
+		}
+		core, _, err := s.awg3CorePick(req.EngineCore)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		if core != "" {
+			settings.EngineCore = core
+		}
+		settings.EngineMode = engineMode
+	}
 	if s.backend.Name() == store.PlatformOpenwrt {
 		settings.OpenwrtProto = req.OpenwrtProto
 		if settings.OpenwrtProto == "" {
 			settings.OpenwrtProto = "wireguard"
 		}
+	}
+	if req.EngineMode != "" {
+		// движковому пулу слот Wireguard не нужен - сразу tun
+		if err := s.validFallback(req.Name, settings.Fallback); err != nil {
+			writeErr(w, err)
+			return
+		}
+		pool, err := s.claimTun(settings, req.Name)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		s.store.LogEvent(pool.Name, "applied", "создан пустой пул на движке "+map[bool]string{true: "mihomo", false: "sing-box"}[pool.Settings.EngineCore == engineCoreMihomo])
+		writeJSON(w, http.StatusOK, pool)
+		return
 	}
 	slot, err := s.resolveKeeneticSlot(req.KeeneticSlot)
 	if err != nil {
@@ -1755,12 +1789,49 @@ func (s *Server) uploadConfigs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	unique, dupes := wgconf.Dedupe(all)
-	added, storeDupes, err := s.store.AddConfigs(name, unique)
-	if err != nil {
-		writeErr(w, err)
-		return
+	// Гейт нежизнеспособных конфигов (слово владельца 30.10: «не должно
+	// даже пытаться создавать пулы, а то ерунда выходит»): в нативный
+	// пул конфиг, требующий движка (AWG 3.x / <r>-случайность на старом
+	// kmod), НЕ сохраняется - иначе пул живёт с вечным «apply failed».
+	// Текст называет установленные движки (sing-box любого флейвора,
+	// mihomo) - не только sing-box-lx.
+	if pool, ok := s.store.Pool(name); ok && pool.Settings.EngineMode == "" {
+		rNeedEngine := false
+		if ob, ok := s.backend.(*openwrt.Backend); ok && !ob.SupportsNativeAWG3() {
+			rNeedEngine = true
+		}
+		// Keenetic 5.2+ / OpenWrt kmod 3.x поднимают 3.x нативно
+		// (asc-хвост из 31 аргумента) - гейт их не трогает
+		native3 := s.nativeAWG3()
+		sbOK, mhOK := s.awg3Cores()
+		installed := installedEngineNames(sbOK, mhOK)
+		var keep []wgconf.NamedConfig
+		for _, nc := range unique {
+			if !((nc.Config.NeedsEngine() && !native3) || (rNeedEngine && nc.Config.AWG.HasRandomInit())) {
+				keep = append(keep, nc)
+				continue
+			}
+			if installed == "" {
+				errors = append(errors, nc.OriginalName+": конфиг AmneziaWG 3.x не поднимется: прошивка ниже 5.2 нативно его не применяет, ни sing-box, ни mihomo не установлены - установите движок в «Система -> Зависимости» или создайте пул на движке после установки")
+				continue
+			}
+			errors = append(errors, nc.OriginalName+": конфиг AmneziaWG 3.x в нативном пуле не поднимется - создайте движковый пул («Новый интерфейс -> конфиги .conf / .zip», ядро: "+installed+")")
+		}
+		if len(keep) < len(unique) {
+			unique = keep
+		}
 	}
-	dupes = append(dupes, storeDupes...)
+	var added int
+	if len(unique) > 0 {
+		var storeDupes []string
+		var err error
+		added, storeDupes, err = s.store.AddConfigs(name, unique)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		dupes = append(dupes, storeDupes...)
+	}
 	// помечаем конфликтные: адрес занят другим интерфейсом сейчас ->
 	// в ротацию не попадает, пока конфликт не исчезнет
 	var warnings []string
@@ -1775,29 +1846,32 @@ func (s *Server) uploadConfigs(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	// конфиг, который нативный интерфейс не поднимет (AWG 3.x-поля или
-	// <r>-случайность на старом kmod), сохраняем, но честно предупреждаем:
-	// при активации он бы умирал глухой ошибкой применения
-	if pool, ok := s.store.Pool(name); ok && pool.Settings.EngineMode == "" {
-		rNeedEngine := false
-		if ob, ok := s.backend.(*openwrt.Backend); ok && !ob.SupportsNativeAWG3() {
-			rNeedEngine = true
-		}
-		// Keenetic 5.2+ / OpenWrt kmod 3.x поднимают 3.x нативно
-		// (asc-хвост из 31 аргумента) - предупреждение не нужно
-		native3 := s.nativeAWG3()
-		for _, nc := range unique {
-			if (nc.Config.NeedsEngine() && !native3) || (rNeedEngine && nc.Config.AWG.HasRandomInit()) {
-				warnings = append(warnings, nc.OriginalName+": конфиг AmneziaWG 3.x - нативный интерфейс его поля не применит, нужен движок sing-box-lx («Система -> Зависимости»); конфиг сохранён")
-			}
-		}
-	}
+	// Конфликтные адреса помечает configConflict ниже; гейт движковых
+	// конфигов отработал ДО записи - «конфиг сохранён» тут больше не
+	// бывает (95-док, слово владельца 30.10).
 	for _, w := range warnings {
 		s.store.LogEvent(name, "conflict", w)
+	}
+	if added == 0 && len(unique) == 0 && len(errors) > 0 {
+		writeErr(w, fmt.Errorf("%s", errors[len(errors)-1]))
+		return
 	}
 	s.engine.CheckNow(name)
 	s.cascSyncPool(name)
 	writeJSON(w, http.StatusOK, map[string]any{"added": added, "duplicates": dupes, "errors": errors, "warnings": warnings})
+}
+
+// installedEngineNames - человеческий перечень установленных движков
+// для сообщений гейта AWG 3.x ("" = ни одного).
+func installedEngineNames(sbOK, mhOK bool) string {
+	var names []string
+	if sbOK {
+		names = append(names, "sing-box")
+	}
+	if mhOK {
+		names = append(names, "mihomo")
+	}
+	return strings.Join(names, " / ")
 }
 
 func (s *Server) deleteConfig(w http.ResponseWriter, r *http.Request) {

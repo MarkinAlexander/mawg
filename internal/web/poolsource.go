@@ -214,13 +214,20 @@ func (s *Server) createPoolFromNodes(w http.ResponseWriter, r *http.Request, req
 		}
 	}
 	if needsEngine {
-		if _, err := s.sb(); err != nil {
-			writeErr(w, fmt.Errorf("в источнике конфиг AmneziaWG 3.x - нативные интерфейсы его не поднимают, нужен движок sing-box-lx: установите ядро в «Система -> Зависимости»"))
+		// Ядро движкового AWG-пула: явный выбор пользователя или автопик
+		// (sing-box, если жив; иначе mihomo); ни одного - честный отказ
+		// (слово владельца 30.10: гейты не затыкаются на sing-box-lx).
+		core, coreName, err := s.awg3CorePick(req.EngineCore)
+		if err != nil {
+			writeErr(w, fmt.Errorf("в источнике конфиг AmneziaWG 3.x - нативные интерфейсы его не поднимают: %v", err))
 			return
 		}
 		settings := store.PoolSettings{
 			Platform: s.backend.Name(), Fallback: req.Fallback, ProbeHost: req.ProbeHost,
 			Source: req.Source, EngineMode: engineMode, Amnezia: storeAmnezia(amnezia),
+		}
+		if core != "" {
+			settings.EngineCore = core
 		}
 		if err := s.validFallback(req.Name, settings.Fallback); err != nil {
 			writeErr(w, err)
@@ -239,8 +246,8 @@ func (s *Server) createPoolFromNodes(w http.ResponseWriter, r *http.Request, req
 		plan.Pool = pool.Name
 		plan.Tun = pool.Settings.TunName
 		plan.Added = added
-		plan.Warnings = append(plan.Warnings, "Конфиги AmneziaWG 3.x: нативные интерфейсы не поддерживают этот формат, пул работает через ядро sing-box (tun "+pool.Settings.TunName+").")
-		s.store.LogEvent(pool.Name, "applied", fmt.Sprintf("AWG 3.x из источника: %d конфигов в движке (%s)", added, pool.Settings.TunName))
+		plan.Warnings = append(plan.Warnings, "Конфиги AmneziaWG 3.x: нативные интерфейсы не поддерживают этот формат, пул работает через ядро "+coreName+" (tun "+pool.Settings.TunName+").")
+		s.store.LogEvent(pool.Name, "applied", fmt.Sprintf("AWG 3.x из источника: %d конфигов в движке %s (%s)", added, coreName, pool.Settings.TunName))
 		if p, ok := s.store.Pool(pool.Name); ok && len(p.Configs) > 0 {
 			_ = s.engine.SetActive(pool.Name, p.Configs[0].File)
 		}

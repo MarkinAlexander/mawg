@@ -15,8 +15,10 @@ import (
 
 	"mawg/internal/links"
 	"mawg/internal/mihomo"
+	"mawg/internal/platform/openwrt"
 	"mawg/internal/singbox"
 	"mawg/internal/store"
+	"mawg/internal/wgconf"
 )
 
 const engineMode = "singbox"
@@ -129,6 +131,57 @@ func engineCoreOf(p store.Pool) string {
 		return engineCoreMihomo
 	}
 	return "singbox"
+}
+
+// awg3Cores - какие ядра сейчас способны крутить конфиг, требующий
+// движка (AWG 3.x / <r>-случайность на старом kmod): sing-box любого
+// флейвора (lx несёт AWG-поля в корне, extended - объектом amnezia;
+// билдер строит оба формата) и mihomo (amnezia-wg-option, Version 3).
+// Учитываем мастер-выключатели ядер («Система -> Ядра VPN»). Слово
+// владельца 30.10: гейты не должны затыкаться на sing-box-lx - движков
+// может быть несколько, и движковый пул можно создать под любой из них.
+func (s *Server) awg3Cores() (singboxOK, mihomoOK bool) {
+	if !s.store.CoreDisabled("singbox") {
+		if _, err := s.sb(); err == nil {
+			singboxOK = true
+		}
+	}
+	if !s.store.CoreDisabled("mihomo") {
+		if _, err := s.mh(); err == nil {
+			mihomoOK = true
+		}
+	}
+	return
+}
+
+// awg3CorePick - выбрать ядро для движкового AWG-пула: явный выбор
+// пользователя валидируется, пустой - автопик (sing-box, если жив;
+// иначе mihomo). Возвращает нормализованное ядро ("" = singbox) и
+// человеческое имя для сообщений.
+func (s *Server) awg3CorePick(core string) (string, string, error) {
+	sbOK, mhOK := s.awg3Cores()
+	switch core {
+	case "", "singbox":
+		if sbOK {
+			return "", "sing-box", nil
+		}
+		if core == "" && mhOK {
+			return engineCoreMihomo, "mihomo", nil
+		}
+	case engineCoreMihomo:
+		if mhOK {
+			return engineCoreMihomo, "mihomo", nil
+		}
+	default:
+		return "", "", fmt.Errorf("engineCore: singbox|mihomo")
+	}
+	if !sbOK && !mhOK {
+		return "", "", fmt.Errorf("конфиг требует движок, но ни sing-box, ни mihomo не установлены - установите ядро в «Система -> Зависимости»")
+	}
+	if core == engineCoreMihomo {
+		return "", "", fmt.Errorf("ядро mihomo не установлено (или выключено) - выберите sing-box или установите mihomo в «Система -> Зависимости»")
+	}
+	return "", "", fmt.Errorf("ядро sing-box не установлено (или выключено) - установите его в «Система -> Зависимости» или выберите mihomo")
 }
 
 func (s *Server) sharedPaths() (dir, init string) {
@@ -570,6 +623,33 @@ func (s *Server) refreshSource(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	ncs, engineNodes, skipped := buildNativeConfigs(res.sub.Nodes)
+	// Гейт движковых конфигов (как в uploadConfigs, слово владельца
+	// 30.10): в нативный пул AWG 3.x не попадает - не resurrectить
+	// нежизнеспособные конфиги обновлением из источника.
+	if pool, ok := s.store.Pool(name); ok && pool.Settings.EngineMode == "" {
+		rNeedEngine := false
+		if ob, ok := s.backend.(*openwrt.Backend); ok && !ob.SupportsNativeAWG3() {
+			rNeedEngine = true
+		}
+		native3 := s.nativeAWG3()
+		installed := ""
+		if sbOK, mhOK := s.awg3Cores(); sbOK || mhOK {
+			installed = installedEngineNames(sbOK, mhOK)
+		}
+		var keep []wgconf.NamedConfig
+		for _, nc := range ncs {
+			if (nc.Config.NeedsEngine() && !native3) || (rNeedEngine && nc.Config.AWG.HasRandomInit()) {
+				if installed == "" {
+					plan.Skipped = append(plan.Skipped, nc.OriginalName+": конфиг AmneziaWG 3.x не поднимется - ни sing-box, ни mihomo не установлены («Система -> Зависимости»)")
+				} else {
+					plan.Skipped = append(plan.Skipped, nc.OriginalName+": конфиг AmneziaWG 3.x в нативном пуле не поднимется (движок "+installed+" установлен - нужен движковый пул)")
+				}
+				continue
+			}
+			keep = append(keep, nc)
+		}
+		ncs = keep
+	}
 	plan.Skipped = append(plan.Skipped, skipped...)
 	if len(ncs) > 0 {
 		added, dupes, err := s.store.AddConfigs(name, ncs)

@@ -509,7 +509,7 @@ func (b *Backend) Apply(pool store.Pool, cfg wgconf.Config) error {
 	}
 	if cfg.AWG.Present() {
 		if cfg.AWG.AWG3() && !b.SupportsNativeAWG3() {
-			return fmt.Errorf("конфиг AmneziaWG 3.x: прошивка ниже 5.2 не применяет его нативно (нужен движок sing-box-lx)")
+			return fmt.Errorf("конфиг AmneziaWG 3.x: прошивка ниже 5.2 не применяет его нативно (нужен движок sing-box или mihomo)")
 		}
 		if err := b.applyAsc(slot, cfg.AWG); err != nil {
 			return err

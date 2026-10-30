@@ -288,4 +288,58 @@ describe('PoolCreateDialog', () => {
     expect(btn(dlg, 'Установить ядро sing-box-lx').length).toBeGreaterThan(0);
     dlg.unmount();
   });
+
+  // AWG 3.x в брошенном конфиге: снифф -> ядро движка, create уносит
+  // engineMode/engineCore, конфиги заливаются следом (95-док)
+  const awg3conf = [
+    '[Interface]',
+    'PrivateKey = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=',
+    'Address = 10.9.0.2/32',
+    'Jc = 6',
+    'H1 = 1',
+    'HeaderProtectionKey = YMG9kWQIDtUsXbYMG9kWQIDtUsXbYMG9kWQ=',
+    'RekeyAfterTime = 100-120',
+    '[Peer]',
+    'PublicKey = bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbBBB=',
+    'Endpoint = 78.17.149.149:3045',
+  ].join('\n');
+  it('cfg+AWG3: снифф включает движковое ядро, Создать -> engineMode + upload', async () => {
+    const { dlg, f } = await makeDialog({
+      '/slots': { slots: [{ id: 'nwg0', device: 'nwg0', description: '', linkUp: false, connected: false, managed: false }] },
+      '/configs': { added: 2 },
+    }, { engines: { singbox: { available: true }, mihomo: { available: true } } } as Partial<Status>);
+    const input = dlg.find('input[type=file]').element as HTMLInputElement;
+    const file = new File([awg3conf], 'awg3.conf');
+    Object.defineProperty(input, 'files', { value: [file] });
+    await input.dispatchEvent(new Event('change'));
+    await vi.waitFor(() => expect(dlg.text()).toContain('AmneziaWG 3.x (1)'));
+    await dlg.find('input:not([type=file])').setValue('engpool');
+    await btn(dlg, 'Создать')[0].trigger('click');
+    await vi.waitFor(() => {
+      const post = f.mock.calls.find((c) => (c[0] as string).endsWith('/pools') && c[1]?.method === 'POST');
+      expect(JSON.parse(post![1]!.body as string)).toEqual({ name: 'engpool', fallback: 'direct', engineMode: 'singbox', engineCore: '' });
+    });
+    await vi.waitFor(() => {
+      expect(f.mock.calls.some((c) => (c[0] as string).endsWith('/pools/engpool/configs'))).toBe(true);
+    });
+    dlg.unmount();
+  });
+
+  it('cfg+AWG3 без движков: блокер с отсылкой в Систему, Создать не уходит', async () => {
+    const { dlg, f } = await makeDialog({
+      '/slots': { slots: [{ id: 'nwg0', device: 'nwg0', description: '', linkUp: false, connected: false, managed: false }] },
+    }, { engine: undefined, engines: { singbox: { available: false }, mihomo: { available: false } } } as Partial<Status>);
+    const input = dlg.find('input[type=file]').element as HTMLInputElement;
+    const file = new File([awg3conf], 'awg3.conf');
+    Object.defineProperty(input, 'files', { value: [file] });
+    await input.dispatchEvent(new Event('change'));
+    await vi.waitFor(() => expect(dlg.text()).toContain('ни sing-box, ни mihomo не установлены'));
+    expect(dlg.text()).toContain('Открыть «Система -> Зависимости»');
+    await dlg.find('input:not([type=file])').setValue('blocked');
+    await btn(dlg, 'Создать')[0].trigger('click');
+    await nextTick();
+    expect(f.mock.calls.some((c) => (c[0] as string).endsWith('/pools') && c[1]?.method === 'POST')).toBe(false);
+    expect(useToast().toasts.list.some((t) => t.text.includes('требуют движок'))).toBe(true);
+    dlg.unmount();
+  });
 });

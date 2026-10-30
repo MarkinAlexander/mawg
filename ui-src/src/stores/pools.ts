@@ -17,12 +17,16 @@ export interface UploadRes {
   warnings?: string[]
 }
 
-// тело создания пула из конфигов (легаси pCreate, режим cfg)
+// тело создания пула из конфигов (легаси pCreate, режим cfg);
+// engineMode "singbox" - пустой пул сразу на движке (95-док, слово
+// владельца 30.10): конфиги (в т.ч. AWG 3.x) льются после создания
 export interface CreatePoolBody {
   name: string
   fallback: string
   keeneticSlot?: string
   openwrtProto?: string
+  engineMode?: string
+  engineCore?: string
 }
 
 export function usePoolActions() {
