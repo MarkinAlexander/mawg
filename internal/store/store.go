@@ -419,6 +419,24 @@ func (s *Store) SetExcludes(list []string) error {
 	return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
 }
 
+// ExcludesDisabled - функционал исключений выключен целиком (95-док,
+// слово владельца 30.10): REST-гейты 503/400, синк в каскаде спит.
+func (s *Store) ExcludesDisabled() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.root.Settings.ExcludesDisabled
+}
+
+func (s *Store) SetExcludesDisabled(v bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.root.Settings.ExcludesDisabled == v {
+		return nil
+	}
+	s.root.Settings.ExcludesDisabled = v
+	return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
+}
+
 // GroupPolicy - политика поведения группы при отвале интерфейса.
 func (s *Store) GroupPolicy(id string) GroupPolicy {
 	s.mu.Lock()

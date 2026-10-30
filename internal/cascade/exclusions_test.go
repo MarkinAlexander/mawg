@@ -191,6 +191,43 @@ func TestSyncHooksCoversExclusionsWithoutCascades(t *testing.T) {
 	}
 }
 
+// Флаг выключенного функционала (95-док, слово владельца 30.10):
+// excludesPresent()=false при непустых списках - SyncHooks не вставляет
+// mawg-excl, SyncExclusions спит; после снятия флага всё возвращается.
+func TestExcludesDisabledSleeps(t *testing.T) {
+	ipt := &exclIpt{chains: map[string][]string{"MT_g1": {}}}
+	m := exclFixture(t, ipt, []magitrickle.Group{{ID: "g1", Name: "nwg1", Interface: "nwg1", Enable: true}})
+	if err := m.Store.SetExcludes([]string{"192.0.2.9/32"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Store.CreatePool("nwg1", store.PoolSettings{
+		Platform: store.PlatformOpenwrt, Excludes: []string{"198.51.100.7"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Store.SetExcludesDisabled(true); err != nil {
+		t.Fatal(err)
+	}
+
+	if m.excludesPresent() {
+		t.Fatal("при флаге excludesPresent()=true")
+	}
+	m.SyncHooks()
+	m.SyncExclusions()
+	if got := ipt.tagged("MT_g1"); len(got) != 0 {
+		t.Fatalf("спящая фича вставила правила: %v", got)
+	}
+
+	// снятие флага - SyncHooks снова покрывает исключения
+	if err := m.Store.SetExcludesDisabled(false); err != nil {
+		t.Fatal(err)
+	}
+	m.SyncHooks()
+	if got := ipt.tagged("MT_g1"); len(got) != 4 {
+		t.Fatalf("после включения фичи исключения не вернулись: %v", got)
+	}
+}
+
 // Нет цепочки (группа без правил) - тихий skip, без паник и ошибок.
 func TestSyncExclusionsSkipsMissingChain(t *testing.T) {
 	ipt := &exclIpt{chains: map[string][]string{}}

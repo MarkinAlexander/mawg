@@ -8,6 +8,7 @@ import {
 import { dropIndex, isBeforeHalf, reorder } from '../../components/ui/dnd'
 import { useConfirm } from '../../stores/confirm'
 import { useGroups } from '../../stores/groups'
+import { useStatus } from '../../stores/status'
 import { useToast } from '../../stores/toast'
 import { G } from '../glossary'
 import type { GroupView, Preset, Rule } from '../../api/types'
@@ -148,6 +149,10 @@ const cascadeOpen = ref(false);
 
 // --- гистерезис политик (легаси 1213-1246) ---
 // --- исключения из обработки (94-док): черновик + пачка через разделители ---
+// функционал выключен флагом (95-док, слово владельца 30.10): блок
+// гасится плашкой, кнопки disabled; PUT бэкенд всё равно отклонит (503)
+const { state: status } = useStatus();
+const excludesDisabled = computed(() => !!status.data?.excludesDisabled);
 const exclDraft = ref<string[]>([]);
 const exclNew = ref('');
 const exclSaving = ref(false);
@@ -660,6 +665,11 @@ onMounted(openFromLink);
 
     <!-- исключения из обработки (94-док): глобальный список, действует
          на все группы - включая добавленные позже - и на новые правила -->
+    <UiBanner
+      v-if="excludesDisabled"
+      kind="warn"
+      text="Исключения временно выключены: разбираемся со странным ростом нагрузки на CPU"
+    />
     <div class="excls">
       <div class="exclhead">
         <span class="muted">
@@ -684,6 +694,7 @@ onMounted(openFromLink);
             type="button"
             class="exclrm"
             title="убрать из списка"
+            :disabled="excludesDisabled"
             @click="exclRemove(i)"
           >✕</button>
         </span>
@@ -694,14 +705,18 @@ onMounted(openFromLink);
           bare
           class="cname"
           placeholder="IP или подсеть; можно несколько через запятую/пробел"
+          :disabled="excludesDisabled"
           @keydown.enter="exclAdd"
         />
-        <UiButton @click="exclAdd">
+        <UiButton
+          :disabled="excludesDisabled"
+          @click="exclAdd"
+        >
           + добавить
         </UiButton>
         <UiButton
           variant="primary"
-          :disabled="!exclDirty"
+          :disabled="excludesDisabled || !exclDirty"
           :busy="exclSaving"
           @click="exclSave"
         >

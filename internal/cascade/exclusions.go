@@ -46,7 +46,14 @@ func canonExclude(e string) string {
 const exclComment = "mawg-excl"
 
 // excludesPresent - есть ли что исключать (глобальный список или пулы).
+// Функционал выключен флагом (95-док, слово владельца 30.10) - false:
+// SyncHooks (hasExcl) и SyncExclusions спят целиком, никакой активности
+// фичи; вставленные ранее правила mawg-excl вымирают на ближайшей
+// пересборке форка, списки в сторах остаются.
 func (m *Manager) excludesPresent() bool {
+	if m.Store.Settings().ExcludesDisabled {
+		return false
+	}
 	if len(m.Store.Settings().Excludes) > 0 {
 		return true
 	}
