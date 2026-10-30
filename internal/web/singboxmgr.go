@@ -133,6 +133,106 @@ func engineCoreOf(p store.Pool) string {
 	return "singbox"
 }
 
+// enginePoolActivate - сменить активный конфиг движкового пула: только
+// запись стора + пересборка движка (rotator.SetActive недопустим - его
+// applyConfig идёт в нативный backend.Apply). Слово владельца 30.10:
+// движку подкладывается один конфиг, ротация = смена активного.
+func (s *Server) enginePoolActivate(name, file string) error {
+	p, ok := s.store.Pool(name)
+	if !ok {
+		return fmt.Errorf("пул %q не найден", name)
+	}
+	c, ok := p.ConfigByFile(file)
+	if !ok || !c.Enabled {
+		return fmt.Errorf("конфиг %q не найден или выключен", file)
+	}
+	s.store.MutateState(name, func(st *store.PoolState) {
+		delete(st.Cooldowns, file)
+	})
+	if _, err := s.applyEngine(); err != nil {
+		return err
+	}
+	s.store.MutateState(name, func(st *store.PoolState) {
+		st.ActiveFile = file
+		st.LastError = ""
+	})
+	s.store.LogEvent(name, "applied", "движковый пул: активный конфиг → "+file)
+	return nil
+}
+
+// EngineConfigRotateLoop - автоповорот конфигов движковых пулов: движок
+// пробует цель пула сам (PoolStatus), при устойчивых неудачах mawg
+// подкидывает следующий конфиг и пересобирает движок - как ротация
+// нативных пулов (слово владельца 30.10).
+func (s *Server) EngineConfigRotateLoop(ctx context.Context) {
+	t := time.NewTicker(30 * time.Second)
+	defer t.Stop()
+	fails := map[string]int{}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			s.rotateEngineConfigs(fails)
+		}
+	}
+}
+
+func (s *Server) rotateEngineConfigs(fails map[string]int) {
+	for _, p := range s.enginePools() {
+		if p.Disabled || len(p.Configs) < 2 {
+			continue
+		}
+		mgr, err := s.engineMgr(p)
+		if err != nil {
+			continue
+		}
+		ps, ok := mgr.PoolStatus(p.Name)
+		if !ok {
+			continue
+		}
+		if ps.ProbeOK {
+			delete(fails, p.Name)
+			continue
+		}
+		threshold := p.Settings.FailThreshold
+		if threshold <= 0 {
+			threshold = 3
+		}
+		fails[p.Name]++
+		if fails[p.Name] < threshold {
+			continue
+		}
+		fails[p.Name] = 0
+		// следующий включённый конфиг после активного, не в cooldown
+		st := s.store.State(p.Name)
+		start := p.IndexByFile(st.ActiveFile)
+		next := ""
+		for k := 1; k <= len(p.Configs); k++ {
+			c := p.Configs[(start+k)%len(p.Configs)]
+			if !c.Enabled {
+				continue
+			}
+			if until, ok := st.Cooldowns[c.File]; ok && time.Now().Unix() < until {
+				continue
+			}
+			next = c.File
+			break
+		}
+		if next == "" || next == st.ActiveFile {
+			continue
+		}
+		s.store.MutateState(p.Name, func(state *store.PoolState) {
+			if state.ActiveFile != "" {
+				state.Cooldowns[state.ActiveFile] = time.Now().Add(time.Duration(p.Settings.CooldownMin) * time.Minute).Unix()
+			}
+		})
+		if err := s.enginePoolActivate(p.Name, next); err != nil {
+			s.store.LogEvent(p.Name, "rotate", "движковый пул: ротация не удалась: "+err.Error())
+		}
+	}
+}
+
 // awg3Cores - какие ядра сейчас способны крутить конфиг, требующий
 // движка (AWG 3.x / <r>-случайность на старом kmod): sing-box любого
 // флейвора (lx несёт AWG-поля в корне, extended - объектом amnezia;
@@ -406,17 +506,33 @@ func (s *Server) engineSpecs() ([]engineSpec, error) {
 			}
 		case os.IsNotExist(err) && len(p.Configs) > 0:
 			// пул без nodes.json, но с конфигами WG/AWG (Amnezia Free и
-			// AWG 3.x-импорт) - конфиги едут wireguard-эндпоинтами
-			for _, c := range p.Configs {
+			// AWG 3.x-импорт) - движку подкладывается ОДИН активный конфиг
+			// (95-док, слово владельца 30.10: у однотипных конфигов
+			// одинаковый внутренний IP - все сразу создали бы коллизию;
+			// ротация = смена активного + пересборка, как у нативных)
+			st := s.store.State(p.Name)
+			var active *store.ManagedConfig
+			for i := range p.Configs {
+				c := p.Configs[i]
 				if !c.Enabled {
 					continue
 				}
-				cfg, cerr := s.store.LoadConfigFile(p.Name, c.File)
-				if cerr != nil {
-					return nil, fmt.Errorf("пул %s: конфиг %s: %v", p.Name, c.File, cerr)
+				if c.File == st.ActiveFile {
+					active = &p.Configs[i]
+					break
 				}
-				spec.WG = append(spec.WG, cfg)
+				if active == nil {
+					active = &p.Configs[i]
+				}
 			}
+			if active == nil {
+				return nil, fmt.Errorf("пул %s: нет включённых конфигов", p.Name)
+			}
+			cfg, cerr := s.store.LoadConfigFile(p.Name, active.File)
+			if cerr != nil {
+				return nil, fmt.Errorf("пул %s: конфиг %s: %v", p.Name, active.File, cerr)
+			}
+			spec.WG = append(spec.WG, cfg)
 		default:
 			return nil, fmt.Errorf("пул %s: %v", p.Name, err)
 		}

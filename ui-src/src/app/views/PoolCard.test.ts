@@ -231,8 +231,10 @@ describe('PoolCard - отображение', () => {
     expect(w.text()).toContain('tun1 | движок sing-box 1.11.0-lx (не запущен)');
     expect(w.findAll('.protos .uibadge')).toHaveLength(2);
     expect(w.text()).toContain('awg3 ×2');
-    // конфигов у движкового нет, но есть секция «Узлы» (60-док)
-    expect(w.text()).not.toContain('Конфиги (');
+    // секции «Узлы» и «Конфиги» сосуществуют: в движковый пул теперь
+    // можно кидать .conf (95-док, слово владельца 30.10)
+    expect(w.text()).toContain('Конфиги (0)');
+    expect(w.text()).toContain('перетащите .conf / .zip или нажмите');
     expect(w.text()).toContain('Узлы (');
     expect(btn(w, 'Сменить конфиг')).toHaveLength(0);
     expect(btn(w, 'Проверить')).toHaveLength(0);

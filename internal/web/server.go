@@ -1856,6 +1856,13 @@ func (s *Server) uploadConfigs(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, fmt.Errorf("%s", errors[len(errors)-1]))
 		return
 	}
+	// Движковый пул: конфиги WG/AWG едут wireguard-эндпоинтами движка
+	// (engineSpecs) - пересобираем сразу, чтобы конфиг появился живьём.
+	if pool, ok := s.store.Pool(name); ok && pool.Settings.EngineMode == engineMode && added > 0 {
+		if _, err := s.applyEngine(); err != nil {
+			warnings = append(warnings, "движок не пересобран после загрузки: "+err.Error())
+		}
+	}
 	s.engine.CheckNow(name)
 	s.cascSyncPool(name)
 	writeJSON(w, http.StatusOK, map[string]any{"added": added, "duplicates": dupes, "errors": errors, "warnings": warnings})
@@ -1906,6 +1913,12 @@ func (s *Server) enableConfig(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.SetConfigEnabled(r.PathValue("name"), r.PathValue("file"), req.Enabled); err != nil {
 		writeErr(w, err)
 		return
+	}
+	// Движковый пул: включённость конфига = состав spec.WG - пересборка.
+	if pool, ok := s.store.Pool(r.PathValue("name")); ok && pool.Settings.EngineMode == engineMode {
+		if _, err := s.applyEngine(); err != nil {
+			s.store.LogEvent(r.PathValue("name"), "applied", "движок не пересобран после переключения конфига: "+err.Error())
+		}
 	}
 	// выключение последнего активного конфига - тот же случай: без
 	// немедленной перепроверки туннель продолжит работать
@@ -1990,6 +2003,17 @@ func (s *Server) postActivate(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.liveAddressConflict(r.PathValue("name"), req.File); err != nil {
 		writeErr(w, err)
+		return
+	}
+	// Движковый пул: rotator.SetActive недопустим (его applyConfig идёт
+	// в нативный backend.Apply) - меняем активный конфиг в сторе и
+	// пересобираем движок (95-док, слово владельца 30.10).
+	if pool, ok := s.store.Pool(r.PathValue("name")); ok && pool.Settings.EngineMode == engineMode {
+		if err := s.enginePoolActivate(r.PathValue("name"), req.File); err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"ok": "activated"})
 		return
 	}
 	if err := s.engine.SetActive(r.PathValue("name"), req.File); err != nil {

@@ -304,6 +304,7 @@ func main() {
 	httpServer := &http.Server{Addr: bind, Handler: srv.Handler()}
 	go srv.RestoreEngine()
 	go srv.SubUpdateLoop(ctx)
+	go srv.EngineConfigRotateLoop(ctx)
 	go func() {
 		<-ctx.Done()
 		httpServer.Close()
