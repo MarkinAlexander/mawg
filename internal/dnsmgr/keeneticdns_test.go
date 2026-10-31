@@ -9,9 +9,10 @@ import (
 // fake ndm: запоминает записи ip name-server; running-config отражает их
 // (98-док: каждая запись верифицируется чтением - фейк это и эмулирует).
 type fakeNdmc struct {
-	servers map[string]bool // ключ - args ("8.8.8.8 5353", `8.8.8.8 "" on ISP`)
+	servers  map[string]bool // ключ - args ("8.8.8.8 5353", `8.8.8.8 "" on ISP`)
 	commands []string
-	failNext bool
+	failNext  bool
+	intercept bool
 }
 
 func newFakeNdmc() *fakeNdmc { return &fakeNdmc{servers: map[string]bool{}} }
@@ -32,11 +33,20 @@ func (f *fakeNdmc) run(script string, _ time.Duration) (string, error) {
 		switch {
 		case cmd == "show running-config":
 			var sb strings.Builder
-			for a := range f.servers {
-				sb.WriteString("    ip name-server " + a + "\n")
+			sb.WriteString("dns-proxy\n")
+			if f.intercept {
+				sb.WriteString("    intercept enable\n")
 			}
-			sb.WriteString("    ip no name-servers\n")
+			sb.WriteString("!\n")
+			for a := range f.servers {
+				sb.WriteString("ip name-server " + a + "\n")
+			}
+			sb.WriteString("ip no name-servers\n")
 			return sb.String(), nil
+		case cmd == "dns-proxy intercept enable":
+			f.intercept = true
+		case cmd == "dns-proxy no intercept enable":
+			f.intercept = false
 		case cmd == "system configuration save":
 			// персист - просто фиксируем в commands
 		case strings.HasPrefix(cmd, "ip name-server "):
@@ -176,5 +186,37 @@ func TestNameServerPresent(t *testing.T) {
 	}
 	if nameServerPresent(config, "8.8.4.4") {
 		t.Fatal("чужая запись совпала")
+	}
+}
+
+func TestSetKeeneticIntercept(t *testing.T) {
+	f := newFakeNdmc()
+	if err := SetKeeneticIntercept(f.run, true); err != nil {
+		t.Fatal(err)
+	}
+	if !f.intercept {
+		t.Fatal("перехват не включился")
+	}
+	cfg, err := KeeneticRunningConfig(f.run)
+	if err != nil || !ParseKeeneticOwn(cfg).Intercept {
+		t.Fatalf("парсер не увидел перехват: %v", err)
+	}
+	if err := SetKeeneticIntercept(f.run, false); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ = KeeneticRunningConfig(f.run)
+	if ParseKeeneticOwn(cfg).Intercept {
+		t.Fatal("перехват не выключился")
+	}
+}
+
+func TestParseKeeneticOwnIntercept(t *testing.T) {
+	with := ParseKeeneticOwn("dns-proxy\n    rebind-protect auto\n    intercept enable\n    filter profile DnsProfile0 intercept enable\n!")
+	if !with.Intercept {
+		t.Fatal("глобальный intercept не увиден")
+	}
+	without := ParseKeeneticOwn("dns-proxy\n    filter profile DnsProfile0 intercept enable\n!")
+	if without.Intercept {
+		t.Fatal("профильный intercept принят за глобальный")
 	}
 }

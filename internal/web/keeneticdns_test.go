@@ -21,8 +21,9 @@ import (
 // ndmFake - эмулятор ndm/Entware-шелла: запоминает ip name-server,
 // running-config отражает их (верификация чтением - суть механики).
 type ndmFake struct {
-	mu      sync.Mutex
-	servers map[string]bool
+	mu        sync.Mutex
+	servers   map[string]bool
+	intercept bool
 }
 
 func newNdmsFake() *ndmFake { return &ndmFake{servers: map[string]bool{}} }
@@ -42,11 +43,20 @@ func (n *ndmFake) shell(script string) (string, error) {
 		switch {
 		case cmd == "show running-config":
 			var sb strings.Builder
-			for a := range n.servers {
-				sb.WriteString("    ip name-server " + a + "\n")
+			sb.WriteString("dns-proxy\n")
+			if n.intercept {
+				sb.WriteString("    intercept enable\n")
 			}
-			sb.WriteString("    ip no name-servers\n")
+			sb.WriteString("!\n")
+			for a := range n.servers {
+				sb.WriteString("ip name-server " + a + "\n")
+			}
+			sb.WriteString("ip no name-servers\n")
 			return sb.String(), nil
+		case cmd == "dns-proxy intercept enable":
+			n.intercept = true
+		case cmd == "dns-proxy no intercept enable":
+			n.intercept = false
 		case strings.HasPrefix(cmd, "ip name-server "):
 			n.servers[strings.TrimSpace(strings.TrimPrefix(cmd, "ip name-server "))] = true
 		case strings.HasPrefix(cmd, "no ip name-server "):
@@ -261,5 +271,56 @@ func TestKeeneticDNSMTDeadGate(t *testing.T) {
 	}
 	if ndm.has("127.0.0.1 3553") {
 		t.Fatal("запись встала при мёртвом MT")
+	}
+}
+
+func TestKeeneticInterceptToggle(t *testing.T) {
+	ndm := newNdmsFake()
+	srv := keenDNSServer(t, &fakeMT{version: "0.8.2-rev16-mawg-dev"}, ndm)
+
+	// без confirm - 409
+	code, body := keenDNSPut(t, srv.URL+"/api/v1/dns/keenetic/dns", `{"intercept":true}`)
+	if code != http.StatusConflict || body["needConfirm"] != true {
+		t.Fatalf("intercept без confirm: status=%d body=%v", code, body)
+	}
+	// с confirm - включён, верифицирован чтением
+	code, body = keenDNSPut(t, srv.URL+"/api/v1/dns/keenetic/dns", `{"intercept":true,"confirm":true}`)
+	if code != http.StatusOK {
+		t.Fatalf("intercept с confirm: status=%d body=%v", code, body)
+	}
+	st := body["state"].(map[string]any)
+	if st["intercept"] != true {
+		t.Fatalf("стейт после включения: %v", st)
+	}
+	ndm.mu.Lock()
+	on := ndm.intercept
+	ndm.mu.Unlock()
+	if !on {
+		t.Fatal("в ndm-фейке не включён")
+	}
+	// выключение - безопасно, без confirm
+	code, body = keenDNSPut(t, srv.URL+"/api/v1/dns/keenetic/dns", `{"intercept":false}`)
+	if code != http.StatusOK {
+		t.Fatalf("intercept выключение: status=%d body=%v", code, body)
+	}
+	st = body["state"].(map[string]any)
+	if st["intercept"] != false {
+		t.Fatalf("стейт после выключения: %v", st)
+	}
+}
+
+func TestKeeneticInterceptMTLoopGuard(t *testing.T) {
+	ndm := newNdmsFake()
+	// снапшот fakeMT содержит простой 8.8.8.8:53 - с перехватом+mt это петля
+	srv := keenDNSServer(t, &fakeMT{version: "0.8.2-rev16-mawg-dev"}, ndm)
+	if code, body := keenDNSPut(t, srv.URL+"/api/v1/dns/keenetic/dns", `{"mode":"mt","confirm":true}`); code != http.StatusOK {
+		t.Fatalf("mt: status=%d body=%v", code, body)
+	}
+	code, body := keenDNSPut(t, srv.URL+"/api/v1/dns/keenetic/dns", `{"intercept":true,"confirm":true}`)
+	if code != http.StatusBadRequest {
+		t.Fatalf("петля-гард: status=%d body=%v", code, body)
+	}
+	if !strings.Contains(body["error"].(string), "петлю") {
+		t.Fatalf("текст гарда: %v", body)
 	}
 }

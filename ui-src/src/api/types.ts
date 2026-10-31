@@ -357,6 +357,8 @@ export interface KeeneticDNSState {
   iface?: string
   applied?: string
   live: boolean
+  // глобальный перехват ndm (system profile): весь :53 отвечает Keenetic
+  intercept: boolean
 }
 
 // GET /dns/state: состояние DNS-стека роутера (46-док §3).

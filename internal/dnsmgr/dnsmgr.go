@@ -160,6 +160,11 @@ type KeeneticOwn struct {
 	DoT []KeeneticDot `json:"dot"`
 	Udp []KeeneticUdp `json:"udp"` // простые DNS по подключениям (IPv4)
 	V6  []KeeneticUdp `json:"v6,omitempty"`
+	// Intercept - глобальный перехват ndm (system profile, строка
+	// `intercept enable` секции dns-proxy): роутер отвечает на ВСЕ
+	// запросы :53 - транзит клиентов с чужим DNS и свои собственные
+	// (эмпирика 31.10: nslookup к 8.8.8.8 отвечает профильный upstream).
+	Intercept bool `json:"intercept"`
 }
 
 type KeeneticDoh struct {
@@ -194,6 +199,10 @@ func ParseKeeneticOwn(config string) KeeneticOwn {
 			inProxy = false
 		}
 		switch {
+		case inProxy && trimmed == "intercept enable":
+			// глобальный перехват system-профиля (точное совпадение - не
+			// путать с `filter profile X intercept enable`)
+			own.Intercept = true
 		case inProxy && strings.HasPrefix(trimmed, "https upstream "):
 			parts := strings.Fields(strings.TrimPrefix(trimmed, "https upstream "))
 			if len(parts) > 0 {

@@ -159,11 +159,48 @@ func KeeneticDNSLive(r Runner, args string) bool {
 	if args == "" {
 		return false
 	}
-	out, err := r(ndmcCmd("show running-config"), 30*time.Second)
+	out, err := KeeneticRunningConfig(r)
 	if err != nil {
 		return false
 	}
-	return nameServerPresent(out, args)
+	return NameServerInConfig(out, args)
+}
+
+// KeeneticRunningConfig - running-config живьём (одна точка чтения для
+// верификаций: name-server записи, перехват, собственные серверы).
+func KeeneticRunningConfig(r Runner) (string, error) {
+	out, err := r(ndmcCmd("show running-config"), 30*time.Second)
+	if err != nil {
+		return "", fmt.Errorf("running-config: %w", err)
+	}
+	return out, nil
+}
+
+// NameServerInConfig - поиск записи "ip name-server <args>" в тексте
+// running-config ("ip no name-servers" и чужие записи не совпадают).
+func NameServerInConfig(config, args string) bool {
+	return nameServerPresent(config, args)
+}
+
+// SetKeeneticIntercept - глобальный перехват ndm (system profile):
+// `dns-proxy intercept enable` ловит весь :53 - транзит клиентов с чужим
+// DNS и собственные запросы роутера (эмпирика 31.10: nslookup к 8.8.8.8
+// отвечает профильный upstream). Выключение - `no intercept enable`.
+// Обе стороны верифицируются чтением running-config.
+func SetKeeneticIntercept(r Runner, enable bool) error {
+	cmd := "dns-proxy no intercept enable"
+	if enable {
+		cmd = "dns-proxy intercept enable"
+	}
+	out, err := r(ndmcCmd(cmd)+" ; "+ndmcCmd("system configuration save"), 30*time.Second)
+	if err != nil {
+		return fmt.Errorf("ndmc %s: %w: %s", cmd, err, strings.TrimSpace(out))
+	}
+	cfg, err := KeeneticRunningConfig(r)
+	if err != nil || ParseKeeneticOwn(cfg).Intercept != enable {
+		return fmt.Errorf("Кинетик не принял dns-proxy %s", cmd)
+	}
+	return nil
 }
 
 // nameServerPresent - поиск записи в тексте running-config: строка

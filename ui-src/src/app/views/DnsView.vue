@@ -122,6 +122,29 @@ const kdbDirty = computed(() => {
   return false;
 });
 
+async function toggleKeenIntercept(): Promise<void> {
+  if (kdbBusy.value || !keenDNS.value) return;
+  const enable = !keenDNS.value.intercept;
+  const ok = await confirm({
+    title: enable ? 'Включить перехват DNS Keenetic?' : 'Выключить перехват DNS Keenetic?',
+    text: enable
+      ? 'Keenetic начнёт отвечать на ВСЕ запросы порта 53 - и клиентов с чужим DNS, и собственные; резолвером станут его апстримы (собственные серверы + режим выше).'
+      : 'Запросы клиентов с чужим DNS и собственные запросы роутера к внешним серверам пойдут провайдеру без перехвата.',
+    okLabel: enable ? 'Включить' : 'Выключить',
+  });
+  if (!ok) return;
+  kdbBusy.value = true;
+  try {
+    const res = await api<{ ok: boolean; state: KeeneticDNSState }>('PUT', '/dns/keenetic/dns', { intercept: enable, confirm: true });
+    keenDNS.value = res.state;
+    push(enable ? 'Перехват DNS Keenetic включён' : 'Перехват DNS Keenetic выключен');
+  } catch (e) {
+    push(e instanceof Error ? e.message : String(e), true);
+  } finally {
+    kdbBusy.value = false;
+  }
+}
+
 async function applyKeenDNS(mode: 'off' | 'spare' | 'mt'): Promise<void> {
   if (kdbBusy.value) return;
   if (mode !== 'off' && !kdbConsent.value) return;
@@ -925,6 +948,19 @@ function a2key(z: DnsZone, i: number): string {
         subtitle="режим управления ndm - только по явному согласию"
       >
         <UiHint text="Сам роутер резолвит через собственные серверы Keenetic: обновления, opkg, поднятие пулов с доменными адресами (например WARP). Панель может записать одну запись ip name-server - страховочный сервер или перевод роутера на каскад MagiTrickle. Режим «Как есть» снимает ровно запись панели; ваши записи не трогаются." />
+        <b>Перехват DNS Keenetic<UiHelp text="Глобальный перехват ndm (system profile): роутер отвечает на ВСЕ запросы порта 53 - клиентов с чужим DNS и свои собственные. Включён у тех, у кого DoH заведён в «Интернет-фильтр» (их DoH отвечает даже на запросы к 8.8.8.8); выключен - такие запросы уходят провайдеру напрямую. При режиме «через MagiTrickle» простые :53-серверы в «Резервных» дадут петлю - панель не даст включить." /></b>
+        <span>
+          <UiBadge
+            :text="keenDNS.intercept ? 'включён' : 'выключен'"
+            :variant="keenDNS.intercept ? 'ok' : 'muted'"
+          />
+          <UiButton
+            :busy="kdbBusy"
+            @click="toggleKeenIntercept"
+          >
+            {{ keenDNS.intercept ? 'Выключить' : 'Включить' }}
+          </UiButton>
+        </span>
         <UiSelect
           v-model="kdbMode"
           :options="kdbModeOptions"

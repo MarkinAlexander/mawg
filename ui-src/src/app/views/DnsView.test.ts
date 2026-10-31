@@ -960,7 +960,7 @@ describe('DnsView - keenetic: честные формулировки DNS-мех
 });
 
 describe('DnsView - keenetic: DNS самого роутера (98-док)', () => {
-  type KeenDNSState = { mode: string; spare?: string; iface?: string; applied?: string; live: boolean };
+  type KeenDNSState = { mode: string; spare?: string; iface?: string; applied?: string; live: boolean; intercept?: boolean };
 
   function stubRouterDNS(state: KeenDNSState | null, capture?: { put?: unknown }) {
     vi.stubGlobal('fetch', vi.fn(async (url: string, opts?: RequestInit) => {
@@ -968,10 +968,16 @@ describe('DnsView - keenetic: DNS самого роутера (98-док)', () =
         if ((opts?.method ?? 'GET') === 'PUT') {
           if (capture) capture.put = JSON.parse(String(opts?.body));
           const sent = JSON.parse(String(opts?.body));
+          if (sent.intercept !== undefined) {
+            return new Response(JSON.stringify({
+              ok: true,
+              state: { ...state, intercept: !!sent.intercept },
+            }), { status: 200 });
+          }
           const applied = sent.mode === 'off' ? '' : sent.mode === 'mt' ? '127.0.0.1 3553' : `8.8.8.8 "" on ISP`;
           return new Response(JSON.stringify({
             ok: true,
-            state: { mode: sent.mode, spare: sent.spare, iface: sent.iface, applied: applied || undefined, live: applied !== '' },
+            state: { mode: sent.mode, spare: sent.spare, iface: sent.iface, applied: applied || undefined, live: applied !== '', intercept: state?.intercept ?? false },
           }), { status: 200 });
         }
         if (state === null) {
@@ -1066,6 +1072,62 @@ describe('DnsView - keenetic: DNS самого роутера (98-док)', () =
     await nextTick();
     expect(card.find('.uibanner.k-warn').exists()).toBe(true);
     expect(card.text()).toContain('умер MT - умер резолв');
+    w.unmount();
+  });
+});
+
+describe('DnsView - keenetic: перехват ndm (98-док, находка пользователя 31.10)', () => {
+  function stubIntercept(state: { mode: string; intercept: boolean }, capture?: { put?: unknown }): void {
+    vi.stubGlobal('fetch', vi.fn(async (url: string, opts?: RequestInit) => {
+      if (url.endsWith('/dns/keenetic/dns')) {
+        if ((opts?.method ?? 'GET') === 'PUT') {
+          if (capture) capture.put = JSON.parse(String(opts?.body));
+          const sent = JSON.parse(String(opts?.body));
+          const next = { mode: sent.mode ?? state.mode, intercept: sent.intercept !== undefined ? !!sent.intercept : state.intercept };
+          return new Response(JSON.stringify({ ok: true, state: next }), { status: 200 });
+        }
+        return new Response(JSON.stringify(state), { status: 200 });
+      }
+      if (url.endsWith('/dns/state')) {
+        return new Response(JSON.stringify({
+          platform: 'keenetic',
+          dnsmasq: { servers: [], inMT: false, noresolv: false, strict: false },
+          mt: { upstream: '8.8.8.8:53', remap53: true },
+        }), { status: 200 });
+      }
+      if (url.endsWith('/dns/keenetic/own')) {
+        return new Response(JSON.stringify({ doh: [], dot: [], udp: [] }), { status: 200 });
+      }
+      if (url.endsWith('/dns/upstreams') || url.endsWith('/dns/policy')) {
+        return new Response(JSON.stringify({ capable: false, policy: { enabled: false } }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    }));
+  }
+
+  it('выключен: бейдж «выключен», кнопка «Включить» уходит с confirm:true', async () => {
+    const capture: { put?: unknown } = {};
+    stubIntercept({ mode: '', intercept: false }, capture);
+    const w = mount(DnsView);
+    await vi.waitFor(() => expect(w.find('#card-dns-router').text()).toContain('Перехват DNS Keenetic'));
+    const card = w.find('#card-dns-router');
+    expect(card.text()).toContain('выключен');
+
+    const btn = card.findAll('button').find((b) => b.text() === 'Включить')!;
+    await btn.trigger('click');
+    await vi.waitFor(() => {
+      expect(capture.put).toEqual({ intercept: true, confirm: true });
+    });
+    await vi.waitFor(() => expect(card.text()).toContain('включён'));
+    w.unmount();
+  });
+
+  it('включён: бейдж ок и кнопка «Выключить»', async () => {
+    stubIntercept({ mode: 'spare', intercept: true });
+    const w = mount(DnsView);
+    await vi.waitFor(() => expect(w.find('#card-dns-router').text()).toContain('включён'));
+    const card = w.find('#card-dns-router');
+    expect(card.findAll('button').some((b) => b.text() === 'Выключить')).toBe(true);
     w.unmount();
   });
 });

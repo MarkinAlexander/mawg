@@ -15,6 +15,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 
@@ -29,14 +30,19 @@ type keeneticDNSState struct {
 	Iface   string `json:"iface,omitempty"`
 	Applied string `json:"applied,omitempty"`
 	Live    bool   `json:"live"`
+	// Intercept - глобальный перехват ndm (system profile): весь :53
+	// отвечает сам Keenetic через свои апстримы.
+	Intercept bool `json:"intercept"`
 }
 
 func (s *Server) keeneticDNSState() keeneticDNSState {
 	set := s.store.KeeneticDNS()
 	st := keeneticDNSState{Mode: set.Mode, Spare: set.Spare, Iface: set.Iface, Applied: set.Applied}
-	if set.Applied != "" {
-		if run, ok := s.dnsRunner(); ok {
-			st.Live = dnsmgr.KeeneticDNSLive(run, set.Applied)
+	if run, ok := s.dnsRunner(); ok {
+		// один ndmc-вызов на обе верификации (запись + перехват)
+		if cfg, err := dnsmgr.KeeneticRunningConfig(run); err == nil {
+			st.Live = set.Applied != "" && dnsmgr.NameServerInConfig(cfg, set.Applied)
+			st.Intercept = dnsmgr.ParseKeeneticOwn(cfg).Intercept
 		}
 	}
 	return st
@@ -71,16 +77,26 @@ func (s *Server) keeneticDNSSet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Mode    string `json:"mode"`
-		Spare   string `json:"spare"`
-		Iface   string `json:"iface"`
-		Confirm bool   `json:"confirm"`
+		Mode      string `json:"mode"`
+		Spare     string `json:"spare"`
+		Iface     string `json:"iface"`
+		Confirm   bool   `json:"confirm"`
+		Intercept *bool  `json:"intercept"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
 		writeErr(w, fmt.Errorf("кривой запрос"))
 		return
 	}
 	prev := s.store.KeeneticDNS()
+
+	// тумблер перехвата ndm - отдельное действие, mode не трогает
+	if req.Intercept != nil {
+		if s.setKeeneticIntercept(w, r.Context(), *req.Intercept, req.Confirm) {
+			st := s.keeneticDNSState()
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "state": st})
+		}
+		return
+	}
 
 	var args string
 	switch req.Mode {
@@ -133,6 +149,55 @@ func (s *Server) keeneticDNSSet(w http.ResponseWriter, r *http.Request) {
 func (s *Server) dnsRunnerFn() dnsmgr.Runner {
 	run, _ := s.dnsRunner()
 	return run
+}
+
+// setKeeneticIntercept - применение тумблера перехвата ndm; false = ответ
+// уже записан клиенту (ошибка/409), true = применено.
+func (s *Server) setKeeneticIntercept(w http.ResponseWriter, ctx context.Context, enable, confirm bool) bool {
+	if enable && !confirm {
+		// перехват всего :53 - честное предупреждение перед записью
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"needConfirm": true,
+			"error":       "Keenetic начнёт отвечать на ВСЕ запросы порта 53 - и клиентов с чужим DNS, и собственные; резолвером станут его апстримы. В режиме «через MagiTrickle» простые :53-серверы в «Резервных» замкнут петлю ndm→MT→ndm.",
+		})
+		return false
+	}
+	if enable && s.store.KeeneticDNS().Mode == "mt" {
+		if res, err := s.mtClient().DnsUpstreams(ctx); err == nil {
+			for _, u := range res.Upstreams {
+				if plainPort53(u.Address) {
+					writeJSON(w, http.StatusBadRequest, map[string]string{
+						"error": "в «Резервных серверах» есть простой :53 (" + u.Address + "): с включённым перехватом и режимом «через MagiTrickle» запросы MT замкнутся в петлю ndm→MT→ndm. Уберите простые серверы или замените их DoH/DoT-версиями.",
+					})
+					return false
+				}
+			}
+		}
+	}
+	if err := dnsmgr.SetKeeneticIntercept(s.dnsRunnerFn(), enable); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return false
+	}
+	if enable {
+		s.store.LogEvent("dns", "keenetic-dns", "перехват DNS Keenetic включён (system profile): весь :53 отвечает ndm")
+	} else {
+		s.store.LogEvent("dns", "keenetic-dns", "перехват DNS Keenetic выключен")
+	}
+	return true
+}
+
+// plainPort53 - простой UDP-апстрим на 53-м порту (без схемы; порт пуст =
+// 53): при перехвате ndm + режиме «через MagiTrickle» замыкает петлю.
+func plainPort53(addr string) bool {
+	if strings.Contains(addr, "://") {
+		return false // tls:// / https:// - порты 853/443, перехват их не ловит
+	}
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return true // "8.8.8.8" - порт по умолчанию 53
+	}
+	_ = host
+	return port == "53" || port == ""
 }
 
 // spareLoopGuard - страховочный сервер не должен указывать на системный
