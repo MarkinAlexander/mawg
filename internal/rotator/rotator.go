@@ -58,6 +58,10 @@ type Engine struct {
 	mtEverAlive bool
 	mtRestarts  []time.Time // автоперезапуски за скользящий час (бюджет)
 	mtSyncAt    time.Time
+	// lastProbeVersion - версия MT на момент последней пробы совместимости
+	// (перепроверка при смене версии: пользователь обновил MT - липкий
+	// флаг глючности с прошлого старта панели должен сняться сам).
+	lastProbeVersion string
 
 	ifaceAt time.Time
 
@@ -203,12 +207,55 @@ func (e *Engine) Start(parent context.Context) {
 // nf-объекты после прошлого сеанса - известная история) - это НЕ глючная
 // сборка, а транзиент: рестарт демона + одна повторная попытка, флаг
 // только если не помогло. Ждём поднятия демона до 2 минут (на буте
-// иногда виснет).
+// иногда виснет). После первой пробы - вотчер версии: смена версии MT
+// (обновили mtinstall'ом) перепроверяет флаг без рестарта панели.
 func (e *Engine) probeMagitrickleCompatibility(ctx context.Context) {
 	if !e.waitMagitrickleAlive(2 * time.Minute) {
 		return
 	}
+	e.runMagitrickleProbe(ctx)
+	go e.watchMagitrickleVersion(ctx)
+}
+
+// watchMagitrickleVersion - дешёвый GET /version раз в 10 минут; смена
+// версии MT = повторная проба совместимости (снимает липкий флаг после
+// обновления MT без рестарта панели).
+func (e *Engine) watchMagitrickleVersion(ctx context.Context) {
+	ticker := time.NewTicker(10 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			e.maybeReprobeOnVersionChange(ctx)
+		}
+	}
+}
+
+// maybeReprobeOnVersionChange - одна проверка версии: изменилась -
+// повторная проба. true = проба выполнялась.
+func (e *Engine) maybeReprobeOnVersionChange(ctx context.Context) bool {
+	vctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	v, err := e.mt.GetVersion(vctx)
+	cancel()
+	if err != nil || v == "" || v == e.lastProbeVersion {
+		return false
+	}
+	if !e.waitMagitrickleAlive(2 * time.Minute) {
+		return false
+	}
+	e.runMagitrickleProbe(ctx)
+	return true
+}
+
+// runMagitrickleProbe - тело пробы (старт + перепроверка по версии).
+func (e *Engine) runMagitrickleProbe(ctx context.Context) {
 	pctx, cancel := context.WithTimeout(ctx, 4*time.Minute)
+	defer cancel()
+	if v, err := e.mt.GetVersion(pctx); err == nil && v != "" {
+		e.lastProbeVersion = v
+	}
 	defer cancel()
 	before, err := e.mt.GroupsWithRules(pctx)
 	if err != nil || len(before) == 0 {

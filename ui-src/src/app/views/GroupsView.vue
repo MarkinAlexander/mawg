@@ -776,8 +776,8 @@ onMounted(openFromLink);
     <UiBanner
       v-if="state.glitchy"
       kind="err"
-      text="Обнаружена глючная сборка MagiTrickle: массовые записи усекают группы. Поставьте наш форк с фиксами -"
-      :link="{ href: 'https://gitlab.com/magitrickle/magitrickle/-/merge_requests/222', label: 'MR !222' }"
+      text="Обнаружена глючная сборка MagiTrickle: проба панели поймала усечение групп на массовой записи. Поставьте наш форк (кнопка «обновить MT» в Системе) - проба перепроверится автоматически при смене версии MT; если MT уже наш и свежий, флаг снялся бы при рестарте панели или обновлении."
+      :link="{ href: 'https://github.com/MarkinAlexander/magitrickle/releases', label: 'релизы нашего форка' }"
       class="mtnote"
     />
     <UiBanner

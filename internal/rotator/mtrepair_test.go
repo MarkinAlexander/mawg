@@ -151,3 +151,63 @@ func TestProbeDetectsGlitchyMT(t *testing.T) {
 		t.Fatal("пустой рантайм не должен ловиться как глючный")
 	}
 }
+
+// перепроверка по версии MT: липкий флаг глючности (проба старта поймала
+// усечение, потом MT обновили без рестарта панели) снимается сам при
+// смене версии - без него пользователю с свежим MT светит мёртвый баннер
+func TestProbeReRunsOnVersionChange(t *testing.T) {
+	magitrickle.SetShadowStorage(nil, nil)
+	truncate := atomic.Bool{}
+	version := atomic.Value{}
+	version.Store("0.8.2-rev16-mawg-dev")
+	var state []magitrickle.Group
+	mt := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/version":
+			json.NewEncoder(w).Encode(map[string]string{"version": version.Load().(string)})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/groups":
+			json.NewEncoder(w).Encode(map[string]any{"groups": state})
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/groups":
+			var req struct {
+				Groups []magitrickle.Group `json:"groups"`
+			}
+			json.NewDecoder(r.Body).Decode(&req)
+			if truncate.Load() {
+				req.Groups = req.Groups[:1]
+			}
+			state = req.Groups
+			w.WriteHeader(200)
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	t.Cleanup(mt.Close)
+
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := New(st, fake.New(), magitrickle.New(mt.URL))
+	state = []magitrickle.Group{
+		{ID: "g1", Name: "a", Enable: true},
+		{ID: "g2", Name: "b", Enable: true},
+	}
+	truncate.Store(true)
+	e.probeMagitrickleCompatibility(t.Context())
+	if !st.MTGlitchy() {
+		t.Fatal("флаг не поставлен")
+	}
+	// та же версия: перепроверка не выполняется (дешёвый GET, флаг живёт)
+	if e.maybeReprobeOnVersionChange(t.Context()) {
+		t.Fatal("перепроверка при неизменной версии")
+	}
+	// MT обновили: версия сменилась - проба сняла флаг
+	truncate.Store(false)
+	version.Store("0.8.2-rev17-mawg-dev")
+	if !e.maybeReprobeOnVersionChange(t.Context()) {
+		t.Fatal("смена версии не запустила перепроверку")
+	}
+	if st.MTGlitchy() {
+		t.Fatal("липкий флаг не снят после обновления MT")
+	}
+}
