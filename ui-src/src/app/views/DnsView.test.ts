@@ -1011,69 +1011,28 @@ describe('DnsView - keenetic: DNS самого роутера (98-док)', () =
     w.unmount();
   });
 
-  it('режим как есть: селект, согласие гейтит кнопку, PUT уходит с confirm:true', async () => {
-    const capture: { put?: unknown } = {};
-    stubRouterDNS({ mode: '', live: false }, capture);
-    const w = mount(DnsView);
-    await vi.waitFor(() => expect(w.find('#card-dns-router').exists()).toBe(true));
-    const card = w.find('#card-dns-router');
-    expect(card.text()).toContain('DNS самого роутера');
-    expect(card.text()).toContain('Как есть - панель не пишет в Keenetic');
-
-    // без правок кнопка недоступна
-    const apply = () => card.findAll('button').find((b) => b.text() === 'Применить')!;
-    expect(apply().attributes('disabled')).toBeDefined();
-
-    // выбираем spare через кастомный селект (GOTCHAS: триггер .psel-btn)
-    const modeBtn = card.findAll('.psel-btn').find((b) => b.text().includes('Как есть'));
-    await modeBtn!.trigger('click');
-    await nextTick();
-    await card.findAll('.psel-item').find((o) => o.text().includes('Страховочный сервер'))!.trigger('click');
-    await nextTick();
-    expect(apply().attributes('disabled')).toBeDefined();
-
-    // галочка согласия - кнопка оживает, PUT с confirm:true
-    await card.find('.uiswitch input').setValue(true);
-    await nextTick();
-    expect(apply().attributes('disabled')).toBeUndefined();
-    await apply().trigger('click');
-    await vi.waitFor(() => {
-      expect(capture.put).toEqual({ mode: 'spare', spare: '', iface: '', confirm: true });
-    });
-    // стейт перечитан: applied-строка в карточке
-    await vi.waitFor(() => expect(card.text()).toContain('ip name-server 8.8.8.8 "" on ISP'));
-    expect(card.text()).toContain('живёт');
-    w.unmount();
-  });
-
-  it('запись стоит: строка applied + кнопка «Убрать запись» уходит с mode:off без согласия', async () => {
-    const capture: { put?: unknown } = {};
-    stubRouterDNS({ mode: 'spare', spare: '8.8.8.8', iface: 'ISP', applied: '8.8.8.8 "" on ISP', live: true }, capture);
-    const w = mount(DnsView);
-    await vi.waitFor(() => expect(w.find('#card-dns-router').text()).toContain('ip name-server 8.8.8.8 "" on ISP'));
-
-    const remove = w.findAll('#card-dns-router button').find((b) => b.text() === 'Убрать запись')!;
-    await remove.trigger('click');
-    await vi.waitFor(() => {
-      expect(capture.put).toEqual({ mode: 'off', spare: '8.8.8.8', iface: 'ISP', confirm: true });
-    });
-    w.unmount();
-  });
-
-  it('режим MT снят: пункта в селекте нет, порт в подсказке честно назван доменом', async () => {
+  it('режимы записи в ndm выведены: селекта нет, остался только перехват + подсказка про легаси', async () => {
     stubRouterDNS({ mode: '', live: false });
     const w = mount(DnsView);
     await vi.waitFor(() => expect(w.find('#card-dns-router').exists()).toBe(true));
     const card = w.find('#card-dns-router');
-    const modeBtn = card.findAll('.psel-btn').find((b) => b.text().includes('Как есть'));
-    await modeBtn!.trigger('click');
-    await nextTick();
-    const items = card.findAll('.psel-item').map((o) => o.text());
-    expect(items.some((t) => t.includes('Через MagiTrickle'))).toBe(false);
-    // выбор spare: подсказка объясняет, почему без порта
-    await card.findAll('.psel-item').find((o) => o.text().includes('Страховочный'))!.trigger('click');
-    await nextTick();
-    expect(card.text()).toContain('второе поле ip name-server - это домен, не порт');
+    expect(card.text()).toContain('DNS самого роутера');
+    // селекта режима и кнопки Применить больше нет
+    expect(card.findAll('.psel-btn').length).toBe(0);
+    expect(card.findAll('button').find((b) => b.text() === 'Применить')).toBeUndefined();
+    // подсказка объясняет, почему режимы сняты и что будет с легаси
+    expect(card.text()).toContain('выведены из панели');
+    expect(card.text()).toContain('легаси-запись снимется автоматически');
+    w.unmount();
+  });
+
+  it('легаси-запись в стейте: панель не рендерит applied-строку (снятие делает сервер при открытии)', async () => {
+    stubRouterDNS({ mode: 'spare', spare: '8.8.8.8', iface: 'ISP', applied: '8.8.8.8 "" on ISP', live: true });
+    const w = mount(DnsView);
+    await vi.waitFor(() => expect(w.find('#card-dns-router').exists()).toBe(true));
+    const card = w.find('#card-dns-router');
+    expect(card.text()).not.toContain('ip name-server 8.8.8.8 "" on ISP');
+    expect(card.findAll('button').find((b) => b.text() === 'Убрать запись')).toBeUndefined();
     w.unmount();
   });
 });
