@@ -567,8 +567,11 @@ func (b *Backend) RunShell(script string, timeout time.Duration) (string, error)
 	return platform.RunBoundedCombined(prep(exec.Command("/bin/sh", "-c", script)), timeout)
 }
 
+// RestartMagitrickle - рестарт активного MT-бэкенда. Если установлен
+// (executable) init mt-c - рестартить его, иначе подмена бэкенда: heal
+// поднял бы Go-MT поверх живого mt-c (паритет keenetic.go, 108-док).
 func (b *Backend) RestartMagitrickle() error {
-	_, err := runShell("/etc/init.d/magitrickle restart")
+	_, err := runShell(`if [ -x /etc/init.d/mtc ]; then /etc/init.d/mtc restart; else /etc/init.d/magitrickle restart; fi`)
 	return err
 }
 
