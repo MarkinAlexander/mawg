@@ -67,6 +67,7 @@ export interface MtGroupsRes {
   glitchy: boolean // глючная сборка MT: массовые записи усекают группы
   wrapper: boolean // в OUTPUT видна обёртка юзера (MR_*)
   sources: boolean // MT понимает sources (форк rev3+)
+  backendFlavor?: string // семейство бэкенда MT: mawg-c | mawg-dev | upstream
 }
 
 // ссылка на вхождение паттерна (GET /mt/duplicates): где ещё живёт правило
@@ -125,6 +126,7 @@ export interface CascadesRes {
   available: boolean
   cascades?: CascadeInfo[]
   wrapper?: boolean
+  backendFlavor?: string // семейство бэкенда MT: mawg-c | mawg-dev | upstream
 }
 
 // гистерезис политик (server.go getPolicyCycles): {failCycles, restoreCycles}

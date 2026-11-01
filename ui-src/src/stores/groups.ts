@@ -12,6 +12,7 @@ interface GroupsState {
   groups: GroupView[]
   glitchy: boolean
   wrapper: boolean
+  backendFlavor: string // семейство бэкенда MT (107-док): mawg-c | mawg-dev | upstream
   sourcesCapable: boolean
   duplicates: Record<string, DupInfo[]>
   ifaces: MtIface[] // селекты интерфейсов (легаси MT_IFACES, опрос 60с)
@@ -33,6 +34,7 @@ const state = reactive<GroupsState>({
   groups: [],
   glitchy: false,
   wrapper: false,
+  backendFlavor: '',
   sourcesCapable: true,
   duplicates: {},
   ifaces: [],
@@ -65,6 +67,7 @@ export function useGroups() {
       state.available = true;
       state.glitchy = !!r.glitchy;
       state.wrapper = !!r.wrapper;
+      state.backendFlavor = r.backendFlavor || '';
       state.sourcesCapable = r.sources !== false;
       const json = JSON.stringify(r.groups || []);
       const changed = force || json !== state.lastJSON;

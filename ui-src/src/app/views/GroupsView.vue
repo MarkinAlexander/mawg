@@ -787,6 +787,12 @@ onMounted(openFromLink);
       class="mtnote"
     />
     <UiBanner
+      v-if="state.backendFlavor === 'mawg-c'"
+      kind="info"
+      text="Бэкенд MT — mt-c: роутер-путь (OUTPUT) обслуживает сам mt-c, каскадные записи mawg в чужие iptables-цепочки отключены. Синхронизация групп через sources API работает как обычно."
+      class="mtnote"
+    />
+    <UiBanner
       v-if="!state.sourcesCapable"
       kind="warn"
       text="Подключённый MagiTrickle не поддерживает источники групп: режимы «кто ходит в группу» спрятаны. Поставьте форк 0.8.2-rev3 или новее."

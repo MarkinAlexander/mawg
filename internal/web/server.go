@@ -2343,11 +2343,13 @@ func (s *Server) mtGetGroups(w http.ResponseWriter, r *http.Request) {
 		out = append(out, gv)
 	}
 	wrapper := false
+	flavor := ""
 	if c := s.casc(); c != nil {
 		wrapper = c.WrapperDetected()
+		flavor = string(c.BackendFlavor())
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"available": true, "groups": out, "glitchy": s.store.MTGlitchy(), "wrapper": wrapper,
-		"sources": s.mtSourcesCapable(r.Context())})
+		"sources": s.mtSourcesCapable(r.Context()), "backendFlavor": flavor})
 }
 
 func (s *Server) mtGetInterfaces(w http.ResponseWriter, r *http.Request) {
@@ -2761,7 +2763,8 @@ func (s *Server) cascList(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"available": false})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"available": true, "cascades": c.Infos(r.Context()), "wrapper": c.WrapperDetected()})
+	writeJSON(w, http.StatusOK, map[string]any{"available": true, "cascades": c.Infos(r.Context()), "wrapper": c.WrapperDetected(),
+		"backendFlavor": string(c.BackendFlavor())})
 }
 
 func (s *Server) cascCreate(w http.ResponseWriter, r *http.Request) {
