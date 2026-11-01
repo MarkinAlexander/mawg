@@ -128,38 +128,37 @@ func TestKeeneticDNSNotKeenetic(t *testing.T) {
 
 func TestKeeneticDNSSpare(t *testing.T) {
 	ndm := newNdmsFake()
-	srv := keenDNSServer(t, &fakeMT{version: "0.8.2-rev16-mawg-dev"}, ndm)
+	mt := httptest.NewServer((&fakeMT{version: "0.8.2-rev17-mawg-dev"}).handler())
+	t.Cleanup(mt.Close)
+	fb := fake.New()
+	fb.NameOverride = "keenetic"
+	fb.ShellFn = ndm.shell
+	st, _ := store.Open(t.TempDir())
+	engine := rotator.New(st, fb, nil)
+	srv := httptest.NewServer(New(st, engine, fb, magitrickle.New(mt.URL), "test", nil).Handler())
+	t.Cleanup(srv.Close)
 
-	// старт: режим пуст
-	resp, err := http.Get(srv.URL + "/api/v1/dns/keenetic/dns")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var start struct {
-		Mode string `json:"mode"`
-		Live bool   `json:"live"`
-	}
-	json.NewDecoder(resp.Body).Decode(&start)
-	resp.Body.Close()
-	if start.Mode != "" || start.Live {
-		t.Fatalf("стартовое состояние: %+v", start)
-	}
-
-	// страховочный сервер с привязкой к подключению
+	// режимы записи в ndm выведены: spare - честный 400
 	code, body := keenDNSPut(t, srv.URL+"/api/v1/dns/keenetic/dns", `{"mode":"spare","spare":"8.8.8.8","iface":"ISP"}`)
-	if code != http.StatusOK {
+	if code != http.StatusBadRequest {
 		t.Fatalf("PUT spare: status=%d body=%v", code, body)
 	}
-	st := body["state"].(map[string]any)
-	if st["mode"] != "spare" || st["applied"] != `8.8.8.8 "" on ISP` || st["live"] != true {
-		t.Fatalf("стейт после spare: %v", st)
+	if msg, _ := body["error"].(string); !strings.Contains(msg, "выведена") {
+		t.Fatalf("текст без объяснения: %v", body)
 	}
-	if !ndm.has(`8.8.8.8 "" on ISP`) {
-		t.Fatalf("запись не встала: %v", ndm.servers)
+	if ndm.has(`8.8.8.8 "" on ISP`) {
+		t.Fatal("запись встала при снятом режиме")
 	}
 
-	// GET подтверждает живость чтением running-config
-	resp, err = http.Get(srv.URL + "/api/v1/dns/keenetic/dns")
+	// легаси: в хранилище осталась старая запись - первый GET снимает её
+	// из ndm и возвращает панель на дефолт
+	if err := st.SetKeeneticDNS(store.KeeneticDNS{Mode: "spare", Spare: "8.8.8.8", Iface: "ISP", Applied: `8.8.8.8 "" on ISP`}); err != nil {
+		t.Fatal(err)
+	}
+	ndm.mu.Lock()
+	ndm.servers[`8.8.8.8 "" on ISP`] = true
+	ndm.mu.Unlock()
+	resp, err := http.Get(srv.URL + "/api/v1/dns/keenetic/dns")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,26 +169,16 @@ func TestKeeneticDNSSpare(t *testing.T) {
 	}
 	json.NewDecoder(resp.Body).Decode(&after)
 	resp.Body.Close()
-	if after.Mode != "spare" || after.Applied != `8.8.8.8 "" on ISP` || !after.Live {
-		t.Fatalf("GET после spare: %+v", after)
-	}
-
-	// петлевой страховочный сервер - честный 400
-	if code, _ := keenDNSPut(t, srv.URL+"/api/v1/dns/keenetic/dns", `{"mode":"spare","spare":"127.0.0.1"}`); code != http.StatusBadRequest {
-		t.Fatalf("loopback-spare: status=%d, хочу 400", code)
-	}
-
-	// off снимает ровно нашу запись
-	code, body = keenDNSPut(t, srv.URL+"/api/v1/dns/keenetic/dns", `{"mode":"off"}`)
-	if code != http.StatusOK {
-		t.Fatalf("PUT off: status=%d body=%v", code, body)
-	}
-	st = body["state"].(map[string]any)
-	if st["mode"] != "off" || st["applied"] != nil || st["live"] != false {
-		t.Fatalf("стейт после off: %v", st)
+	if after.Mode != "" || after.Applied != "" || after.Live {
+		t.Fatalf("легаси-автосброс: %+v", after)
 	}
 	if ndm.has(`8.8.8.8 "" on ISP`) {
-		t.Fatal("запись не снята")
+		t.Fatal("легаси-запись не снята из ndm")
+	}
+
+	// петлевой страховочный сервер тоже просто 400 (гвард раньше)
+	if code, _ := keenDNSPut(t, srv.URL+"/api/v1/dns/keenetic/dns", `{"mode":"spare","spare":"127.0.0.1"}`); code != http.StatusBadRequest {
+		t.Fatalf("loopback-spare: status=%d, хочу 400", code)
 	}
 }
 

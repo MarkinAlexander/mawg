@@ -45,10 +45,21 @@ func (s *Server) keeneticDNSState() keeneticDNSState {
 	return st
 }
 
-// keeneticDNSGet - состояние режима «DNS самого роутера».
+// keeneticDNSGet - состояние перехвата ndm. Заодно: режимы записи в ndm
+// сняты с производства (решение владельца 01.11) - у легаси-пользователей
+// с сохранённой записью она снимается из ndm автоматически при первом
+// открытии карточки, состояние панели возвращается на дефолт.
 func (s *Server) keeneticDNSGet(w http.ResponseWriter, r *http.Request) {
 	if !s.keeneticDNSReady(w) {
 		return
+	}
+	if prev := s.store.KeeneticDNS(); prev.Applied != "" || prev.Mode != "" && prev.Mode != "off" {
+		if _, err := dnsmgr.ApplyKeeneticDNS(s.dnsRunnerFn(), "off", "", "", prev.Applied); err != nil {
+			s.store.LogEvent("dns", "keenetic-dns", "легаси-запись ip name-server "+prev.Applied+" не снялась автоматически ("+err.Error()+") - повтор при следующем открытии карточки")
+		} else {
+			s.store.SetKeeneticDNS(store.KeeneticDNS{})
+			s.store.LogEvent("dns", "keenetic-dns", "легаси-запись ip name-server "+prev.Applied+" снята автоматически (режимы записи в ndm выведены из панели)")
+		}
 	}
 	writeJSON(w, http.StatusOK, s.keeneticDNSState())
 }
@@ -95,31 +106,24 @@ func (s *Server) keeneticDNSSet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var args string
 	switch req.Mode {
 	case "spare":
-		var err error
-		if args, err = dnsmgr.NameServerArgs(req.Spare, req.Iface); err != nil {
-			writeErr(w, err)
-			return
-		}
-		if err := s.spareLoopGuard(args); err != nil {
-			writeErr(w, err)
-			return
-		}
+		// режимы записи в ndm выведены из панели (решение владельца
+		// 01.11): потенциальная петля и лишний SPOF при том, что
+		// перехват DNS на Keenetic делает сам MT (DNAT :53->:3553).
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "запись ip name-server выведена из панели: ndm не принимает loopback и порты, а перехват DNS клиентов делает сам MagiTrickle. Легаси-запись снимется автоматически при открытии этой карточки",
+		})
+		return
 	case "mt":
-		// режим снят (инцидент 01.11): ndm не принимает 127.0.0.1 как
-		// апстрим и портов не поддерживает - MT:3553 через name-server
-		// невыразим; перехват DNS делает сам MT (DNAT). Старая вкладка
-		// UI получает честный отказ вместо «проверьте прошивку».
 		writeJSON(w, http.StatusBadRequest, map[string]string{
 			"error": "режим «в MT» снят: ndm не принимает 127.0.0.1 как апстрим и портов не поддерживает (второе поле ip name-server - домен). Перехват DNS на Keenetic делает сам MagiTrickle - прописывать ничего не нужно",
 		})
 		return
 	case "off":
-		// рестор - безопасно, согласие не требуется
+		// легаси-кнопка «Убрать запись» старой вкладки: снять и очистить
 	default:
-		writeErr(w, fmt.Errorf("mode: off|spare"))
+		writeErr(w, fmt.Errorf("mode: off"))
 		return
 	}
 

@@ -79,25 +79,17 @@ watch(isKeen, (v) => {
 }, { immediate: true });
 
 // --- DNS самого роутера (98-док): историческая граница «панель в ndm не
-// пишет» остаётся дефолтом, но ndm без единого апстрима оглохнет (кейс
-// 31.10: галки «игнорировать провайдера» + стёртый DoH = ноль запросов при
-// живой локалке). По явному согласию панель пишет одну запись ip
-// name-server - страховочный сервер или MT:3553; рестор - снятие ровно
-// этой записи. Согласие двуслойное: галочка + confirm-диалог. ---
+// пишет» остаётся дефолтом. Режимы записи ip name-server (spare/mt)
+// ВЫВЕДЕНЫ (решение владельца 01.11, инцидент с ndm): ndm не принимает
+// loopback/порты, перехват DNS клиентов делает сам MagiTrickle, а
+// легаси-записи пользователей снимаются сервером автоматически при
+// открытии карточки. В карточке остаётся только перехват ndm. ---
 const keenDNS = ref<KeeneticDNSState | null>(null);
-const kdbMode = ref<'off' | 'spare'>('off');
-const kdbSpare = ref('');
-const kdbIface = ref('');
-const kdbConsent = ref(false);
 const kdbBusy = ref(false);
 
 async function loadKeenDNS(): Promise<void> {
   try {
-    const st = await api<KeeneticDNSState>('GET', '/dns/keenetic/dns');
-    keenDNS.value = st;
-    kdbMode.value = (st.mode === 'spare' ? 'spare' : 'off');
-    kdbSpare.value = st.spare || '';
-    kdbIface.value = st.iface || '';
+    keenDNS.value = await api<KeeneticDNSState>('GET', '/dns/keenetic/dns');
   } catch {
     keenDNS.value = null; // не-Кинетик/ошибка - карточки не будет
   }
@@ -105,25 +97,6 @@ async function loadKeenDNS(): Promise<void> {
 watch(isKeen, (v) => {
   if (v && keenDNS.value === null) void loadKeenDNS();
 }, { immediate: true });
-
-// Режим «в MT» убран (98-док + инцидент 01.11): ndm не принимает
-// 127.0.0.1 как апстрим вовсе (invalid IP address), а второе поле
-// ip name-server - ДОМЕН, не порт, поэтому «MT:3553» невыразимо.
-// Перехват DNS на Keenetic делает сам MagiTrickle (DNAT :53->:3553).
-const kdbModeOptions = computed<UiSelectOption[]>(() => [
-  { value: 'off', label: 'Как есть - панель не пишет в Keenetic' },
-  { value: 'spare', label: 'Страховочный сервер из MAWG' },
-]);
-
-const kdbDirty = computed(() => {
-  const st = keenDNS.value;
-  if (!st) return false;
-  if (kdbMode.value !== (st.mode || 'off')) return true;
-  if (kdbMode.value === 'spare') {
-    return kdbSpare.value !== (st.spare || '') || kdbIface.value !== (st.iface || '');
-  }
-  return false;
-});
 
 async function toggleKeenIntercept(): Promise<void> {
   if (kdbBusy.value || !keenDNS.value) return;
@@ -141,34 +114,6 @@ async function toggleKeenIntercept(): Promise<void> {
     const res = await api<{ ok: boolean; state: KeeneticDNSState }>('PUT', '/dns/keenetic/dns', { intercept: enable, confirm: true });
     keenDNS.value = res.state;
     push(enable ? 'Перехват DNS Keenetic включён' : 'Перехват DNS Keenetic выключен');
-  } catch (e) {
-    push(e instanceof Error ? e.message : String(e), true);
-  } finally {
-    kdbBusy.value = false;
-  }
-}
-
-async function applyKeenDNS(mode: 'off' | 'spare'): Promise<void> {
-  if (kdbBusy.value) return;
-  if (mode !== 'off' && !kdbConsent.value) return;
-  const what = mode === 'off'
-    ? 'Запись панели будет снята из настроек Keenetic. Собственные записи Keenetic не трогаются.'
-    : `В настройки Keenetic будет записан DNS-сервер ${kdbSpare.value.trim() || '(не задан)'}${kdbIface.value.trim() ? ` на подключении ${kdbIface.value.trim()}` : ''}. Обратно - режим «Как есть».`;
-  const ok = await confirm({ title: 'Изменить DNS самого роутера?', text: what, okLabel: 'Применить' });
-  if (!ok) return;
-  kdbBusy.value = true;
-  try {
-    const res = await api<{ ok: boolean; state: KeeneticDNSState }>('PUT', '/dns/keenetic/dns', {
-      mode,
-      spare: kdbSpare.value.trim(),
-      iface: kdbIface.value.trim(),
-      confirm: true,
-    });
-    keenDNS.value = res.state;
-    kdbMode.value = (res.state.mode === 'spare' ? 'spare' : 'off');
-    kdbConsent.value = false;
-    push(mode === 'off' ? 'DNS роутера: запись панели снята' : 'DNS роутера: применено');
-    void loadOwn(); // баннер «не осталось серверов» может уйти
   } catch (e) {
     push(e instanceof Error ? e.message : String(e), true);
   } finally {
@@ -962,53 +907,7 @@ function a2key(z: DnsZone, i: number): string {
             {{ keenDNS.intercept ? 'Выключить' : 'Включить' }}
           </UiButton>
         </span>
-        <UiSelect
-          v-model="kdbMode"
-          :options="kdbModeOptions"
-          label="Режим DNS роутера"
-        />
-        <template v-if="kdbMode === 'spare'">
-          <div class="hrow">
-            <UiInput
-              v-model="kdbSpare"
-              label="Сервер (IP)"
-              placeholder="8.8.8.8"
-            />
-            <UiInput
-              v-model="kdbIface"
-              label="Подключение (опционально)"
-              placeholder="обычно ISP"
-            />
-          </div>
-          <UiHint text="Только IP-адрес, БЕЗ порта: ndm порты не принимает (второе поле ip name-server - это домен, не порт); loopback (127.0.0.1) отвергается как «сам себе апстрим». Имя ndm резолвить нечем. Подключение - привязка записи к интерфейсу (обычно ISP / Кабель Ethernet), пусто - глобально. Перехват DNS клиентов на Keenetic делает сам MagiTrickle, этот пункт для того не нужен." />
-        </template>
-        <UiSwitch
-          v-model="kdbConsent"
-          label="Я понимаю, что делаю: панель запишет ip name-server в настройки Keenetic"
-        />
-        <div class="btnrow">
-          <UiButton
-            :busy="kdbBusy"
-            :disabled="!kdbDirty || (kdbMode !== 'off' && !kdbConsent)"
-            @click="applyKeenDNS(kdbMode)"
-          >
-            Применить
-          </UiButton>
-        </div>
-        <template v-if="keenDNS.applied">
-          <b>Записано в ndm<UiHelp text="Единственная запись, которую панель поставила в настройки Keenetic (ip name-server). Бейдж «живёт» - запись реально стоит в running-config. Кнопка снимает её; собственные записи Keenetic при этом не трогаются." /></b>
-          <span>
-            <code class="mono">ip name-server {{ keenDNS.applied }}</code>
-            <UiBadge
-              :text="keenDNS.live ? 'живёт' : 'не найдено'"
-              :variant="keenDNS.live ? 'ok' : 'warn'"
-            />
-            <UiButton
-              :busy="kdbBusy"
-              @click="applyKeenDNS('off')"
-            >Убрать запись</UiButton>
-          </span>
-        </template>
+        <UiHint text="Режимы записи ip name-server в ndm выведены из панели: Keenetic не принимает loopback и порты, а перехват DNS клиентов делает сам MagiTrickle. Если раньше включали «Через MagiTrickle» - откройте эту карточку, легаси-запись снимется автоматически. Собственные записи Keenetic панель не трогает." />
       </UiCard>
 
       <template v-if="state && isKeen">
