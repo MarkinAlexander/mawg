@@ -803,8 +803,13 @@ func (b *Backend) IfaceHandshake(device string) int {
 	return best
 }
 
+// RestartMagitrickle - рестарт активного MT-бэкенда. Если установлен
+// (executable) init mt-c S98mtc - рестартить его, иначе подмена бэкенда:
+// heal/monitor, решив «MT умер», молча поднял бы Go-MT поверх живого
+// mt-c (107-док; init определяется по факту: чей +x, тот и активен -
+// на Кинетике сосуществование поднимается только скриптами свитча).
 func (b *Backend) RestartMagitrickle() error {
-	cmd := exec.Command("/bin/sh", "-c", "/opt/etc/init.d/S99magitrickle restart")
+	cmd := exec.Command("/bin/sh", "-c", `if [ -x /opt/etc/init.d/S98mtc ]; then /opt/etc/init.d/S98mtc restart; else /opt/etc/init.d/S99magitrickle restart; fi`)
 	_, err := platform.RunBoundedCombined(cmd, 60*time.Second)
 	return err
 }
