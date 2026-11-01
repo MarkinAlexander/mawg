@@ -2,12 +2,13 @@ package web
 
 // Петлезащита «Резервных серверов» (openwrt, dnsmasq.inMT): upstream
 // 127.0.0.1:53 или собственный IP:53 - это dnsmasq, который сам кормится
-// от MT:3553 - петля dnsmasq->MT->dnsmasq, DNS роутера встанет. На
-// Keenetic 127.0.0.1:53 - системный резолвер ndm (легален; прод владельца
-// живёт именно на нём) - правило платформенное. Не запрет, а честное
-// предупреждение с подтверждением (слово владельца 2026-10-18): PUT
-// отвечает 409 со списком рискованных адресов, клиент показывает
-// предупреждение и повторяет запрос с confirm.
+// от MT:3553 - петля dnsmasq->MT->dnsmasq, DNS роутера встанет. Не
+// запрет, а честное предупреждение с подтверждением (слово владельца
+// 2026-10-18): PUT отвечает 409 со списком рискованных адресов, клиент
+// показывает предупреждение и повторяет запрос с confirm.
+// На Keenetic правила нет: ndm не кормится от MT (режим «в MT» снят -
+// невыразим в ndm, см. dnsmgr/keeneticdns.go), 127.0.0.1:53 для MT - это
+// ndm-апстрим без петли.
 
 import (
 	"net"
@@ -20,21 +21,10 @@ import (
 // loopRiskUpstreams - подмножество addrs, замыкающее петлю при текущем
 // состоянии DNS-стека (правило не-Кинетик: на Keenetic dnsmasq нулевой,
 // а 127.0.0.1:53 - системный резолвер; лишние uci-вызовы на проде тоже
-// не нужны). Исключение - режим «DNS роутера через MagiTrickle» (98-док):
-// ndm кормится от MT:3553, петлевой адрес (127.0.0.1:53/свой IP:53) в
-// списке замыкает ndm->MT->ndm - в этом режиме правило как на OpenWrt.
+// не нужны).
 func (s *Server) loopRiskUpstreams(addrs []string) []string {
 	if s.backend.Name() == store.PlatformKeenetic {
-		if s.store.KeeneticDNS().Mode != "mt" {
-			return nil
-		}
-		var risky []string
-		for _, a := range addrs {
-			if dnsmasqLoopHost(a, dnsmgr.SelfIPs()) {
-				risky = append(risky, a)
-			}
-		}
-		return risky
+		return nil
 	}
 	run, ok := s.dnsRunner()
 	if !ok {

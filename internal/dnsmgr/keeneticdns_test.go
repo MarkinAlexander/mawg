@@ -70,11 +70,12 @@ func TestNameServerArgs(t *testing.T) {
 		wantErr            bool
 	}{
 		{"8.8.8.8", "", "8.8.8.8", false},
-		{"8.8.8.8:5353", "", "8.8.8.8 5353", false},
 		{"8.8.8.8", "ISP", `8.8.8.8 "" on ISP`, false},
-		{"dns.google", "", "", true},  // имя - ndm резолвить нечем
-		{"::1", "", "", true},         // IPv6 - отдельная команда
-		{"8.8.8.8", "IS'P", "", true}, // инъекция в ndmc
+		{"8.8.8.8:5353", "", "", true}, // порт: ndm второе поле читает как домен
+		{"127.0.0.1", "", "", true},    // loopback: ndm не принимает (invalid IP address)
+		{"dns.google", "", "", true},   // имя - ndm резолвить нечем
+		{"::1", "", "", true},          // IPv6 - отдельная команда
+		{"8.8.8.8", "IS'P", "", true},  // инъекция в ndmc
 		{"", "", "", true},
 	}
 	for _, c := range cases {
@@ -108,14 +109,34 @@ func TestApplyKeeneticDNS(t *testing.T) {
 			t.Fatalf("нет сохранения конфига: %v", f.commands)
 		}
 	})
-	t.Run("mt - 127.0.0.1 3553", func(t *testing.T) {
+	t.Run("mt снят - честная ошибка без записи в ndm", func(t *testing.T) {
 		f := newFakeNdmc()
-		applied, err := ApplyKeeneticDNS(f.run, "mt", "", "", "")
-		if err != nil {
-			t.Fatal(err)
+		_, err := ApplyKeeneticDNS(f.run, "mt", "", "", "")
+		if err == nil {
+			t.Fatal("режим mt должен возвращать ошибку (невыразим в ndm)")
 		}
-		if applied != ndmMTArgs || !f.servers[ndmMTArgs] {
-			t.Fatalf("applied=%q servers=%v", applied, f.servers)
+		if !strings.Contains(err.Error(), "снят") || len(f.commands) != 0 {
+			t.Fatalf("err=%v commands=%v", err, f.commands)
+		}
+	})
+	t.Run("спар с портом отвергается - второе поле ndm это домен", func(t *testing.T) {
+		f := newFakeNdmc()
+		_, err := ApplyKeeneticDNS(f.run, "spare", "8.8.8.8:5353", "", "")
+		if err == nil {
+			t.Fatal("порт должен отвергаться (ndm принял бы его как домен)")
+		}
+		if !strings.Contains(err.Error(), "домен") || len(f.commands) != 0 {
+			t.Fatalf("err=%v commands=%v", err, f.commands)
+		}
+	})
+	t.Run("loopback отвергается до вызова ndmc", func(t *testing.T) {
+		f := newFakeNdmc()
+		_, err := ApplyKeeneticDNS(f.run, "spare", "127.0.0.1", "", "")
+		if err == nil {
+			t.Fatal("loopback должен отвергаться (ndm: invalid IP address)")
+		}
+		if !strings.Contains(err.Error(), "loopback") || len(f.commands) != 0 {
+			t.Fatalf("err=%v commands=%v", err, f.commands)
 		}
 	})
 	t.Run("смена режима снимает прежнюю запись", func(t *testing.T) {
@@ -123,11 +144,11 @@ func TestApplyKeeneticDNS(t *testing.T) {
 		if _, err := ApplyKeeneticDNS(f.run, "spare", "8.8.8.8", "", ""); err != nil {
 			t.Fatal(err)
 		}
-		applied, err := ApplyKeeneticDNS(f.run, "mt", "", "", `8.8.8.8`)
+		applied, err := ApplyKeeneticDNS(f.run, "spare", "9.9.9.9", "", `8.8.8.8`)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if applied != ndmMTArgs || f.servers["8.8.8.8"] {
+		if applied != "9.9.9.9" || f.servers["8.8.8.8"] {
 			t.Fatalf("прежняя запись жива: applied=%q servers=%v", applied, f.servers)
 		}
 	})
@@ -156,8 +177,8 @@ func TestApplyKeeneticDNS(t *testing.T) {
 			}
 			return "", nil
 		}
-		if _, err := ApplyKeeneticDNS(broken, "spare", "8.8.8.8", "", ""); err == nil || !strings.Contains(err.Error(), "не принял") {
-			t.Fatalf("ждали «не принял», получили %v", err)
+		if _, err := ApplyKeeneticDNS(broken, "spare", "8.8.8.8", "", ""); err == nil || !strings.Contains(err.Error(), "не применил") {
+			t.Fatalf("ждали «не применил», получили %v", err)
 		}
 	})
 }

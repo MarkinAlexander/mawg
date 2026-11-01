@@ -5,10 +5,20 @@ package dnsmgr
 // оглохнет - обновления, opkg и hostname-эндпоинты пулов (например WARP)
 // резолвит именно он (живой кейс 31.10: галки «игнорировать провайдера»
 // + стёртый DoH = ноль запросов, при живой локалке через MT). По явному
-// согласию пользователя пишем ОДНУ запись ip name-server: страховочный
-// сервер или MT:3553; рестор - снятие ровно этой записи. Синтаксис RCI
-// подтверждён мануалом + живым диффом (69-док §1/§3):
-//   add:    ndmc -c "ip name-server <ip> [port] ["" on <iface>]"
+// согласию пользователя пишем ОДНУ запись ip name-server:
+// страховочный сервер (чистый IP); рестор - снятие ровно этой записи.
+//
+// Режим «в MT» (ip name-server 127.0.0.1 3553) УБРАН (инцидент 01.11,
+// живой Кинетик): ndm (а) не принимает loopback как апстрим вовсе -
+// даже без порта отвечает "invalid IP address: 127.0.0.1", (б) второе
+// поле ip name-server - ДОМЕН, а не порт: "8.8.8.8 5353" принимается
+// как "сервер для домена 5353". То есть MT:3553 через name-server
+// невыразим в принципе - дело не в версии прошивки. Перехват DNS
+// клиентов на Keenetic делает сам MagiTrickle (DNAT :53->:3553,
+// цепочка MT_DNSOR), панельный пункт был не нужен.
+//
+// Синтаксис RCI:
+//   add:    ndmc -c "ip name-server <ip> ["" on <iface>]"
 //   remove: ndmc -c "no ip name-server ..."
 //   persist: ndmc -c "system configuration save"
 // ndmc молча проглатывает кривые команды (код возврата не показателен) -
@@ -22,37 +32,38 @@ import (
 	"time"
 )
 
-// ndmMTArgs - аргументы name-server режима «через MagiTrickle»
-// (dns-proxy слушает [::]:3553, loopback входит).
-const ndmMTArgs = "127.0.0.1 3553"
-
 // NameServerArgs - каноническая строка аргументов RCI после
-// "ip name-server": "<ip>[ <port>][ "" on <iface>]". Applied хранится
-// ровно в этом виде - add/remove строятся конкатенацией.
+// "ip name-server": "<ip>[ "" on <iface>]". Applied хранится ровно в
+// этом виде - add/remove строятся конкатенацией. Порт отвергается с
+// объяснением: у ndm второе поле ip name-server - домен, не порт
+// (живой Кинетик 01.11: "8.8.8.8 5353" добавилось как "сервер для
+// домена 5353"); loopback отвергается самим ndm ("invalid IP
+// address") - отбиваем его сразу с честным текстом.
 func NameServerArgs(spare, iface string) (string, error) {
 	t := strings.TrimSpace(spare)
 	if t == "" {
 		return "", fmt.Errorf("сервер не указан")
 	}
-	host, port := t, ""
-	if h, p, err := net.SplitHostPort(t); err == nil {
-		host, port = h, p
+	host := t
+	if h, _, err := net.SplitHostPort(t); err == nil {
+		if _, portErr := strconv.Atoi(h); portErr != nil {
+			// хост с портом (ip:port): SplitHostPort разобрал - значит
+			// пользователь указал порт, а ndm портов не умеет
+			return "", fmt.Errorf("без порта: ndm в ip name-server портов не поддерживает - второе поле это домен; укажите чистый IP")
+		}
+		host = h
 	}
 	ip := net.ParseIP(strings.Trim(host, "[]"))
 	if ip == nil {
 		return "", fmt.Errorf("нужен IP-адрес (имя ndm резолвить нечем), получено %q", spare)
 	}
+	if ip.IsLoopback() {
+		return "", fmt.Errorf("loopback (%s) ndm не принимает как апстрим - \"сам себе апстрим\" запрещён; перехват DNS на Keenetic делает сам MagiTrickle, этот пункт не для того", ip)
+	}
 	if ip.To4() == nil {
 		return "", fmt.Errorf("IPv6 этим переключателем не поддерживается (ipv6 name-server - отдельная команда)")
 	}
 	args := ip.String()
-	if port != "" {
-		n, err := strconv.Atoi(port)
-		if err != nil || n <= 0 || n > 65535 {
-			return "", fmt.Errorf("порт: %q", port)
-		}
-		args += " " + port
-	}
 	if iface = strings.TrimSpace(iface); iface != "" {
 		if strings.ContainsAny(iface, "\"'\n;") {
 			return "", fmt.Errorf("подключение: недопустимые символы в %q", iface)
@@ -63,7 +74,8 @@ func NameServerArgs(spare, iface string) (string, error) {
 }
 
 // ApplyKeeneticDNS применяет режим: "off" снимает applied (если была),
-// "spare" ставит ip[:port] (опционально on <iface>), "mt" - 127.0.0.1:3553.
+// "spare" ставит чистый IP (опционально on <iface>). Режим "mt" удалён:
+// невыразим в ndm (loopback отвергается, портов нет - см. шапку файла).
 // applied - прежняя запись панели (аргументы RCI); возвращается новая
 // (пустая для off). Каждое изменение верифицируется чтением.
 func ApplyKeeneticDNS(r Runner, mode, spare, iface, applied string) (string, error) {
@@ -78,7 +90,7 @@ func ApplyKeeneticDNS(r Runner, mode, spare, iface, applied string) (string, err
 		}
 		target = args
 	case "mt":
-		target = ndmMTArgs
+		return "", fmt.Errorf("режим \"в MT\" снят: ndm не принимает 127.0.0.1 как апстрим (\"invalid IP address\") и портов не поддерживает (второе поле ip name-server - домен). Перехват DNS на Keenetic делает сам MagiTrickle - ничего прописывать не нужно")
 	default:
 		return "", fmt.Errorf("неизвестный режим %q", mode)
 	}
@@ -104,7 +116,7 @@ func ndmNameServerAdd(r Runner, args string) error {
 		return fmt.Errorf("ndmc ip name-server: %w: %s", err, strings.TrimSpace(out))
 	}
 	if !KeeneticDNSLive(r, args) {
-		return fmt.Errorf("Кинетик не принял запись ip name-server %s (проверьте версию прошивки)", args)
+		return fmt.Errorf("Кинетик не применил запись ip name-server %s: ndm отвергает loopback как апстрим и портов не поддерживает (второе поле - домен); проверьте, что указан чистый внешний IP", args)
 	}
 	return nil
 }

@@ -193,84 +193,30 @@ func TestKeeneticDNSSpare(t *testing.T) {
 	}
 }
 
-func TestKeeneticDNSMTConfirmAndLoopClean(t *testing.T) {
+func TestKeeneticDNSMTRemoved(t *testing.T) {
 	ndm := newNdmsFake()
-	fm := &fakeMT{version: "0.8.2-rev16-mawg-dev"}
+	fm := &fakeMT{version: "0.8.2-rev17-mawg-dev"}
 	srv := keenDNSServer(t, fm, ndm)
 
-	// mt без confirm - 409 (честное предупреждение)
-	code, body := keenDNSPut(t, srv.URL+"/api/v1/dns/keenetic/dns", `{"mode":"mt"}`)
-	if code != http.StatusConflict {
-		t.Fatalf("mt без confirm: status=%d body=%v", code, body)
-	}
-	if body["needConfirm"] != true {
-		t.Fatalf("нет needConfirm: %v", body)
-	}
-	if ndm.has("127.0.0.1 3553") {
-		t.Fatal("запись встала без confirm")
-	}
-
-	// mt с confirm: запись ставится
-	code, body = keenDNSPut(t, srv.URL+"/api/v1/dns/keenetic/dns", `{"mode":"mt","confirm":true}`)
-	if code != http.StatusOK {
-		t.Fatalf("mt с confirm: status=%d body=%v", code, body)
-	}
-	st := body["state"].(map[string]any)
-	if st["applied"] != "127.0.0.1 3553" || st["live"] != true {
-		t.Fatalf("стейт после mt: %v", st)
-	}
-
-	// петлезащита PUT /dns/upstreams теперь действует и на Кинетике
-	code, body = keenDNSPut(t, srv.URL+"/api/v1/dns/upstreams", `{"upstreams":["8.8.8.8:53","127.0.0.1:53"]}`)
-	if code != http.StatusConflict {
-		t.Fatalf("петля в mt-режиме: status=%d body=%v", code, body)
-	}
-	if code, _ := keenDNSPut(t, srv.URL+"/api/v1/dns/upstreams", `{"upstreams":["8.8.8.8:53","127.0.0.1:53"],"confirm":true}`); code != http.StatusOK {
-		t.Fatalf("петля с confirm: status=%d", code)
-	}
-}
-
-func TestKeeneticDNSMTCleansUpstreams(t *testing.T) {
-	ndm := newNdmsFake()
-	fm := &fakeMT{version: "0.8.2-rev16-mawg-dev", loopUpstream: true}
-	srv := keenDNSServer(t, fm, ndm)
-
-	// mt с confirm: 127.0.0.1:53 вычищен из «Резервных» до включения
+	// режим mt снят: 400 с честным текстом, без confirm-танцев и без
+	// записи в ndm (инцидент 01.11: ndm не принимает 127.0.0.1 как
+	// апстрим, портов нет - MT:3553 через name-server невыразим)
 	code, body := keenDNSPut(t, srv.URL+"/api/v1/dns/keenetic/dns", `{"mode":"mt","confirm":true}`)
-	if code != http.StatusOK {
-		t.Fatalf("mt с петлёй в списке: status=%d body=%v", code, body)
+	if code != http.StatusBadRequest {
+		t.Fatalf("mt: status=%d body=%v", code, body)
 	}
-	puts := fm.puts()
-	if len(puts) != 1 || strings.Contains(puts[0], "127.0.0.1:53") || !strings.Contains(puts[0], "8.8.8.8:53") {
-		t.Fatalf("список MT не вычищен: %q", puts)
-	}
-	if !ndm.has("127.0.0.1 3553") {
-		t.Fatal("запись ndm не встала")
-	}
-}
-
-func TestKeeneticDNSMTDeadGate(t *testing.T) {
-	ndm := newNdmsFake()
-	// MT не поднимаем (mtClient смотрит в пустоту) - mt-режим честно 502
-	srv := keenDNSServer(t, &fakeMT{version: "0.8.2-rev16-mawg-dev"}, ndm)
-	// подсунуть недоступный MT: пересобрать сервер без MT-фейка
-	fb := fake.New()
-	fb.NameOverride = "keenetic"
-	fb.ShellFn = ndm.shell
-	st, _ := store.Open(t.TempDir())
-	engine := rotator.New(st, fb, nil)
-	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(500) }))
-	defer dead.Close()
-	srv2 := httptest.NewServer(New(st, engine, fb, magitrickle.New(dead.URL), "test", nil).Handler())
-	t.Cleanup(srv2.Close)
-	_ = srv
-
-	code, _ := keenDNSPut(t, srv2.URL+"/api/v1/dns/keenetic/dns", `{"mode":"mt","confirm":true}`)
-	if code != http.StatusBadGateway {
-		t.Fatalf("mt при мёртвом MT: status=%d, хочу 502", code)
+	if msg, _ := body["error"].(string); !strings.Contains(msg, "снят") {
+		t.Fatalf("текст ошибки без объяснения: %v", body)
 	}
 	if ndm.has("127.0.0.1 3553") {
-		t.Fatal("запись встала при мёртвом MT")
+		t.Fatal("запись ndm встала при снятом режиме")
+	}
+
+	// петлезащита upstreams на Кинетике больше не привязана к mt:
+	// ndm не кормится от MT - loop-адрес в «Резервных» не петля
+	code, _ = keenDNSPut(t, srv.URL+"/api/v1/dns/upstreams", `{"upstreams":["8.8.8.8:53","127.0.0.1:53"]}`)
+	if code != http.StatusOK {
+		t.Fatalf("loop-адреса на Keenetic без mt-режима легальны: status=%d", code)
 	}
 }
 
@@ -309,18 +255,22 @@ func TestKeeneticInterceptToggle(t *testing.T) {
 	}
 }
 
-func TestKeeneticInterceptMTLoopGuard(t *testing.T) {
+func TestKeeneticInterceptWithoutMTMode(t *testing.T) {
 	ndm := newNdmsFake()
-	// снапшот fakeMT содержит простой 8.8.8.8:53 - с перехватом+mt это петля
-	srv := keenDNSServer(t, &fakeMT{version: "0.8.2-rev16-mawg-dev"}, ndm)
-	if code, body := keenDNSPut(t, srv.URL+"/api/v1/dns/keenetic/dns", `{"mode":"mt","confirm":true}`); code != http.StatusOK {
-		t.Fatalf("mt: status=%d body=%v", code, body)
-	}
+	srv := keenDNSServer(t, &fakeMT{version: "0.8.2-rev17-mawg-dev"}, ndm)
+	// режим mt снят - перехват ndm больше не связан с «Резервными» MT:
+	// простой :53 в списке петли не даёт (ndm не направляется в MT)
 	code, body := keenDNSPut(t, srv.URL+"/api/v1/dns/keenetic/dns", `{"intercept":true,"confirm":true}`)
-	if code != http.StatusBadRequest {
-		t.Fatalf("петля-гард: status=%d body=%v", code, body)
+	if code != http.StatusOK {
+		t.Fatalf("intercept с confirm: status=%d body=%v", code, body)
 	}
-	if !strings.Contains(body["error"].(string), "петлю") {
-		t.Fatalf("текст гарда: %v", body)
+	st := body["state"].(map[string]any)
+	if st["intercept"] != true {
+		t.Fatalf("перехват не включился: %v", st)
+	}
+	// и обратно выключается
+	code, _ = keenDNSPut(t, srv.URL+"/api/v1/dns/keenetic/dns", `{"intercept":false,"confirm":true}`)
+	if code != http.StatusOK {
+		t.Fatalf("intercept off: status=%d", code)
 	}
 }

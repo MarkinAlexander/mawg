@@ -1060,7 +1060,7 @@ describe('DnsView - keenetic: DNS самого роутера (98-док)', () =
     w.unmount();
   });
 
-  it('режим MT: warn-баннер о зависимости от MT', async () => {
+  it('режим MT снят: пункта в селекте нет, порт в подсказке честно назван доменом', async () => {
     stubRouterDNS({ mode: '', live: false });
     const w = mount(DnsView);
     await vi.waitFor(() => expect(w.find('#card-dns-router').exists()).toBe(true));
@@ -1068,10 +1068,12 @@ describe('DnsView - keenetic: DNS самого роутера (98-док)', () =
     const modeBtn = card.findAll('.psel-btn').find((b) => b.text().includes('Как есть'));
     await modeBtn!.trigger('click');
     await nextTick();
-    await card.findAll('.psel-item').find((o) => o.text().includes('Через MagiTrickle'))!.trigger('click');
+    const items = card.findAll('.psel-item').map((o) => o.text());
+    expect(items.some((t) => t.includes('Через MagiTrickle'))).toBe(false);
+    // выбор spare: подсказка объясняет, почему без порта
+    await card.findAll('.psel-item').find((o) => o.text().includes('Страховочный'))!.trigger('click');
     await nextTick();
-    expect(card.find('.uibanner.k-warn').exists()).toBe(true);
-    expect(card.text()).toContain('умер MT - умер резолв');
+    expect(card.text()).toContain('второе поле ip name-server - это домен, не порт');
     w.unmount();
   });
 });
