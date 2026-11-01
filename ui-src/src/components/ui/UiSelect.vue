@@ -66,9 +66,15 @@ async function toggle() {
 }
 
 // список в экранных координатах: при скролле/ресайзе якорь уезжает -
-// закрываем (стандарт дропдаунов)
-function onViewportChange() {
-  if (open.value) open.value = false
+// закрываем (стандарт дропдаунов). Скролл САМОГО списка (колёсико по
+// нему, драг его скроллбара) не повод: его scroll-событие на capture-
+// фазе долетает до window раньше всего и без этой проверки закрывало
+// дропдаун на первом же обороте колёсика (жалоба владельца 2026-11-01:
+// список ни прокрутить, ни подвигать).
+function onViewportChange(e: Event) {
+  if (!open.value) return
+  if (e.target instanceof Node && root.value?.contains(e.target)) return
+  open.value = false
 }
 
 function onDocPointerDown(e: PointerEvent) {

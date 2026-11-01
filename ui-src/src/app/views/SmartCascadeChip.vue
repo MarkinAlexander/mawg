@@ -62,7 +62,13 @@ function onDocClick(e: MouseEvent): void {
   if (open.value && root.value && !root.value.contains(e.target as Node)) close()
 }
 function onKey(e: KeyboardEvent): void { if (e.key === 'Escape') close() }
-function onViewportChange(): void { if (open.value) close() }
+// скролл САМОГО поповера не закрывает (его scroll на capture-фазе долетает
+// до window первым - без проверки таргета прокрутить его было нельзя)
+function onViewportChange(e: Event): void {
+  if (!open.value) return
+  if (e.target instanceof Node && root.value?.contains(e.target)) return
+  close()
+}
 onMounted(() => {
   document.addEventListener('click', onDocClick, true)
   document.addEventListener('keydown', onKey)

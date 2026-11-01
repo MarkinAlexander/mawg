@@ -24,9 +24,14 @@ function onDocClick(e: MouseEvent): void {
 function onKey(e: KeyboardEvent): void {
   if (e.key === 'Escape') close()
 }
-// capture: скролл любого контейнера (не только window) тоже закрывает
-function onViewportChange(): void {
-  if (open.value) close()
+// capture: скролл любого контейнера (не только window) закрывает; скролл
+// САМОГО поповера - нет: его scroll-событие на capture-фазе долетает до
+// window первым, без проверки таргета внутренняя прокрутка («последний
+// рубеж») закрывала поповер на первом же обороте колёсика.
+function onViewportChange(e: Event): void {
+  if (!open.value) return
+  if (e.target instanceof Node && root.value?.contains(e.target)) return
+  close()
 }
 
 onMounted(() => {
