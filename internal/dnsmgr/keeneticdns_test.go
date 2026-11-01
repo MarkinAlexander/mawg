@@ -199,14 +199,26 @@ func TestKeeneticDNSLive(t *testing.T) {
 }
 
 func TestNameServerPresent(t *testing.T) {
+	// реальный конфиг Кинетика владельца (инцидент 01.11): глобальная
+	// запись панели снята, но остались чужие per-interface записи с тем
+	// же адресом - префиксный матч ловил их и «Убрать запись» вечно
+	// ошибался, бейдж «живёт» висел на несуществующей записи
 	config := "dns-proxy\n    tls upstream 1.1.1.1\n!\n" +
-		"ip name-server 8.8.8.8 \"\" on ISP\n" +
+		"ip name-server 8.8.8.8 \"\" on Wireguard5\n" +
+		"ip name-server 8.8.4.4 \"\" on Wireguard5\n" +
 		"ip no name-servers\n"
-	if !nameServerPresent(config, `8.8.8.8 "" on ISP`) {
-		t.Fatal("точная запись не найдена")
+	if nameServerPresent(config, "8.8.8.8") {
+		t.Fatal("глобальной записи нет, а префиксный матч нашёл чужую per-interface")
 	}
 	if nameServerPresent(config, "8.8.4.4") {
 		t.Fatal("чужая запись совпала")
+	}
+	config += "ip name-server 8.8.8.8\n"
+	if !nameServerPresent(config, "8.8.8.8") {
+		t.Fatal("точная глобальная запись не найдена")
+	}
+	if nameServerPresent(config, `8.8.8.8 "" on ISP`) {
+		t.Fatal("запись с iface не должна матчить глобальную")
 	}
 }
 

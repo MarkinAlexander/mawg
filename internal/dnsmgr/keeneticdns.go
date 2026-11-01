@@ -216,8 +216,12 @@ func SetKeeneticIntercept(r Runner, enable bool) error {
 }
 
 // nameServerPresent - поиск записи в тексте running-config: строка
-// "ip name-server <args...>" начинается точно с наших аргументов
-// ("ip no name-servers" и записи других серверов не совпадают).
+// "ip name-server <args>" должна СОВПАДАТЬ ЦЕЛИКОМ с нашими аргументами.
+// Префиксный матч здесь был багом (инцидент 01.11): панельская запись
+// "8.8.8.8" совпадала с чужой "8.8.8.8 \"\" on Wireguard5" (DNS пула) -
+// после удаления глобальной записи верификация продолжала считать её
+// живой, «Убрать запись» вечно ошибался. ("ip no name-servers" и другие
+// серверы не совпадают и так.)
 func nameServerPresent(config, args string) bool {
 	prefix := "ip name-server "
 	for _, raw := range strings.Split(config, "\n") {
@@ -225,8 +229,7 @@ func nameServerPresent(config, args string) bool {
 		if !strings.HasPrefix(line, prefix) {
 			continue
 		}
-		rest := strings.TrimPrefix(line, prefix)
-		if rest == args || strings.HasPrefix(rest, args+" ") {
+		if strings.TrimPrefix(line, prefix) == args {
 			return true
 		}
 	}
