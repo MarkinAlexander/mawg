@@ -94,6 +94,11 @@ func (m *Manager) SyncExclusions() {
 	if inWindow || (!m.excludesPresent() && !active) {
 		return
 	}
+	if m.mtcBackend() {
+		// бэкенд mt-c: RETURN-правила в его цепочки не пишем (гейт flavor,
+		// SetBackendFlavor) - и собственные mawg-excl, и каскадные
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	groups, err := m.MT.GroupsWithRules(ctx)

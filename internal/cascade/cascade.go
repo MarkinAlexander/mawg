@@ -37,6 +37,7 @@ type Manager struct {
 	wrapper  bool                                 // в mangle OUTPUT видны чужие MR_*-цепочки (обёртка юзера)
 	mutating int                                  // глубина окна мутации: SyncHooks в нём молчит (см. beginMutate)
 	exclActive bool                               // исключения могли остаться в цепочках - синк продолжает вычищать (exclusions.go)
+	flavor   magitrickle.MtFlavor                 // flavor бэкенда MT (проталкивает rotator после пробы версии)
 	iptRun   func(args ...string) (string, error) // подменяется в тестах
 }
 
@@ -311,6 +312,9 @@ func (m *Manager) reportStuck(stuck []string) {
 // хуки по SyncHooks.
 func (m *Manager) BeforeMutate(_ func([]magitrickle.Group) bool) {
 	m.beginMutate()
+	if m.mtcBackend() {
+		return
+	}
 	m.reportStuck(m.sweepOutputHooks())
 }
 
@@ -324,6 +328,9 @@ func (m *Manager) AfterMutate() {
 // вообще все цепочки, так что снимать нужно все хуки без исключений.
 func (m *Manager) BeforeReplace(_ []magitrickle.Group) {
 	m.beginMutate()
+	if m.mtcBackend() {
+		return
+	}
 	m.reportStuck(m.sweepOutputHooks())
 }
 
@@ -334,6 +341,11 @@ func (m *Manager) SyncHooks() {
 	if inWindow {
 		// окно мутации: хуки поставит AfterMutate по завершении записи,
 		// иначе тик вернёт хук между снятием и записью - CHAIN_DEL busy
+		return
+	}
+	if m.mtcBackend() {
+		// бэкенд mt-c: ни прыжков, ни исключений в его цепочки - весь
+		// роутер-путь он держит сам (SetBackendFlavor)
 		return
 	}
 	casc := m.Store.Cascades()
@@ -446,6 +458,39 @@ func (m *Manager) WrapperDetected() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.wrapper
+}
+
+// SetBackendFlavor - flavor бэкенда MT (проталкивает rotator из пробы
+// версии, 107-док). Бэкенд mt-c сам обслуживает роутер-путь через свои
+// policy-цепочки и делает батч-пересборки iptables-restore: ЛЮБАЯ наша
+// запись между его коммитами фаз роняет весь restore -> шторм -> голодание
+// DNS-прокси :3553 (аварии 01.11). Поэтому при FlavorMtC каскад не пишет
+// в чужие цепочки вовсе: хуки, свип и исключения молчат, честная строка -
+// в журнал событий.
+func (m *Manager) SetBackendFlavor(f magitrickle.MtFlavor) {
+	m.mu.Lock()
+	wasMtc := m.flavor == magitrickle.FlavorMtC
+	m.flavor = f
+	m.mu.Unlock()
+	isMtc := f == magitrickle.FlavorMtC
+	switch {
+	case isMtc && !wasMtc:
+		m.log("cascade", "mtc-backend", "OUTPUT-хуки отключены: бэкенд mt-c")
+	case !isMtc && wasMtc:
+		m.log("cascade", "mtc-backend", "бэкенд mt-c сменился ("+string(f)+") - каскадные OUTPUT-хуки возвращаются")
+	}
+}
+
+// BackendFlavor - flavor бэкенда MT для панели.
+func (m *Manager) BackendFlavor() magitrickle.MtFlavor {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.flavor
+}
+
+// mtcBackend - активен ли гейт «не писать в чужие цепочки».
+func (m *Manager) mtcBackend() bool {
+	return m.BackendFlavor() == magitrickle.FlavorMtC
 }
 
 // syncHookExclusions ставит RETURN-исключения для эндпоинтов туннеля, в

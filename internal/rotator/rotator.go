@@ -255,6 +255,10 @@ func (e *Engine) runMagitrickleProbe(ctx context.Context) {
 	defer cancel()
 	if v, err := e.mt.GetVersion(pctx); err == nil && v != "" {
 		e.lastProbeVersion = v
+		// flavor каскаду: при бэкенде mt-c (версия -mawg-c) каскад не
+		// пишет в чужие iptables-цепочки (107-док); смена версии MT
+		// (обновили mtinstall'ом) перепроверяет гейт без рестарта панели
+		e.casc.SetBackendFlavor(magitrickle.FlavorOf(v))
 	}
 	defer cancel()
 	before, err := e.mt.GroupsWithRules(pctx)
