@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"regexp"
 	"strconv"
+	"strings"
 )
 
 // GetVersion опрашивает MT по /api/v1/version (форк rev5+). Старые бинари
@@ -113,6 +114,30 @@ func RevOf(version string) int {
 	}
 	n, _ := strconv.Atoi(m[1])
 	return n
+}
+
+// MtFlavor - семейство бэкенда MT по строке версии: mt-c (форк на C,
+// суффикс -mawg-c), наш Go-форк (подстрока mawg: -mawg-dev и старые
+// -mawgfix1/2) или апстрим (в т.ч. бинари без /api/v1/version - строка
+// пустая или нечитаемая).
+type MtFlavor string
+
+const (
+	FlavorMtC      MtFlavor = "mawg-c"
+	FlavorGoFork   MtFlavor = "mawg-dev"
+	FlavorUpstream MtFlavor = "upstream"
+)
+
+// FlavorOf - flavor бэкенда MT из строки версии. Порядок проверок важен:
+// "-mawg-c" сама содержит "mawg", поэтому mt-c детектится первой.
+func FlavorOf(version string) MtFlavor {
+	if strings.Contains(version, "-mawg-c") {
+		return FlavorMtC
+	}
+	if strings.Contains(version, "mawg") {
+		return FlavorGoFork
+	}
+	return FlavorUpstream
 }
 
 var configVersionRe = regexp.MustCompile(`(?m)^\s*configVersion:\s*"?([^"\s"]+)`)
