@@ -108,7 +108,11 @@ describe('PoolSettingsDialog', () => {
     expect(dlg.findAll('button').find((b) => b.text() === '+ добавить')!.attributes('disabled')).toBeDefined();
     const exInput = dlg.findAll('.hrow input').find((i) => (i.element as HTMLInputElement).placeholder.includes('IP или подсеть'))!;
     expect((exInput.element as HTMLInputElement).disabled).toBe(true);
-    // сохранение не уносит excludes: секция не могла стать dirty
+    // сохранение не уносит excludes: секция не могла стать dirty.
+    // dirty-гейт (02.11): без правок «Сохранить» погашена - правим интервал
+    const ins95 = dlg.findAll('input').filter((i) => (i.element as HTMLInputElement).value === '45');
+    await ins95[0].setValue('50');
+    await nextTick();
     await btn(dlg, 'Сохранить')[0].trigger('click');
     await vi.waitFor(() => {
       const put = f.mock.calls.find((c) => (c[0] as string).endsWith('/pools/proton') && c[1]?.method === 'PUT');
@@ -138,12 +142,20 @@ describe('PoolSettingsDialog', () => {
     expect(vals()).toContain('21');    // keepalive
     expect(vals()).toContain('350');   // rtt
 
+    // dirty-гейт (слово владельца 02.11): без правок «Сохранить» погашена
+    const saveBtn0 = btn(dlg, 'Сохранить')[0];
+    expect(saveBtn0.attributes('disabled')).toBeDefined();
+    const intInput = inputs.find((i) => (i.element as HTMLInputElement).value === '45')!;
+    await intInput.setValue('50');
+    await nextTick();
+    expect(btn(dlg, 'Сохранить')[0].attributes('disabled')).toBeUndefined();
+
     await btn(dlg, 'Сохранить')[0].trigger('click');
     await vi.waitFor(() => {
       const put = f.mock.calls.find((c) => (c[0] as string).endsWith('/pools/proton') && c[1]?.method === 'PUT');
       expect(JSON.parse(put![1]!.body as string)).toEqual({
         probeHost: 'http://www.gstatic.com/generate_204',
-        checkIntervalSec: 45, failThreshold: 4, cooldownMin: 7, keepalive: 21,
+        checkIntervalSec: 50, failThreshold: 4, cooldownMin: 7, keepalive: 21,
         fallback: 'hold', maxRttMs: 350, updateIntervalH: 12,
         // умный каскад не настроен -> честное «выключено» (86-док)
         smartCascade: { via: [] },
@@ -352,6 +364,9 @@ describe('PoolSettingsDialog - режим группы движка (60-док)'
     const { dlg, f } = await makeDialog({}, [pool]);
     await vi.waitFor(() => expect(dlg.text()).toContain('Источник'));
     expect(dlg.text()).not.toContain('Выбор узла в подписке');
+    const ins = dlg.findAll('input');
+    await ins.find((i) => (i.element as HTMLInputElement).value === '45')!.setValue('55');
+    await nextTick();
     await btn(dlg, 'Сохранить')[0].trigger('click');
     await vi.waitFor(() => {
       const put = f.mock.calls.find((c) => (c[0] as string).endsWith('/pools/proton') && c[1]?.method === 'PUT');
@@ -499,6 +514,51 @@ describe('PoolSettingsDialog - устройства через пул (97-док
       const del = f.mock.calls.find((c) => (c[0] as string).includes('/mt/device-group/') && c[1]?.method === 'DELETE');
       expect(del).toBeTruthy();
     });
+    dlg.unmount();
+  });
+});
+
+// Dirty-гейт и черновик устройств (слово владельца 02.11): «Сохранить»
+// активна без изменений - нелогично; вписанный IP без «+ привязать»
+// при «Сохранить» терялся молча.
+describe('PoolSettingsDialog - dirty-гейт и черновик привязки', () => {
+  const bindings = (list: unknown) => ({ '/members': { members: [] }, '/device-bindings': { bindings: list } });
+
+  it('вписанный IP + «Сохранить»: привязка применяется (POST) и настройки уходят (PUT)', async () => {
+    const { dlg, f } = await makeDialog(bindings([]), [pool]);
+    await vi.waitFor(() => expect(dlg.text()).toContain('Устройства через пул'));
+    const ip = dlg.findAll('input').find((i) => (i.element as HTMLInputElement).placeholder.includes('IP устройства'))!;
+    await ip.setValue('192.168.0.62');
+    await nextTick();
+    // черновик сам по себе делает форму «грязной» - кнопка активна
+    expect(btn(dlg, 'Сохранить')[0].attributes('disabled')).toBeUndefined();
+    await btn(dlg, 'Сохранить')[0].trigger('click');
+    await vi.waitFor(() => {
+      const post = f.mock.calls.find((c) => (c[0] as string).endsWith('/mt/device-group') && c[1]?.method === 'POST');
+      expect(post).toBeTruthy();
+      expect(JSON.parse(post![1]!.body as string)).toEqual({ pool: 'proton', ips: ['192.168.0.62'] });
+      expect(f.mock.calls.some((c) => (c[0] as string).endsWith('/pools/proton') && c[1]?.method === 'PUT')).toBe(true);
+    });
+    expect(useToast().toasts.list.some((t) => t.text.includes('Устройства привязаны'))).toBe(true);
+    dlg.unmount();
+  });
+
+  it('кривой IP + «Сохранить»: привязка и настройки не сохраняются, честная ошибка', async () => {
+    const { dlg, f } = await makeDialog(bindings([]), [pool]);
+    await vi.waitFor(() => expect(dlg.text()).toContain('Устройства через пул'));
+    const ip = dlg.findAll('input').find((i) => (i.element as HTMLInputElement).placeholder.includes('IP устройства'))!;
+    await ip.setValue('носитель');
+    await nextTick();
+    await btn(dlg, 'Сохранить')[0].trigger('click');
+    await vi.waitFor(() => expect(useToast().toasts.list.some((t) => t.text.includes('не применена'))).toBe(true));
+    expect(f.mock.calls.some((c) => (c[0] as string).endsWith('/mt/device-group'))).toBe(false);
+    expect(f.mock.calls.some((c) => (c[0] as string).endsWith('/pools/proton') && c[1]?.method === 'PUT')).toBe(false);
+    dlg.unmount();
+  });
+
+  it('чужая привязка видна в списке пула (реестр загружен к открытию)', async () => {
+    const { dlg } = await makeDialog(bindings([{ name: 'Устройство: 192.168.0.62', pool: 'proton', ips: ['192.168.0.62/32'] }]), [pool]);
+    await vi.waitFor(() => expect(dlg.text()).toContain('192.168.0.62/32'));
     dlg.unmount();
   });
 });

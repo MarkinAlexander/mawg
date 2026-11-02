@@ -142,3 +142,41 @@ describe('DeviceGroupDialog', () => {
     dlg.unmount()
   })
 })
+
+// Реестр привязок в диалоге кнопки (слово владельца 02.11: «нажимаю
+// кнопку устройство через пул - 0.62 видно не будет»): привязки
+// выбранного пула видны чипами со снятием, чужие - подсказкой.
+describe('DeviceGroupDialog: существующие привязки', () => {
+  it('показывает привязки пула чипами и чужие подсказкой; ✕ удаляет группу', async () => {
+    useGroups().state.bindings = [
+      { name: 'Устройство: 192.168.0.62', pool: 'trojan-test', ips: ['192.168.0.62/32'] },
+      { name: 'Устройство: 10.0.0.5', pool: 'warp', ips: ['10.0.0.5'] },
+    ];
+    const { dlg, f } = await makeDialog({
+      '/mt/groups': { available: true, groups: [] },
+    }, [pool('warp'), pool('trojan-test')], 'trojan-test');
+    expect(dlg.text()).toContain('Уже привязано к пулу trojan-test');
+    expect(dlg.text()).toContain('192.168.0.62/32');
+    expect(dlg.text()).toContain('В других пулах: 10.0.0.5 → warp');
+
+    await dlg.find('.exclrm').trigger('click');
+    await nextTick();
+    expect(useConfirm().state.open).toBe(true);
+    expect(useConfirm().state.text).toContain('192.168.0.62/32');
+    useConfirm().ok();
+    await vi.waitFor(() => {
+      const del = f.mock.calls.find((c) => (c[0] as string).includes('/mt/device-group/') && (c[1]?.method === 'DELETE'));
+      expect(del).toBeTruthy();
+      expect(del![0]).toContain(encodeURIComponent('Устройство: 192.168.0.62'));
+    });
+    dlg.unmount();
+  });
+
+  it('без привязок секций нет, диалог остаётся формой создания', async () => {
+    const { dlg } = await makeDialog({ '/mt/groups': { available: true, groups: [] } }, [pool('warp')], 'warp');
+    expect(dlg.text()).not.toContain('Уже привязано');
+    expect(dlg.text()).not.toContain('В других пулах');
+    expect(dlg.text()).toContain('IP-адреса устройств');
+    dlg.unmount();
+  });
+})

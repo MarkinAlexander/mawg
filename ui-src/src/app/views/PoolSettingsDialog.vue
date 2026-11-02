@@ -91,9 +91,9 @@ function devParse(): string[] {
   }
   return parts;
 }
-async function devAdd(): Promise<void> {
+async function devApplyDraft(): Promise<boolean> {
   const ips = devParse();
-  if (!ips.length || devBusy.value) return;
+  if (!ips.length || devBusy.value) return false;
   devBusy.value = true;
   try {
     try {
@@ -101,18 +101,23 @@ async function devAdd(): Promise<void> {
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) {
         const ok = await confirm({ title: 'Адреса уже заняты', text: e.message, okLabel: 'Всё равно привязать' });
-        if (!ok) return;
+        if (!ok) return false;
         await groups.createDeviceGroup({ pool: props.poolName, ips, confirm: true });
       } else {
         push(e instanceof Error ? e.message : String(e), true);
-        return;
+        return false;
       }
     }
     push(`Устройства привязаны: весь трафик ${ips.length === 1 ? 'адреса' : 'адресов'} идёт через пул ${props.poolName}`);
     devNew.value = '';
+    return true;
   } finally {
     devBusy.value = false;
   }
+}
+async function devAdd(): Promise<void> {
+  if (!devNew.value.trim()) return;
+  await devApplyDraft();
 }
 async function devRemove(b: DeviceBinding): Promise<void> {
   const ok = await confirm({
@@ -304,6 +309,7 @@ watch(open, (v) => {
   void loadMembers();
   void loadFreeConf(p);
   void groups.loadBindings(); // реестр устройств - свежим к открытию
+  formInit.value = JSON.stringify(formVals()); // база dirty-гейта «Сохранить»
 });
 
 async function loadMembers(): Promise<void> {
@@ -416,9 +422,40 @@ async function withBusy(fn: () => Promise<void>): Promise<void> {
   }
 }
 
+// dirty-гейт «Сохранить» (слово владельца 02.11: «Отмена и Сохранить
+// активны без всяких изменений»): снапшот значений, которые реально
+// уносит save() (rename, проба, интервалы, фоллбек, excludes, ядро,
+// умный каскад). source/страны - не считаются: они применяются своими
+// кнопками; привязки устройств применяются сразу - в гейт не входят.
+function formVals(): unknown[] {
+  return [
+    // черновик привязки тоже делает «Сохранить» активной: вписанный IP
+    // применяется этим «Сохранить» (молча терять его нельзя)
+    devNew.value.trim(),
+    newName.value.trim(), probeHost.value.trim(), rttOn.value, rtt.value,
+    interval.value, threshold.value, cooldown.value, keepalive.value,
+    updateInt.value, fallback.value,
+    excludesDisabled.value ? null : exclList.value,
+    isEng.value ? engineCore.value : '',
+    isEng.value ? [groupMode.value, rotateSec.value] : [],
+    isEng.value ? [] : [scOn.value, scVia.value, scTrigMode.value, scTrigFails.value, scInterval.value, scTimes.value, scDwell.value],
+  ];
+}
+const formInit = ref('[]');
+const settingsDirty = computed(() => JSON.stringify(formVals()) !== formInit.value);
+
 async function save(): Promise<void> {
   const p = pool.value;
   if (!p) return;
+  // черновик привязки из секции устройств: «Сохранить» применяет всё
+  // видимое - вписанный IP без «+ привязать» не теряется молча
+  if (devNew.value.trim()) {
+    const applied = await devApplyDraft();
+    if (!applied) {
+      push('Привязка устройства не применена: проверьте адрес или подтвердите коллизию. Настройки не сохранены.', true);
+      return;
+    }
+  }
   await withBusy(async () => {
     try {
       const renamed = newName.value.trim();
@@ -815,7 +852,7 @@ async function save(): Promise<void> {
           + привязать
         </UiButton>
       </div>
-      <UiHint text="Весь трафик перечисленных адресов уйдёт в этот пул целиком (группа «Устройство: …» в списке групп). Один адрес может быть привязан только к одному пулу; адрес из глобальных исключений привязкой не оживить." />
+      <UiHint text="Весь трафик перечисленных адресов уйдёт в этот пул целиком (группа «Устройство: …» в списке групп). Один адрес может быть привязан только к одному пулу; адрес из глобальных исключений привязкой не оживить. Привязки применяются сразу - «Сохранить» для них нажимать не нужно (оно для остальных настроек)." />
       <template v-if="!isEng">
         <div class="sect">
           Умный каскад
@@ -886,6 +923,8 @@ async function save(): Promise<void> {
       <UiButton
         variant="primary"
         :busy="busy"
+        :disabled="!settingsDirty"
+        :tooltip="settingsDirty ? '' : 'изменений нет - привязки устройств применяются сразу, остальное сохраняется этой кнопкой'"
         @click="save"
       >
         Сохранить
