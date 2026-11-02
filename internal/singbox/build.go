@@ -190,9 +190,19 @@ func EligibleNodes(nodes []links.Node, fullCaps bool) (ok []links.Node, reasons 
 func nodeOutbound(poolTag string, n links.Node, fullCaps bool) (map[string]any, bool, string) {
 	skip := func(reason string) (map[string]any, bool, string) { return nil, false, reason }
 	switch n.Type {
-	case "vless", "trojan", "vmess":
+	case "vless", "trojan", "vmess", "hysteria2":
 	default:
 		return skip(fmt.Sprintf("%s: тип %s идёт нативным пулом", n.Tag, n.Type))
+	}
+	if n.Type == "hysteria2" {
+		// честные отказы вместо тихой потери параметров; fullCaps-гвард
+		// не нужен: hysteria2 в апстриме с 1.9 (ядра lx/extended 1.14.x)
+		if n.Mport != "" {
+			return skip(fmt.Sprintf("%s: port hopping (mport) движковым пулом пока не рендерится", n.Tag))
+		}
+		if n.Obfs != "" && n.Obfs != "salamander" {
+			return skip(fmt.Sprintf("%s: obfs %q не поддерживается (только salamander)", n.Tag, n.Obfs))
+		}
 	}
 	if n.Encryption != "" && n.Encryption != "none" && !fullCaps {
 		return skip(fmt.Sprintf("%s: vless-шифрование требует ядро lx или extended", n.Tag))
@@ -226,6 +236,17 @@ func nodeOutbound(poolTag string, n links.Node, fullCaps bool) (map[string]any, 
 			out["alter_id"] = n.AlterId
 		}
 	}
+	if n.Type == "hysteria2" {
+		if n.UpMbps > 0 {
+			out["up_mbps"] = n.UpMbps
+		}
+		if n.DownMbps > 0 {
+			out["down_mbps"] = n.DownMbps
+		}
+		if n.Obfs != "" {
+			out["obfs"] = map[string]any{"type": n.Obfs, "password": n.ObfsPassword}
+		}
+	}
 	if t := n.TLS; t != nil {
 		tls := map[string]any{"enabled": true}
 		if t.SNI != "" {
@@ -234,7 +255,11 @@ func nodeOutbound(poolTag string, n links.Node, fullCaps bool) (map[string]any, 
 		if len(t.ALPN) > 0 {
 			tls["alpn"] = t.ALPN
 		}
-		if t.Fingerprint != "" {
+		if t.Insecure {
+			tls["insecure"] = true
+		}
+		// utls - только TCP-TLS: hysteria2 это QUIC, quic-go uTLS не умеет
+		if t.Fingerprint != "" && n.Type != "hysteria2" {
 			tls["utls"] = map[string]any{"enabled": true, "fingerprint": t.Fingerprint}
 		}
 		if t.Security == "reality" {

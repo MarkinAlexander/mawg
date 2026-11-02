@@ -287,3 +287,110 @@ func TestBuildConfigMergedLXAddsResolver(t *testing.T) {
 		t.Fatal("own-профиль без clash-порта должен падать")
 	}
 }
+
+// Ссылка владельца 111-дока §1 (пароль фейковый): hysteria2-outbound с
+// password/tls(server_name=IP, alpn); utls для QUIC не пишем, гварда
+// fullCaps не нужно (hysteria2 в апстриме с 1.9).
+func TestBuildConfigHysteria2Outbound(t *testing.T) {
+	spec := PoolSpec{Name: "hy", Tun: "tun1", TunIP: TuneIP(1), MixedPort: 2282,
+		Nodes: mustNodes(t, "hysteria2://test-password@movk231.my.to:443"+
+			"?alpn=h3&fp=chrome&security=tls&sni=203.0.113.40#Hysteria2-vitas")}
+	data, skipped, err := BuildConfig([]PoolSpec{spec}, Params{ClashPort: 2291})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(skipped) != 0 {
+		t.Fatalf("skipped: %v", skipped)
+	}
+	var cfg struct {
+		Outbounds []map[string]any `json:"outbounds"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	var ob map[string]any
+	for _, o := range cfg.Outbounds {
+		if o["tag"] == "mawg-hy|Hysteria2-vitas" {
+			ob = o
+		}
+	}
+	if ob == nil {
+		t.Fatalf("hysteria2-outbound не построен: %v", cfg.Outbounds)
+	}
+	if ob["type"] != "hysteria2" || ob["server"] != "movk231.my.to" || ob["server_port"].(float64) != 443 {
+		t.Fatalf("шапка: %v", ob)
+	}
+	if ob["password"] != "test-password" {
+		t.Fatalf("password: %v", ob["password"])
+	}
+	tls := ob["tls"].(map[string]any)
+	if tls["server_name"] != "203.0.113.40" || tls["insecure"] != nil {
+		t.Fatalf("tls: %v", tls)
+	}
+	if alpn, _ := tls["alpn"].([]any); len(alpn) != 1 || alpn[0] != "h3" {
+		t.Fatalf("alpn: %v", tls["alpn"])
+	}
+	if _, has := tls["utls"]; has {
+		t.Fatalf("utls у QUIC-протокола писать нельзя: %v", tls)
+	}
+	if _, has := ob["transport"]; has {
+		t.Fatalf("у hysteria2 транспорта нет: %v", ob)
+	}
+}
+
+// obfs-пара и полоса: up_mbps/down_mbps, obfs{type,password}; insecure=1
+// -> tls.insecure.
+func TestBuildConfigHysteria2ObfsBandwidth(t *testing.T) {
+	spec := PoolSpec{Name: "hy", Tun: "tun1", TunIP: TuneIP(1), MixedPort: 2282,
+		Nodes: mustNodes(t, "hysteria2://test-password@203.0.113.50:36812"+
+			"?insecure=1&obfs=salamander&obfs-password=obfs-pass&upmbps=100&downmbps=500#hy2")}
+	data, skipped, err := BuildConfig([]PoolSpec{spec}, Params{ClashPort: 2291})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(skipped) != 0 {
+		t.Fatalf("skipped: %v", skipped)
+	}
+	var cfg struct {
+		Outbounds []map[string]any `json:"outbounds"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	var ob map[string]any
+	for _, o := range cfg.Outbounds {
+		if o["tag"] == "mawg-hy|hy2" {
+			ob = o
+		}
+	}
+	if ob == nil {
+		t.Fatal("outbound не построен")
+	}
+	if ob["up_mbps"].(float64) != 100 || ob["down_mbps"].(float64) != 500 {
+		t.Fatalf("полоса: %v", ob)
+	}
+	obf := ob["obfs"].(map[string]any)
+	if obf["type"] != "salamander" || obf["password"] != "obfs-pass" {
+		t.Fatalf("obfs: %v", obf)
+	}
+	tls := ob["tls"].(map[string]any)
+	if tls["insecure"] != true {
+		t.Fatalf("insecure=1 не дошёл: %v", tls)
+	}
+}
+
+// Честные отказы: mport и чужой obfs - skip с причиной, не тихая потеря.
+func TestBuildConfigHysteria2Skips(t *testing.T) {
+	spec := PoolSpec{Name: "hy", Tun: "tun1", TunIP: TuneIP(1), MixedPort: 2282,
+		Nodes: mustNodes(t, "hysteria2://test-password@203.0.113.50:36812"+
+			"?mport=50000-60000#hop\n"+
+			"hysteria2://test-password@203.0.113.51:36812?obfs=fake#weird")}
+	_, skipped, err := BuildConfig([]PoolSpec{spec}, Params{ClashPort: 2291})
+	if err == nil || !strings.Contains(err.Error(), "нет подходящих") {
+		t.Fatalf("все узлы отбиты - ожидается ошибка: %v / %v", err, skipped)
+	}
+	joined := strings.Join(skipped, "; ")
+	if !strings.Contains(joined, "mport") || !strings.Contains(joined, "salamander") {
+		t.Fatalf("причины не объяснены: %v", skipped)
+	}
+}
