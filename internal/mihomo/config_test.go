@@ -19,6 +19,15 @@ func vlessNode(tag string) links.Node {
 	}
 }
 
+// Структура ссылки владельца 111-дока §1: sni=IP, fp=chrome, alpn=h3.
+func hysteria2Node(tag string) links.Node {
+	return links.Node{
+		Type: "hysteria2", Tag: "manual|" + tag, Host: "movk231.my.to", Port: 443,
+		Password: "test-password",
+		TLS:      &links.TLS{Security: "tls", SNI: "203.0.113.40", Fingerprint: "chrome", ALPN: []string{"h3"}},
+	}
+}
+
 func parseYAML(t *testing.T, data []byte) map[string]any {
 	t.Helper()
 	var out map[string]any
@@ -148,8 +157,7 @@ func TestBuildConfigSkipsUnsupported(t *testing.T) {
 }
 
 func anySkip(list []string, sub string) bool {
-	for _, s := range list {
-		if strings.Contains(s, sub) {
+	for _, s := range list {		if strings.Contains(s, sub) {
 			return true
 		}
 	}
@@ -245,4 +253,94 @@ func hasKey(m map[string]any, key string) bool {
 		}
 	}
 	return false
+}
+
+// Рендер hysteria2 по ссылке владельца 111-дока: password, sni (IP),
+// alpn; поля tls/client-fingerprint у QUIC-протокола быть не должно
+// (quic-go без uTLS), insecure -> skip-cert-verify.
+func TestBuildConfigHysteria2(t *testing.T) {
+	spec := PoolSpec{
+		Name: "hy2", Tun: "tun3", TunIP: "172.19.3.1/30", MixedPort: 2383,
+		ProbeTarget: "http://www.gstatic.com/generate_204", CheckIntervalSec: 60,
+		Nodes: []links.Node{hysteria2Node("vitas")},
+	}
+	data, skipped, err := BuildConfig([]PoolSpec{spec}, Params{ClashPort: 2391})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(skipped) != 0 {
+		t.Fatalf("лишние skip: %v", skipped)
+	}
+	cfg := parseYAML(t, data)
+	proxies := cfg["proxies"].([]any)
+	if len(proxies) != 1 {
+		t.Fatalf("прокси: %v", proxies)
+	}
+	p := proxies[0].(map[string]any)
+	if p["type"] != "hysteria2" || p["server"] != "movk231.my.to" || p["port"] != 443 {
+		t.Fatalf("шапка прокси: %v", p)
+	}
+	if p["password"] != "test-password" || p["sni"] != "203.0.113.40" {
+		t.Fatalf("auth/sni: %v", p)
+	}
+	if p["alpn"] == nil || len(p["alpn"].([]any)) != 1 || p["alpn"].([]any)[0] != "h3" {
+		t.Fatalf("alpn: %v", p["alpn"])
+	}
+	for _, absent := range []string{"tls", "client-fingerprint", "network"} {
+		if _, ok := p[absent]; ok {
+			t.Fatalf("у hysteria2 не должно быть поля %q:\n%s", absent, data)
+		}
+	}
+	if p["skip-cert-verify"] != nil {
+		t.Fatalf("insecure в ссылке нет - skip-cert-verify не место:\n%s", data)
+	}
+}
+
+// hysteria2 с obfs-парой, полосой и insecure -> соответствующие поля ядра.
+func TestBuildConfigHysteria2ObfsBandwidth(t *testing.T) {
+	n := hysteria2Node("full")
+	n.Obfs, n.ObfsPassword = "salamander", "obfs-pass"
+	n.UpMbps, n.DownMbps = 100, 500
+	n.TLS.Insecure = true
+	spec := PoolSpec{
+		Name: "hy2", Tun: "tun3", TunIP: "172.19.3.1/30", MixedPort: 2383,
+		Nodes: []links.Node{n},
+	}
+	data, skipped, err := BuildConfig([]PoolSpec{spec}, Params{ClashPort: 2391})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(skipped) != 0 {
+		t.Fatalf("лишние skip: %v", skipped)
+	}
+	cfg := parseYAML(t, data)
+	p := cfg["proxies"].([]any)[0].(map[string]any)
+	if p["obfs"] != "salamander" || p["obfs-password"] != "obfs-pass" {
+		t.Fatalf("obfs-пара: %v", p)
+	}
+	if p["up"] != 100 || p["down"] != 500 {
+		t.Fatalf("полоса: %v", p)
+	}
+	if p["skip-cert-verify"] != true {
+		t.Fatalf("insecure=1 не дошёл до skip-cert-verify: %v", p)
+	}
+}
+
+// Честные отказы: port hopping и чужой obfs - не тихая потеря параметров.
+func TestBuildConfigHysteria2Skips(t *testing.T) {
+	hop := hysteria2Node("hop")
+	hop.Mport = "50000-60000"
+	weird := hysteria2Node("weird")
+	weird.Obfs = "fake"
+	spec := PoolSpec{
+		Name: "hy2", Tun: "tun3", TunIP: "172.19.3.1/30", MixedPort: 2383,
+		Nodes: []links.Node{hop, weird},
+	}
+	_, skipped, err := BuildConfig([]PoolSpec{spec}, Params{ClashPort: 2391})
+	if err == nil || !strings.Contains(err.Error(), "нет подходящих") {
+		t.Fatalf("все узлы отбиты - ожидается ошибка, получили %v / %v", err, skipped)
+	}
+	if !anySkip(skipped, "mport") || !anySkip(skipped, "salamander") {
+		t.Fatalf("причины не объяснены: %v", skipped)
+	}
 }

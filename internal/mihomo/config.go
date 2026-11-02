@@ -80,10 +80,20 @@ type proxy struct {
 	Port   int    `yaml:"port"`
 
 	UUID     string `yaml:"uuid,omitempty"`     // vless/vmess
-	Password string `yaml:"password,omitempty"` // trojan
+	Password string `yaml:"password,omitempty"` // trojan, hysteria2
 	Cipher   string `yaml:"cipher,omitempty"`   // vmess: security
 	AlterID  int    `yaml:"alterId,omitempty"`  // vmess
 	Flow     string `yaml:"flow,omitempty"`     // vless
+
+	// hysteria2 (поля ядра v1.19.33 свеяны по скачанному бинарю):
+	// up/down - полоса, obfs - salamander, sni/skip-cert-verify - TLS;
+	// client-fingerprint для QUIC не существует (quic-go без uTLS),
+	// fingerprint ядра - cert-pinning, не uTLS
+	Up             int    `yaml:"up,omitempty"`
+	Down           int    `yaml:"down,omitempty"`
+	Obfs           string `yaml:"obfs,omitempty"`
+	ObfsPassword   string `yaml:"obfs-password,omitempty"`
+	SkipCertVerify bool   `yaml:"skip-cert-verify,omitempty"`
 
 	UDP bool `yaml:"udp,omitempty"`
 
@@ -152,7 +162,8 @@ type config struct {
 }
 
 // EligibleNodes - узлы, которые mihomo умеет запустить: vless/vmess/trojan
-// с транспортами ws/grpc/http/httpupgrade (xhttp - lx-специфика).
+// с транспортами ws/grpc/http/httpupgrade (xhttp - lx-специфика) и
+// hysteria2 (QUIC, без транспорта).
 func EligibleNodes(nodes []links.Node) (ok []links.Node, reasons []string) {
 	for _, n := range nodes {
 		if reason := nodeReason(n); reason != "" {
@@ -166,9 +177,19 @@ func EligibleNodes(nodes []links.Node) (ok []links.Node, reasons []string) {
 
 func nodeReason(n links.Node) string {
 	switch n.Type {
-	case "vless", "trojan", "vmess":
+	case "vless", "trojan", "vmess", "hysteria2":
 	default:
 		return fmt.Sprintf("%s: тип %s идёт нативным пулом", n.Tag, n.Type)
+	}
+	if n.Type == "hysteria2" {
+		// честные отказы вместо тихой потери параметров
+		if n.Mport != "" {
+			return fmt.Sprintf("%s: port hopping (mport) движковым пулом пока не рендерится", n.Tag)
+		}
+		if n.Obfs != "" && n.Obfs != "salamander" {
+			return fmt.Sprintf("%s: obfs %q не поддерживается mihomo (только salamander)", n.Tag, n.Obfs)
+		}
+		return ""
 	}
 	if n.Encryption != "" && n.Encryption != "none" {
 		return fmt.Sprintf("%s: vless-шифрование не поддерживается mihomo (нужен sing-box lx)", n.Tag)
@@ -201,15 +222,31 @@ func nodeProxy(poolTag string, n links.Node) (proxy, bool) {
 		p.AlterID = n.AlterId
 	case "trojan":
 		p.Password = n.Password
+	case "hysteria2":
+		p.Password = n.Password
+		p.Up, p.Down = n.UpMbps, n.DownMbps
+		if n.Obfs == "salamander" {
+			p.Obfs, p.ObfsPassword = n.Obfs, n.ObfsPassword
+		}
 	}
 	if t := n.TLS; t != nil {
-		p.TLS = n.Type != "trojan" // trojan в clash всегда TLS, поля не имеет
-		if n.Type == "trojan" {
+		switch n.Type {
+		case "trojan", "hysteria2":
+			// у trojan/hysteria2 поля tls нет (всегда TLS): sni отдельным полем;
+			// hysteria2: insecure -> skip-cert-verify
 			p.SNI = t.SNI
-		} else {
+			if n.Type == "hysteria2" {
+				p.SkipCertVerify = t.Insecure
+			}
+		default:
+			p.TLS = true
 			p.ServerName = t.SNI
 		}
-		p.ClientFingerprint = t.Fingerprint
+		if n.Type != "hysteria2" {
+			// hysteria2 - QUIC: quic-go uTLS не умеет, поле ядра
+			// fingerprint - cert-pinning; для TCP-типов поведение прежнее
+			p.ClientFingerprint = t.Fingerprint
+		}
 		p.ALPN = t.ALPN
 		if t.Security == "reality" {
 			p.Reality = &realityOpts{PublicKey: t.PublicKey, ShortID: t.ShortID}
