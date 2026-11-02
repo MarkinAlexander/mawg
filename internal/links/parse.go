@@ -2,6 +2,7 @@ package links
 
 import (
 	"errors"
+	"fmt"
 	"net/url"
 	"strconv"
 	"strings"
@@ -59,6 +60,8 @@ func ParseLink(source, raw string) (Node, error) {
 		return parseVmess(source, raw)
 	case "trojan":
 		return parseTrojan(source, raw)
+	case "hysteria2":
+		return parseHysteria2(source, raw)
 	case "wireguard":
 		return parseWG(source, raw, false)
 	case "amneziawg":
@@ -119,6 +122,64 @@ func parseTrojan(source, raw string) (Node, error) {
 	n.Flow = q.Get("flow")
 	n.TLS = tlsFromQuery(q)
 	transportFromQuery(&n, q)
+	return n, nil
+}
+
+// parseHysteria2 - hysteria2://AUTH@host:port?PARAMS#TAG (RFC сообщества,
+// де-факто sing-box/mihomo; 111-док §1). Протокол всегда TLS-over-QUIC:
+// TLS-блок заводится даже без security=tls (в ссылке владельца он есть,
+// но часть экспортёров его опускает). Валидны IP в sni (кейс владельца).
+func parseHysteria2(source, raw string) (Node, error) {
+	u, frag, err := splitFragment(raw)
+	if err != nil {
+		return Node{}, err
+	}
+	pass := ""
+	if u.User != nil {
+		pass = u.User.Username()
+		if p, ok := u.User.Password(); ok && p != "" {
+			pass += ":" + p // пароль с двоеточием: userinfo целиком
+		}
+	}
+	if pass == "" {
+		return Node{}, fmt.Errorf("hysteria2: нет auth-пароля в ссылке (userinfo)")
+	}
+	q := query(u)
+	n := Node{
+		Type:     "hysteria2",
+		Tag:      source + "|" + proxyTag(u, frag),
+		Host:     u.Hostname(),
+		Password: pass,
+		Raw:      raw,
+	}
+	n.Port = portOf(u)
+	t := &TLS{Security: "tls", SNI: q.Get("sni")}
+	if fp := q.Get("fp"); fp != "" {
+		t.Fingerprint = fp
+	}
+	for _, a := range strings.Split(q.Get("alpn"), ",") {
+		if a = strings.TrimSpace(a); a != "" {
+			t.ALPN = append(t.ALPN, a)
+		}
+	}
+	switch q.Get("insecure") {
+	case "1", "true":
+		t.Insecure = true
+	}
+	n.TLS = t
+	n.Obfs = q.Get("obfs")
+	n.ObfsPassword = q.Get("obfs-password")
+	n.Mport = q.Get("mport") // port hopping, строкой - движки пока не рендерят
+	up := q.Get("upmbps")
+	if up == "" {
+		up = q.Get("up")
+	}
+	n.UpMbps, _ = strconv.Atoi(up)
+	down := q.Get("downmbps")
+	if down == "" {
+		down = q.Get("down")
+	}
+	n.DownMbps, _ = strconv.Atoi(down)
 	return n, nil
 }
 

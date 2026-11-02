@@ -71,7 +71,9 @@ func looksLikeLinkList(b []byte) bool {
 		return false
 	}
 	t := string(b)
-	for _, scheme := range []string{"vless://", "vmess://", "trojan://", "wireguard://", "amneziawg://", "vpn://", "ss://", "hysteria", "tuic://", "socks://", "http://", "https://"} {
+	// hysteria2 - отдельный протокол; hysteria (1.x) сюда сознательно не
+	// входит: ни парсер, ни движки его не умеют
+	for _, scheme := range []string{"vless://", "vmess://", "trojan://", "wireguard://", "amneziawg://", "vpn://", "ss://", "hysteria2://", "tuic://", "socks://", "http://", "https://"} {
 		if strings.Contains(t, scheme) {
 			return true
 		}

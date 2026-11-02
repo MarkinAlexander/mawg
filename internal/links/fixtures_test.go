@@ -61,6 +61,15 @@ var (
 	trojanNoneHTTPUpgrade = "trojan://" + fakePass + "@203.0.113.30:55392" +
 		"?host=&path=%2F&security=none&type=httpupgrade#trojantest"
 
+	// Структура ссылки владельца из 111-дока §1 (пароль подменён фейковым:
+	// живой cred на сервер в гит не идёт, снек-скан диффа)
+	hysteria2Owner = "hysteria2://" + fakePass + "@movk231.my.to:443" +
+		"?alpn=h3&fp=chrome&security=tls&sni=203.0.113.40#Hysteria2-vitas"
+
+	hysteria2Full = "hysteria2://" + fakePass + "@203.0.113.50:36812" +
+		"?alpn=h3%2Ch3&insecure=1&obfs=salamander&obfs-password=" + fakePass +
+		"2&mport=50000-60000&upmbps=100&downmbps=500#hy2-obfs"
+
 	wireguardLink = "wireguard://" + fakeKey('c') + "@203.0.113.30:35091" +
 		"?address=10.0.0.7%2F32&keepalive=25&mtu=1280&presharedkey=" + fakeKey('d') +
 		"&publickey=" + fakeKey('e') + "#wg-test"

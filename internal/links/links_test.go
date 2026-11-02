@@ -375,6 +375,68 @@ func TestParseSubscriptionUnknownScheme(t *testing.T) {
 	}
 }
 
+// Ссылка владельца (111-док §1, пароль фейковый): userinfo=auth,
+// sni=IP валиден, alpn списком, fp=chrome, TLS по умолчанию даже при
+// security=tls.
+func TestParseHysteria2Owner(t *testing.T) {
+	n, err := ParseLink("s4", hysteria2Owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n.Type != "hysteria2" || n.Host != "movk231.my.to" || n.Port != 443 {
+		t.Fatalf("хост/порт/тип: %+v", n)
+	}
+	if n.Password != fakePass || n.Tag != "s4|Hysteria2-vitas" {
+		t.Fatalf("auth/tag: %q %q", n.Password, n.Tag)
+	}
+	if n.TLS == nil || n.TLS.Security != "tls" || n.TLS.SNI != "203.0.113.40" ||
+		n.TLS.Fingerprint != "chrome" || len(n.TLS.ALPN) != 1 || n.TLS.ALPN[0] != "h3" {
+		t.Fatalf("TLS: %+v", n.TLS)
+	}
+	if n.TLS.Insecure {
+		t.Fatal("insecure не выставлен в ссылке - должен быть false")
+	}
+}
+
+// Вариации: insecure=1, obfs-пара, mport, up/down (111-док §3-А).
+func TestParseHysteria2Variations(t *testing.T) {
+	n, err := ParseLink("s4", hysteria2Full)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !n.TLS.Insecure {
+		t.Fatal("insecure=1 не распознан")
+	}
+	if n.Obfs != "salamander" || n.ObfsPassword != fakePass+"2" {
+		t.Fatalf("obfs-пара: %q/%q", n.Obfs, n.ObfsPassword)
+	}
+	if n.Mport != "50000-60000" || n.UpMbps != 100 || n.DownMbps != 500 {
+		t.Fatalf("mport/up/down: %q %d/%d", n.Mport, n.UpMbps, n.DownMbps)
+	}
+}
+
+// hysteria2 без auth-пароля - честная ошибка, а не нода-пустышка.
+func TestParseHysteria2NoAuth(t *testing.T) {
+	if _, err := ParseLink("s4", "hysteria2://203.0.113.50:443#noauth"); err == nil {
+		t.Fatal("ссылка без userinfo не должна парситься")
+	}
+}
+
+// hysteria2 в подписке: парсится в ноду, а не падает в warnings
+// (до фикса схемы в перечислении не было вовсе).
+func TestParseSubscriptionHysteria2(t *testing.T) {
+	res := ParseSubscription("sub1", vlessRealityTCP+"\n"+hysteria2Owner+"\n")
+	if len(res.Nodes) != 2 {
+		t.Fatalf("узлов: %d", len(res.Nodes))
+	}
+	if len(res.Warnings) != 0 {
+		t.Fatalf("warnings: %v", res.Warnings)
+	}
+	if res.Nodes[1].Type != "hysteria2" {
+		t.Fatalf("тип второго узла: %s", res.Nodes[1].Type)
+	}
+}
+
 func TestParseSubscriptionJSON(t *testing.T) {
 	cfg := `{
 	  "outbounds": [

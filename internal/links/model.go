@@ -9,6 +9,7 @@ type TLS struct {
 	ALPN        []string `json:"alpn,omitempty"`
 	PublicKey   string   `json:"publicKey,omitempty"`
 	ShortID     string   `json:"shortId,omitempty"`
+	Insecure    bool     `json:"insecure,omitempty"` // skip-cert-verify (hysteria2 insecure=1)
 }
 
 type AWG struct {
@@ -76,7 +77,14 @@ type Node struct {
 	HeaderHost   string   `json:"headerHost,omitempty"`
 	ServiceName  string   `json:"serviceName,omitempty"`
 	Mode         string   `json:"mode,omitempty"`
-	TLS          *TLS     `json:"tls,omitempty"`
+	// hysteria2: obfs salamander, полоса и port hopping. mport остаётся
+	// строкой (формат 50000-60000) - движки его пока не рендерят
+	Obfs         string `json:"obfs,omitempty"`
+	ObfsPassword string `json:"obfsPassword,omitempty"`
+	UpMbps       int    `json:"upMbps,omitempty"`
+	DownMbps     int    `json:"downMbps,omitempty"`
+	Mport        string `json:"mport,omitempty"`
+	TLS          *TLS   `json:"tls,omitempty"`
 	PrivateKey   string   `json:"privateKey,omitempty"`
 	PublicKey    string   `json:"publicKey,omitempty"`
 	PresharedKey string   `json:"presharedKey,omitempty"`
