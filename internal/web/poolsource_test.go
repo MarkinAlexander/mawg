@@ -11,10 +11,12 @@ import (
 	"sync"
 	"testing"
 
+	"mawg/internal/links"
 	"mawg/internal/magitrickle"
 	"mawg/internal/platform/fake"
 	"mawg/internal/rotator"
 	"mawg/internal/store"
+	"mawg/internal/wgconf"
 )
 
 func fakeWGKey(b byte) string {
@@ -241,5 +243,66 @@ func TestApplyEngineRejectsDuplicateTun(t *testing.T) {
 	_, err = srv.applyEngine()
 	if err == nil || !strings.Contains(err.Error(), "tun tun2") || !strings.Contains(err.Error(), "dup-a") {
 		t.Fatalf("ожидалась ошибка задвоения tun, получено: %v", err)
+	}
+}
+
+// Диспетчер активации (111-док, задача Д, живой кейс teastr3333):
+// движковый пул из WG/AWG-конфигов не должен звать нативный apply -
+// раньше ветки from-source звали rotator.SetActive, и на Кинетике apply
+// падал на пустом keenetic-слоте («неверный слот keenetic: ""»),
+// загоняя конфиг в cooldown и рисуя ошибку на работающем пуле.
+func TestActivatePoolConfigDispatch(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fb := fake.New()
+	e := rotator.New(st, fb, magitrickle.New("http://127.0.0.1:1"))
+	srv := New(st, e, fb, nil, "test", nil)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	// движковый пул с WG/AWG-конфигом: активация - только стор+пересборка
+	settings := store.PoolSettings{Platform: "fake", EngineMode: "singbox", TunName: "tun9"}
+	if _, err := st.CreatePool("eng-awg", settings); err != nil {
+		t.Fatal(err)
+	}
+	node, err := links.ParseLink("t", fakeWGLink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	confText, err := node.ConfText()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := wgconf.Parse([]byte(confText))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.AddConfigs("eng-awg", []wgconf.NamedConfig{
+		{OriginalName: node.ConfName(), Raw: []byte(confText), Config: cfg},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	p, _ := st.Pool("eng-awg")
+	if err := srv.activatePoolConfig("eng-awg", p.Configs[0].File); err != nil {
+		// пересборка в тесте без ядер может честно ругаться - не важно,
+		// важно что нативный apply не звался и активный конфиг записан
+		t.Logf("пересборка без ядер: %v", err)
+	}
+	if got := fb.Applied(); len(got) != 0 {
+		t.Fatalf("нативный apply для движкового пула зваться не должен: %v", got)
+	}
+	if state := st.State("eng-awg"); state.ActiveFile != p.Configs[0].File {
+		t.Fatalf("активный конфиг не записан: %q != %q", state.ActiveFile, p.Configs[0].File)
+	}
+
+	// нативный пул: rotator-путь должен жить - apply зовётся
+	code, plan := postFromSourceTs(t, ts, `{"name":"nat-awg","source":"`+fakeWGLink+`","keeneticSlot":"Wireguard2"}`)
+	if code != 200 {
+		t.Fatalf("нативный пул: код %d, план %+v", code, plan)
+	}
+	if got := fb.Applied(); len(got) != 1 {
+		t.Fatalf("нативный пул должен применяться нативно: %v", got)
 	}
 }

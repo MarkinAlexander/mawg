@@ -249,7 +249,7 @@ func (s *Server) createPoolFromNodes(w http.ResponseWriter, r *http.Request, req
 		plan.Warnings = append(plan.Warnings, "Конфиги AmneziaWG 3.x: нативные интерфейсы не поддерживают этот формат, пул работает через ядро "+coreName+" (tun "+pool.Settings.TunName+").")
 		s.store.LogEvent(pool.Name, "applied", fmt.Sprintf("AWG 3.x из источника: %d конфигов в движке %s (%s)", added, coreName, pool.Settings.TunName))
 		if p, ok := s.store.Pool(pool.Name); ok && len(p.Configs) > 0 {
-			_ = s.engine.SetActive(pool.Name, p.Configs[0].File)
+			_ = s.activatePoolConfig(pool.Name, p.Configs[0].File)
 		}
 		s.applyEngineWarn(&plan)
 		s.cascSyncPool(req.Name)
@@ -305,7 +305,7 @@ func (s *Server) createPoolFromNodes(w http.ResponseWriter, r *http.Request, req
 			plan.Warnings = append(plan.Warnings, "Конфиги идут через движок "+coreName+" (нативный путь отключён выбором ядра).")
 			s.store.LogEvent(pool.Name, "applied", fmt.Sprintf("пул на движке %s из источника: %d конфигов", coreName, added))
 			if p, ok := s.store.Pool(pool.Name); ok && len(p.Configs) > 0 {
-				_ = s.engine.SetActive(pool.Name, p.Configs[0].File)
+				_ = s.activatePoolConfig(pool.Name, p.Configs[0].File)
 			}
 			s.applyEngineWarn(&plan)
 			s.cascSyncPool(req.Name)

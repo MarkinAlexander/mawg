@@ -133,6 +133,18 @@ func engineCoreOf(p store.Pool) string {
 	return "singbox"
 }
 
+// activatePoolConfig - сменить активный конфиг пула по его режиму:
+// движковый пул активируется пересборкой движка, нативный - rotator
+// (его SetActive для движкового пула недопустим: нативный applyConfig
+// падает на пустом keenetic-слоте и загоняет конфиг в cooldown -
+// живой кейс teastr3333, 111-док задача Д).
+func (s *Server) activatePoolConfig(name, file string) error {
+	if p, ok := s.store.Pool(name); ok && p.Settings.EngineMode != "" {
+		return s.enginePoolActivate(name, file)
+	}
+	return s.engine.SetActive(name, file)
+}
+
 // enginePoolActivate - сменить активный конфиг движкового пула: только
 // запись стора + пересборка движка (rotator.SetActive недопустим - его
 // applyConfig идёт в нативный backend.Apply). Слово владельца 30.10:
@@ -780,7 +792,7 @@ func (s *Server) refreshSource(w http.ResponseWriter, r *http.Request) {
 		plan.Pool, plan.Added, plan.Duplicates = name, added, dupes
 		plan.Engine = engineNodes
 		if p, ok := s.store.Pool(name); ok && len(p.Configs) > 0 {
-			if err := s.engine.SetActive(name, p.Configs[0].File); err != nil {
+			if err := s.activatePoolConfig(name, p.Configs[0].File); err != nil {
 				plan.Warnings = append(plan.Warnings, "не активирован: "+err.Error())
 			}
 		}
