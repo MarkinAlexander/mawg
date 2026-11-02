@@ -106,6 +106,32 @@ var (
 		"Endpoint = 203.0.113.40:51820\n"
 )
 
+// awg31FullConf - полный AWG 3.1-конфиг по §2а 111-дока (структура кейса
+// пользователя, ключи фейковые): junk 2.0 + I1=<r> + HP-ключ, паддинг и
+// все диапазонные таймеры. Фикстура round-trip: ни одно поле не должно
+// теряться при NodeFromConf -> ConfText.
+func awg31FullConf() string {
+	return "[Interface]\n" +
+		"PrivateKey = " + fakeKey('c') + "\n" +
+		"Address = 10.8.2.2/32\n" +
+		"DNS = 1.1.1.1, 8.8.8.8\n" +
+		"MTU = 1394\n" +
+		"Jc = 6\nJmin = 51\nJmax = 240\nS1 = 127\nS2 = 28\nS3 = 29\nS4 = 26\n" +
+		"H1 = 1\nH2 = 2\nH3 = 3\nH4 = 4\n" +
+		"I1 = <r 156>\n" +
+		"HeaderProtectionKey = " + fakeKey('h') + "\n" +
+		"ContentPaddingAddition = 19-37\n" +
+		"RekeyAfterTime = 109-145\n" +
+		"RekeyTimeout = 3-4\n" +
+		"RejectAfterTime = 194-263\n" +
+		"KeepaliveTimeout = 9-14\n" +
+		"MaxHandshakeAttempts = 25-47\n" +
+		"\n# AmneziaWG-3.1 - admin-awg - kit\n[Peer]\n" +
+		"PublicKey = " + fakeKey('e') + "\n" +
+		"AllowedIPs = 0.0.0.0/0, ::/0\n" +
+		"Endpoint = movk231.my.to:51822\n"
+}
+
 func subLinks() []string {
 	return []string{vlessRealityTCP, vlessNoneHTTPUpgrade, trojanNoneHTTPUpgrade}
 }

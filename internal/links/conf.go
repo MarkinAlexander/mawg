@@ -32,6 +32,17 @@ func (n Node) ConfText() (string, error) {
 			{"S1", a.S1}, {"S2", a.S2}, {"S3", a.S3}, {"S4", a.S4},
 			{"H1", a.H1}, {"H2", a.H2}, {"H3", a.H3}, {"H4", a.H4},
 			{"I1", a.I1}, {"I2", a.I2}, {"I3", a.I3}, {"I4", a.I4}, {"I5", a.I5},
+			// AWG 3.x: ключи должны совпадать с узнаваемыми wgconf.setAWG
+			// (сверка lowercase) - иначе потеря при повторном парсе
+			{"HeaderProtectionKey", a.HeaderProtectionKey},
+			{"ContentPaddingAddition", a.ContentPaddingAddition},
+			{"RekeyAfterTime", a.RekeyAfterTime},
+			{"RekeyTimeout", a.RekeyTimeout},
+			{"RejectAfterTime", a.RejectAfterTime},
+			{"KeepaliveTimeout", a.KeepaliveTimeout},
+			{"MaxHandshakeAttempts", a.MaxHandshakeAttempts},
+			{"RandomTrailers", a.RandomTrailers},
+			{"DisableCookies", a.DisableCookies},
 		} {
 			if f.val != "" {
 				fmt.Fprintf(&b, "%s = %s\n", f.key, f.val)

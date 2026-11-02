@@ -59,7 +59,8 @@ func (a *AWG) present() bool {
 	return a.Jc != "" || a.Jmin != "" || a.Jmax != "" ||
 		a.S1 != "" || a.S2 != "" || a.S3 != "" || a.S4 != "" ||
 		a.H1 != "" || a.H2 != "" || a.H3 != "" || a.H4 != "" ||
-		a.I1 != "" || a.I2 != "" || a.I3 != "" || a.I4 != "" || a.I5 != ""
+		a.I1 != "" || a.I2 != "" || a.I3 != "" || a.I4 != "" || a.I5 != "" ||
+		a.AWG3()
 }
 
 func splitComma(s string) []string {
@@ -84,6 +85,16 @@ func awgFromWGConf(p wgconf.AWGParams) *AWG {
 		S1: deref(p.S1), S2: deref(p.S2), S3: deref(p.S3), S4: deref(p.S4),
 		H1: deref(p.H1), H2: deref(p.H2), H3: deref(p.H3), H4: deref(p.H4),
 		I1: deref(p.I1), I2: deref(p.I2), I3: deref(p.I3), I4: deref(p.I4), I5: deref(p.I5),
+		// AWG 3.x: без переноса этих полей нода теряла бы спецпараметры
+		HeaderProtectionKey:    deref(p.HeaderProtectionKey),
+		ContentPaddingAddition: deref(p.ContentPaddingAddition),
+		RekeyAfterTime:         deref(p.RekeyAfterTime),
+		RekeyTimeout:           deref(p.RekeyTimeout),
+		RejectAfterTime:        deref(p.RejectAfterTime),
+		KeepaliveTimeout:       deref(p.KeepaliveTimeout),
+		MaxHandshakeAttempts:   deref(p.MaxHandshakeAttempts),
+		RandomTrailers:         deref(p.RandomTrailers),
+		DisableCookies:         deref(p.DisableCookies),
 	}
 	if !a.present() {
 		return nil

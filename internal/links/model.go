@@ -1,5 +1,7 @@
 package links
 
+import "strings"
+
 type TLS struct {
 	Security    string   `json:"security"`
 	SNI         string   `json:"sni,omitempty"`
@@ -26,6 +28,36 @@ type AWG struct {
 	I3   string `json:"i3,omitempty"`
 	I4   string `json:"i4,omitempty"`
 	I5   string `json:"i5,omitempty"`
+	// AWG 3.x - полный набор: без этих полей ConfText регенерирует конфиг
+	// без спецпараметров и AWG 3.1 тихо деградирует до 2.0 при импорте
+	// через vpn://-ссылку (сервер требует junk/HP - handshake мёртв;
+	// 111-док, задача Д)
+	HeaderProtectionKey    string `json:"headerProtectionKey,omitempty"`
+	ContentPaddingAddition string `json:"contentPaddingAddition,omitempty"`
+	RekeyAfterTime         string `json:"rekeyAfterTime,omitempty"`
+	RekeyTimeout           string `json:"rekeyTimeout,omitempty"`
+	RejectAfterTime        string `json:"rejectAfterTime,omitempty"`
+	KeepaliveTimeout       string `json:"keepaliveTimeout,omitempty"`
+	MaxHandshakeAttempts   string `json:"maxHandshakeAttempts,omitempty"`
+	RandomTrailers         string `json:"randomTrailers,omitempty"`
+	DisableCookies         string `json:"disableCookies,omitempty"`
+}
+
+// AWG3 - в ноде есть спецполя AmneziaWG 3.x (защита заголовка, диапазонные
+// таймеры, паддинг, включённые флаги)
+func (a *AWG) AWG3() bool {
+	return a != nil && (a.HeaderProtectionKey != "" || a.ContentPaddingAddition != "" ||
+		a.RekeyAfterTime != "" || a.RekeyTimeout != "" || a.RejectAfterTime != "" ||
+		a.KeepaliveTimeout != "" || a.MaxHandshakeAttempts != "" ||
+		awgFlagOn(a.RandomTrailers) || awgFlagOn(a.DisableCookies))
+}
+
+func awgFlagOn(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "on", "1", "true":
+		return true
+	}
+	return false
 }
 
 type Node struct {

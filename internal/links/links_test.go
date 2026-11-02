@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"mawg/internal/wgconf"
 )
 
 func TestParseVlessRealityTCP(t *testing.T) {
@@ -523,6 +525,64 @@ func TestParseVPNPlainAWGIni(t *testing.T) {
 	}
 	if n.AWG == nil {
 		t.Fatal("AWG-параметры (junk) не сохранены в ноде")
+	}
+}
+
+// Round-trip AWG 3.1 (111-док, задача Д): конфиг пользователя работает в
+// Амнезии, но через vpn://-путь нода хранила только 2.0-поля - ConfText
+// регенерировал .conf без спецпараметров, NeedsEngine был false, пул
+// уходил нативным слотом как AWG 2.0 и сервер молча отвергал handshake.
+// Ни одно поле §2а не должно теряться: ParseLink -> ConfText -> wgconf.
+func TestAWG31RoundTripKeeps3xFields(t *testing.T) {
+	link := "vpn://" + base64.RawURLEncoding.EncodeToString([]byte(awg31FullConf()))
+	n, err := ParseLink("s4", link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n.Type != "amneziawg" {
+		t.Fatalf("тип: %s", n.Type)
+	}
+	a := n.AWG
+	if a == nil || a.HeaderProtectionKey != fakeKey('h') ||
+		a.ContentPaddingAddition != "19-37" || a.RekeyAfterTime != "109-145" ||
+		a.RekeyTimeout != "3-4" || a.RejectAfterTime != "194-263" ||
+		a.KeepaliveTimeout != "9-14" || a.MaxHandshakeAttempts != "25-47" ||
+		a.I1 != "<r 156>" {
+		t.Fatalf("3.x-поля потеряны в ноде: %+v", a)
+	}
+	if !a.AWG3() {
+		t.Fatal("нода с 3.x-полями должна распознаваться как AWG3")
+	}
+	confText, err := n.ConfText()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := wgconf.Parse([]byte(confText))
+	if err != nil {
+		t.Fatalf("регенерированный .conf не парсится: %v", err)
+	}
+	if !cfg.AWG.AWG3() {
+		t.Fatalf("ConfText потерял 3.x-поля:\n%s", confText)
+	}
+	if !cfg.NeedsEngine() || !cfg.AWG.HasRandomInit() {
+		t.Fatalf("NeedsEngine/HasRandomInit: %v/%v - гейт пула сработает неверно",
+			cfg.NeedsEngine(), cfg.AWG.HasRandomInit())
+	}
+	args := cfg.AWG.AscArgs()
+	if len(args) != 31 {
+		t.Fatalf("asc-хвост не полный (%d аргументов):\n%q", len(args), args)
+	}
+	// позиции: 0-8 префикс 2.0, 9-15 S3/S4/I1-I5, 16 HP-ключ, 17-28 шесть
+	// пар min-max, 29-30 флаги
+	want := []string{fakeKey('h'), "19", "37", "109", "145", "3", "4",
+		"194", "263", "9", "14", "25", "47", "0", "0"}
+	for i, w := range want {
+		if args[16+i] != w {
+			t.Fatalf("asc[%d] = %q, ждём %q\nвсе: %q", 16+i, args[16+i], w, args)
+		}
+	}
+	if lvl := wgconf.AwgLevelOf([]byte(confText)); lvl != wgconf.Awg3 {
+		t.Fatalf("уровень регенерата: %q, ждём awg3", lvl)
 	}
 }
 

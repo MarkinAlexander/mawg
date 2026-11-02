@@ -26,6 +26,7 @@ func (s *Server) inspectSource(w http.ResponseWriter, r *http.Request) {
 		Error     string   `json:"error,omitempty"`
 		Native    int      `json:"native"`
 		Engine    int      `json:"engine"`
+		Awg3      bool     `json:"awg3,omitempty"`
 		Types     []string `json:"types,omitempty"`
 		Tags      []string `json:"tags,omitempty"`
 		Userinfo  string   `json:"userinfo,omitempty"`
@@ -55,6 +56,11 @@ func (s *Server) inspectSource(w http.ResponseWriter, r *http.Request) {
 	for _, n := range res.Nodes {
 		if n.Type == "wireguard" || n.Type == "amneziawg" {
 			out.Native++
+			// AWG 3.x - ноде нужны натив 5.2+ или движок: честный флаг
+			// ещё до создания пула (111-док, задача Д)
+			if n.AWG.AWG3() {
+				out.Awg3 = true
+			}
 		} else {
 			out.Engine++
 		}
