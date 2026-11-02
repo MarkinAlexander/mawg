@@ -489,6 +489,79 @@ func TestParseVPNBareZlibAndWireguardContainer(t *testing.T) {
 	}
 }
 
+// Плоский флейвор AmneziaWG (нативный экспорт приложения): vpn:// = чистый
+// base64 от INI-конфига с junk-параметрами, без zlib и JSON-обёртки.
+// Реальный кейс пользователя 02.11 (110-док): «vpn://: тело не zlib».
+func TestParseVPNPlainAWGIni(t *testing.T) {
+	awgConf := "[Interface]\n" +
+		"PrivateKey = " + fakeKey('c') + "\n" +
+		"Address = 10.8.2.2/32\n" +
+		"DNS = 1.1.1.1, 8.8.8.8\n" +
+		"MTU = 1394\n" +
+		"Jc = 6\nJmin = 51\nJmax = 240\nS1 = 127\nS2 = 28\nS3 = 29\nS4 = 26\n" +
+		"H1 = 1\nH2 = 2\nH3 = 3\nH4 = 4\n" +
+		"I1 = <r 156>\n" +
+		"HeaderProtectionKey = " + fakeKey('h') + "\n" +
+		"ContentPaddingAddition = 19-37\n" +
+		"RekeyAfterTime = 109-145\n" +
+		"RekeyTimeout = 3-4\n" +
+		"RejectAfterTime = 194-263\n" +
+		"KeepaliveTimeout = 9-14\n" +
+		"MaxHandshakeAttempts = 25-47\n" +
+		"\n# AmneziaWG-3.1-admin-awg\n[Peer]\n" +
+		"PublicKey = " + fakeKey('e') + "\n" +
+		"AllowedIPs = 0.0.0.0/0, ::/0\n" +
+		"Endpoint = movk231.my.to:51822\n"
+	link := "vpn://" + base64.RawURLEncoding.EncodeToString([]byte(awgConf))
+	n, err := ParseLink("s4", link)
+	if err != nil {
+		t.Fatalf("плоский AWG-конфиг должен парситься: %v", err)
+	}
+	// NodeFromConf распознаёт AWG по junk-параметрам -> тип amneziawg
+	if n.Type != "amneziawg" || n.Host != "movk231.my.to" || n.Port != 51822 {
+		t.Fatalf("плоский AWG: %+v", n)
+	}
+	if n.AWG == nil {
+		t.Fatal("AWG-параметры (junk) не сохранены в ноде")
+	}
+}
+
+// Мессенджер рвёт длинный base64 переносами - decodeBase64URL обязан
+// их вычищать (инцидент 02.11: ссылка из Telegram со смятыми строками).
+func TestParseVPNPlainAWGWrappedBase64(t *testing.T) {
+	awgConf := "[Interface]\nPrivateKey = " + fakeKey('c') + "\nAddress = 10.8.2.2/32\n" +
+		"\n[Peer]\nPublicKey = " + fakeKey('e') + "\nEndpoint = 203.0.113.41:51820\n"
+	b64 := base64.RawURLEncoding.EncodeToString([]byte(awgConf))
+	var wrapped strings.Builder
+	for i, r := range b64 {
+		if i > 0 && i%48 == 0 {
+			wrapped.WriteString("\n")
+		}
+		wrapped.WriteRune(r)
+	}
+	n, err := ParseLink("s4", "vpn://"+wrapped.String())
+	if err != nil {
+		t.Fatalf("смятый переносами base64 должен парситься: %v", err)
+	}
+	if n.Host != "203.0.113.41" || n.Port != 51820 {
+		t.Fatalf("wrapped: %+v", n)
+	}
+}
+
+// Обрезанная ссылка (мессенджер свернул хвост под «...») - честная
+// ошибка с подсказкой, а не «тело не zlib».
+func TestParseVPNPlainAWGTruncated(t *testing.T) {
+	awgConf := "[Interface]\nPrivateKey = " + fakeKey('c') + "\nAddress = 10.8.2.2/32\n"
+	link := "vpn://" + base64.RawURLEncoding.EncodeToString([]byte(awgConf))
+	_, err := ParseLink("s4", link)
+	if err == nil {
+		t.Fatal("обрезанный конфиг не должен парситься (нет [Peer])")
+	}
+	if !strings.Contains(err.Error(), "обрезан") {
+		t.Fatalf("текст без подсказки об обрезке: %v", err)
+	}
+}
+
 func TestDecodeBodyRejectsPlainText(t *testing.T) {
 	if _, ok := decodeBody("vless://" + fakeUUID + "@203.0.113.1:1#x"); ok {
 		t.Fatal("чистый текст ссылок не должен считаться base64")

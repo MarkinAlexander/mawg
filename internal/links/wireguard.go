@@ -194,8 +194,17 @@ func parseVPN(source, raw string) (Node, error) {
 	if !okDoc {
 		if d, ok := zlibAll(payload); ok {
 			doc = d
+		} else if bytes.Contains(payload, []byte("[Interface]")) || bytes.Contains(payload, []byte("[Peer]")) {
+			// плоский флейвор AmneziaWG: чистый base64 от INI-конфига
+			// (нативный экспорт приложения) без zlib и без JSON-обёртки
+			node, err := NodeFromConf(source, "", payload)
+			if err != nil {
+				return Node{}, fmt.Errorf("vpn://: конфиг AWG распознан, но не разобран (%w). Если ссылка из мессенджера - разверните сообщение полностью: хвост под «...» обрезан", err)
+			}
+			node.Raw = raw
+			return node, nil
 		} else {
-			return Node{}, fmt.Errorf("vpn://: тело не zlib")
+			return Node{}, fmt.Errorf("vpn://: тело не zlib и не конфиг AWG - возможно, ссылка обрезана (в мессенджерах хвост прячется под «...») или это другой формат экспорта")
 		}
 	}
 	var exp vpnExport
