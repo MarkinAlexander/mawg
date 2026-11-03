@@ -576,7 +576,7 @@ func (b *Backend) RestartMagitrickle() error {
 	_, err := runShell(`
 if ps w | grep -v grep | grep -q 'magitrickled-c'; then
   /etc/init.d/mtc restart
-elif ps w | grep -v grep | grep -qE 'bin/magitrickled( |$)'; then
+elif ps w | grep -v grep | grep -qE 'magitrickled( |$)'; then
   /etc/init.d/magitrickle restart
 elif [ -x /etc/init.d/mtc ]; then
   /etc/init.d/mtc restart

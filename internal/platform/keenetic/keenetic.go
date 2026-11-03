@@ -813,7 +813,7 @@ func (b *Backend) RestartMagitrickle() error {
 	cmd := exec.Command("/bin/sh", "-c", `
 if ps w | grep -v grep | grep -q 'magitrickled-c'; then
   /opt/etc/init.d/S98mtc restart
-elif ps w | grep -v grep | grep -qE 'bin/magitrickled( |$)'; then
+elif ps w | grep -v grep | grep -qE 'magitrickled( |$)'; then
   /opt/etc/init.d/S99magitrickle restart
 elif [ -x /opt/etc/init.d/S98mtc ]; then
   /opt/etc/init.d/S98mtc restart
