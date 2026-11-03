@@ -97,6 +97,30 @@ async function refreshSystem(): Promise<void> {
   }
 }
 
+// рестарт активного MagiTrickle (слово владельца 03.11): геоблок/правила
+// удобно проверять перезапуском MT прямо из панели; хуки пересобираются,
+// маршрутизация мигнёт на секунды - пулы mawg не трогаются
+const mtBusy = ref(false);
+async function mtRestart(): Promise<void> {
+  if (mtBusy.value) return;
+  const ok = await confirm({
+    title: 'Перезапустить MagiTrickle?',
+    text: 'Хуки групп пересоберутся: маршрутизация по правилам мигнёт на пару секунд (сессии телеграма/геоблока могут оборваться). Пулы mawg и их туннели не трогаются.',
+    okLabel: 'Перезапустить',
+  });
+  if (!ok) return;
+  mtBusy.value = true;
+  try {
+    await sys.mtRestart();
+    push('MagiTrickle перезапущен', false);
+    void sys.refresh();
+  } catch (e) {
+    push(e instanceof Error ? e.message : String(e), true);
+  } finally {
+    mtBusy.value = false;
+  }
+}
+
 // --- установка компонента (легаси installComp 2890 + dlgLx 2928); диалог
 // ядра sing-box-lx (профиль/бэкап) - общий компонент LxInstallDialog, он
 // нужен и в потоке создания пула ---
@@ -299,6 +323,13 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
     subtitle="Проверка зависимостей: пакеты WireGuard/AmneziaWG, MagiTrickle, ядро sing-box-lx, компоненты прошивки. Установка только по вашему подтверждению."
   >
     <template #actions>
+      <UiButton
+        :busy="mtBusy"
+        tooltip="рестарт активного MagiTrickle: хуки групп пересобираются, маршрутизация мигнёт на секунды"
+        @click="mtRestart"
+      >
+        перезапустить MT
+      </UiButton>
       <UiButton
         :busy="refreshing"
         tooltip="перечитать системную проверку"

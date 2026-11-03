@@ -126,3 +126,34 @@ func TestAppUIServed(t *testing.T) {
 		t.Fatalf("старая панель пропала с /")
 	}
 }
+
+// Кнопка «перезапустить MT» на Системе (слово владельца 03.11): эндпоинт
+// зовёт платформенный RestartMagitrickle и отвечает ok.
+func TestMTRestartEndpoint(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fb := fake.New()
+	e := rotator.New(st, fb, magitrickle.New("http://127.0.0.1:1"))
+	srv := New(st, e, fb, nil, "test", nil)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Post(ts.URL+"/api/v1/system/mt-restart", "application/json", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("код %d", resp.StatusCode)
+	}
+	var out map[string]string
+	json.NewDecoder(resp.Body).Decode(&out)
+	if out["ok"] != "restarting" {
+		t.Fatalf("ответ: %v", out)
+	}
+	if fb.MTRestarts() != 1 {
+		t.Fatalf("RestartMagitrickle не звался: %d", fb.MTRestarts())
+	}
+}

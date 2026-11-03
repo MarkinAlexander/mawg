@@ -74,6 +74,11 @@ export function useSystem() {
   async function setSingboxCache(mode: 'off' | 'tmp'): Promise<void> {
     await api('POST', '/singbox/cache-file', { mode });
   }
+  // рестарт активного MagiTrickle (платформенно: Кинетик mtc/S99,
+  // OpenWrt mtc/magitrickle) - кнопка на вкладке Система
+  async function mtRestart(): Promise<void> {
+    await api('POST', '/system/mt-restart', {});
+  }
   // lifecycle ядра: start|stop|restart|enable|disable|uninstall
   async function corePower(id: string, action: string): Promise<CoreInfo> {
     const r = await api<{ core: CoreInfo }>('POST', `/cores/${id}/power`, { action });
@@ -82,5 +87,5 @@ export function useSystem() {
     else cores.list.push(r.core);
     return r.core;
   }
-  return { state, cores, upd, refresh, refreshCores, start, stop, checkUpdate, coreSources, install, setSingboxMode, setSingboxCache, corePower };
+  return { state, cores, upd, refresh, refreshCores, start, stop, checkUpdate, coreSources, install, setSingboxMode, setSingboxCache, corePower, mtRestart };
 }

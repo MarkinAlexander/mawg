@@ -194,6 +194,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/system/update/check", s.updateCheck)
 	mux.HandleFunc("POST /api/v1/system/update/run", s.updateRun)
 	mux.HandleFunc("POST /api/v1/system/restart", s.postSystemRestart)
+	mux.HandleFunc("POST /api/v1/system/mt-restart", s.postMTRestart)
 	mux.HandleFunc("GET /api/v1/cascades/iface-endpoints", s.ifaceEndpointsHint)
 	mux.HandleFunc("GET /api/v1/cascades", s.cascList)
 	mux.HandleFunc("POST /api/v1/cascades", s.cascCreate)
@@ -443,6 +444,19 @@ func (s *Server) postSystemRestart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.store.LogEvent("settings", "server", "перезапуск панели из веб-интерфейса")
+	writeJSON(w, http.StatusOK, map[string]string{"ok": "restarting"})
+}
+
+// postMTRestart - рестарт активного MagiTrickle (платформенно:
+// Кинетик S98mtc/S99magitrickle, OpenWrt mtc/magitrickle).
+// Слово владельца 03.11: кнопка на вкладке Система - геоблок удобнее
+// проверять перезапуском MT прямо из панели.
+func (s *Server) postMTRestart(w http.ResponseWriter, r *http.Request) {
+	if err := s.backend.RestartMagitrickle(); err != nil {
+		writeErr(w, err)
+		return
+	}
+	s.store.LogEvent("settings", "server", "перезапуск MagiTrickle из веб-интерфейса")
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "restarting"})
 }
 

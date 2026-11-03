@@ -29,6 +29,8 @@ type Fake struct {
 	// NameOverride - имя платформы для тестов платформенных ветвлений
 	// ("keenetic" и пр.); пусто = "fake".
 	NameOverride string
+
+	mtRestarts int
 }
 
 type DevProbe struct {
@@ -149,7 +151,19 @@ func (f *Fake) Applied() []string {
 	return out
 }
 
-func (f *Fake) RestartMagitrickle() error { return nil }
+func (f *Fake) RestartMagitrickle() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.mtRestarts++
+	return nil
+}
+
+// MTRestarts - сколько раз звали RestartMagitrickle (тест кнопки Системы).
+func (f *Fake) MTRestarts() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.mtRestarts
+}
 
 // RunShell - ShellRunner: вывод задаёт ShellFn (сценарий теста).
 func (f *Fake) RunShell(script string, timeout time.Duration) (string, error) {

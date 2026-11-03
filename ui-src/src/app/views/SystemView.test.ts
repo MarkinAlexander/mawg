@@ -9,6 +9,7 @@ import { useEvents } from '../../stores/events'
 import { useStatus } from '../../stores/status'
 import { useSystem } from '../../stores/system'
 import { useConfirm } from '../../stores/confirm'
+import { useToast } from '../../stores/toast'
 import type { Status, SystemItem } from '../../api/types'
 
 const ev = (time: string, pool: string, kind: string, message: string) => ({ time, pool, kind, message });
@@ -530,6 +531,39 @@ describe('SystemView - mihomo в таблице зависимостей', () =>
       expect(JSON.parse(post![1]!.body as string)).toEqual({ id: 'mihomo', replace: true });
     });
     await vi.waitFor(() => expect(w.text()).toContain('Установлено'));
+    w.unmount();
+  });
+});
+
+// Кнопка «перезапустить MT» (слово владельца 03.11): confirm -> POST
+// /system/mt-restart -> тост + перечитка системной проверки.
+describe('SystemView: перезапуск MagiTrickle', () => {
+  it('кнопка есть, клик -> confirm -> POST /system/mt-restart', async () => {
+    const { w, f } = await makeView();
+    const b = btn(w, 'перезапустить MT')[0];
+    expect(b).toBeTruthy();
+    await b.trigger('click');
+    await nextTick();
+    expect(useConfirm().state.open).toBe(true);
+    expect(useConfirm().state.text).toContain('Хуки групп пересоберутся');
+    useConfirm().ok();
+    await vi.waitFor(() => {
+      const post = f.mock.calls.find((c) => (c[0] as string).endsWith('/system/mt-restart') && (c[1]?.method === 'POST'));
+      expect(post).toBeTruthy();
+    });
+    await vi.waitFor(() =>
+      expect(useToast().toasts.list.some((t) => t.text.includes('MagiTrickle перезапущен'))).toBe(true));
+    w.unmount();
+  });
+
+  it('отмена confirm - POST не уходит', async () => {
+    const { w, f } = await makeView();
+    await btn(w, 'перезапустить MT')[0].trigger('click');
+    await nextTick();
+    expect(useConfirm().state.open).toBe(true);
+    useConfirm().cancel();
+    await nextTick();
+    expect(f.mock.calls.some((c) => (c[0] as string).endsWith('/system/mt-restart'))).toBe(false);
     w.unmount();
   });
 });
