@@ -747,8 +747,7 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
             :href="d.compact.url"
             target="_blank"
             rel="noopener"
-            >сжатый ({{ dlMb(d.compact.size) }})</a
-          >
+          >сжатый ({{ dlMb(d.compact.size) }})</a>
           <span class="corenote mono">{{ d.plain?.asset }}</span>
         </div>
       </details>
