@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -66,12 +67,24 @@ func cmdStatus(plat, dir string, portOverride int) int {
 
 	st, err := store.Open(dir)
 	port := portOverride
-	if port == 0 {
+	if port == 0 && err == nil && st != nil {
 		_, p, _, _ := st.ServerSettings()
 		port = p
 	}
+	if port == 0 {
+		// стор не читается (битый json после пропадания питания, read-only
+		// ФС) - статус обязан работать и на сломанной установке: показываем
+		// дефолтный порт и честную причину вместо паники (живой кейс:
+		// nil-deref в ServerSettings на OpenWrt)
+		port = 8090
+	}
 	fmt.Printf("mawg %s: %s, panel http://127.0.0.1:%d\n", version, status, port)
-	if err != nil || !alive {
+	if err != nil {
+		fmt.Printf("  ВНИМАНИЕ: база %s не читается: %v\n", dir, err)
+		fmt.Printf("  проверьте json в %s (config/state/premium/free/warp): битый файл после сбоя питания лечится переносом aside, pool-конфиги в %s не тронуты\n", dir, filepath.Join(dir, "pools"))
+		return 0
+	}
+	if !alive {
 		return 0
 	}
 
