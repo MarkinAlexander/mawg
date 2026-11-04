@@ -32,10 +32,16 @@ var (
 	swapDiskFree = platform.DiskFreeBytes
 	swapCopyFile = platform.CopyFile
 	swapELFArch  = singbox.ELFArch
+	swapDetectArch = singbox.DetectLxArch
 	swapRun      = func(argv0 string, args ...string) ([]byte, error) {
 		return exec.Command(argv0, args...).Output()
 	}
 	swapTimeNow = func() string { return time.Now().Format(time.RFC3339) }
+	// swapVersionProvider - версия-функция по ядру (подмена в тестах)
+	swapVersionProvider = swapCoreVersionFn
+	// целевые пути бинарей по платформе (подмена в тестах)
+	swapLXTarget = singbox.LXTargetForPlatform
+	swapMhTarget = mihomo.TargetForPlatform
 )
 
 // swapParams - вход конвейера: колбэки вместо прямых вызовов менеджеров,
@@ -98,7 +104,7 @@ func swapEngineBinary(p swapParams) (*swapResult, error) {
 	}
 	routerArch := p.RouterArch
 	if routerArch == "" {
-		a, detail, derr := singbox.DetectLxArch()
+		a, detail, derr := swapDetectArch()
 		if derr != nil {
 			return res, derr
 		}
@@ -261,7 +267,7 @@ func (s *Server) runCoreSwap(core, staged string, keepBackup bool) (*swapResult,
 	stop := func() error { return nil }
 	switch core {
 	case "mihomo":
-		t := mihomo.TargetForPlatform(s.backend.Name())
+		t := swapMhTarget(s.backend.Name())
 		bin, markerDir = t.Bin, t.MarkerDir
 		stop = func() error {
 			// менеджер может быть не создан (ядро не установлено) - тогда
@@ -273,7 +279,7 @@ func (s *Server) runCoreSwap(core, staged string, keepBackup bool) (*swapResult,
 		}
 	default:
 		core = "singbox"
-		t := singbox.LXTargetForPlatform(s.backend.Name())
+		t := swapLXTarget(s.backend.Name())
 		bin, markerDir = t.Bin, t.MarkerDir
 		stop = func() error {
 			if s.store.SingboxMode() == "shared" {
@@ -294,7 +300,7 @@ func (s *Server) runCoreSwap(core, staged string, keepBackup bool) (*swapResult,
 	return swapEngineBinary(swapParams{
 		Core: core, Bin: bin, MarkerDir: markerDir, Staged: staged,
 		KeepBackup: keepBackup,
-		VersionFn: swapCoreVersionFn(core),
+		VersionFn: swapVersionProvider(core),
 		StopFn:    stop,
 		StartFn: func() error {
 			// менеджеры перечитывают версию нового бинаря, кэш детекта ядер -

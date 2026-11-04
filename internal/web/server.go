@@ -50,6 +50,7 @@ type Server struct {
 	ifaceCache respCache
 	sysCache   respCache
 	sbSrcCache respCache // источники ядра sing-box: отдельный слот (respCache одно-тельный)
+	dlCache    respCache // прямые ссылки на ассеты бинарей движков (112-док 4.1)
 	IPGate     *auth.IPGate
 	// warpReg - регистратор Cloudflare WARP (генератор конфигов);
 	// nil = штатный клиент, подменяется в тестах.
@@ -127,7 +128,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/singbox/cache-file", s.postCacheFile)
 	mux.HandleFunc("GET /api/v1/cores", s.getCores)
 	mux.HandleFunc("GET /api/v1/cores/singbox/sources", s.getSingboxSources)
+	mux.HandleFunc("GET /api/v1/cores/downloads", s.getCoreDownloads)
 	mux.HandleFunc("POST /api/v1/cores/{id}/power", s.postCorePower)
+	mux.HandleFunc("POST /api/v1/cores/{id}/binary", s.postCoreBinary)
 	mux.HandleFunc("POST /api/v1/pools/{name}/refresh-source", s.refreshSource)
 	mux.HandleFunc("PUT /api/v1/pools/{name}", s.updatePool)
 	mux.HandleFunc("DELETE /api/v1/pools/{name}", s.deletePool)
@@ -2582,6 +2585,11 @@ func limitBody(next http.Handler) http.Handler {
 		limit := int64(1 << 20)
 		if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/") {
 			limit = 32 << 20
+		}
+		// заливка бинаря движка: обычный бинарь до ~100 МБ (extended),
+		// 32 МБ multipart-лимита не хватает (112-док 4.1)
+		if strings.HasSuffix(r.URL.Path, "/binary") {
+			limit = maxCoreUpload
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, limit)
 		next.ServeHTTP(w, r)
