@@ -573,6 +573,7 @@ export interface CoreInfo {
   managedByMawg: boolean
   disabled: boolean
   note?: string
+  lastError?: string // причина последнего неудачного старта (112-док 3.6)
   caps: { start: boolean; stop: boolean; enable: boolean; disable: boolean; uninstall: boolean; install?: boolean }
 }
 

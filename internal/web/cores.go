@@ -42,7 +42,10 @@ type coreView struct {
 	ManagedByMawg bool     `json:"managedByMawg"`
 	Disabled      bool     `json:"disabled"`
 	Note          string   `json:"note,omitempty"`
-	Caps          coreCaps `json:"caps"`
+	// LastError - причина последнего неудачного старта: карточка ядра
+	// показывает «не запущен: <причина>» (кейс 04.11, 112-док 3.6)
+	LastError string   `json:"lastError,omitempty"`
+	Caps      coreCaps `json:"caps"`
 }
 
 // кэш детекта ядра: запуск <bin> version - не бесплатный, а /cores
@@ -117,6 +120,7 @@ func (s *Server) mihomoCoreView() coreView {
 	v.Disabled = s.store.CoreDisabled("mihomo")
 	if mgr, err := s.mh(); err == nil {
 		v.Running = mgr.Status().Running
+		v.LastError = mgr.LastError()
 	}
 	v.AutostartNote = "own-режим: ядро стартует вместе с движковыми пулами mawg"
 	v.Caps.Start = v.Disabled || !v.Running
@@ -153,6 +157,7 @@ func (s *Server) singboxCoreView() coreView {
 	v.Disabled = s.store.EngineDisabled()
 	if mgr, err := s.sb(); err == nil {
 		v.Running = mgr.Status().Running
+		v.LastError = mgr.LastError()
 	}
 	if v.Mode == "shared" {
 		v.Autostart = s.coreAutostart()

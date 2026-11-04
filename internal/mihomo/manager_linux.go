@@ -5,6 +5,7 @@ package mihomo
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -17,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"mawg/internal/platform"
 	"mawg/internal/singbox"
 )
 
@@ -44,6 +46,8 @@ type Manager struct {
 	lastSpecs     []PoolSpec
 	statuses      map[string]*singbox.PoolStatus
 	nodeCooldown  map[string]time.Time
+	engineLog     string // лог движка (rotated): причина старта и хвост диагностики
+	lastStartErr  string // последняя неудача старта (под stmu): «не запущен» с причиной
 }
 
 type RunConfig struct {
@@ -65,6 +69,7 @@ func NewManagerConfig(dir string, cfg RunConfig) (*Manager, error) {
 	}
 	m := &Manager{eng: eng, Dir: dir, MixedPort: 2381, ClashPort: 2391,
 		webPort: cfg.WebPort, logEvent: cfg.LogEvent,
+		engineLog:  platform.EngineLogPath(dir, "mihomo"),
 		lastRotate: map[string]time.Time{},
 		statuses:   map[string]*singbox.PoolStatus{}, nodeCooldown: map[string]time.Time{}}
 	m.probeLoopStop = make(chan struct{})
@@ -74,6 +79,30 @@ func NewManagerConfig(dir string, cfg RunConfig) (*Manager, error) {
 
 // Info - найденный бинарь ядра.
 func (m *Manager) Info() Engine { return *m.eng }
+
+// EngineLog - путь лога движка (ротация при каждом старте): диагностика
+// «не запущен» и хвост для бандла (112-док 3.7).
+func (m *Manager) EngineLog() string { return m.engineLog }
+
+// LastError - причина последнего неудачного старта ядра: карточка ядра
+// показывает её вместо голого «не запущен» (кейс 04.11, 112-док 3.6).
+func (m *Manager) LastError() string {
+	m.stmu.Lock()
+	defer m.stmu.Unlock()
+	return m.lastStartErr
+}
+
+// setStartErr - зафиксировать исход старта (вызывается под m.mu из Apply;
+// поле под stmu - его читает probeSpec без m.mu). Неудача пишет событие
+// в журнал панели.
+func (m *Manager) setStartErr(msg string) {
+	m.stmu.Lock()
+	m.lastStartErr = msg
+	m.stmu.Unlock()
+	if msg != "" && m.logEvent != nil {
+		m.logEvent("mihomo", "start-fail", msg)
+	}
+}
 
 // StopOwn - гасит процесс ядра, менеджер жив (мастер-выключатель ядра).
 func (m *Manager) StopOwn() {
@@ -157,6 +186,17 @@ func (m *Manager) probeSpec(spec PoolSpec) {
 	}
 	if err != nil {
 		st.ProbeErr = err.Error()
+		// к отказу пробы - первая строка ошибки из лога движка, когда ядро
+		// само в отказе; у живого ядра мёртвый узел старый лог не тащит
+		// (112-док 3.7г)
+		m.stmu.Lock()
+		startErr := m.lastStartErr
+		m.stmu.Unlock()
+		if startErr != "" || strings.Contains(st.ProbeErr, "connection refused") {
+			if first := platform.LogFirstError(m.engineLog); first != "" {
+				st.ProbeErr += " | ядро: " + first
+			}
+		}
 		st.ConsecFails = fails + 1
 	}
 	m.setStatus(spec.Name, st)
@@ -464,7 +504,9 @@ func (m *Manager) Apply(pools []PoolSpec) ([]string, error) {
 		return skipped, err
 	}
 	m.stop()
-	logF, err := os.OpenFile(filepath.Join(m.Dir, "mihomo.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND|os.O_TRUNC, 0o600)
+	// ротация перед O_TRUNC: хвост прошлой сессии ядра живёт в .old
+	platform.RotateIfLarge(m.engineLog, platform.EngineLogMaxBytes)
+	logF, err := os.OpenFile(m.engineLog, os.O_CREATE|os.O_WRONLY|os.O_APPEND|os.O_TRUNC, 0o600)
 	if err != nil {
 		return skipped, err
 	}
@@ -477,14 +519,23 @@ func (m *Manager) Apply(pools []PoolSpec) ([]string, error) {
 	cmd.Stderr = logF
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
+		m.setStartErr(fmt.Sprintf("процесс не стартовал: %v", err))
 		return skipped, err
 	}
 	m.pid = cmd.Process.Pid
 	go cmd.Process.Wait()
 	os.WriteFile(m.pidPath(), []byte(strconv.Itoa(m.pid)), 0o600)
 	if err := m.waitClash(30 * time.Second); err != nil {
-		return skipped, fmt.Errorf("mihomo стартовал, но API не отвечает: %v (лог: %s/mihomo.log)", err, m.Dir)
+		// причина - в первых строках лога (FATAL ядра), а не только таймаут
+		msg := fmt.Sprintf("mihomo стартовал, но API не отвечает: %v", err)
+		if head := platform.LogHead(m.engineLog, 4); len(head) > 0 {
+			msg += "; ядро пишет: " + strings.Join(head, " ⏎ ")
+		}
+		msg += " (лог: " + m.engineLog + ")"
+		m.setStartErr(msg)
+		return skipped, errors.New(msg)
 	}
+	m.setStartErr("")
 	if cp, err := os.ReadFile(m.cfgPath()); err == nil {
 		os.WriteFile(m.lastGood(), cp, 0o600)
 	}

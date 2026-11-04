@@ -50,6 +50,11 @@ func (m *Manager) Info() Engine { return Engine{} }
 func (m *Manager) Apply(pools []PoolSpec) ([]string, error) {
 	return nil, fmt.Errorf("ядро mihomo доступно только на роутере")
 }
+
+// LastError/EngineLog - заглушки не-Linux сборки (диагностика старта).
+func (m *Manager) LastError() string { return "" }
+func (m *Manager) EngineLog() string { return "" }
+
 func (m *Manager) Status() Status { return Status{} }
 
 func (m *Manager) PoolStatus(name string) (singbox.PoolStatus, bool) {

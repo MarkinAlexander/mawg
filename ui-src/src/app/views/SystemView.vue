@@ -435,6 +435,12 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
         />
       </div>
       <div
+        v-if="c.lastError && !c.running"
+        class="coreerr"
+      >
+        не запущен: {{ c.lastError }}
+      </div>
+      <div
         v-if="c.installed"
         class="coreact"
       >
@@ -654,6 +660,12 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
 .corenote {
   color: var(--dim);
   font-size: 12px;
+}
+.coreerr {
+  color: var(--warn, #b8860b);
+  font-size: 12px;
+  margin-top: 4px;
+  word-break: break-word;
 }
 .coreact {
   display: flex;

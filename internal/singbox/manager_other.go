@@ -53,7 +53,12 @@ func (m *Manager) Close()       {}
 func (m *Manager) Apply(pools []PoolSpec) ([]string, error) {
 	return nil, fmt.Errorf("движок sing-box доступен только на роутере")
 }
-func (m *Manager) Status() Status    { return Status{} }
+
+// LastError/EngineLog - заглушки не-Linux сборки (диагностика старта).
+func (m *Manager) LastError() string { return "" }
+func (m *Manager) EngineLog() string { return "" }
+
+func (m *Manager) Status() Status { return Status{} }
 func (m *Manager) SharedAlive() bool { return false }
 func (m *Manager) PatchNote() string { return "" }
 
