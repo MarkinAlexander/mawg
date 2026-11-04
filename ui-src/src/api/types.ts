@@ -593,11 +593,11 @@ export interface SingboxSourceInfo {
   error?: string
 }
 
-// GET /cores/downloads: прямые ссылки на релизные ассеты под арх роутера
-// (112-док 4.1: скачать на ПК, распаковать, залить бинарь кнопкой)
+// GET /cores/downloads: прямые ссылки на релизные ассеты ПОД ЭТОТ роутер
+// (112-док 4.1: один рекомендованный ассет на движок, остальное - в
+// singboxAlt; слово владельца: список максимально короткий)
 export interface CoreDownloadInfo {
-  source?: string
-  title?: string
+  label: string
   asset: string
   url: string
   size?: number
@@ -607,6 +607,7 @@ export interface CoreDownloadInfo {
 export interface CoreDownloadsRes {
   arch: string
   singbox: CoreDownloadInfo[]
+  singboxAlt: CoreDownloadInfo[]
   mihomo: CoreDownloadInfo[]
   magitrickle: CoreDownloadInfo[]
 }

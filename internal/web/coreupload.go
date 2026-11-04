@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"mawg/internal/mihomo"
@@ -107,32 +108,38 @@ func (s *Server) postCoreBinary(w http.ResponseWriter, r *http.Request) {
 // coreDownloadView - прямая ссылка на релизный ассет под арх роутера:
 // пользователь скачивает на свой ПК, распаковывает и заливает бинарь
 // кнопкой «Загрузить бинарь» (на забитых роутерах распаковка на месте
-// не живёт).
+// не живёт). Список МИНИМАЛЕН (слово владельца 04.11: «слишком большой
+// список, упрощать и очень сильно»): один рекомендованный ассет на
+// движок - только то, что подходит этому роутеру.
 type coreDownloadView struct {
-	Source string `json:"source,omitempty"`
-	Title  string `json:"title,omitempty"`
-	Asset  string `json:"asset"`
-	URL    string `json:"url"`
-	Size   int64  `json:"size,omitempty"`
-	Note   string `json:"note,omitempty"` // gz-бинарь/пакет - что делать после скачивания
+	// Label - короткая подпись для пользователя («sing-box-extended 1.14.3»),
+	// полное имя ассета - в Asset
+	Label string `json:"label"`
+	Asset string `json:"asset"`
+	URL   string `json:"url"`
+	Size  int64  `json:"size,omitempty"`
+	Note  string `json:"note,omitempty"` // одна короткая подсказка, что делать с файлом
 }
 
-// getCoreDownloads - GET /api/v1/cores/downloads: прямые ссылки на
-// ассеты всех движков под арх роутера (sing-box по источникам, mihomo,
-// пакеты MT). Кэш 10 минут - GitHub API.
+// getCoreDownloads - GET /api/v1/cores/downloads: прямые ссылки ПОД ЭТОТ
+// роутер: sing-box - рекомендованный источник (дефолтный, остальные в
+// singboxAlt), mihomo - один gz-бинарь, MT - один пакет платформы
+// (правило выбора то же, что у установки). Кэш 10 минут - GitHub API.
 func (s *Server) getCoreDownloads(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 	s.dlCache.serve(w, 10*time.Minute, func() ([]byte, error) {
 		arch, _, _ := singbox.DetectLxArch()
 		out := struct {
-			Arch       string             `json:"arch"`
-			Singbox    []coreDownloadView `json:"singbox"`
-			Mihomo     []coreDownloadView `json:"mihomo"`
+			Arch        string             `json:"arch"`
+			Singbox     []coreDownloadView `json:"singbox"`
+			SingboxAlt  []coreDownloadView `json:"singboxAlt"`
+			Mihomo      []coreDownloadView `json:"mihomo"`
 			Magitrickle []coreDownloadView `json:"magitrickle"`
-		}{Arch: arch, Singbox: []coreDownloadView{}, Mihomo: []coreDownloadView{}, Magitrickle: []coreDownloadView{}}
+		}{Arch: arch, Singbox: []coreDownloadView{}, SingboxAlt: []coreDownloadView{}, Mihomo: []coreDownloadView{}, Magitrickle: []coreDownloadView{}}
 
-		// sing-box: свежий ассет каждого источника (plain-профиль)
+		// sing-box: первый источник с ассетом под арх = рекомендованный
+		// (порядок Sources = приоритет установки), остальные - альтернативы
 		for _, rep := range singbox.Discovery(ctx) {
 			if rep.Error != "" {
 				continue
@@ -142,14 +149,20 @@ func (s *Server) getCoreDownloads(w http.ResponseWriter, r *http.Request) {
 				if !ok || n.Plain == "" {
 					continue
 				}
-				out.Singbox = append(out.Singbox, coreDownloadView{
-					Source: rep.Source.ID, Title: rep.Source.Title,
+				ver := strings.TrimPrefix(rel.Tag, "v")
+				item := coreDownloadView{
+					Label: rep.Source.Title + " " + ver,
 					Asset: n.Plain,
 					URL: fmt.Sprintf("https://github.com/%s/releases/download/%s/%s",
 						rep.Source, rel.Tag, n.Plain),
 					Size: n.PlainSz,
-					Note: "архив tar.gz: распакуйте на ПК, внутри бинарь sing-box",
-				})
+					Note: "архив tar.gz - распаковать на ПК",
+				}
+				if len(out.Singbox) == 0 {
+					out.Singbox = append(out.Singbox, item)
+				} else {
+					out.SingboxAlt = append(out.SingboxAlt, item)
+				}
 				break
 			}
 		}
@@ -157,21 +170,29 @@ func (s *Server) getCoreDownloads(w http.ResponseWriter, r *http.Request) {
 		if rels, derr := mihomo.DiscoverReleases(ctx); derr == nil {
 			if pick, perr := mihomo.PickAsset(rels, arch); perr == nil {
 				out.Mihomo = append(out.Mihomo, coreDownloadView{
+					Label: "mihomo " + pick.Tag,
 					Asset: pick.Asset, URL: pick.URL(), Size: pick.Size,
-					Note: "gz-бинарь: распакуйте на ПК (gunzip), внутри готовый бинарь mihomo",
+					Note: "gz-файл - распаковать на ПК (gunzip)",
 				})
 			}
 		}
-		// MT: пакеты .ipk/.apk - ставятся штатным менеджером, не заливкой
+		// MT: ОДИН пакет этого роутера - правило выбора как у установки
+		// (DetectTarget + PackageManager + PickAsset); не определился -
+		// секции не будет, MT ставится кнопкой из панели
 		if rel, lerr := mtinstall.LatestRelease(ctx); lerr == nil && rel != nil {
-			for _, a := range rel.Assets {
-				note := "пакет для ручной установки: opkg install / apk add"
-				if a.Name == "" {
-					continue
+			platform := "openwrt"
+			if s.backend.Name() == "keenetic" {
+				platform = "entware"
+			}
+			if target, _, terr := mtinstall.DetectTarget(s.backend.Name()); terr == nil {
+				_, ext := mtinstall.PackageManager(s.backend.Name())
+				if a, perr := mtinstall.PickAsset(rel, platform, target, ext); perr == nil {
+					out.Magitrickle = append(out.Magitrickle, coreDownloadView{
+						Label: "MagiTrickle " + strings.TrimPrefix(rel.TagName, "v") + " (" + target + ")",
+						Asset: a.Name, URL: a.URL, Size: a.Size,
+						Note: "пакет MT - вручную только если панель недоступна",
+					})
 				}
-				out.Magitrickle = append(out.Magitrickle, coreDownloadView{
-					Asset: a.Name, URL: a.URL, Size: a.Size, Note: note,
-				})
 			}
 		}
 		return json.Marshal(out)

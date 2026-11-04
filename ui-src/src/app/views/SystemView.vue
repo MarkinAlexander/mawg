@@ -311,6 +311,7 @@ function openUpload(c: CoreInfo): void {
 const dlOpen = ref(false);
 const dlBusy = ref(false);
 const dlSingbox = ref<CoreDownloadInfo[]>([]);
+const dlSingboxAlt = ref<CoreDownloadInfo[]>([]);
 const dlMihomo = ref<CoreDownloadInfo[]>([]);
 const dlMt = ref<CoreDownloadInfo[]>([]);
 const dlArch = ref('');
@@ -321,6 +322,7 @@ async function openDownloads(): Promise<void> {
   if (r) {
     dlArch.value = r.arch;
     dlSingbox.value = r.singbox || [];
+    dlSingboxAlt.value = r.singboxAlt || [];
     dlMihomo.value = r.mihomo || [];
     dlMt.value = r.magitrickle || [];
   }
@@ -687,12 +689,11 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
   <UiDialog
     v-model:open="dlOpen"
     title="Скачать бинарь движка"
-    width="560px"
+    width="480px"
   >
     <div class="lxtext">
-      Прямые ссылки на релизные ассеты под архитектуру этого роутера{{ dlArch ? ` (${dlArch})` : '' }}.
-      Скачайте архив на компьютер, распакуйте (tar.gz - tar -xzf, gz - gunzip) и залейте готовый
-      бинарь кнопкой «Загрузить бинарь» - на забитых роутерах распаковка на месте не живёт.
+      Ссылки уже подобраны под этот роутер{{ dlArch ? ` (${dlArch})` : '' }}: скачайте,
+      распакуйте на компьютере и залейте файл кнопкой «Загрузить бинарь».
     </div>
     <div v-if="dlBusy">
       ссылки уточняются (GitHub)...
@@ -703,36 +704,63 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
         :key="d.url"
         class="dllink"
       >
+        <b>{{ d.label }}</b>
         <a
           :href="d.url"
           target="_blank"
           rel="noopener"
-        >{{ d.title || d.source }}: {{ d.asset }}</a>
-        <span class="corenote">{{ dlMb(d.size) }} · {{ d.note }}</span>
+        >скачать ({{ dlMb(d.size) }})</a>
+        <span class="corenote">{{ d.note }}</span>
       </div>
       <div
         v-for="d in dlMihomo"
         :key="d.url"
         class="dllink"
       >
+        <b>{{ d.label }}</b>
         <a
           :href="d.url"
           target="_blank"
           rel="noopener"
-        >mihomo: {{ d.asset }}</a>
-        <span class="corenote">{{ dlMb(d.size) }} · {{ d.note }}</span>
+        >скачать ({{ dlMb(d.size) }})</a>
+        <span class="corenote">{{ d.note }}</span>
       </div>
-      <div
-        v-for="d in dlMt"
-        :key="d.url"
-        class="dllink"
+      <details
+        v-if="dlSingboxAlt.length"
+        class="dlalt"
       >
-        <a
-          :href="d.url"
-          target="_blank"
-          rel="noopener"
-        >MagiTrickle: {{ d.asset }}</a>
-        <span class="corenote">{{ dlMb(d.size) }} · {{ d.note }}</span>
+        <summary>другие сборки sing-box</summary>
+        <div
+          v-for="d in dlSingboxAlt"
+          :key="d.url"
+          class="dllink"
+        >
+          <a
+            :href="d.url"
+            target="_blank"
+            rel="noopener"
+          >{{ d.label }} ({{ dlMb(d.size) }})</a>
+        </div>
+      </details>
+      <div
+        v-if="dlMt.length"
+        class="dlmt"
+      >
+        <details>
+          <summary>MagiTrickle (пакет - только для ручной установки)</summary>
+          <div
+            v-for="d in dlMt"
+            :key="d.url"
+            class="dllink"
+          >
+            <a
+              :href="d.url"
+              target="_blank"
+              rel="noopener"
+            >{{ d.label }} ({{ dlMb(d.size) }})</a>
+            <span class="corenote">{{ d.note }}</span>
+          </div>
+        </details>
       </div>
     </template>
   </UiDialog>
@@ -907,9 +935,26 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
 }
 .dllink {
   margin: 6px 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: baseline;
 }
 .dllink > a {
   font-size: 12px;
+}
+.dllink > b {
+  font-size: 12.5px;
+}
+.dlalt,
+.dlmt {
+  margin-top: 10px;
+}
+.dlalt summary,
+.dlmt summary {
+  color: var(--dim);
+  font-size: 11.5px;
+  cursor: pointer;
 }
 .lxtext {
   color: var(--dim);
