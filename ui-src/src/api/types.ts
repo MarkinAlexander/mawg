@@ -593,14 +593,20 @@ export interface SingboxSourceInfo {
   error?: string
 }
 
-// GET /cores/downloads: прямые ссылки на релизные ассеты ПОД ЭТОТ роутер
-// (112-док 4.1: один рекомендованный ассет на движок, остальное - в
-// singboxAlt; слово владельца: список максимально короткий)
-export interface CoreDownloadInfo {
-  label: string
+// один файл релиза (прямая ссылка)
+export interface AssetLink {
   asset: string
   url: string
   size?: number
+}
+
+// GET /cores/downloads: сборки движков ПОД ЭТОТ роутер (112-док 4.1):
+// одна рекомендованная сборка sing-box (остальные - в singboxAlt),
+// у каждой - обычный бинарь и сжатый профиль, когда источник его делает
+export interface CoreDownloadInfo {
+  label: string
+  plain?: AssetLink
+  compact?: AssetLink // сжатая сборка (upx/-compressed): качать и заливать меньше
   note?: string
 }
 

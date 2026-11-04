@@ -694,6 +694,7 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
     <div class="lxtext">
       Ссылки уже подобраны под этот роутер{{ dlArch ? ` (${dlArch})` : '' }}: скачайте,
       распакуйте на компьютере и залейте файл кнопкой «Загрузить бинарь».
+      «Сжатый» - тот же бинарь, упакованный upx: качать и заливать меньше.
     </div>
     <div v-if="dlBusy">
       ссылки уточняются (GitHub)...
@@ -701,28 +702,36 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
     <template v-else>
       <div
         v-for="d in dlSingbox"
-        :key="d.url"
+        :key="d.label"
         class="dllink"
       >
         <b>{{ d.label }}</b>
         <a
-          :href="d.url"
+          v-if="d.plain"
+          :href="d.plain.url"
           target="_blank"
           rel="noopener"
-        >скачать ({{ dlMb(d.size) }})</a>
+        >скачать ({{ dlMb(d.plain.size) }})</a>
+        <a
+          v-if="d.compact"
+          :href="d.compact.url"
+          target="_blank"
+          rel="noopener"
+        >сжатый upx ({{ dlMb(d.compact.size) }})</a>
         <span class="corenote">{{ d.note }}</span>
       </div>
       <div
         v-for="d in dlMihomo"
-        :key="d.url"
+        :key="d.label"
         class="dllink"
       >
         <b>{{ d.label }}</b>
         <a
-          :href="d.url"
+          v-if="d.plain"
+          :href="d.plain.url"
           target="_blank"
           rel="noopener"
-        >скачать ({{ dlMb(d.size) }})</a>
+        >скачать ({{ dlMb(d.plain.size) }})</a>
         <span class="corenote">{{ d.note }}</span>
       </div>
       <details
@@ -732,14 +741,22 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
         <summary>другие сборки sing-box</summary>
         <div
           v-for="d in dlSingboxAlt"
-          :key="d.url"
+          :key="d.label"
           class="dllink"
         >
+          <span>{{ d.label }}</span>
           <a
-            :href="d.url"
+            v-if="d.plain"
+            :href="d.plain.url"
             target="_blank"
             rel="noopener"
-          >{{ d.label }} ({{ dlMb(d.size) }})</a>
+          >скачать ({{ dlMb(d.plain.size) }})</a>
+          <a
+            v-if="d.compact"
+            :href="d.compact.url"
+            target="_blank"
+            rel="noopener"
+          >сжатый ({{ dlMb(d.compact.size) }})</a>
         </div>
       </details>
       <div
@@ -750,14 +767,15 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
           <summary>MagiTrickle (пакет - только для ручной установки)</summary>
           <div
             v-for="d in dlMt"
-            :key="d.url"
+            :key="d.label"
             class="dllink"
           >
             <a
-              :href="d.url"
+              v-if="d.plain"
+              :href="d.plain.url"
               target="_blank"
               rel="noopener"
-            >{{ d.label }} ({{ dlMb(d.size) }})</a>
+            >{{ d.label }} ({{ dlMb(d.plain.size) }})</a>
             <span class="corenote">{{ d.note }}</span>
           </div>
         </details>

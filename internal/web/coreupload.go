@@ -105,20 +105,24 @@ func (s *Server) postCoreBinary(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// coreDownloadView - прямая ссылка на релизный ассет под арх роутера:
-// пользователь скачивает на свой ПК, распаковывает и заливает бинарь
-// кнопкой «Загрузить бинарь» (на забитых роутерах распаковка на месте
-// не живёт). Список МИНИМАЛЕН (слово владельца 04.11: «слишком большой
-// список, упрощать и очень сильно»): один рекомендованный ассет на
-// движок - только то, что подходит этому роутеру.
-type coreDownloadView struct {
-	// Label - короткая подпись для пользователя («sing-box-extended 1.14.3»),
-	// полное имя ассета - в Asset
-	Label string `json:"label"`
+// assetLink - один файл релиза (прямая ссылка).
+type assetLink struct {
 	Asset string `json:"asset"`
 	URL   string `json:"url"`
 	Size  int64  `json:"size,omitempty"`
-	Note  string `json:"note,omitempty"` // одна короткая подсказка, что делать с файлом
+}
+
+// coreDownloadView - сборка движка под арх роутера: обычный бинарь и,
+// если источник делает сжатый профиль (upx / -compressed), он же сжатый -
+// на забитых роутерах качать и заливать меньше (слова владельца 04.11).
+// Список МИНИМАЛЕН: одна рекомендованная сборка sing-box (остальные в
+// singboxAlt), один mihomo, один пакет MT - только этот роутер.
+type coreDownloadView struct {
+	// Label - короткая подпись («sing-box-extended 1.14.3-extended-2.7.3»)
+	Label   string     `json:"label"`
+	Plain   *assetLink `json:"plain,omitempty"`   // обычная сборка
+	Compact *assetLink `json:"compact,omitempty"` // сжатая (upx/-compressed)
+	Note    string     `json:"note,omitempty"`    // одна короткая подсказка
 }
 
 // getCoreDownloads - GET /api/v1/cores/downloads: прямые ссылки ПОД ЭТОТ
@@ -139,7 +143,8 @@ func (s *Server) getCoreDownloads(w http.ResponseWriter, r *http.Request) {
 		}{Arch: arch, Singbox: []coreDownloadView{}, SingboxAlt: []coreDownloadView{}, Mihomo: []coreDownloadView{}, Magitrickle: []coreDownloadView{}}
 
 		// sing-box: первый источник с ассетом под арх = рекомендованный
-		// (порядок Sources = приоритет установки), остальные - альтернативы
+		// (порядок Sources = приоритет установки), остальные - альтернативы;
+		// каждая сборка - обычный и (если есть) сжатый профиль
 		for _, rep := range singbox.Discovery(ctx) {
 			if rep.Error != "" {
 				continue
@@ -152,11 +157,19 @@ func (s *Server) getCoreDownloads(w http.ResponseWriter, r *http.Request) {
 				ver := strings.TrimPrefix(rel.Tag, "v")
 				item := coreDownloadView{
 					Label: rep.Source.Title + " " + ver,
-					Asset: n.Plain,
-					URL: fmt.Sprintf("https://github.com/%s/releases/download/%s/%s",
-						rep.Source, rel.Tag, n.Plain),
-					Size: n.PlainSz,
+					Plain: &assetLink{
+						Asset: n.Plain, Size: n.PlainSz,
+						URL: fmt.Sprintf("https://github.com/%s/releases/download/%s/%s",
+							rep.Source, rel.Tag, n.Plain),
+					},
 					Note: "архив tar.gz - распаковать на ПК",
+				}
+				if n.UPX != "" {
+					item.Compact = &assetLink{
+						Asset: n.UPX, Size: n.UPXSz,
+						URL: fmt.Sprintf("https://github.com/%s/releases/download/%s/%s",
+							rep.Source, rel.Tag, n.UPX),
+					}
 				}
 				if len(out.Singbox) == 0 {
 					out.Singbox = append(out.Singbox, item)
@@ -171,8 +184,8 @@ func (s *Server) getCoreDownloads(w http.ResponseWriter, r *http.Request) {
 			if pick, perr := mihomo.PickAsset(rels, arch); perr == nil {
 				out.Mihomo = append(out.Mihomo, coreDownloadView{
 					Label: "mihomo " + pick.Tag,
-					Asset: pick.Asset, URL: pick.URL(), Size: pick.Size,
-					Note: "gz-файл - распаковать на ПК (gunzip)",
+					Plain: &assetLink{Asset: pick.Asset, URL: pick.URL(), Size: pick.Size},
+					Note:  "gz-файл - распаковать на ПК (gunzip)",
 				})
 			}
 		}
@@ -189,8 +202,8 @@ func (s *Server) getCoreDownloads(w http.ResponseWriter, r *http.Request) {
 				if a, perr := mtinstall.PickAsset(rel, platform, target, ext); perr == nil {
 					out.Magitrickle = append(out.Magitrickle, coreDownloadView{
 						Label: "MagiTrickle " + strings.TrimPrefix(rel.TagName, "v") + " (" + target + ")",
-						Asset: a.Name, URL: a.URL, Size: a.Size,
-						Note: "пакет MT - вручную только если панель недоступна",
+						Plain: &assetLink{Asset: a.Name, URL: a.URL, Size: a.Size},
+						Note:  "пакет MT - вручную только если панель недоступна",
 					})
 				}
 			}
