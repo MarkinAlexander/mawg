@@ -57,6 +57,10 @@ async function makeView(routes: Record<string, unknown | ((init?: { method?: str
 const btn = (w: ReturnType<typeof mount>, text: string) =>
   w.findAll('button').filter((b) => b.text() === text);
 
+// кнопка-стрелка «перечитать состояния» (иконка без текста, ищем по title)
+const refreshBtn = (w: ReturnType<typeof mount>) =>
+  w.findAll('button').find((b) => (b.attributes('title') || '').startsWith('перечитать'))!;
+
 beforeEach(() => {
   vi.unstubAllGlobals();
   // confirm-диалог живёт на history (dialogBack): отложенный back()
@@ -212,22 +216,24 @@ describe('SystemView - карточка «Система»', () => {
     });
     const sysCard = () => w.findAll('.card').find((c) => c.text().includes('Проверка зависимостей'))!;
     expect(sysCard().findAll('.uibadge').map((b) => b.text())).toContain('lx');
-    // сменился источник - бейдж перечитывается кнопкой «обновить»
+    // сменился источник - бейдж перечитывается кнопкой-стрелкой (бывшая
+    // «обновить»: слово владельца 04.11 - слово читалось как «обновление
+    // всего», теперь круглая стрелка = перечитать состояния)
     checkItems = [
       { id: 'singbox-lx', title: 'Ядро sing-box', installed: true, version: '1.14.4', statusText: '', source: 'upstream' },
     ];
-    await btn(w, 'обновить')[0].trigger('click');
+    await refreshBtn(w).trigger('click');
     await vi.waitFor(() =>
       expect(sysCard().findAll('.uibadge').map((b) => b.text())).toContain('апстрим'),
     );
     w.unmount();
   });
 
-  it('«обновить» перечитывает /system/check', async () => {
+  it('кнопка-стрелка (перечитать состояния) перечитывает /system/check', async () => {
     const { w, f } = await makeView();
     const gets = () => f.mock.calls.filter((c) => (c[0] as string).endsWith('/system/check') && (c[1]?.method || 'GET') === 'GET').length;
     const before = gets();
-    await btn(w, 'обновить')[0].trigger('click');
+    await refreshBtn(w).trigger('click');
     await vi.waitFor(() => expect(gets()).toBe(before + 1));
     w.unmount();
   });

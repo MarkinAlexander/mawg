@@ -310,12 +310,16 @@ function openUpload(c: CoreInfo): void {
 
 const dlOpen = ref(false);
 const dlBusy = ref(false);
+const dlCore = ref<'singbox' | 'mihomo'>('singbox');
 const dlSingbox = ref<CoreDownloadInfo[]>([]);
 const dlSingboxAlt = ref<CoreDownloadInfo[]>([]);
 const dlMihomo = ref<CoreDownloadInfo[]>([]);
 const dlMt = ref<CoreDownloadInfo[]>([]);
 const dlArch = ref('');
-async function openDownloads(): Promise<void> {
+// диалог пер-ядро (слово владельца 04.11: «скачать и загрузить выносить
+// отдельно»): кнопка в карточке ядра показывает сборки ТОЛЬКО его
+async function openDownloads(core: string): Promise<void> {
+  dlCore.value = core === 'mihomo' ? 'mihomo' : 'singbox';
   dlOpen.value = true;
   dlBusy.value = true;
   const r = await sys.coreDownloads();
@@ -328,6 +332,7 @@ async function openDownloads(): Promise<void> {
   }
   dlBusy.value = false;
 }
+const dlTitle = computed(() => (dlCore.value === 'mihomo' ? 'mihomo' : 'sing-box'));
 const dlMb = (b?: number) => (b ? (b / 1048576).toFixed(0) + ' МБ' : '');
 
 // --- диагностика движков (112-док 3.7, слово владельца 04.11) ---
@@ -380,12 +385,16 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
       >
         перезапустить MT
       </UiButton>
+      <!-- круглая стрелка вместо слова «обновить» (слово владельца 04.11:
+           читалось как «обновление всего», а это лишь перечитывание
+           состояний и статусов) -->
       <UiButton
+        variant="icon"
         :busy="refreshing"
-        tooltip="перечитать системную проверку"
+        tooltip="перечитать состояния и статусы (это не обновление программ)"
         @click="refreshSystem"
       >
-        обновить
+        <UiIcon name="refresh" />
       </UiButton>
     </template>
     <UiTable
@@ -517,8 +526,8 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
           @update:model-value="(v: boolean) => corePower(c, v ? 'enable' : 'disable')"
         />
         <UiButton
-          tooltip="прямые ссылки на релизные ассеты под архитектуру роутера: скачать на ПК, распаковать и залить бинарь кнопкой рядом"
-          @click="openDownloads"
+          tooltip="прямые ссылки на сборки ЭТОГО ядра под архитектуру роутера: скачать на ПК, распаковать и залить бинарь кнопкой рядом"
+          @click="openDownloads(c.id)"
         >
           Скачать бинарь
         </UiButton>
@@ -688,63 +697,25 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
 
   <UiDialog
     v-model:open="dlOpen"
-    title="Скачать бинарь движка"
+    :title="`Скачать бинарь - ${dlTitle}`"
     width="480px"
   >
     <div class="lxtext">
-      Ссылки уже подобраны под этот роутер{{ dlArch ? ` (${dlArch})` : '' }}: скачайте,
-      распакуйте на компьютере и залейте файл кнопкой «Загрузить бинарь».
-      «Сжатый» - тот же бинарь, упакованный upx: качать и заливать меньше.
+      Сборки {{ dlTitle }} под этот роутер{{ dlArch ? ` (${dlArch})` : '' }}: скачайте,
+      распакуйте на компьютере и залейте файл кнопкой «Загрузить бинарь» в карточке
+      {{ dlTitle }}. «Сжатый» - тот же бинарь, упакованный upx: качать и заливать меньше.
     </div>
     <div v-if="dlBusy">
       ссылки уточняются (GitHub)...
     </div>
     <template v-else>
-      <div
-        v-for="d in dlSingbox"
-        :key="d.label"
-        class="dllink"
-      >
-        <b>{{ d.label }}</b>
-        <a
-          v-if="d.plain"
-          :href="d.plain.url"
-          target="_blank"
-          rel="noopener"
-        >скачать ({{ dlMb(d.plain.size) }})</a>
-        <a
-          v-if="d.compact"
-          :href="d.compact.url"
-          target="_blank"
-          rel="noopener"
-        >сжатый upx ({{ dlMb(d.compact.size) }})</a>
-        <span class="corenote">{{ d.note }}</span>
-      </div>
-      <div
-        v-for="d in dlMihomo"
-        :key="d.label"
-        class="dllink"
-      >
-        <b>{{ d.label }}</b>
-        <a
-          v-if="d.plain"
-          :href="d.plain.url"
-          target="_blank"
-          rel="noopener"
-        >скачать ({{ dlMb(d.plain.size) }})</a>
-        <span class="corenote">{{ d.note }}</span>
-      </div>
-      <details
-        v-if="dlSingboxAlt.length"
-        class="dlalt"
-      >
-        <summary>другие сборки sing-box</summary>
+      <template v-if="dlCore === 'singbox'">
         <div
-          v-for="d in dlSingboxAlt"
+          v-for="d in dlSingbox"
           :key="d.label"
           class="dllink"
         >
-          <span>{{ d.label }}</span>
+          <b>{{ d.label }}</b>
           <a
             v-if="d.plain"
             :href="d.plain.url"
@@ -756,15 +727,57 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
             :href="d.compact.url"
             target="_blank"
             rel="noopener"
-          >сжатый ({{ dlMb(d.compact.size) }})</a>
+          >сжатый upx ({{ dlMb(d.compact.size) }})</a>
+          <span class="corenote">{{ d.note }}</span>
         </div>
-      </details>
+        <details
+          v-if="dlSingboxAlt.length"
+          class="dlalt"
+        >
+          <summary>другие сборки sing-box</summary>
+          <div
+            v-for="d in dlSingboxAlt"
+            :key="d.label"
+            class="dllink"
+          >
+            <span>{{ d.label }}</span>
+            <a
+              v-if="d.plain"
+              :href="d.plain.url"
+              target="_blank"
+              rel="noopener"
+            >скачать ({{ dlMb(d.plain.size) }})</a>
+            <a
+              v-if="d.compact"
+              :href="d.compact.url"
+              target="_blank"
+              rel="noopener"
+            >сжатый ({{ dlMb(d.compact.size) }})</a>
+          </div>
+        </details>
+      </template>
+      <div
+        v-for="d in dlMihomo"
+        v-else
+        :key="d.label"
+        class="dllink"
+      >
+        <b>{{ d.label }}</b>
+        <a
+          v-if="d.plain"
+          :href="d.plain.url"
+          target="_blank"
+          rel="noopener"
+        >скачать ({{ dlMb(d.plain.size) }})</a>
+        <span class="corenote">{{ d.note }}</span>
+      </div>
+      <UiHint text="MagiTrickle - пакет (.ipk), бинарем не заливается: обновляется своим пунктом в таблице зависимостей выше («обновить до revN»)." />
       <div
         v-if="dlMt.length"
         class="dlmt"
       >
         <details>
-          <summary>MagiTrickle (пакет - только для ручной установки)</summary>
+          <summary>пакет MagiTrickle - только для полной ручной переустановки</summary>
           <div
             v-for="d in dlMt"
             :key="d.label"
@@ -776,7 +789,6 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
               target="_blank"
               rel="noopener"
             >{{ d.label }} ({{ dlMb(d.plain.size) }})</a>
-            <span class="corenote">{{ d.note }}</span>
           </div>
         </details>
       </div>
