@@ -493,6 +493,88 @@ func (m *Manager) stop() {
 	m.pid = 0
 }
 
+// sweepOrphanEngines гасит осиротевшие процессы нашего экземпляра
+// sing-box: comm sing-box + наш конфиг в cmdline, pid не наш (потерян
+// прошлым mawg при рестарте). Чужой сервис (свой конфиг) не трогается.
+// Возвращает число погашенных.
+func (m *Manager) sweepOrphanEngines() int {
+	orphans := OurEngineProcs("sing-box", m.cfgPath(), m.pid)
+	if len(orphans) == 0 {
+		return 0
+	}
+	for _, p := range orphans {
+		syscall.Kill(p.PID, syscall.SIGTERM)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		alive := 0
+		for _, p := range orphans {
+			if syscall.Kill(p.PID, 0) == nil {
+				alive++
+			}
+		}
+		if alive == 0 {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	forced := 0
+	for _, p := range orphans {
+		if syscall.Kill(p.PID, 0) == nil {
+			syscall.Kill(p.PID, syscall.SIGKILL)
+			forced++
+		}
+	}
+	if m.logEvent != nil {
+		msg := "погашен осиротевший процесс sing-box: " + DescribeProcs(orphans)
+		if forced > 0 {
+			msg += fmt.Sprintf(" (%d не ушёл по SIGTERM, добит SIGKILL)", forced)
+		}
+		m.logEvent("singbox", "orphan", msg)
+	}
+	return len(orphans)
+}
+
+// startOwn - поднять свой процесс ядра (конфиг уже записан и проверен,
+// прошлые процессы погашены). Ошибка старта фиксируется с причиной из
+// лога ядра (112-док 3.6).
+func (m *Manager) startOwn() error {
+	// ротация перед O_TRUNC: хвост прошлой сессии ядра живёт в .old
+	platform.RotateIfLarge(m.engineLog, platform.EngineLogMaxBytes)
+	logF, err := os.OpenFile(m.engineLog, os.O_CREATE|os.O_WRONLY|os.O_APPEND|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	defer logF.Close()
+	cmd := exec.Command(m.eng.Bin, "run", "-c", m.cfgPath())
+	cmd.Stdout = logF
+	cmd.Stderr = logF
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := cmd.Start(); err != nil {
+		m.setStartErr(fmt.Sprintf("процесс не стартовал: %v", err))
+		return err
+	}
+	m.pid = cmd.Process.Pid
+	go cmd.Process.Wait()
+	os.WriteFile(m.pidPath(), []byte(strconv.Itoa(m.pid)), 0o600)
+	if err := m.waitClash(30 * time.Second); err != nil {
+		// причина - в первых строках лога (FATAL ядра: занятый tun,
+		// порт, битый конфиг), а не только таймаут clash_api
+		msg := fmt.Sprintf("движок стартовал, но clash_api не отвечает: %v", err)
+		if head := platform.LogHead(m.engineLog, 4); len(head) > 0 {
+			msg += "; ядро пишет: " + strings.Join(head, " ⏎ ")
+		}
+		if others := TunHolderProcs(m.pid); len(others) > 0 {
+			msg += "; /dev/net/tun держат: " + DescribeProcs(others)
+		}
+		msg += " (лог: " + m.engineLog + ")"
+		m.setStartErr(msg)
+		return errors.New(msg)
+	}
+	m.setStartErr("")
+	return nil
+}
+
 func (m *Manager) writeConfig(pools []PoolSpec) error {
 	merged := m.Mode == "shared"
 	data, _, err := BuildConfig(pools, Params{ClashPort: m.ClashPort, Profile: m.eng.SourceID, Merged: merged, ResolverTag: m.resolverTag})
@@ -1086,36 +1168,19 @@ func (m *Manager) Apply(pools []PoolSpec) ([]string, error) {
 		return skipped, err
 	}
 	m.stop()
-	// ротация перед O_TRUNC: хвост прошлой сессии ядра живёт в .old
-	platform.RotateIfLarge(m.engineLog, platform.EngineLogMaxBytes)
-	logF, err := os.OpenFile(m.engineLog, os.O_CREATE|os.O_WRONLY|os.O_APPEND|os.O_TRUNC, 0o600)
-	if err != nil {
-		return skipped, err
-	}
-	defer logF.Close()
-	cmd := exec.Command(m.eng.Bin, "run", "-c", m.cfgPath())
-	cmd.Stdout = logF
-	cmd.Stderr = logF
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	if err := cmd.Start(); err != nil {
-		m.setStartErr(fmt.Sprintf("процесс не стартовал: %v", err))
-		return skipped, err
-	}
-	m.pid = cmd.Process.Pid
-	go cmd.Process.Wait()
-	os.WriteFile(m.pidPath(), []byte(strconv.Itoa(m.pid)), 0o600)
-	if err := m.waitClash(30 * time.Second); err != nil {
-		// причина - в первых строках лога (FATAL ядра: занятый tun,
-		// порт, битый конфиг), а не только таймаут clash_api
-		msg := fmt.Sprintf("движок стартовал, но clash_api не отвечает: %v", err)
-		if head := platform.LogHead(m.engineLog, 4); len(head) > 0 {
-			msg += "; ядро пишет: " + strings.Join(head, " ⏎ ")
+	// осиротевшие процессы нашего экземпляра (pid потерян прошлым mawg)
+	// держат tun/порты со старым конфигом - гасим ДО старта (кейс 04.11)
+	m.sweepOrphanEngines()
+	if err := m.startOwn(); err != nil {
+		// повтор один раз: за время неудачного старта мог вскрыться ещё
+		// один сирота (гонка sweep/старта) - погасили, пробуем снова
+		if m.sweepOrphanEngines() == 0 {
+			return skipped, err
 		}
-		msg += " (лог: " + m.engineLog + ")"
-		m.setStartErr(msg)
-		return skipped, errors.New(msg)
+		if retryErr := m.startOwn(); retryErr != nil {
+			return skipped, retryErr
+		}
 	}
-	m.setStartErr("")
 	cp, err := os.ReadFile(m.cfgPath())
 	if err == nil {
 		os.WriteFile(m.lastGood(), cp, 0o600)

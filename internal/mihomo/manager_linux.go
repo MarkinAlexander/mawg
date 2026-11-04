@@ -428,6 +428,89 @@ func (m *Manager) stop() {
 	m.pid = 0
 }
 
+// sweepOrphanEngines гасит осиротевшие процессы нашего экземпляра
+// mihomo: comm mihomo + наш cache-каталог (-d /tmp/mihomo-mawg) в
+// cmdline, pid не наш. Чужие mihomo не трогаются. Возвращает число
+// погашенных.
+func (m *Manager) sweepOrphanEngines() int {
+	orphans := singbox.OurEngineProcs("mihomo", CacheDir, m.pid)
+	if len(orphans) == 0 {
+		return 0
+	}
+	for _, p := range orphans {
+		syscall.Kill(p.PID, syscall.SIGTERM)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		alive := 0
+		for _, p := range orphans {
+			if syscall.Kill(p.PID, 0) == nil {
+				alive++
+			}
+		}
+		if alive == 0 {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	forced := 0
+	for _, p := range orphans {
+		if syscall.Kill(p.PID, 0) == nil {
+			syscall.Kill(p.PID, syscall.SIGKILL)
+			forced++
+		}
+	}
+	if m.logEvent != nil {
+		msg := "погашен осиротевший процесс mihomo: " + singbox.DescribeProcs(orphans)
+		if forced > 0 {
+			msg += fmt.Sprintf(" (%d не ушёл по SIGTERM, добит SIGKILL)", forced)
+		}
+		m.logEvent("mihomo", "orphan", msg)
+	}
+	return len(orphans)
+}
+
+// startOwn - поднять процесс ядра (конфиг записан, прошлые процессы
+// погашены). Ошибка старта фиксируется с причиной из лога (112-док 3.6).
+func (m *Manager) startOwn() error {
+	// ротация перед O_TRUNC: хвост прошлой сессии ядра живёт в .old
+	platform.RotateIfLarge(m.engineLog, platform.EngineLogMaxBytes)
+	logF, err := os.OpenFile(m.engineLog, os.O_CREATE|os.O_WRONLY|os.O_APPEND|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	defer logF.Close()
+	if err := os.MkdirAll(CacheDir, 0o755); err != nil {
+		return err
+	}
+	cmd := exec.Command(m.eng.Bin, "-d", CacheDir, "-f", m.cfgPath())
+	cmd.Stdout = logF
+	cmd.Stderr = logF
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := cmd.Start(); err != nil {
+		m.setStartErr(fmt.Sprintf("процесс не стартовал: %v", err))
+		return err
+	}
+	m.pid = cmd.Process.Pid
+	go cmd.Process.Wait()
+	os.WriteFile(m.pidPath(), []byte(strconv.Itoa(m.pid)), 0o600)
+	if err := m.waitClash(30 * time.Second); err != nil {
+		// причина - в первых строках лога (FATAL ядра), а не только таймаут
+		msg := fmt.Sprintf("mihomo стартовал, но API не отвечает: %v", err)
+		if head := platform.LogHead(m.engineLog, 4); len(head) > 0 {
+			msg += "; ядро пишет: " + strings.Join(head, " ⏎ ")
+		}
+		if others := singbox.TunHolderProcs(m.pid); len(others) > 0 {
+			msg += "; /dev/net/tun держат: " + singbox.DescribeProcs(others)
+		}
+		msg += " (лог: " + m.engineLog + ")"
+		m.setStartErr(msg)
+		return errors.New(msg)
+	}
+	m.setStartErr("")
+	return nil
+}
+
 func (m *Manager) writeConfig(pools []PoolSpec) error {
 	data, _, err := BuildConfig(pools, Params{ClashPort: m.ClashPort})
 	if err != nil {
@@ -504,38 +587,20 @@ func (m *Manager) Apply(pools []PoolSpec) ([]string, error) {
 		return skipped, err
 	}
 	m.stop()
-	// ротация перед O_TRUNC: хвост прошлой сессии ядра живёт в .old
-	platform.RotateIfLarge(m.engineLog, platform.EngineLogMaxBytes)
-	logF, err := os.OpenFile(m.engineLog, os.O_CREATE|os.O_WRONLY|os.O_APPEND|os.O_TRUNC, 0o600)
-	if err != nil {
-		return skipped, err
-	}
-	defer logF.Close()
-	if err := os.MkdirAll(CacheDir, 0o755); err != nil {
-		return skipped, err
-	}
-	cmd := exec.Command(m.eng.Bin, "-d", CacheDir, "-f", m.cfgPath())
-	cmd.Stdout = logF
-	cmd.Stderr = logF
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	if err := cmd.Start(); err != nil {
-		m.setStartErr(fmt.Sprintf("процесс не стартовал: %v", err))
-		return skipped, err
-	}
-	m.pid = cmd.Process.Pid
-	go cmd.Process.Wait()
-	os.WriteFile(m.pidPath(), []byte(strconv.Itoa(m.pid)), 0o600)
-	if err := m.waitClash(30 * time.Second); err != nil {
-		// причина - в первых строках лога (FATAL ядра), а не только таймаут
-		msg := fmt.Sprintf("mihomo стартовал, но API не отвечает: %v", err)
-		if head := platform.LogHead(m.engineLog, 4); len(head) > 0 {
-			msg += "; ядро пишет: " + strings.Join(head, " ⏎ ")
+	// осиротевшие процессы нашего экземпляра mihomo (pid потерян прошлым
+	// mawg) держат tun/порты со старым конфигом - гасим ДО старта (кейс
+	// 04.11: два живых mihomo, TUNSETIFF busy у нового)
+	m.sweepOrphanEngines()
+	if err := m.startOwn(); err != nil {
+		// повтор один раз: за время неудачного старта мог вскрыться ещё
+		// один сирота - погасили, пробуем снова
+		if m.sweepOrphanEngines() == 0 {
+			return skipped, err
 		}
-		msg += " (лог: " + m.engineLog + ")"
-		m.setStartErr(msg)
-		return skipped, errors.New(msg)
+		if retryErr := m.startOwn(); retryErr != nil {
+			return skipped, retryErr
+		}
 	}
-	m.setStartErr("")
 	if cp, err := os.ReadFile(m.cfgPath()); err == nil {
 		os.WriteFile(m.lastGood(), cp, 0o600)
 	}
