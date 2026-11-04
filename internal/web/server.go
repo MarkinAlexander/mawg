@@ -619,6 +619,9 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 				entry["probeMs"] = ps.ProbeMs
 				entry["probeErr"] = ps.ProbeErr
 				entry["reason"] = ps.Reason
+				// причина waits-lx/waits-core из матрицы возможностей
+				// (112-док 2.3): варнинг в карточке пула
+				entry["detail"] = ps.Detail
 			}
 			tuns = append(tuns, entry)
 		}
@@ -654,6 +657,7 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 				entry["probeMs"] = ps.ProbeMs
 				entry["probeErr"] = ps.ProbeErr
 				entry["reason"] = ps.Reason
+				entry["detail"] = ps.Detail
 			}
 			tuns = append(tuns, entry)
 		}

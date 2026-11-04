@@ -705,3 +705,31 @@ describe('PoolCard - умный каскад (86-док)', () => {
     w.unmount();
   });
 });
+
+// Варнинг «пул ждёт подходящее ядро» (112-док 2.3): reason=waits-lx из
+// матрицы возможностей -> жёлтый баннер с причиной + кнопка замены ядра.
+describe('PoolCard - пул ждёт ядро', () => {
+  it('waits-lx: баннер с причиной из матрицы и кнопка «Заменить ядро на lx»', () => {
+    const w = makeCard(enginePool, {
+      engine: {
+        available: true, running: true, version: '1.14.3-extended-2.7.3', mode: 'own',
+        tuns: [{ pool: 'free', tun: 'tun1', nodes: 3, reason: 'waits-lx', detail: 'pq-node: пост-квантовый REALITY (X25519MLKEM768) несёт только линия lx (v1.14.0-lx.36+)' }],
+      },
+    });
+    expect(w.text()).toContain('Пул не запущен');
+    expect(w.text()).toContain('X25519MLKEM768');
+    expect(btn(w, 'Заменить ядро на lx').length).toBe(1);
+    w.unmount();
+  });
+
+  it('без waits-причины баннера нет', () => {
+    const w = makeCard(enginePool, {
+      engine: {
+        available: true, running: true, version: '1.14.4-lx.30', mode: 'own',
+        tuns: [{ pool: 'free', tun: 'tun1', nodes: 3, probeOk: true }],
+      },
+    });
+    expect(w.text()).not.toContain('Пул не запущен');
+    w.unmount();
+  });
+});

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { UiBadge, UiButton, UiCard, UiHelp, UiHint, UiIcon, UiInput, UiSelect, type UiSelectOption, UiSwitch } from '../../components/ui'
+import { UiBadge, UiBanner, UiButton, UiCard, UiHelp, UiHint, UiIcon, UiInput, UiSelect, type UiSelectOption, UiSwitch } from '../../components/ui'
 import { useConfirm } from '../../stores/confirm'
 import { useGroups } from '../../stores/groups'
 import { useStatus } from '../../stores/status'
@@ -13,7 +13,8 @@ import { probeHuman } from './groupsLogic'
 import { agoText, isWarpPool } from './poolsLogic'
 import SmartCascadeChip from './SmartCascadeChip.vue'
 import DeviceGroupDialog from './DeviceGroupDialog.vue'
-import type { ConfigView, PoolEngine, PoolView } from '../../api/types'
+import LxInstallDialog from './LxInstallDialog.vue'
+import type { ConfigView, PoolEngine, PoolView, TunInfo } from '../../api/types'
 
 // Карточка пула (легаси ensureCard/updateCard 67-265). Данные приходят из
 // /status (5с) - карточка чисто отображает + мутации. Шестерёнка настроек и
@@ -153,6 +154,22 @@ function genWarp(): void {
 // --- строка карточки (легаси updateCard 174) ---
 const engine = computed(() => status.data?.engine);
 const isEng = computed(() => props.pool.settings.engineMode === 'singbox');
+
+// «Ждёт ядро»: пул жив, но ни один узел не поддерживается установленным
+// ядром (112-док 2.3): причина - из матрицы возможностей, в карточке
+// варнинг + кнопка поставить подходящее ядро (только у sing-box пулов;
+// у mihomo-пула лечится сменой ядра пула в настройках)
+const engineWaits = computed<{ detail: string; needsLx: boolean } | null>(() => {
+  if (!isEng.value) return null;
+  const core = props.pool.settings.engineCore === 'mihomo' ? 'mihomo' : 'singbox';
+  const eng = core === 'mihomo' ? status.data?.engines?.mihomo : engine.value;
+  const tun = (eng?.tuns || []).find((t: TunInfo) => t.pool === props.pool.name) as
+    | (TunInfo & { reason?: string; detail?: string })
+    | undefined;
+  if (!tun || (tun.reason !== 'waits-lx' && tun.reason !== 'waits-core')) return null;
+  return { detail: tun.detail || 'узлы не поддерживаются текущим ядром', needsLx: core === 'singbox' };
+});
+const lxOpen = ref(false);
 
 // --- узлы движкового пула (60-док): список + пинги из clash_api движка,
 // ручной выбор в selector (⚡), перемер в urltest. Ленивая загрузка по
@@ -427,6 +444,23 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
       v-if="smart?.ensureErr"
       :text="'Служебная группа каскада не создана (' + smart.ensureErr + ') - панель повторит сама, MagiTrickle недоступен?'"
     />
+
+    <!-- пул ждёт подходящее ядро (112-док 2.3): узлы не поддерживаются
+         установленным (PQ REALITY, xhttp, шифрование) - раньше это было
+         видно только строчкой при создании пула -->
+    <UiBanner
+      v-if="engineWaits"
+      kind="warn"
+      :text="'Пул не запущен: ' + engineWaits.detail"
+    >
+      <UiButton
+        v-if="engineWaits.needsLx"
+        variant="primary"
+        @click="lxOpen = true"
+      >
+        Заменить ядро на lx
+      </UiButton>
+    </UiBanner>
 
     <div
       v-if="isEng && (pool.protos || []).length"
@@ -787,6 +821,12 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
   <DeviceGroupDialog
     v-model:open="devOpen"
     :pool-name="pool.name"
+  />
+
+  <!-- замена ядра sing-box из варнинга «пул ждёт подходящее ядро» -->
+  <LxInstallDialog
+    v-model:open="lxOpen"
+    @installed="refreshStatus"
   />
 </template>
 
