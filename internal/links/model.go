@@ -10,6 +10,12 @@ type TLS struct {
 	PublicKey   string   `json:"publicKey,omitempty"`
 	ShortID     string   `json:"shortId,omitempty"`
 	Insecure    bool     `json:"insecure,omitempty"` // skip-cert-verify (hysteria2 insecure=1)
+	// Mlkem768 - узел заявляет пост-квантовый REALITY (Xray 26.9.8+
+	// требует X25519MLKEM768 key share; support-x25519mlkem768=true).
+	// Несёт только линия lx (апстрим sing-box ключ вырезал) - ядро без
+	// него сервер молча уводит на камуфляжный сайт (111-док §6, кейс
+	// vlessfrancmicro: x509 *.azureedge.net вместо SNI)
+	Mlkem768 bool `json:"mlkem768,omitempty"`
 }
 
 type AWG struct {

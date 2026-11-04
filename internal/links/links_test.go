@@ -689,3 +689,27 @@ func TestDecodeBodyRejectsPlainText(t *testing.T) {
 		t.Fatal("чистый текст ссылок не должен считаться base64")
 	}
 }
+
+// Пост-квантовый REALITY (Xray 26.9.8+): support-x25519mlkem768=true
+// распознаётся в TLS.Mlkem768; без флага - false (кейс vlessfrancmicro,
+// 111-док §6: сервер молча уводит на камуфляж без key share).
+func TestParseVlessRealityPQ(t *testing.T) {
+	n, err := ParseLink("manual", vlessRealityPQ)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n.TLS == nil || !n.TLS.Mlkem768 {
+		t.Fatalf("Mlkem768 не распознан: %+v", n.TLS)
+	}
+	if n.TLS.SNI != "pq.example.org" || n.TLS.ShortID != "fake154" {
+		t.Fatalf("reality-поля: %+v", n.TLS)
+	}
+	// без флага - false
+	n2, err := ParseLink("manual", vlessRealityTCP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n2.TLS != nil && n2.TLS.Mlkem768 {
+		t.Fatal("обычный reality не должен помечаться Mlkem768")
+	}
+}

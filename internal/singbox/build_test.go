@@ -394,3 +394,41 @@ func TestBuildConfigHysteria2Skips(t *testing.T) {
 		t.Fatalf("причины не объяснены: %v", skipped)
 	}
 }
+
+// Пост-квантовый REALITY (Xray 26.9.8+): на линии lx - узел жив,
+// key_share=hybrid в конфиге; на extended/upstream - честный skip
+// (апстрим вырезал X25519MLKEM768 - сервер уводит на камуфляжный сайт;
+// живой кейс vlessfrancmicro, 111-док §6).
+const fakeVlessPQ = "vless://00000000-0000-4000-8000-000000000001@203.0.113.10:13122" +
+	"?encryption=none&fp=chrome&pbk=FAKE0public0key0for0tests0only0not0real0kz" +
+	"&security=reality&sid=fake154&sni=pq.example.org" +
+	"&support-x25519mlkem768=true&type=tcp#pq-reality"
+
+func TestBuildConfigPQReality(t *testing.T) {
+	mkSpec := func() PoolSpec {
+		return PoolSpec{Name: "pq", Tun: "tun1", TunIP: TuneIP(1), MixedPort: 2282,
+			Nodes: mustNodes(t, fakeVlessPQ)}
+	}
+
+	lx := mkSpec()
+	data, skipped, err := BuildConfig([]PoolSpec{lx}, Params{ClashPort: 2291, Profile: SourceLXID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(skipped) != 0 {
+		t.Fatalf("на lx PQ-узел жив: %v", skipped)
+	}
+	if !strings.Contains(string(data), `"key_share": "hybrid"`) {
+		t.Fatalf("на lx должен рендериться key_share hybrid:\n%s", data)
+	}
+
+	for _, prof := range []string{SourceExtID, ""} {
+		_, skipped, err := BuildConfig([]PoolSpec{mkSpec()}, Params{ClashPort: 2291, Profile: prof})
+		if err == nil {
+			t.Fatalf("профиль %q: PQ-узел не должен собираться", prof)
+		}
+		if len(skipped) == 0 || !strings.Contains(strings.Join(skipped, "; "), "X25519MLKEM768") {
+			t.Fatalf("профиль %q: причина не объяснена: %v", prof, skipped)
+		}
+	}
+}

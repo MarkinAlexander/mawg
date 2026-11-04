@@ -66,6 +66,12 @@ var (
 	hysteria2Owner = "hysteria2://" + fakePass + "@movk231.my.to:443" +
 		"?alpn=h3&fp=chrome&security=tls&sni=203.0.113.40#Hysteria2-vitas"
 
+	// пост-квантовый REALITY (Xray 26.9.8+ требует X25519MLKEM768)
+	vlessRealityPQ = "vless://" + fakeUUID + "@203.0.113.10:13122" +
+		"?encryption=none&fp=chrome&pbk=FAKE0public0key0for0tests0only0not0real0kz" +
+		"&security=reality&sid=fake154&sni=pq.example.org" +
+		"&support-x25519mlkem768=true&type=tcp#pq-reality"
+
 	hysteria2Full = "hysteria2://" + fakePass + "@203.0.113.50:36812" +
 		"?alpn=h3%2Ch3&insecure=1&obfs=salamander&obfs-password=" + fakePass +
 		"2&mport=50000-60000&upmbps=100&downmbps=500#hy2-obfs"

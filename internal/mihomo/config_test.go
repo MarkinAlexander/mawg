@@ -344,3 +344,22 @@ func TestBuildConfigHysteria2Skips(t *testing.T) {
 		t.Fatalf("причины не объяснены: %v", skipped)
 	}
 }
+
+// Пост-квантовый REALITY: mihomo честно отказывает - ключ несёт только lx
+// (кейс vlessfrancmicro, 111-док §6).
+func TestBuildConfigPQRealitySkipped(t *testing.T) {
+	n := hysteria2Node("unused")
+	n = links.Node{Type: "vless", Tag: "manual|pq", Host: "203.0.113.10", Port: 13122,
+		UUID: "00000000-0000-4000-8000-000000000001",
+		TLS: &links.TLS{Security: "reality", SNI: "pq.example.org",
+			Fingerprint: "chrome", PublicKey: "FAKE0pbk", ShortID: "fake154", Mlkem768: true}}
+	spec := PoolSpec{Name: "pq", Tun: "tun3", TunIP: "172.19.3.1/30", MixedPort: 2383,
+		Nodes: []links.Node{n}}
+	_, skipped, err := BuildConfig([]PoolSpec{spec}, Params{ClashPort: 2391})
+	if err == nil {
+		t.Fatal("PQ-узел на mihomo не должен собираться")
+	}
+	if !anySkip(skipped, "X25519MLKEM768") {
+		t.Fatalf("причина не объяснена: %v", skipped)
+	}
+}

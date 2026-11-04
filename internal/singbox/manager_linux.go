@@ -985,7 +985,8 @@ func (m *Manager) Apply(pools []PoolSpec) ([]string, error) {
 	var skipped []string
 	var runnable []PoolSpec
 	for i, spec := range pools {
-		eligible, reasons := EligibleNodes(spec.Nodes, m.eng.FullCaps())
+		lxLineage := m.eng.SourceID == SourceLXID || m.eng.SourceID == SourceLXOwnID
+		eligible, reasons := EligibleNodes(spec.Nodes, m.eng.FullCaps(), lxLineage)
 		// WG-конфиги пула - полноценные члены (wireguard-эндпоинты): пул
 		// без vless-узлов, но с конфигами runnable. AWG-поля умеют только
 		// расширенные ядра (lx/extended) - на upstream такие конфиги ждут.

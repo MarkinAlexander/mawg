@@ -181,6 +181,9 @@ func nodeReason(n links.Node) string {
 	default:
 		return fmt.Sprintf("%s: тип %s идёт нативным пулом", n.Tag, n.Type)
 	}
+	if t := n.TLS; t != nil && t.Mlkem768 {
+		return fmt.Sprintf("%s: пост-квантовый REALITY (X25519MLKEM768) несёт только ядро lx", n.Tag)
+	}
 	if n.Type == "hysteria2" {
 		// честные отказы вместо тихой потери параметров
 		if n.Mport != "" {

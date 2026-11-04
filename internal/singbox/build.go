@@ -164,6 +164,12 @@ type Params struct {
 // fullCaps - расширенные возможности ядра (lx/extended).
 func (p Params) fullCaps() bool { return p.Profile == SourceLXID || p.Profile == SourceExtID }
 
+// lxLineage - линия lx (SPEC 083): REALITY несёт X25519MLKEM768 key share
+// и понимает tls.reality.key_share. Extended - апстрим-линия без этого
+// патча: пост-квантовые узлы (Xray 26.9.8+) на нём молча уводятся на
+// камуфляжный сайт (живой кейс vlessfrancmicro, 111-док §6).
+func (p Params) lxLineage() bool { return p.Profile == SourceLXID || p.Profile == SourceLXOwnID }
+
 // lxResolverDNS - dns-секция lx-профиля: без записи в dns.servers ядро
 // на check отвечает "default domain resolver not found".
 func lxResolverDNS(tag string) map[string]any {
@@ -173,10 +179,11 @@ func lxResolverDNS(tag string) map[string]any {
 }
 
 // EligibleNodes - узлы, которые текущее ядро умеет запустить (fullCaps =
-// сборка lx/extended; апстриму не дают xhttp/vless-шифрование)
-func EligibleNodes(nodes []links.Node, fullCaps bool) (ok []links.Node, reasons []string) {
+// сборка lx/extended; апстриму не дают xhttp/vless-шифрование;
+// lxLineage = ядро с X25519MLKEM768 в REALITY - пост-квантовые узлы)
+func EligibleNodes(nodes []links.Node, fullCaps, lxLineage bool) (ok []links.Node, reasons []string) {
 	for _, n := range nodes {
-		ob, good, reason := nodeOutbound("probe", n, fullCaps)
+		ob, good, reason := nodeOutbound("probe", n, fullCaps, lxLineage)
 		_ = ob
 		if good {
 			ok = append(ok, n)
@@ -187,7 +194,7 @@ func EligibleNodes(nodes []links.Node, fullCaps bool) (ok []links.Node, reasons 
 	return ok, reasons
 }
 
-func nodeOutbound(poolTag string, n links.Node, fullCaps bool) (map[string]any, bool, string) {
+func nodeOutbound(poolTag string, n links.Node, fullCaps, lxLineage bool) (map[string]any, bool, string) {
 	skip := func(reason string) (map[string]any, bool, string) { return nil, false, reason }
 	switch n.Type {
 	case "vless", "trojan", "vmess", "hysteria2":
@@ -206,6 +213,9 @@ func nodeOutbound(poolTag string, n links.Node, fullCaps bool) (map[string]any, 
 	}
 	if n.Encryption != "" && n.Encryption != "none" && !fullCaps {
 		return skip(fmt.Sprintf("%s: vless-шифрование требует ядро lx или extended", n.Tag))
+	}
+	if t := n.TLS; t != nil && t.Mlkem768 && !lxLineage {
+		return skip(fmt.Sprintf("%s: пост-квантовый REALITY (X25519MLKEM768) несёт только ядро lx", n.Tag))
 	}
 	out := map[string]any{
 		"type": n.Type, "tag": poolTag + "|" + n.ConfName(),
@@ -263,7 +273,16 @@ func nodeOutbound(poolTag string, n links.Node, fullCaps bool) (map[string]any, 
 			tls["utls"] = map[string]any{"enabled": true, "fingerprint": t.Fingerprint}
 		}
 		if t.Security == "reality" {
-			tls["reality"] = map[string]any{"enabled": true, "public_key": t.PublicKey, "short_id": t.ShortID}
+			reality := map[string]any{"enabled": true, "public_key": t.PublicKey, "short_id": t.ShortID}
+			// пост-квантовый узел на линии lx: key_share гибридом явно -
+			// детерминированней, чем «как несёт отпечаток» (LxBox §457);
+			// extended поле не знает - отверг бы весь конфиг, поэтому
+			// рендерим только при lxLineage (PQ-узлы на extended уже
+			// отсечены гейтом выше)
+			if t.Mlkem768 && lxLineage {
+				reality["key_share"] = "hybrid"
+			}
+			tls["reality"] = reality
 		}
 		out["tls"] = tls
 	}
@@ -340,7 +359,7 @@ func BuildConfig(pools []PoolSpec, p Params) ([]byte, []string, error) {
 		groupTag := "mawg-" + spec.Name
 		var tags []string
 		for _, n := range spec.Nodes {
-			ob, ok, reason := nodeOutbound(groupTag, n, p.fullCaps())
+			ob, ok, reason := nodeOutbound(groupTag, n, p.fullCaps(), p.lxLineage())
 			if !ok {
 				skipped = append(skipped, reason)
 				continue

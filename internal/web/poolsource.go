@@ -378,10 +378,13 @@ func (s *Server) createPoolFromNodes(w http.ResponseWriter, r *http.Request, req
 			}
 		} else {
 			fullCaps := false
+			sbLx := false
 			if mgr, err := s.sb(); err == nil {
 				fullCaps = mgr.Info().FullCaps()
+				info := mgr.Info()
+				sbLx = info.SourceID == singbox.SourceLXID || info.SourceID == singbox.SourceLXOwnID
 			}
-			eligible, reasons = singbox.EligibleNodes(res.Nodes, fullCaps)
+			eligible, reasons = singbox.EligibleNodes(res.Nodes, fullCaps, sbLx)
 			if len(eligible) == 0 {
 				plan.Engine = engineNodes
 				plan.Skipped = append(plan.Skipped, reasons...)
