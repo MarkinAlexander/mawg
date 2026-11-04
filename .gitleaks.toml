@@ -85,7 +85,7 @@ description = "синтетические ключи тестовых фикст
 regexes = [
   '''^SMAp//W\+/qjES6qfuxaVCM8jQlQtHhgDgHZrhDCfe00=$''',
   '''^V0FSUC1TQ09VVC1URVNULUtFWS0wMDEtMjM0LTU2Nzg=$''',
-  '''^YMG9kWQIDtUsXbYMG9kWQIDtUsXbYMG9kWQ(=|IDtUsXbYMG9kWQIDtUsXbYMG9kWQ=)$''',
+  '''^YMG9kWQIDtUsXb(YMG9kWQIDtUsXb)*(YMG9kWQ)?=?$''',
   '''^bWC4hghUjJ6lD7F2QZ1rO0WEP7AezONJmXVssOFkR8E=$''',
   '''^c3ludGhldGljLWhwLWtleQ==$''',
   '''^gEyQZ7ioEGZMg6xF8Wwf0A9mifQodrcdrjDEzIwjNmw=$''',
