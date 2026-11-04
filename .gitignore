@@ -17,6 +17,10 @@ runs.tmp.json
 
 # Vue-панель: зависимости не в гите, сборка (ui/dist) коммитится для go:embed
 ui-src/node_modules/
+# локальные сборки и зависимости в корне - не в гите
+/mawg.exe
+/mawg
+/node_modules/
 
 .env
 .env.*

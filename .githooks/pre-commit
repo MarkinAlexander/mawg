@@ -1,4 +1,12 @@
 #!/bin/sh
+# Секрет-скан индексированных изменений. gitleaks нет - мягко пропускаем
+# (CI всё равно проверит всю историю на пуше).
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks protect --staged --config .gitleaks.toml --redact -v || exit 1
+else
+  echo "пропуск секрет-скана: gitleaks не установлен (https://github.com/gitleaks/gitleaks)"
+fi
+
 # Фаза 0 рерайта UI (44-дока): типы, линт и тесты перед коммитом, если
 # тронут ui-src. Включается один раз: git config core.hooksPath .githooks
 if git diff --cached --name-only | grep -q '^ui-src/'; then
