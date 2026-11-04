@@ -385,7 +385,7 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
         tooltip="перечитать состояния и статусы (это не обновление программ)"
         @click="refreshSystem"
       >
-        <UiIcon name="refresh" />
+        <UiIcon name="refresh-bold" />
       </UiButton>
     </template>
     <UiTable
@@ -875,14 +875,11 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
 </template>
 
 <style scoped>
-/* крупная заметная кнопка-стрелка «перечитать состояния»: стандартный
-   v-icon 21×21 теряется среди текстовых кнопок (слово владельца 04.11) */
+/* крупная заметная кнопка-стрелка «перечитать состояния»: иконка
+   сама 28×28 (refresh-bold), кнопка ~46×46 - не потеряется (слово
+   владельца 04.11) */
 .refresh-btn {
   padding: 8px;
-}
-.refresh-btn :deep(.uiicon svg) {
-  width: 22px;
-  height: 22px;
 }
 .hrow {
   display: flex;
