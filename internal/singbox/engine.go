@@ -35,9 +35,9 @@ func Detect() (*Engine, error) {
 	return nil, fmt.Errorf("бинар sing-box не найден (ищу в /opt/bin, /usr/bin, /usr/local/bin)")
 }
 
-// FullCaps - ядро понимает расширения lx (xhttp, vless-шифрование,
-// AWG-поля wireguard): сборки lx и extended. У апстрима такие узлы
-// скрываются с подсказкой поставить расширенное ядро.
+// FullCaps - легаси-гейт «расширенное ядро» (lx/extended); новые гейты -
+// по матрице возможностей Engine.Caps() (112-док 2.2). Оставлен для
+// системной проверки зависимостей (provision).
 func (e Engine) FullCaps() bool { return e.LX || e.Extended }
 
 // DetectSourceID - источник по форме версии.

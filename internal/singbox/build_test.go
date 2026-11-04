@@ -152,7 +152,7 @@ func TestBuildConfigSkipsXhttpOnUpstream(t *testing.T) {
 
 func TestBuildConfigLXAllowsXhttp(t *testing.T) {
 	spec := PoolSpec{Name: "x", Tun: "tun1", TunIP: TuneIP(1), MixedPort: 2282, Nodes: mustNodes(t, fakeVlessXhttp)}
-	data, skipped, err := BuildConfig([]PoolSpec{spec}, Params{ClashPort: 2291, Profile: SourceLXID})
+	data, skipped, err := BuildConfig([]PoolSpec{spec}, Params{ClashPort: 2291, Profile: SourceLXID, Caps: capsOf(SourceLXID, "1.14.4-lx.30")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +251,7 @@ func TestBuildConfigMergedFragment(t *testing.T) {
 func TestBuildConfigMergedLXAddsResolver(t *testing.T) {
 	spec := PoolSpec{Name: "x", Tun: "tun1", TunIP: TuneIP(1), MixedPort: 2282,
 		ProbeTarget: "http://www.gstatic.com/generate_204", Nodes: mustNodes(t, fakeVlessXhttp)}
-	data, _, err := BuildConfig([]PoolSpec{spec}, Params{Profile: SourceLXID, Merged: true})
+	data, _, err := BuildConfig([]PoolSpec{spec}, Params{Profile: SourceLXID, Caps: capsOf(SourceLXID, "1.14.4-lx.30"), Merged: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +263,7 @@ func TestBuildConfigMergedLXAddsResolver(t *testing.T) {
 	if !strings.Contains(string(data), `"type": "local"`) || !strings.Contains(string(data), `"tag": "local"`) {
 		t.Fatalf("lx-фрагмент обязан определять локальный dns-сервер: %s", data)
 	}
-	custom, _, err := BuildConfig([]PoolSpec{spec}, Params{Profile: SourceLXID, Merged: true, ResolverTag: "mawg-local"})
+	custom, _, err := BuildConfig([]PoolSpec{spec}, Params{Profile: SourceLXID, Caps: capsOf(SourceLXID, "1.14.4-lx.30"), Merged: true, ResolverTag: "mawg-local"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -280,7 +280,7 @@ func TestBuildConfigMergedLXAddsResolver(t *testing.T) {
 	if strings.Contains(string(plain), `"dns"`) || strings.Contains(string(plain), "default_domain_resolver") {
 		t.Fatalf("upstream-фрагмент не должен содержать dns/resolver: %s", plain)
 	}
-	if _, _, err := BuildConfig([]PoolSpec{spec}, Params{Profile: SourceLXID, Merged: true, ClashPort: 0}); err != nil {
+	if _, _, err := BuildConfig([]PoolSpec{spec}, Params{Profile: SourceLXID, Caps: capsOf(SourceLXID, "1.14.4-lx.30"), Merged: true, ClashPort: 0}); err != nil {
 		t.Fatalf("merged-профиль не должен требовать clash-порт: %v", err)
 	}
 	if _, _, err := BuildConfig([]PoolSpec{spec}, Params{ClashPort: 0}); err == nil {
@@ -395,23 +395,34 @@ func TestBuildConfigHysteria2Skips(t *testing.T) {
 	}
 }
 
-// Пост-квантовый REALITY (Xray 26.9.8+): на линии lx - узел жив,
-// key_share=hybrid в конфиге; на extended/upstream - честный skip
-// (апстрим вырезал X25519MLKEM768 - сервер уводит на камуфляжный сайт;
-// живой кейс vlessfrancmicro, 111-док §6).
+// Пост-квантовый REALITY (Xray 26.9.8+): гейты по матрице возможностей
+// (112-док 2.2). На свежем lx узел жив, key_share=hybrid в конфиге; на
+// extended/upstream/lx до SPEC 083 - честный skip (апстрим вырезал
+// X25519MLKEM768 - сервер уводит на камуфляжный сайт; живой кейс
+// vlessfrancmicro, 111-док §6).
 const fakeVlessPQ = "vless://00000000-0000-4000-8000-000000000001@203.0.113.10:13122" +
 	"?encryption=none&fp=chrome&pbk=FAKE0public0key0for0tests0only0not0real0kz" +
 	"&security=reality&sid=fake154&sni=pq.example.org" +
 	"&support-x25519mlkem768=true&type=tcp#pq-reality"
 
+const fakeVlessClassical = "vless://00000000-0000-4000-8000-000000000002@203.0.113.10:13123" +
+	"?encryption=none&fp=chrome&pbk=FAKE0public0key0for0tests0only0not0real0kz" +
+	"&security=reality&sid=fake155&sni=classic.example.org" +
+	"&key_share=classical&type=tcp#classic-reality"
+
+// capsOf - матрица возможностей ядра по источнику+версии (как Engine.Caps).
+func capsOf(srcID, ver string) CoreCaps {
+	return Engine{SourceID: srcID, Version: ver}.Caps()
+}
+
 func TestBuildConfigPQReality(t *testing.T) {
-	mkSpec := func() PoolSpec {
+	mkSpec := func(link string) PoolSpec {
 		return PoolSpec{Name: "pq", Tun: "tun1", TunIP: TuneIP(1), MixedPort: 2282,
-			Nodes: mustNodes(t, fakeVlessPQ)}
+			Nodes: mustNodes(t, link)}
 	}
 
-	lx := mkSpec()
-	data, skipped, err := BuildConfig([]PoolSpec{lx}, Params{ClashPort: 2291, Profile: SourceLXID})
+	lx := mkSpec(fakeVlessPQ)
+	data, skipped, err := BuildConfig([]PoolSpec{lx}, Params{ClashPort: 2291, Profile: SourceLXID, Caps: capsOf(SourceLXID, "1.14.4-lx.30")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -422,13 +433,61 @@ func TestBuildConfigPQReality(t *testing.T) {
 		t.Fatalf("на lx должен рендериться key_share hybrid:\n%s", data)
 	}
 
-	for _, prof := range []string{SourceExtID, ""} {
-		_, skipped, err := BuildConfig([]PoolSpec{mkSpec()}, Params{ClashPort: 2291, Profile: prof})
+	// не-mlkem ядра: extended (без SPEC 083), апстрим, СТАРЫЙ lx (до 083)
+	for _, tc := range []struct {
+		name string
+		p    Params
+	}{
+		{"extended", Params{ClashPort: 2291, Profile: SourceExtID, Caps: capsOf(SourceExtID, "1.14.3-extended-2.7.3")}},
+		{"upstream", Params{ClashPort: 2291, Caps: capsOf(SourceUpID, "1.14.0")}},
+		{"lx до SPEC 083", Params{ClashPort: 2291, Profile: SourceLXID, Caps: capsOf(SourceLXID, "1.14.0-lx.35")}},
+	} {
+		_, skipped, err := BuildConfig([]PoolSpec{mkSpec(fakeVlessPQ)}, tc.p)
 		if err == nil {
-			t.Fatalf("профиль %q: PQ-узел не должен собираться", prof)
+			t.Fatalf("%s: PQ-узел не должен собираться", tc.name)
 		}
 		if len(skipped) == 0 || !strings.Contains(strings.Join(skipped, "; "), "X25519MLKEM768") {
-			t.Fatalf("профиль %q: причина не объяснена: %v", prof, skipped)
+			t.Fatalf("%s: причина не объяснена: %v", tc.name, skipped)
 		}
+	}
+
+	// lx с 083, но БЕЗ параметра key_share (до v1.14.1-lx.4): узел жив
+	// (гибрид - дефолт таких ядер), поле не пишем - его ядро не знает
+	data, skipped, err = BuildConfig([]PoolSpec{mkSpec(fakeVlessPQ)},
+		Params{ClashPort: 2291, Profile: SourceLXID, Caps: capsOf(SourceLXID, "1.14.0-lx.36")})
+	if err != nil || len(skipped) != 0 {
+		t.Fatalf("lx v1.14.0-lx.36: PQ-узел жив без поля: %v %v", err, skipped)
+	}
+	if strings.Contains(string(data), "key_share") {
+		t.Fatalf("lx без параметра key_share не должен получать поле:\n%s", data)
+	}
+}
+
+func TestBuildConfigKeyShareClassical(t *testing.T) {
+	mkSpec := func() PoolSpec {
+		return PoolSpec{Name: "cl", Tun: "tun1", TunIP: TuneIP(1), MixedPort: 2282,
+			Nodes: mustNodes(t, fakeVlessClassical)}
+	}
+	// свежий lx: явный classical key_share рендерится
+	data, _, err := BuildConfig([]PoolSpec{mkSpec()}, Params{ClashPort: 2291, Profile: SourceLXID, Caps: capsOf(SourceLXID, "1.14.4-lx.30")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"key_share": "classical"`) {
+		t.Fatalf("на свежем lx ждём key_share classical:\n%s", data)
+	}
+	// extended: классика - дефолт не-lx ядер, узел жив, поле не пишем
+	data, _, err = BuildConfig([]PoolSpec{mkSpec()}, Params{ClashPort: 2291, Profile: SourceExtID, Caps: capsOf(SourceExtID, "1.14.3-extended-2.7.3")})
+	if err != nil {
+		t.Fatalf("на extended классика жива: %v", err)
+	}
+	if strings.Contains(string(data), "key_share") {
+		t.Fatalf("extended не знает key_share - поле быть не должно:\n%s", data)
+	}
+	// mlkem-ядро БЕЗ параметра: понесло бы гибрид, а узел ждёт классику -
+	// честный skip
+	_, skipped, err := BuildConfig([]PoolSpec{mkSpec()}, Params{ClashPort: 2291, Profile: SourceLXID, Caps: capsOf(SourceLXID, "1.14.0-lx.36")})
+	if err == nil || len(skipped) == 0 || !strings.Contains(strings.Join(skipped, "; "), "классический key_share") {
+		t.Fatalf("lx без параметра: ждём честный skip классики, получено err=%v skipped=%v", err, skipped)
 	}
 }

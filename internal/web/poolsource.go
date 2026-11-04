@@ -377,14 +377,13 @@ func (s *Server) createPoolFromNodes(w http.ResponseWriter, r *http.Request, req
 				return
 			}
 		} else {
-			fullCaps := false
-			sbLx := false
+			// матрица возможностей установленного ядра (112-док 2.2):
+			// пустая = ядро не детектится, гейты честно всё отметят
+			var caps singbox.CoreCaps
 			if mgr, err := s.sb(); err == nil {
-				fullCaps = mgr.Info().FullCaps()
-				info := mgr.Info()
-				sbLx = info.SourceID == singbox.SourceLXID || info.SourceID == singbox.SourceLXOwnID
+				caps = mgr.Info().Caps()
 			}
-			eligible, reasons = singbox.EligibleNodes(res.Nodes, fullCaps, sbLx)
+			eligible, reasons = singbox.EligibleNodes(res.Nodes, caps)
 			if len(eligible) == 0 {
 				plan.Engine = engineNodes
 				plan.Skipped = append(plan.Skipped, reasons...)

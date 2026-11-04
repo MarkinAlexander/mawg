@@ -14,8 +14,26 @@ type TLS struct {
 	// требует X25519MLKEM768 key share; support-x25519mlkem768=true).
 	// Несёт только линия lx (апстрим sing-box ключ вырезал) - ядро без
 	// него сервер молча уводит на камуфляжный сайт (111-док §6, кейс
-	// vlessfrancmicro: x509 *.azureedge.net вместо SNI)
+	// vlessfrancmicro: x509 *.azureedge.net вместо SNI).
+	// Легаси-поле первых PQ-сборок (0daf3aa): сохранено для старых
+	// nodes.json, новые записи несут KeyShare.
 	Mlkem768 bool `json:"mlkem768,omitempty"`
+	// KeyShare - режим reality key share из ссылки (LxBox §457):
+	// "hybrid" (X25519MLKEM768, он же support-x25519mlkem768=true) или
+	// "classical" (явный классический x25519). Пусто = узел не заявляет.
+	KeyShare string `json:"keyShare,omitempty"`
+}
+
+// EffectiveKeyShare - режим key share узла с учётом легаси-флага: гибрид
+// по support-x25519mlkem768=true, явное значение key_share= приоритетнее.
+func (t *TLS) EffectiveKeyShare() string {
+	if t.KeyShare != "" {
+		return t.KeyShare
+	}
+	if t.Mlkem768 {
+		return "hybrid"
+	}
+	return ""
 }
 
 type AWG struct {

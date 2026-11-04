@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+
+	"mawg/internal/singbox"
 )
 
 // Engine - найденный бинарь mihomo (Clash.Meta). Своего «lx»-профиля нет:
@@ -12,6 +14,11 @@ type Engine struct {
 	Bin     string
 	Version string
 }
+
+// Caps - матрица возможностей ядра mihomo (112-док 2.2): xhttp/vless-
+// шифрование/AWG-поля/X25519MLKEM768 нет (PQ-узлы дают empty reply -
+// живая проверка 03.11), hysteria2 есть.
+func (e Engine) Caps() singbox.CoreCaps { return singbox.CoreCaps{Hysteria2: true} }
 
 var binCandidates = []string{"/opt/bin/mihomo", "/usr/bin/mihomo", "/usr/local/bin/mihomo"}
 

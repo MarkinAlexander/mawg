@@ -200,10 +200,14 @@ func tlsFromQuery(q url.Values) *TLS {
 	if sec == "reality" {
 		t.PublicKey = q.Get("pbk")
 		t.ShortID = q.Get("sid")
-		// пост-квантовый REALITY: support-x25519mlkem768=true (Xray 26.9.8+)
-		// или key_share=hybrid (LxBox §457). Несущие ядро - только линия lx
-		if strings.EqualFold(q.Get("support-x25519mlkem768"), "true") || strings.EqualFold(q.Get("key_share"), "hybrid") {
-			t.Mlkem768 = true
+		// режим key share (LxBox §457): key_share=hybrid|classical;
+		// support-x25519mlkem768=true (Xray 26.9.8+) - то же, что hybrid.
+		// Гибрид несёт только линия lx (SPEC 083), классика дефолт у прочих
+		if ks := strings.ToLower(q.Get("key_share")); ks == "hybrid" || ks == "classical" {
+			t.KeyShare = ks
+		}
+		if strings.EqualFold(q.Get("support-x25519mlkem768"), "true") && t.KeyShare == "" {
+			t.KeyShare = "hybrid"
 		}
 	}
 	return t

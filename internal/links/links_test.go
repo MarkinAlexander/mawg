@@ -698,18 +698,33 @@ func TestParseVlessRealityPQ(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n.TLS == nil || !n.TLS.Mlkem768 {
-		t.Fatalf("Mlkem768 не распознан: %+v", n.TLS)
+	if n.TLS == nil || n.TLS.EffectiveKeyShare() != "hybrid" {
+		t.Fatalf("гибридный key share не распознан: %+v", n.TLS)
 	}
 	if n.TLS.SNI != "pq.example.org" || n.TLS.ShortID != "fake154" {
 		t.Fatalf("reality-поля: %+v", n.TLS)
 	}
-	// без флага - false
+	// key_share=classical - явный классический share (LxBox §457)
+	nc, err := ParseLink("manual", "vless://00000000-0000-4000-8000-000000000002@203.0.113.10:13123"+
+		"?encryption=none&fp=chrome&pbk=FAKE0public0key0for0tests0only0not0real0kz"+
+		"&security=reality&sid=fake155&sni=classic.example.org&key_share=classical&type=tcp#cl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nc.TLS == nil || nc.TLS.KeyShare != "classical" {
+		t.Fatalf("classical key_share не распознан: %+v", nc.TLS)
+	}
+	// без флага - узел ничего не заявляет
 	n2, err := ParseLink("manual", vlessRealityTCP)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n2.TLS != nil && n2.TLS.Mlkem768 {
-		t.Fatal("обычный reality не должен помечаться Mlkem768")
+	if n2.TLS != nil && n2.TLS.EffectiveKeyShare() != "" {
+		t.Fatal("обычный reality не должен заявлять key share")
+	}
+	// легаси nodes.json с mlkem768=true - EffectiveKeyShare даёт гибрид
+	legacy := &TLS{Security: "reality", Mlkem768: true}
+	if legacy.EffectiveKeyShare() != "hybrid" {
+		t.Fatalf("легаси Mlkem768 должен читаться как гибрид: %+v", legacy)
 	}
 }

@@ -577,7 +577,7 @@ func (m *Manager) startOwn() error {
 
 func (m *Manager) writeConfig(pools []PoolSpec) error {
 	merged := m.Mode == "shared"
-	data, _, err := BuildConfig(pools, Params{ClashPort: m.ClashPort, Profile: m.eng.SourceID, Merged: merged, ResolverTag: m.resolverTag})
+	data, _, err := BuildConfig(pools, Params{ClashPort: m.ClashPort, Profile: m.eng.SourceID, Caps: m.eng.Caps(), Merged: merged, ResolverTag: m.resolverTag})
 	if err != nil {
 		return err
 	}
@@ -1108,13 +1108,12 @@ func (m *Manager) Apply(pools []PoolSpec) ([]string, error) {
 	var skipped []string
 	var runnable []PoolSpec
 	for i, spec := range pools {
-		lxLineage := m.eng.SourceID == SourceLXID || m.eng.SourceID == SourceLXOwnID
-		eligible, reasons := EligibleNodes(spec.Nodes, m.eng.FullCaps(), lxLineage)
+		eligible, reasons := EligibleNodes(spec.Nodes, m.eng.Caps())
 		// WG-конфиги пула - полноценные члены (wireguard-эндпоинты): пул
 		// без vless-узлов, но с конфигами runnable. AWG-поля умеют только
 		// расширенные ядра (lx/extended) - на upstream такие конфиги ждут.
 		wgOK := len(spec.WG) > 0
-		if wgOK && !m.eng.FullCaps() {
+		if wgOK && !m.eng.Caps().AWG {
 			for _, c := range spec.WG {
 				if c.AWG.Present() {
 					wgOK = false
