@@ -220,8 +220,11 @@ func TestUploadAnalyzeThenApplySingbox(t *testing.T) {
 		t.Fatalf("результат: %v", res)
 	}
 	// повторный apply без новой загрузки - отказ
-	resp2, _ := http.Post(ts.URL+"/api/v1/cores/binary/apply",
+	resp2, err := http.Post(ts.URL+"/api/v1/cores/binary/apply",
 		"application/json", strings.NewReader(`{"backup":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp2.Body.Close()
 	if resp2.StatusCode != http.StatusBadRequest {
 		t.Fatalf("повторный apply должен отказывать, code=%d", resp2.StatusCode)
