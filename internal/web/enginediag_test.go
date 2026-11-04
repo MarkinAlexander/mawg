@@ -23,7 +23,7 @@ private_key: "q9Xk1AbCdefGHIjklMNOpqrsTUVwxyz0123456789stu="
 "public_key": "X25519pbkValue1234567890abcdefghijklmnopqrstuv",
 "server": "203.0.113.10"`
 	out := maskSecrets(in)
-	for _, leak := range []string{"98f6800b", "hunter2", "q9Xk1AbCdef", "X25519pbkValue"} {
+	for _, leak := range []string{"a1b2c3d4", "hunter2", "q9Xk1AbCdef", "X25519pbkValue"} {
 		if strings.Contains(out, leak) {
 			t.Fatalf("секрет %q утёк: %s", leak, out)
 		}
