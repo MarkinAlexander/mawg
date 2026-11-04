@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { UiBadge, UiBanner, UiButton, UiCard, UiDialog, UiHelp, UiHint, UiInput, UiSelect, type UiSelectOption, UiSwitch, UiTable, type UiTableColumn } from '../../components/ui'
+import { UiBadge, UiBanner, UiButton, UiCard, UiDialog, UiHelp, UiHint, UiIcon, UiInput, UiSelect, type UiSelectOption, UiSwitch, UiTable, type UiTableColumn } from '../../components/ui'
 import { useEvents } from '../../stores/events'
 import { useStatus } from '../../stores/status'
 import { useSystem } from '../../stores/system'
