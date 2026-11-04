@@ -2,7 +2,7 @@
 // ответ на 3 минуты, так что частый опрос дешёв).
 import { reactive } from 'vue'
 import { api } from '../api/client'
-import type { CoreInfo, InstallRes, SingboxSourceInfo, SystemCheckRes, UpdateInfo } from '../api/types'
+import type { CoreDownloadsRes, CoreInfo, EnginesDiagRes, InstallRes, SingboxSourceInfo, SystemCheckRes, UpdateInfo } from '../api/types'
 
 const state = reactive<{ loaded: boolean; data: SystemCheckRes | null }>({ loaded: false, data: null });
 const cores = reactive<{ loaded: boolean; list: CoreInfo[] }>({ loaded: false, list: [] });
@@ -87,5 +87,36 @@ export function useSystem() {
     else cores.list.push(r.core);
     return r.core;
   }
-  return { state, cores, upd, refresh, refreshCores, start, stop, checkUpdate, coreSources, install, setSingboxMode, setSingboxCache, corePower, mtRestart };
+  // заливка своего бинаря движка (112-док 4.1): multipart, конвейер
+  // замены с рестартом движка - сырой fetch без 90с-таймаута
+  async function uploadCoreBinary(id: string, file: File, backup: boolean): Promise<InstallRes> {
+    const form = new FormData();
+    form.append('file', file, file.name);
+    if (!backup) form.append('backup', '0');
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8 * 60_000);
+    try {
+      const r = await fetch(`/api/v1/cores/${id}/binary`, { method: 'POST', body: form, signal: ctrl.signal });
+      return (await r.json()) as InstallRes;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  // прямые ссылки на релизные ассеты под арх роутера (кэш 10 мин)
+  async function coreDownloads(): Promise<CoreDownloadsRes | null> {
+    try {
+      return await api<CoreDownloadsRes>('GET', '/cores/downloads');
+    } catch {
+      return null;
+    }
+  }
+  // диагностика движков: живость/версии/хвосты логов
+  async function enginesDiag(): Promise<EnginesDiagRes | null> {
+    try {
+      return await api<EnginesDiagRes>('GET', '/system/engines');
+    } catch {
+      return null;
+    }
+  }
+  return { state, cores, upd, refresh, refreshCores, start, stop, checkUpdate, coreSources, install, setSingboxMode, setSingboxCache, corePower, mtRestart, uploadCoreBinary, coreDownloads, enginesDiag };
 }

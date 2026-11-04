@@ -593,6 +593,42 @@ export interface SingboxSourceInfo {
   error?: string
 }
 
+// GET /cores/downloads: прямые ссылки на релизные ассеты под арх роутера
+// (112-док 4.1: скачать на ПК, распаковать, залить бинарь кнопкой)
+export interface CoreDownloadInfo {
+  source?: string
+  title?: string
+  asset: string
+  url: string
+  size?: number
+  note?: string
+}
+
+export interface CoreDownloadsRes {
+  arch: string
+  singbox: CoreDownloadInfo[]
+  mihomo: CoreDownloadInfo[]
+  magitrickle: CoreDownloadInfo[]
+}
+
+// GET /system/engines: диагностика движков (112-док 3.7)
+export interface EngineDiagInfo {
+  id: string
+  running: boolean
+  version?: string
+  pid?: number
+  startedAt?: string
+  lastError?: string
+  logPath?: string
+  logTail?: string[]
+  note?: string
+}
+
+export interface EnginesDiagRes {
+  engines: EngineDiagInfo[]
+  mt: EngineDiagInfo
+}
+
 export interface UpdateInfo {
   current: string
   latest: string

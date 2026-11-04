@@ -6,9 +6,10 @@ import { useStatus } from '../../stores/status'
 import { useSystem } from '../../stores/system'
 import { useConfirm } from '../../stores/confirm'
 import { useToast } from '../../stores/toast'
-import type { AppEvent, CoreInfo, SystemItem } from '../../api/types'
+import type { AppEvent, CoreDownloadInfo, CoreInfo, EngineDiagInfo, SystemItem } from '../../api/types'
 import { useSecrets } from '../secrets'
 import LxInstallDialog from './LxInstallDialog.vue'
+import CoreUploadDialog from './CoreUploadDialog.vue'
 
 // Журнал событий (легаси refreshLog): хвост 80, НОВЫЕ СВЕРХУ, k-цвета
 // пяти видов. Место - вкладка «Система» (44-дока §6). Опрос таб-локальный:
@@ -298,6 +299,53 @@ const coreStateBadge = (c: CoreInfo): { text: string; variant: 'ok' | 'err' | 'w
   return c.running ? { text: 'работает', variant: 'ok' } : { text: 'остановлен', variant: 'warn' };
 };
 
+// --- заливка/скачивание бинаря движка (112-док 4.1) ---
+const uploadOpen = ref(false);
+const uploadDlg = ref<InstanceType<typeof CoreUploadDialog> | null>(null);
+function openUpload(c: CoreInfo): void {
+  uploadOpen.value = true;
+  // диалог инициализируется на открытии - ядро доезжает следом тиком
+  setTimeout(() => uploadDlg.value?.openFor(c), 0);
+}
+
+const dlOpen = ref(false);
+const dlBusy = ref(false);
+const dlSingbox = ref<CoreDownloadInfo[]>([]);
+const dlMihomo = ref<CoreDownloadInfo[]>([]);
+const dlMt = ref<CoreDownloadInfo[]>([]);
+const dlArch = ref('');
+async function openDownloads(): Promise<void> {
+  dlOpen.value = true;
+  dlBusy.value = true;
+  const r = await sys.coreDownloads();
+  if (r) {
+    dlArch.value = r.arch;
+    dlSingbox.value = r.singbox || [];
+    dlMihomo.value = r.mihomo || [];
+    dlMt.value = r.magitrickle || [];
+  }
+  dlBusy.value = false;
+}
+const dlMb = (b?: number) => (b ? (b / 1048576).toFixed(0) + ' МБ' : '');
+
+// --- диагностика движков (112-док 3.7, слово владельца 04.11) ---
+const diagOpen = ref(false);
+const diagBusy = ref(false);
+const diagEngines = ref<EngineDiagInfo[]>([]);
+const diagMt = ref<EngineDiagInfo | null>(null);
+async function loadDiag(): Promise<void> {
+  diagOpen.value = !diagOpen.value;
+  if (!diagOpen.value) return;
+  diagBusy.value = true;
+  const r = await sys.enginesDiag();
+  if (r) {
+    diagEngines.value = r.engines || [];
+    diagMt.value = r.mt;
+  }
+  diagBusy.value = false;
+}
+const fmtStarted = (iso?: string) => (iso ? new Date(iso).toLocaleTimeString('ru-RU') : '');
+
 async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
   const texts = {
     off: ['Выключить кэш ядра', 'Кэш будет выключен (experimental.cache_file.enabled = false): запись на флешку прекратится совсем. Ваш sing-box будет перезапущен - соединения коротко прервутся. Запомненные выборы селекторов сбросятся - urltest-пулы восстановятся сами.', 'Выключить'],
@@ -467,6 +515,18 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
           @update:model-value="(v: boolean) => corePower(c, v ? 'enable' : 'disable')"
         />
         <UiButton
+          tooltip="прямые ссылки на релизные ассеты под архитектуру роутера: скачать на ПК, распаковать и залить бинарь кнопкой рядом"
+          @click="openDownloads"
+        >
+          Скачать бинарь
+        </UiButton>
+        <UiButton
+          tooltip="залить распакованный бинарь движка напрямую: для роутеров, где установка из архива не проходит из-за места"
+          @click="openUpload(c)"
+        >
+          Загрузить бинарь
+        </UiButton>
+        <UiButton
           v-if="c.caps.uninstall"
           variant="danger"
           :busy="coreBusy === 'uninstall'"
@@ -524,9 +584,158 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
         в /tmp
       </UiButton>
     </UiBanner>
+
+    <div class="sect">
+      Диагностика движков<UiHelp text="Живость, версии, причины отказов и хвосты логов sing-box/mihomo/MagiTrickle (112-док 3.7): когда «движок не запускается», причина видна здесь, без SSH." />
+    </div>
+    <div class="diagrow">
+      <UiButton
+        :busy="diagBusy"
+        @click="loadDiag"
+      >
+        {{ diagOpen ? 'скрыть' : 'показать состояние' }}
+      </UiButton>
+      <a
+        class="dlbund"
+        href="/api/v1/system/diagnostics"
+        download="mawg-diagnostics.txt"
+      >собрать диагностику (текстовый файл: версии, конфиги без секретов, логи, события)</a>
+    </div>
+    <div v-if="diagOpen">
+      <div
+        v-for="d in diagEngines"
+        :key="d.id"
+        class="diageng"
+      >
+        <b>{{ d.id === 'singbox' ? 'sing-box' : d.id }}</b>
+        <UiBadge
+          :text="d.running ? 'работает' : 'не запущен'"
+          :variant="d.running ? 'ok' : 'err'"
+        />
+        <span
+          v-if="d.version"
+          class="corenote"
+        >{{ d.version }}</span>
+        <span
+          v-if="d.pid"
+          class="corenote"
+        >pid {{ d.pid }} c {{ fmtStarted(d.startedAt) }}</span>
+        <div
+          v-if="d.lastError"
+          class="coreerr"
+        >
+          {{ d.lastError }}
+        </div>
+        <div
+          v-if="d.note"
+          class="corenote"
+        >
+          {{ d.note }}
+        </div>
+        <div
+          v-if="d.logTail && d.logTail.length"
+          class="diaglog"
+        >
+          <div class="corenote">
+            лог: {{ d.logPath }}
+          </div>
+          <div
+            v-for="(l, i) in d.logTail"
+            :key="i"
+          >
+            {{ l }}
+          </div>
+        </div>
+      </div>
+      <div
+        v-if="diagMt"
+        class="diageng"
+      >
+        <b>MagiTrickle</b>
+        <span
+          v-if="diagMt.version"
+          class="corenote"
+        >{{ diagMt.version }}</span>
+        <span
+          v-else
+          class="corenote"
+        >{{ diagMt.note }}</span>
+        <div
+          v-if="diagMt.logTail && diagMt.logTail.length"
+          class="diaglog"
+        >
+          <div class="corenote">
+            лог: {{ diagMt.logPath }}
+          </div>
+          <div
+            v-for="(l, i) in diagMt.logTail"
+            :key="i"
+          >
+            {{ l }}
+          </div>
+        </div>
+      </div>
+    </div>
   </UiCard>
 
   <LxInstallDialog v-model:open="lxOpen" />
+  <CoreUploadDialog
+    ref="uploadDlg"
+    v-model:open="uploadOpen"
+  />
+
+  <UiDialog
+    v-model:open="dlOpen"
+    title="Скачать бинарь движка"
+    width="560px"
+  >
+    <div class="lxtext">
+      Прямые ссылки на релизные ассеты под архитектуру этого роутера{{ dlArch ? ` (${dlArch})` : '' }}.
+      Скачайте архив на компьютер, распакуйте (tar.gz - tar -xzf, gz - gunzip) и залейте готовый
+      бинарь кнопкой «Загрузить бинарь» - на забитых роутерах распаковка на месте не живёт.
+    </div>
+    <div v-if="dlBusy">
+      ссылки уточняются (GitHub)...
+    </div>
+    <template v-else>
+      <div
+        v-for="d in dlSingbox"
+        :key="d.url"
+        class="dllink"
+      >
+        <a
+          :href="d.url"
+          target="_blank"
+          rel="noopener"
+        >{{ d.title || d.source }}: {{ d.asset }}</a>
+        <span class="corenote">{{ dlMb(d.size) }} · {{ d.note }}</span>
+      </div>
+      <div
+        v-for="d in dlMihomo"
+        :key="d.url"
+        class="dllink"
+      >
+        <a
+          :href="d.url"
+          target="_blank"
+          rel="noopener"
+        >mihomo: {{ d.asset }}</a>
+        <span class="corenote">{{ dlMb(d.size) }} · {{ d.note }}</span>
+      </div>
+      <div
+        v-for="d in dlMt"
+        :key="d.url"
+        class="dllink"
+      >
+        <a
+          :href="d.url"
+          target="_blank"
+          rel="noopener"
+        >MagiTrickle: {{ d.asset }}</a>
+        <span class="corenote">{{ dlMb(d.size) }} · {{ d.note }}</span>
+      </div>
+    </template>
+  </UiDialog>
 
   <UiDialog
     :open="!!busyId"
@@ -666,6 +875,47 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
   font-size: 12px;
   margin-top: 4px;
   word-break: break-word;
+}
+.diagrow {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin: 6px 0;
+}
+.dlbund {
+  color: var(--dim);
+  font-size: 12px;
+}
+.diageng {
+  margin: 6px 0 10px;
+}
+.diageng > b {
+  margin-right: 6px;
+}
+.diaglog {
+  font: 11.5px/1.5 ui-monospace, monospace;
+  color: var(--dim);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 8px;
+  margin-top: 4px;
+  max-height: 160px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.dllink {
+  margin: 6px 0;
+}
+.dllink > a {
+  font-size: 12px;
+}
+.lxtext {
+  color: var(--dim);
+  font-size: 12px;
+  line-height: 1.5;
+  margin-bottom: 10px;
 }
 .coreact {
   display: flex;

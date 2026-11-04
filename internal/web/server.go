@@ -158,6 +158,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/magitrickle", s.getMagitrickle)
 	mux.HandleFunc("GET /api/v1/system/check", s.getSystemCheck)
 	mux.HandleFunc("POST /api/v1/system/install", s.postSystemInstall)
+	mux.HandleFunc("GET /api/v1/system/engines", s.getEnginesDiag)
+	mux.HandleFunc("GET /api/v1/system/diagnostics", s.getDiagnostics)
 
 	mux.HandleFunc("GET /api/v1/bundles", s.getBundles)
 	mux.HandleFunc("POST /api/v1/bundles", s.createBundle)
