@@ -102,6 +102,29 @@ func archFromOpkg(out string) string {
 	return ""
 }
 
+// ELFArch - архитектура произвольного бинаря по ELF-заголовку (в терминах
+// ассетов релизов: mipsle-softfloat, amd64, ...). Для проверки загруженного
+// через панель бинаря ДО остановки движка (112-док 4.2): чужая архитектура
+// отвергается сразу.
+func ELFArch(path string) (string, error) {
+	if a := archFromELF(path); a != "" {
+		return a, nil
+	}
+	b := make([]byte, 4)
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	if _, err := io.ReadFull(f, b); err != nil {
+		return "", fmt.Errorf("бинарь не читается: %v", err)
+	}
+	if string(b) != "\x7fELF" {
+		return "", fmt.Errorf("это не ELF-бинарь (загружен архив или файл не того формата?)")
+	}
+	return "", fmt.Errorf("ELF-бинарь неизвестной архитектуры")
+}
+
 // archFromELF читает EI_DATA и e_machine работающего бинаря: байт 5 - порядок
 // байт (1 = little-endian), e_machine (байты 18-19) уточняет семейство.
 func archFromELF(path string) string {
