@@ -547,6 +547,20 @@ export interface EngineInfo {
   [key: string]: unknown
 }
 
+// POST /cores/binary (фаза analyze): что загрузил пользователь - детект
+// панели (sing-box/mihomo по ELF+version, пакет MT по .ipk/.apk)
+export interface UploadAnalyzeRes {
+  ok: boolean
+  error?: string
+  kind?: 'singbox' | 'mihomo' | 'magitrickle'
+  label?: string // «ядро sing-box 1.14.4-lx.30» / «пакет MagiTrickle (…)»
+  version?: string
+  arch?: string
+  routerArch?: string
+  needsBackup?: boolean
+  hint?: string
+}
+
 // POST /system/install: вывод установки (легаси showResult)
 export interface InstallRes {
   ok: boolean

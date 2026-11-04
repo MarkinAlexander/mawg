@@ -299,27 +299,17 @@ const coreStateBadge = (c: CoreInfo): { text: string; variant: 'ok' | 'err' | 'w
   return c.running ? { text: 'работает', variant: 'ok' } : { text: 'остановлен', variant: 'warn' };
 };
 
-// --- заливка/скачивание бинаря движка (112-док 4.1) ---
+// --- заливка/скачивание бинарей движков (112-док 4.1): две кнопки на всё ---
 const uploadOpen = ref(false);
-const uploadDlg = ref<InstanceType<typeof CoreUploadDialog> | null>(null);
-function openUpload(c: CoreInfo): void {
-  uploadOpen.value = true;
-  // диалог инициализируется на открытии - ядро доезжает следом тиком
-  setTimeout(() => uploadDlg.value?.openFor(c), 0);
-}
 
 const dlOpen = ref(false);
 const dlBusy = ref(false);
-const dlCore = ref<'singbox' | 'mihomo'>('singbox');
 const dlSingbox = ref<CoreDownloadInfo[]>([]);
 const dlSingboxAlt = ref<CoreDownloadInfo[]>([]);
 const dlMihomo = ref<CoreDownloadInfo[]>([]);
 const dlMt = ref<CoreDownloadInfo[]>([]);
 const dlArch = ref('');
-// диалог пер-ядро (слово владельца 04.11: «скачать и загрузить выносить
-// отдельно»): кнопка в карточке ядра показывает сборки ТОЛЬКО его
-async function openDownloads(core: string): Promise<void> {
-  dlCore.value = core === 'mihomo' ? 'mihomo' : 'singbox';
+async function openDownloads(): Promise<void> {
   dlOpen.value = true;
   dlBusy.value = true;
   const r = await sys.coreDownloads();
@@ -332,7 +322,6 @@ async function openDownloads(core: string): Promise<void> {
   }
   dlBusy.value = false;
 }
-const dlTitle = computed(() => (dlCore.value === 'mihomo' ? 'mihomo' : 'sing-box'));
 const dlMb = (b?: number) => (b ? (b / 1048576).toFixed(0) + ' МБ' : '');
 
 // --- диагностика движков (112-док 3.7, слово владельца 04.11) ---
@@ -442,8 +431,26 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
       </template>
     </UiTable>
 
-    <div class="sect">
-      Ядра VPN<UiHelp text="Жизненный цикл туннельных движков: включить/выключить совсем, автозагрузка сервиса, удаление. Ядра: sing-box и mihomo (Clash.Meta) - второе ядро для движковых пулов, ставится кнопкой «Установить». Остановка выключает ядро целиком: его движковые пулы перестают работать, нативные (WireGuard-слоты) и пулы другого ядра не затрагиваются." />
+    <div class="sect coresect">
+      <span>Ядра VPN<UiHelp text="Жизненный цикл туннельных движков: включить/выключить совсем, автозагрузка сервиса, удаление. Ядра: sing-box и mihomo (Clash.Meta) - второе ядро для движковых пулов, ставится кнопкой «Установить». Остановка выключает ядро целиком: его движковые пулы перестают работать, нативные (WireGuard-слоты) и пулы другого ядра не затрагиваются." /></span>
+      <!-- две кнопки на всё (слово владельца 04.11): заменить ядро sing-box/
+           mihomo или пакет MT можно и без GitHub - скачать где есть доступ,
+           залить здесь, панель сама поймёт что это -->
+      <span class="coresect-btns">
+        <UiButton
+          tooltip="прямые ссылки на файлы под архитектуру этого роутера: sing-box, mihomo, пакет MagiTrickle - если с роутера GitHub недоступен, скачайте где есть доступ"
+          @click="openDownloads"
+        >
+          Скачать
+        </UiButton>
+        <UiButton
+          variant="primary"
+          tooltip="залить скачанный бинарь sing-box/mihomo или пакет MagiTrickle (.ipk/.apk): панель сама распознает файл, покажет что нашла и заменит по подтверждению"
+          @click="uploadOpen = true"
+        >
+          Загрузить
+        </UiButton>
+      </span>
     </div>
     <div
       v-for="c in sys.cores.list"
@@ -525,18 +532,6 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
           label="автозагрузка"
           @update:model-value="(v: boolean) => corePower(c, v ? 'enable' : 'disable')"
         />
-        <UiButton
-          tooltip="прямые ссылки на сборки ЭТОГО ядра под архитектуру роутера: скачать на ПК, распаковать и залить бинарь кнопкой рядом"
-          @click="openDownloads(c.id)"
-        >
-          Скачать бинарь
-        </UiButton>
-        <UiButton
-          tooltip="залить распакованный бинарь движка напрямую: для роутеров, где установка из архива не проходит из-за места"
-          @click="openUpload(c)"
-        >
-          Загрузить бинарь
-        </UiButton>
         <UiButton
           v-if="c.caps.uninstall"
           variant="danger"
@@ -690,32 +685,57 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
   </UiCard>
 
   <LxInstallDialog v-model:open="lxOpen" />
-  <CoreUploadDialog
-    ref="uploadDlg"
-    v-model:open="uploadOpen"
-  />
+  <CoreUploadDialog v-model:open="uploadOpen" />
 
   <UiDialog
     v-model:open="dlOpen"
-    :title="`Скачать бинарь - ${dlTitle}`"
-    width="480px"
+    title="Скачать бинари движков"
+    width="520px"
   >
     <div class="lxtext">
-      Сборки {{ dlTitle }} под этот роутер{{ dlArch ? ` (${dlArch})` : '' }}: скачайте,
-      распакуйте на компьютере и залейте файл кнопкой «Загрузить бинарь» в карточке
-      {{ dlTitle }}. «Сжатый» - тот же бинарь, упакованный upx: качать и заливать меньше.
+      Файлы под этот роутер{{ dlArch ? ` (архитектура ${dlArch})` : '' }} - если с роутера
+      GitHub недоступен, скачайте где есть доступ (точные имена файлов - под ссылками,
+      их же можно найти на GitHub вручную), затем залейте кнопкой «Загрузить».
+      Бинари sing-box/mihomo - распаковать на компьютере (tar.gz / gz), пакет MT - как есть.
     </div>
     <div v-if="dlBusy">
       ссылки уточняются (GitHub)...
     </div>
     <template v-else>
-      <template v-if="dlCore === 'singbox'">
+      <div class="dlhead">
+        sing-box
+      </div>
+      <div
+        v-for="d in dlSingbox"
+        :key="d.label"
+        class="dllink"
+      >
+        <b>{{ d.label }}</b>
+        <a
+          v-if="d.plain"
+          :href="d.plain.url"
+          target="_blank"
+          rel="noopener"
+        >скачать ({{ dlMb(d.plain.size) }})</a>
+        <a
+          v-if="d.compact"
+          :href="d.compact.url"
+          target="_blank"
+          rel="noopener"
+        >сжатый upx ({{ dlMb(d.compact.size) }})</a>
+        <span class="corenote mono">{{ d.plain?.asset }}</span>
+      </div>
+      <details
+        v-if="dlSingboxAlt.length"
+        class="dlalt"
+      >
+        <summary>другие сборки sing-box</summary>
         <div
-          v-for="d in dlSingbox"
+          v-for="d in dlSingboxAlt"
           :key="d.label"
           class="dllink"
         >
-          <b>{{ d.label }}</b>
+          <span>{{ d.label }}</span>
           <a
             v-if="d.plain"
             :href="d.plain.url"
@@ -727,38 +747,16 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
             :href="d.compact.url"
             target="_blank"
             rel="noopener"
-          >сжатый upx ({{ dlMb(d.compact.size) }})</a>
-          <span class="corenote">{{ d.note }}</span>
-        </div>
-        <details
-          v-if="dlSingboxAlt.length"
-          class="dlalt"
-        >
-          <summary>другие сборки sing-box</summary>
-          <div
-            v-for="d in dlSingboxAlt"
-            :key="d.label"
-            class="dllink"
+            >сжатый ({{ dlMb(d.compact.size) }})</a
           >
-            <span>{{ d.label }}</span>
-            <a
-              v-if="d.plain"
-              :href="d.plain.url"
-              target="_blank"
-              rel="noopener"
-            >скачать ({{ dlMb(d.plain.size) }})</a>
-            <a
-              v-if="d.compact"
-              :href="d.compact.url"
-              target="_blank"
-              rel="noopener"
-            >сжатый ({{ dlMb(d.compact.size) }})</a>
-          </div>
-        </details>
-      </template>
+          <span class="corenote mono">{{ d.plain?.asset }}</span>
+        </div>
+      </details>
+      <div class="dlhead">
+        mihomo
+      </div>
       <div
         v-for="d in dlMihomo"
-        v-else
         :key="d.label"
         class="dllink"
       >
@@ -769,29 +767,29 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
           target="_blank"
           rel="noopener"
         >скачать ({{ dlMb(d.plain.size) }})</a>
-        <span class="corenote">{{ d.note }}</span>
+        <span class="corenote mono">{{ d.plain?.asset }}</span>
       </div>
-      <UiHint text="MagiTrickle - пакет (.ipk), бинарем не заливается: обновляется своим пунктом в таблице зависимостей выше («обновить до revN»)." />
+      <div class="dlhead">
+        MagiTrickle
+      </div>
       <div
-        v-if="dlMt.length"
-        class="dlmt"
+        v-for="d in dlMt"
+        :key="d.label"
+        class="dllink"
       >
-        <details>
-          <summary>пакет MagiTrickle - только для полной ручной переустановки</summary>
-          <div
-            v-for="d in dlMt"
-            :key="d.label"
-            class="dllink"
-          >
-            <a
-              v-if="d.plain"
-              :href="d.plain.url"
-              target="_blank"
-              rel="noopener"
-            >{{ d.label }} ({{ dlMb(d.plain.size) }})</a>
-          </div>
-        </details>
+        <b>{{ d.label }}</b>
+        <a
+          v-if="d.plain"
+          :href="d.plain.url"
+          target="_blank"
+          rel="noopener"
+        >скачать ({{ dlMb(d.plain.size) }})</a>
+        <span class="corenote mono">{{ d.plain?.asset }}</span>
       </div>
+      <UiHint
+        v-if="!dlMt.length"
+        text="пакет MagiTrickle под этот роутер не определился - обновляйте MT пунктом в таблице зависимостей выше"
+      />
     </template>
   </UiDialog>
 
@@ -933,6 +931,26 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
   font-size: 12px;
   margin-top: 4px;
   word-break: break-word;
+}
+.coresect {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.coresect-btns {
+  display: flex;
+  gap: 8px;
+}
+.dlhead {
+  font-weight: 600;
+  font-size: 12.5px;
+  margin: 10px 0 2px;
+}
+.mono {
+  font-family: ui-monospace, monospace;
+  word-break: break-all;
 }
 .diagrow {
   display: flex;

@@ -29,15 +29,59 @@ const maxCoreUpload = 150 << 20
 // uploadTmpDir - куда льём: tmpfs (ОЗУ), не трогаем забитую флешку.
 var uploadTmpDir = "/tmp"
 
-// postCoreBinary - POST /api/v1/cores/{id}/binary: multipart (поле
-// file - бинарь, поле backup - 1/0 сохранять старый), streaming в tmpfs,
-// затем конвейер замены (coreswap). Авторизация - общая (auth.Middleware).
-func (s *Server) postCoreBinary(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if id != "singbox" && id != "mihomo" {
-		writeErr(w, fmt.Errorf("неизвестное ядро %q", id))
-		return
+// uploadDraft - загруженный и распознанный файл между фазами analyze/apply:
+// пользователь подтверждает, ЧТО панель собирается менять (слово владельца
+// 04.11: «понимать что пользователь ставит и что загружает»).
+type uploadDraft struct {
+	Staged string
+	Kind   string // singbox | mihomo | magitrickle
+	Label  string // человекоческая подпись для подтверждения
+}
+
+// detectUploadedBinary - ЧТО загрузил пользователь: бинарь sing-box /
+// mihomo (ELF + version-запуск) или пакет MagiTrickle (.ipk/.apk).
+func detectUploadedBinary(staged, origName string) (kind, version, arch string, err error) {
+	lower := strings.ToLower(origName)
+	if strings.HasSuffix(lower, ".ipk") || strings.HasSuffix(lower, ".apk") {
+		if strings.Contains(lower, "magitrickle") {
+			return "magitrickle", "", "", nil
+		}
+		return "", "", "", fmt.Errorf("пакет %q не похож на MagiTrickle (нужен .ipk/.apk форка magitrickle)", origName)
 	}
+	arch, err = swapELFArch(staged)
+	if err != nil {
+		return "", "", "", fmt.Errorf("это не бинарь движка и не пакет MT (упакованный архив? распакуйте на ПК): %v", err)
+	}
+	// mihomo: строгий парсер «Mihomo Meta vX.Y …»
+	if v, e := mihomo.MihomoVersion(staged, swapRun); e == nil {
+		return "mihomo", v, arch, nil
+	}
+	if out, e := swapRun(staged, "version"); e == nil && strings.HasPrefix(strings.TrimSpace(string(out)), "sing-box version") {
+		if v, ve := singbox.SingBoxVersion(staged, swapRun); ve == nil {
+			return "singbox", v, arch, nil
+		}
+	}
+	// arch знаем, ядро - нет: вызывающий сравнит арх первым (чужая
+	// архитектура - главная причина неработающего version-запуска)
+	return "", "", arch, fmt.Errorf("бинарь не похож на sing-box или mihomo (version-запуск не распознан)")
+}
+
+// kindLabel - подпись для подтверждения в диалоге.
+func kindLabel(kind, version, name string) string {
+	switch kind {
+	case "singbox":
+		return "ядро sing-box " + version
+	case "mihomo":
+		return "ядро mihomo " + version
+	default:
+		return "пакет MagiTrickle (" + filepath.Base(name) + ")"
+	}
+}
+
+// postCoreBinaryUpload - ФАЗА 1, POST /api/v1/cores/binary: multipart
+// (поле file), streaming в tmpfs + детект. Ничего не меняется - пользователь
+// подтверждает распознанное, apply - отдельным запросом.
+func (s *Server) postCoreBinaryUpload(w http.ResponseWriter, r *http.Request) {
 	// tmpfs - это ОЗУ: до приёма сверяем объявленный размер со свободным
 	if free := platform.DiskFreeBytes(uploadTmpDir); free > 0 {
 		if want := r.ContentLength; want > 0 && want+16<<20 > free {
@@ -50,8 +94,8 @@ func (s *Server) postCoreBinary(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, fmt.Errorf("ожидался multipart: %v", err))
 		return
 	}
-	keepBackup := true
-	staged := ""
+	staged := filepath.Join(uploadTmpDir, "mawg-core-upload.bin")
+	origName := ""
 	for {
 		part, perr := mr.NextPart()
 		if perr == io.EOF {
@@ -61,48 +105,123 @@ func (s *Server) postCoreBinary(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, fmt.Errorf("загрузка прервалась: %v", perr))
 			return
 		}
-		if part.FormName() == "backup" {
-			val, _ := io.ReadAll(io.LimitReader(part, 16))
-			if v := string(val); v == "0" || v == "false" {
-				keepBackup = false
-			}
+		if part.FormName() == "backup" || part.FileName() == "" {
 			continue
 		}
-		if part.FileName() == "" {
-			continue
-		}
-		dst := filepath.Join(uploadTmpDir, "mawg-core-upload-"+id+".bin")
-		out, oerr := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
+		origName = part.FileName()
+		out, oerr := os.OpenFile(staged, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
 		if oerr != nil {
 			writeErr(w, oerr)
 			return
 		}
 		n, cerr := io.Copy(out, part) // MaxBytesReader валит копию при превышении
+		out.Close()
 		if cerr != nil {
-			out.Close()
-			os.Remove(dst)
+			os.Remove(staged)
 			writeErr(w, fmt.Errorf("загрузка не удалась: %v", cerr))
 			return
 		}
-		out.Close()
-		staged = dst
-		s.store.LogEvent(id, "core-swap", fmt.Sprintf("бинарь загружен в панель: %s (%s)", part.FileName(), mbSize(n)))
+		s.store.LogEvent("cores", "core-swap", fmt.Sprintf("файл загружен в панель: %s (%s)", origName, mbSize(n)))
 	}
-	if staged == "" {
-		writeErr(w, fmt.Errorf("файл не передан: поле file с бинарем движка"))
+	if origName == "" {
+		writeErr(w, fmt.Errorf("файл не передан: поле file с бинарем или пакетом"))
 		return
 	}
-	res, err := s.runCoreSwap(id, staged, keepBackup)
-	if err != nil {
-		os.Remove(staged) // при откате/отказе tmpfs не должен копить мусор
-		s.store.LogEvent(id, "core-swap", "замена не удалась: "+err.Error())
-		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error(), "output": res.Log})
+	kind, version, arch, derr := detectUploadedBinary(staged, origName)
+	// чужая архитектура - отказ прежде всего остального (главная причина
+	// «не похож на ядро»: version-запуск чужой арх просто не исполняется)
+	routerArch, _, aerr := swapDetectArch()
+	if arch != "" && aerr == nil && arch != routerArch {
+		os.Remove(staged)
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false,
+			"error": fmt.Sprintf("архитектура не подходит: бинарь %s, роутер %s - ничего не изменено", arch, routerArch)})
 		return
 	}
+	if derr != nil {
+		os.Remove(staged)
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": derr.Error()})
+		return
+	}
+	label := kindLabel(kind, version, origName)
+	s.setUploadingDraft(uploadDraft{Staged: staged, Kind: kind, Label: label})
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok": true, "output": res.Log, "version": res.Version,
-		"previous": res.Previous, "backup": res.Backup,
+		"ok": true, "kind": kind, "label": label, "version": version,
+		"arch": arch, "routerArch": routerArch,
+		"needsBackup": kind != "magitrickle",
+		"hint": uploadApplyHint(kind),
 	})
+}
+
+func uploadApplyHint(kind string) string {
+	switch kind {
+	case "magitrickle":
+		return "Пакет установится штатным менеджером (opkg/apk), служба MagiTrickle перезапустится; группы и конфиг сохраняются."
+	default:
+		return "Движок будет остановлен на секунды, бинарь заменён, ядро запущено и проверено; при неудаче вернётся прежний (если включена копия)."
+	}
+}
+
+// postCoreBinaryApply - ФАЗА 2, POST /api/v1/cores/binary/apply
+// {"backup":bool}: применить распознанный файл (ядра - конвейер замены,
+// MT - установка пакета из файла).
+func (s *Server) postCoreBinaryApply(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Backup bool `json:"backup"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
+		writeErr(w, fmt.Errorf("ожидался JSON {backup}"))
+		return
+	}
+	draft, ok := s.takeUploadDraft()
+	if !ok {
+		writeErr(w, fmt.Errorf("нет распознанной загрузки: выберите файл заново"))
+		return
+	}
+	switch draft.Kind {
+	case "magitrickle":
+		s.store.LogEvent("magitrickle", "core-swap", "установка пакета из загруженного файла: "+draft.Label)
+		ctx, cancel := context.WithTimeout(r.Context(), 290*time.Second)
+		defer cancel()
+		res, err := mtinstall.Install(ctx, mtinstall.Options{
+			Platform: s.backend.Name(), LocalPackage: draft.Staged,
+		})
+		if err != nil {
+			os.Remove(draft.Staged)
+			s.store.LogEvent("magitrickle", "core-swap", "установка не удалась: "+err.Error())
+			writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error(), "output": res.Log})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "output": res.Log})
+	default:
+		res, err := s.runCoreSwap(draft.Kind, draft.Staged, req.Backup)
+		if err != nil {
+			os.Remove(draft.Staged)
+			s.store.LogEvent(draft.Kind, "core-swap", "замена не удалась: "+err.Error())
+			writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error(), "output": res.Log})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok": true, "output": res.Log, "version": res.Version,
+			"previous": res.Previous,
+		})
+	}
+}
+
+func (s *Server) setUploadingDraft(d uploadDraft) {
+	s.upMu.Lock()
+	s.upDraft = d
+	s.upMu.Unlock()
+}
+
+func (s *Server) takeUploadDraft() (uploadDraft, bool) {
+	s.upMu.Lock()
+	defer s.upMu.Unlock()
+	if s.upDraft.Staged == "" {
+		return uploadDraft{}, false
+	}
+	d := s.upDraft
+	s.upDraft = uploadDraft{}
+	return d, true
 }
 
 // assetLink - один файл релиза (прямая ссылка).

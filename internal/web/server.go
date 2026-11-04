@@ -51,7 +51,10 @@ type Server struct {
 	sysCache   respCache
 	sbSrcCache respCache // источники ядра sing-box: отдельный слот (respCache одно-тельный)
 	dlCache    respCache // прямые ссылки на ассеты бинарей движков (112-док 4.1)
-	IPGate     *auth.IPGate
+	// черновик загруженного бинаря/пакета между фазами analyze/apply
+	upMu    sync.Mutex
+	upDraft uploadDraft
+	IPGate  *auth.IPGate
 	// warpReg - регистратор Cloudflare WARP (генератор конфигов);
 	// nil = штатный клиент, подменяется в тестах.
 	warpReg *warp.Client
@@ -130,7 +133,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/cores/singbox/sources", s.getSingboxSources)
 	mux.HandleFunc("GET /api/v1/cores/downloads", s.getCoreDownloads)
 	mux.HandleFunc("POST /api/v1/cores/{id}/power", s.postCorePower)
-	mux.HandleFunc("POST /api/v1/cores/{id}/binary", s.postCoreBinary)
+	mux.HandleFunc("POST /api/v1/cores/binary", s.postCoreBinaryUpload)
+	mux.HandleFunc("POST /api/v1/cores/binary/apply", s.postCoreBinaryApply)
 	mux.HandleFunc("POST /api/v1/pools/{name}/refresh-source", s.refreshSource)
 	mux.HandleFunc("PUT /api/v1/pools/{name}", s.updatePool)
 	mux.HandleFunc("DELETE /api/v1/pools/{name}", s.deletePool)
@@ -555,9 +559,9 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 		MtSources bool `json:"mtSources"`
 		// ExcludesDisabled - функционал исключений выключен (95-док,
 		// слово владельца 30.10): UI гасит блоки исключений.
-		ExcludesDisabled bool         `json:"excludesDisabled"`
-		Pools            []poolView   `json:"pools"`
-		Engine    map[string]any `json:"engine,omitempty"`
+		ExcludesDisabled bool           `json:"excludesDisabled"`
+		Pools            []poolView     `json:"pools"`
+		Engine           map[string]any `json:"engine,omitempty"`
 		// Engines - состояние по ядрам (88-док): singbox (копия Engine
 		// для совместимости) и mihomo. available:false - ядро не установлено.
 		Engines map[string]map[string]any `json:"engines,omitempty"`
@@ -2594,7 +2598,7 @@ func limitBody(next http.Handler) http.Handler {
 		}
 		// заливка бинаря движка: обычный бинарь до ~100 МБ (extended),
 		// 32 МБ multipart-лимита не хватает (112-док 4.1)
-		if strings.HasSuffix(r.URL.Path, "/binary") {
+		if strings.HasSuffix(r.URL.Path, "/cores/binary") {
 			limit = maxCoreUpload
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, limit)

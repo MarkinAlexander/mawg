@@ -64,6 +64,11 @@ type Options struct {
 	TmpDir  string
 	MinSize int64
 
+	// LocalPackage - путь к УЖЕ скачанному .ipk/.apk (ручная загрузка
+	// через панель без GitHub, 112-док 4.1): дискавери и скачивание
+	// пропускаются, ставится этот файл; Detect-отказ не фатален.
+	LocalPackage string
+
 	// PackageManagerFn - подмена менеджера пакетов (тесты: apk на раннере без apk).
 	PackageManagerFn func() (mgr, ext string)
 
@@ -272,7 +277,7 @@ func Install(ctx context.Context, opts Options) (Result, error) {
 	}
 
 	target, detail, err := detect()
-	if err != nil {
+	if err != nil && opts.LocalPackage == "" {
 		res.Log = log.String()
 		return res, err
 	}
@@ -281,34 +286,60 @@ func Install(ctx context.Context, opts Options) (Result, error) {
 	if opts.PackageManagerFn != nil {
 		mgr, ext = opts.PackageManagerFn()
 	}
-	step("таргет %s/%s (%s), менеджер %s", platform, target, detail, mgr)
+	if opts.LocalPackage != "" {
+		step("таргет %s (%s) не определялся: локальный пакет, менеджер %s", target, detail, mgr)
+	} else {
+		step("таргет %s/%s (%s), менеджер %s", platform, target, detail, mgr)
+	}
 
-	rel, err := latest(ctx)
-	if err != nil {
-		res.Log = log.String()
-		return res, fmt.Errorf("узнать последний релиз %s не удалось: %v", Repo, err)
-	}
-	asset, err := PickAsset(rel, platform, target, ext)
-	if err != nil {
-		res.Log = log.String()
-		return res, err
-	}
-	res.Tag = rel.TagName
-	res.Asset = asset.Name
-	step("релиз %s: %s (%s)", rel.TagName, asset.Name, mb(asset.Size))
+	var dest string
+	var size int64
+	assetName := ""
+	if opts.LocalPackage != "" {
+		// ручная загрузка пакета через панель (без GitHub): ставим как есть
+		dest = opts.LocalPackage
+		st, serr := os.Stat(dest)
+		if serr != nil {
+			res.Log = log.String()
+			return res, fmt.Errorf("файл пакета не читается: %v", serr)
+		}
+		if st.Size() < minSize {
+			res.Log = log.String()
+			return res, fmt.Errorf("файл пакета подозрительно мал (%d байт)", st.Size())
+		}
+		size = st.Size()
+		assetName = filepath.Base(dest)
+		res.Asset = assetName
+		step("пакет из загруженного файла: %s (%s)", assetName, humanSize(size))
+	} else {
+		rel, lerr := latest(ctx)
+		if lerr != nil {
+			res.Log = log.String()
+			return res, fmt.Errorf("узнать последний релиз %s не удалось: %v", Repo, lerr)
+		}
+		asset, perr := PickAsset(rel, platform, target, ext)
+		if perr != nil {
+			res.Log = log.String()
+			return res, perr
+		}
+		res.Tag = rel.TagName
+		res.Asset = asset.Name
+		step("релиз %s: %s (%s)", rel.TagName, asset.Name, mb(asset.Size))
 
-	dest := filepath.Join(tmp, asset.Name)
-	size, err := fetch(ctx, asset.URL, dest)
-	if err != nil {
-		res.Log = log.String()
-		return res, fmt.Errorf("скачать %s не удалось: %v", asset.Name, err)
+		dest = filepath.Join(tmp, asset.Name)
+		size, ferr := fetch(ctx, asset.URL, dest)
+		if ferr != nil {
+			res.Log = log.String()
+			return res, fmt.Errorf("скачать %s не удалось: %v", asset.Name, ferr)
+		}
+		if size < minSize {
+			os.Remove(dest)
+			res.Log = log.String()
+			return res, fmt.Errorf("скачанный файл подозрительно мал (%d байт)", size)
+		}
+		assetName = asset.Name
+		step("скачано %s", humanSize(size))
 	}
-	if size < minSize {
-		os.Remove(dest)
-		res.Log = log.String()
-		return res, fmt.Errorf("скачанный файл подозрительно мал (%d байт)", size)
-	}
-	step("скачано %s", humanSize(size))
 
 	initScript, socket, bin := ServicePaths(opts.Platform)
 	res.Bin = bin
@@ -373,7 +404,7 @@ func Install(ctx context.Context, opts Options) (Result, error) {
 			if ensureOpkgArch(conf, "all", 50) {
 				step("opkg.conf: добавлена строка arch all 50")
 			}
-			if arch := assetArch(asset.Name, ext); arch != "" && ensureOpkgArch(conf, arch, 300) {
+			if arch := assetArch(assetName, ext); arch != "" && ensureOpkgArch(conf, arch, 300) {
 				step("opkg.conf: добавлена строка arch %s", arch)
 			}
 		}
@@ -398,7 +429,7 @@ func Install(ctx context.Context, opts Options) (Result, error) {
 		// пакета (живой кейс: /etc/apk/arch = aarch64, пакет aarch64_generic,
 		// v0.7.3 у пользователя); финальная попытка с --arch <arch пакета>
 		if err2 != nil && mgr == "apk" && strings.Contains(strings.ToLower(string(out2)), "unable to select packages") {
-			if arch := assetArch(asset.Name, ext); arch != "" {
+			if arch := assetArch(assetName, ext); arch != "" {
 				step("повторяю с --arch %s", arch)
 				out3, err3 := installPackage(run, mgr, dest, "--arch", arch)
 				if err3 == nil {

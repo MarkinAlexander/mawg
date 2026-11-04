@@ -1,7 +1,8 @@
 package web
 
-// Upload бинаря движка через HTTP (112-док 4.1/4.5): multipart-приём,
-// отказ чужой архитектуры без последствий, полный конвейер по фейкам.
+// Загрузка бинаря/пакета через HTTP (112-док 4.1/4.5, слово владельца
+// 04.11: две кнопки, панель сама понимает ЧТО ей дали): фаза analyze
+// (детект sing-box/mihomo/MT-пакета, ничего не меняется) и фаза apply.
 
 import (
 	"bytes"
@@ -34,8 +35,8 @@ type uploadEnv struct {
 	targetCalls    int
 }
 
-func (e *uploadEnv) stagedPath(core string) string {
-	return filepath.Join(e.tmp, "mawg-core-upload-"+core+".bin")
+func (e *uploadEnv) stagedPath() string {
+	return filepath.Join(e.tmp, "mawg-core-upload.bin")
 }
 
 func (e *uploadEnv) versionFn(bin string) (string, error) {
@@ -72,8 +73,8 @@ func newUploadServer(t *testing.T) (*httptest.Server, *uploadEnv) {
 		markerDir: filepath.Join(tmp, "marker"),
 		versions: map[string]string{
 			"new": "1.14.4-lx.30", "old": "1.14.2-lx.12",
-			filepath.Join(tmp, "mawg-core-upload-singbox.bin"): "1.14.4-lx.30",
-			filepath.Join(tmp, "mawg-core-upload-mihomo.bin"):  "1.19.4",
+			// загруженный staged отвечает конвейеру той же версией
+			filepath.Join(tmp, "mawg-core-upload.bin"): "1.14.4-lx.30",
 		},
 		// цель: 1-й вызов - prevVer (старая), 2-й - после копии (новая)
 		targetNewAfter: 2,
@@ -83,9 +84,16 @@ func newUploadServer(t *testing.T) (*httptest.Server, *uploadEnv) {
 	}
 
 	oldDetect, oldVer, oldFree, oldTmp := swapDetectArch, swapVersionProvider, swapDiskFree, uploadTmpDir
-	oldLX, oldMh := swapLXTarget, swapMhTarget
+	oldLX, oldMh, oldRun := swapLXTarget, swapMhTarget, swapRun
 	swapDetectArch = func() (string, string, error) { return "amd64", "тест", nil }
 	swapVersionProvider = func(string) func(string) (string, error) { return env.versionFn }
+	swapRun = func(argv0 string, args ...string) ([]byte, error) {
+		// детект загруженного файла: отвечает как sing-box version
+		if argv0 == env.stagedPath() {
+			return []byte("sing-box version " + env.versions["new"] + "\n"), nil
+		}
+		return nil, os.ErrInvalid
+	}
 	swapDiskFree = func(string) int64 { return 1 << 30 }
 	uploadTmpDir = tmp
 	swapLXTarget = func(string) singbox.LXTarget {
@@ -96,38 +104,23 @@ func newUploadServer(t *testing.T) (*httptest.Server, *uploadEnv) {
 	}
 	t.Cleanup(func() {
 		swapDetectArch, swapVersionProvider, swapDiskFree, uploadTmpDir = oldDetect, oldVer, oldFree, oldTmp
-		swapLXTarget, swapMhTarget = oldLX, oldMh
+		swapLXTarget, swapMhTarget, swapRun = oldLX, oldMh, oldRun
 	})
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	return ts, env
 }
 
-func uploadMultipart(t *testing.T, url string, mips bool, size int64, backup string) (int, map[string]any) {
+// uploadMultipartRaw - POST файла с произвольным содержимым.
+func uploadMultipartRaw(t *testing.T, url string, name string, content []byte) (int, map[string]any) {
 	t.Helper()
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
-	if backup != "" {
-		if err := mw.WriteField("backup", backup); err != nil {
-			t.Fatal(err)
-		}
-	}
-	fw, err := mw.CreateFormFile("file", "engine.bin")
+	fw, err := mw.CreateFormFile("file", name)
 	if err != nil {
 		t.Fatal(err)
 	}
-	hdr := make([]byte, 20)
-	copy(hdr, "\x7fELF")
-	hdr[5] = 1
-	machine := uint16(62) // amd64
-	if mips {
-		machine = 8
-	}
-	hdr[18], hdr[19] = byte(machine), byte(machine>>8)
-	if _, err := fw.Write(hdr); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := fw.Write(bytes.Repeat([]byte{0}, int(size)-len(hdr))); err != nil {
+	if _, err := fw.Write(content); err != nil {
 		t.Fatal(err)
 	}
 	if err := mw.Close(); err != nil {
@@ -146,48 +139,92 @@ func uploadMultipart(t *testing.T, url string, mips bool, size int64, backup str
 	return resp.StatusCode, out
 }
 
-func TestPostCoreBinaryUnknownCore(t *testing.T) {
-	ts, _ := newUploadServer(t)
-	code, out := uploadMultipart(t, ts.URL+"/api/v1/cores/vpn/binary", false, 3<<20, "")
-	if code != http.StatusBadRequest || !strings.Contains(errText(out), "неизвестное ядро") {
-		t.Fatalf("code=%d out=%v", code, out)
+func elfContent(arch string, size int64) []byte {
+	hdr := make([]byte, 20)
+	copy(hdr, "\x7fELF")
+	hdr[5] = 1
+	machine := uint16(62) // amd64
+	if arch == "mipsle-softfloat" {
+		machine = 8
 	}
+	hdr[18], hdr[19] = byte(machine), byte(machine>>8)
+	buf := bytes.Repeat([]byte{0}, int(size))
+	copy(buf, hdr)
+	return buf
 }
 
-func TestPostCoreBinaryRejectsWrongArchOverHTTP(t *testing.T) {
+func TestUploadAnalyzeDetectsWrongArch(t *testing.T) {
 	ts, env := newUploadServer(t)
-	code, out := uploadMultipart(t, ts.URL+"/api/v1/cores/singbox/binary", true, 3<<20, "1")
-	if code != http.StatusOK || out["ok"] != false {
-		t.Fatalf("ожидался ok:false, code=%d out=%v", code, out)
+	code, out := uploadMultipartRaw(t, ts.URL+"/api/v1/cores/binary", "engine.bin", elfContent("mipsle-softfloat", 3<<20))
+	if code != http.StatusOK || out["ok"] != false || !strings.Contains(errText(out), "архитектура не подходит") {
+		t.Fatalf("code=%d out=%v", code, out)
 	}
-	if !strings.Contains(errText(out), "архитектура не подходит") {
-		t.Fatalf("текст ошибки: %v", out)
-	}
-	if _, err := os.Stat(env.stagedPath("singbox")); !os.IsNotExist(err) {
+	if _, err := os.Stat(env.stagedPath()); !os.IsNotExist(err) {
 		t.Fatal("staged не удалён после отказа")
 	}
 }
 
-func TestPostCoreBinarySuccessOverHTTP(t *testing.T) {
+func TestUploadAnalyzeRejectsGarbage(t *testing.T) {
+	ts, env := newUploadServer(t)
+	_, out := uploadMultipartRaw(t, ts.URL+"/api/v1/cores/binary", "engine.bin", []byte("not-an-elf"))
+	if out["ok"] != false || !strings.Contains(errText(out), "не бинарь") {
+		t.Fatalf("ожидался отказ мусора: %v", out)
+	}
+	if _, err := os.Stat(env.stagedPath()); !os.IsNotExist(err) {
+		t.Fatal("staged не удалён после отказа")
+	}
+}
+
+func TestUploadAnalyzeDetectsMTPackage(t *testing.T) {
+	ts, _ := newUploadServer(t)
+	_, out := uploadMultipartRaw(t, ts.URL+"/api/v1/cores/binary",
+		"magitrickle_0.8.2-19_openwrt_i386_pentium4.ipk", bytes.Repeat([]byte("p"), 300_000))
+	if out["ok"] != true || out["kind"] != "magitrickle" {
+		t.Fatalf("пакет MT не распознан: %v", out)
+	}
+	if !strings.Contains(out["label"].(string), "MagiTrickle") {
+		t.Fatalf("label: %v", out["label"])
+	}
+}
+
+func TestUploadAnalyzeThenApplySingbox(t *testing.T) {
 	ts, env := newUploadServer(t)
 	// старый бинарь на месте
 	if err := os.WriteFile(env.target, []byte("old-binary"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
-	code, out := uploadMultipart(t, ts.URL+"/api/v1/cores/singbox/binary", false, 3<<20, "1")
-	if code != http.StatusOK || out["ok"] != true {
-		t.Fatalf("code=%d out=%v (лог: %v)", code, out, out["output"])
+	_, out := uploadMultipartRaw(t, ts.URL+"/api/v1/cores/binary", "engine.bin", elfContent("amd64", 3<<20))
+	if out["ok"] != true || out["kind"] != "singbox" {
+		t.Fatalf("детект: %v", out)
 	}
-	if out["version"] != "1.14.4-lx.30" || out["previous"] != "1.14.2-lx.12" {
-		t.Fatalf("результат: %v", out)
+	if v, _ := out["version"].(string); v != "1.14.4-lx.30" {
+		t.Fatalf("версия детекта: %v", out["version"])
 	}
-	if _, err := os.Stat(env.target); err != nil {
-		t.Fatalf("новый бинарь не на месте: %v", err)
+
+	// подтверждение пользователя -> apply
+	resp, err := http.Post(ts.URL+"/api/v1/cores/binary/apply",
+		"application/json", strings.NewReader(`{"backup":true}`))
+	if err != nil {
+		t.Fatal(err)
 	}
-	marker, err := os.ReadFile(filepath.Join(env.markerDir, singbox.LXMarkerName))
-	if err != nil || !strings.Contains(string(marker), "source=upload") {
-		t.Fatalf("маркер не записан: %v", err)
+	defer resp.Body.Close()
+	var res map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		t.Fatal(err)
+	}
+	if res["ok"] != true {
+		t.Fatalf("apply не прошёл: %v (лог: %v)", res, res["output"])
+	}
+	if res["version"] != "1.14.4-lx.30" || res["previous"] != "1.14.2-lx.12" {
+		t.Fatalf("результат: %v", res)
+	}
+	// повторный apply без новой загрузки - отказ
+	resp2, _ := http.Post(ts.URL+"/api/v1/cores/binary/apply",
+		"application/json", strings.NewReader(`{"backup":true}`))
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusBadRequest {
+		t.Fatalf("повторный apply должен отказывать, code=%d", resp2.StatusCode)
 	}
 }
 
