@@ -376,9 +376,11 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
       </UiButton>
       <!-- круглая стрелка вместо слова «обновить» (слово владельца 04.11:
            читалось как «обновление всего», а это лишь перечитывание
-           состояний и статусов) -->
+           состояний и статусов); крупная и заметная - слово владельца:
+           «если бы не знал, что она есть - не нашёл бы» -->
       <UiButton
         variant="icon"
+        class="refresh-btn"
         :busy="refreshing"
         tooltip="перечитать состояния и статусы (это не обновление программ)"
         @click="refreshSystem"
@@ -873,6 +875,15 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
 </template>
 
 <style scoped>
+/* крупная заметная кнопка-стрелка «перечитать состояния»: стандартный
+   v-icon 21×21 теряется среди текстовых кнопок (слово владельца 04.11) */
+.refresh-btn {
+  padding: 8px;
+}
+.refresh-btn :deep(.uiicon svg) {
+  width: 22px;
+  height: 22px;
+}
 .hrow {
   display: flex;
   gap: 6px;
