@@ -87,6 +87,37 @@ func OurEngineProcs(name, marker string, excludePID int) []ProcInfo {
 	return out
 }
 
+// BinProcs - процессы, исполняющие бинарь по пути exe (подмена exe не
+// делается: ручные запуски из /tmp различимы по полному пути). Замена
+// файла работающего ядра оставила бы сироту с удалённым образом - таких
+// гасим перед конвейером замены (112-док 4.2).
+func BinProcs(exe string) []ProcInfo {
+	entries, err := os.ReadDir(procDir)
+	if err != nil {
+		return nil
+	}
+	var out []ProcInfo
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil || pid <= 1 {
+			continue
+		}
+		target, err := readlinkFn(filepath.Join(procDir, e.Name(), "exe"))
+		if err != nil || target != exe {
+			continue
+		}
+		info := ProcInfo{PID: pid, Exe: target}
+		if b, err := os.ReadFile(filepath.Join(procDir, e.Name(), "comm")); err == nil {
+			info.Comm = strings.TrimSpace(string(b))
+		}
+		out = append(out, info)
+	}
+	return out
+}
+
 // TunHolderProcs - процессы, держащие /dev/net/tun (диагностика занятых
 // tun-устройств: кто мешает TUNSETIFF). Наш pid исключаем.
 func TunHolderProcs(excludePID int) []ProcInfo {

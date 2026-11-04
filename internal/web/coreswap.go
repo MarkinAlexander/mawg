@@ -251,6 +251,11 @@ func mbSize(n int64) string {
 	return fmt.Sprintf("%.0f МБ", float64(n)/float64(1<<20))
 }
 
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
+}
+
 // swapCoreVersionFn - version-функция конвейера для ядра.
 func swapCoreVersionFn(core string) func(string) (string, error) {
 	return func(bin string) (string, error) {
@@ -264,6 +269,12 @@ func swapCoreVersionFn(core string) func(string) (string, error) {
 // runCoreSwap - собрать параметры конвейера из живых менеджеров и платформы.
 func (s *Server) runCoreSwap(core, staged string, keepBackup bool) (*swapResult, error) {
 	var bin, markerDir string
+	// killBinProcs - страховка после сервисного стопа: живые процессы с
+	// ЗАМЕНЯЕМОГО бинаря (ручные запуски, тестовые из /tmp на живом
+	// заменяемом пути) остались бы сиротами с удалённым образом (112-док 4.2)
+	killBinProcs := func() int {
+		return singbox.KillProcs(singbox.BinProcs(bin))
+	}
 	stop := func() error { return nil }
 	switch core {
 	case "mihomo":
@@ -275,6 +286,7 @@ func (s *Server) runCoreSwap(core, staged string, keepBackup bool) (*swapResult,
 			if mgr, err := s.mh(); err == nil {
 				mgr.StopOwn()
 			}
+			killBinProcs()
 			return nil
 		}
 	default:
@@ -284,16 +296,25 @@ func (s *Server) runCoreSwap(core, staged string, keepBackup bool) (*swapResult,
 		stop = func() error {
 			if s.store.SingboxMode() == "shared" {
 				_, init := s.sharedPaths()
-				if init == "" {
+				if init == "" || !fileExists(init) {
+					// init-скрипта нет (ручная/тестовая установка сервиса):
+					// сервисом управлять нечем - гасим процессы с заменяемого
+					// бинаря напрямую, чужие с другими бинарями не трогаем
+					killBinProcs()
 					return nil
 				}
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				defer cancel()
-				return singbox.ServiceCmd(ctx, init, "stop", nil)
+				if err := singbox.ServiceCmd(ctx, init, "stop", nil); err != nil {
+					return err
+				}
+				killBinProcs()
+				return nil
 			}
 			if mgr, err := s.sb(); err == nil {
 				mgr.StopOwn()
 			}
+			killBinProcs()
 			return nil
 		}
 	}
