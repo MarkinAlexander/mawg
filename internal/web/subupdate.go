@@ -44,6 +44,8 @@ func (s *Server) SubUpdateLoop(ctx context.Context) {
 }
 
 func (s *Server) subUpdateTick() {
+	s.mtLogQuietEnsure()
+	s.mtLogNanny()
 	s.engineCatchUpStale()
 	for _, p := range s.store.Pools() {
 		if p.Disabled || !autoUpdatable(p.Settings.Source) {
