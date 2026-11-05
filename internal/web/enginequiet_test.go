@@ -59,6 +59,11 @@ func newMTWithoutTun5(t *testing.T) *httptest.Server {
 // требовать пересборки движка - иначе мёртвая подписка такого пула рвёт
 // сессии соседей по общему ядру (живой кейс trojan-test/телеграм).
 func TestEnginePoolRouted(t *testing.T) {
+	// тень - пакетная глобаль: ранее прошедшие тесты могли её населить,
+	// SetShadowStorage подменяет loader, но не перечитывает непустую
+	// mtShadow - сбрасываем явно, кейс «пустая тень -> живой список»
+	// должен идти от чистого листа
+	magitrickle.SetShadowStorage(nil, nil)
 	mt := newMTWithoutTun5(t)
 	s := newQuietServer(t, mt.URL)
 
@@ -68,6 +73,7 @@ func TestEnginePoolRouted(t *testing.T) {
 	}
 
 	// группа МТ на tun пула (пусть и выключенная) - маршрутизируется
+	magitrickle.SetShadowStorage(nil, nil) // непустая mtShadow не перечитывается сама
 	magitrickle.SetShadowStorage(func() []magitrickle.Group {
 		return []magitrickle.Group{
 			{ID: "1", Name: "telegram", Interface: "tun7"},
