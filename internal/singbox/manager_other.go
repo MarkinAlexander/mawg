@@ -83,6 +83,9 @@ type PoolStatus struct {
 
 func (m *Manager) PoolStatus(name string) (PoolStatus, bool) { return PoolStatus{}, false }
 
+// FragmentMTime - заглушка не-Linux сборки (движок на роутере).
+func (m *Manager) FragmentMTime() time.Time { return time.Time{} }
+
 func (m *Manager) ClashProxies(ctx context.Context) (map[string]ClashProxy, error) {
 	return nil, fmt.Errorf("движок sing-box доступен только на роутере")
 }

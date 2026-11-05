@@ -61,6 +61,9 @@ func (m *Manager) PoolStatus(name string) (singbox.PoolStatus, bool) {
 	return singbox.PoolStatus{}, false
 }
 
+// FragmentMTime - заглушка не-Linux сборки (ядро на роутере).
+func (m *Manager) FragmentMTime() time.Time { return time.Time{} }
+
 func (m *Manager) ClashProxies(ctx context.Context) (map[string]singbox.ClashProxy, error) {
 	return nil, fmt.Errorf("ядро mihomo доступно только на роутере")
 }

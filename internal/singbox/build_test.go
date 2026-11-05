@@ -1,6 +1,7 @@
 package singbox
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -489,5 +490,25 @@ func TestBuildConfigKeyShareClassical(t *testing.T) {
 	_, skipped, err := BuildConfig([]PoolSpec{mkSpec()}, Params{ClashPort: 2291, Profile: SourceLXID, Caps: capsOf(SourceLXID, "1.14.0-lx.36")})
 	if err == nil || len(skipped) == 0 || !strings.Contains(strings.Join(skipped, "; "), "классический key_share") {
 		t.Fatalf("lx без параметра: ждём честный skip классики, получено err=%v skipped=%v", err, skipped)
+	}
+}
+
+// Конфиг обязан быть байт-детерминированным: скип «идентичный фрагмент -
+// без перезагрузки ядра» в Apply опирается на сравнение с прошлым файлом.
+func TestBuildConfigDeterministic(t *testing.T) {
+	spec := PoolSpec{Name: "demo", Tun: "tun1", TunIP: TuneIP(1), MixedPort: 2282, GroupMode: "selector", Nodes: mustNodes(t, fakeVless)}
+	p := Params{ClashPort: 2291, Merged: true, ResolverTag: "local"}
+	a, _, err := BuildConfig([]PoolSpec{spec}, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		b, _, err := BuildConfig([]PoolSpec{spec}, p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(a, b) {
+			t.Fatalf("поколение %d: конфиг недетерминирован (%d vs %d байт)", i, len(a), len(b))
+		}
 	}
 }

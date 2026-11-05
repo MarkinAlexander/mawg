@@ -115,6 +115,9 @@ type engineManager interface {
 	ClashSelect(ctx context.Context, group, name string) error
 	ClashGroupDelay(ctx context.Context, group, testURL string, timeout time.Duration) (map[string]int, error)
 	PoolStatus(name string) (singbox.PoolStatus, bool)
+	// FragmentMTime - время последней записи применённого конфига ядра
+	// (для стейл-детекта nodes.json пулов).
+	FragmentMTime() time.Time
 }
 
 // engineMgr - менеджер ядра, которым крутится пул.

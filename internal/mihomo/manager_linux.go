@@ -384,6 +384,15 @@ func (m *Manager) cfgPath() string  { return filepath.Join(m.Dir, "config.yaml")
 func (m *Manager) pidPath() string  { return filepath.Join(m.Dir, "run.pid") }
 func (m *Manager) lastGood() string { return filepath.Join(m.Dir, "config.last-good.yaml") }
 
+// FragmentMTime - время последней записи применённого конфига ядра
+// (паритет с sing-box: веб сравнивает свежесть nodes.json пулов).
+func (m *Manager) FragmentMTime() time.Time {
+	if fi, err := os.Stat(m.cfgPath()); err == nil {
+		return fi.ModTime()
+	}
+	return time.Time{}
+}
+
 // ClashProxies/ClashSelect/ClashGroupDelay - клиент clash API на порт
 // нашего экземпляра (реализация общая с sing-box).
 func (m *Manager) ClashProxies(ctx context.Context) (map[string]singbox.ClashProxy, error) {

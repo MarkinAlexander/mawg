@@ -44,6 +44,7 @@ func (s *Server) SubUpdateLoop(ctx context.Context) {
 }
 
 func (s *Server) subUpdateTick() {
+	s.engineCatchUpStale()
 	for _, p := range s.store.Pools() {
 		if p.Disabled || !autoUpdatable(p.Settings.Source) {
 			continue
@@ -76,9 +77,27 @@ func (s *Server) subUpdateTick() {
 			continue
 		}
 		if time.Since(st.SubRefreshAt) >= time.Duration(interval*float64(time.Hour)) {
+			// провал не двигает SubRefreshAt - без кулдауна окно 12ч
+			// осталось бы открытым навсегда и долбило движок каждую
+			// минуту (живой кейс trojan-test: мёртвый сервер подписки
+			// рвал телеграм пересборками общего ядра, слово владельца
+			// 2026-11-05). Ретрай не чаще subFailCooldown.
+			if subRetryGated(st, time.Now()) {
+				continue
+			}
 			s.subRefreshPool(p, "по расписанию")
+			// кулдаун считается от попытки, чем бы она ни кончилась
+			s.store.MutateState(p.Name, func(x *store.PoolState) { x.LastFailRefresh = time.Now() })
 		}
 	}
+}
+
+// subRetryGated - плановое окно обновления открыто, но предыдущая
+// попытка провалилась недавно: ретрай под кулдауном, чтобы не долбить
+// движок (и сервер подписки) каждую минуту.
+func subRetryGated(st *store.PoolState, now time.Time) bool {
+	return st.RefreshFails > 0 && !st.LastFailRefresh.IsZero() &&
+		now.Sub(st.LastFailRefresh) < subFailCooldown
 }
 
 // subDegraded - пул деградировал N циклов подряд (проба движка или ротатора).
@@ -155,6 +174,10 @@ func (s *Server) subRefreshPool(p store.Pool, reason string) {
 			if intervalH > 0 {
 				x.SubIntervalH = intervalH
 			}
+			// пул в состоянии последнего успешного применения -
+			// счётчики провалов снимаются
+			x.RefreshFails = 0
+			x.LastRefreshErr = ""
 		})
 		s.store.LogEvent(name, "subupdate", "обновление источника ("+reason+"): тело не изменилось, пул не тронут")
 		return
@@ -207,6 +230,7 @@ func (s *Server) subRefreshFailed(name, reason, detail string) {
 	s.store.MutateState(name, func(x *store.PoolState) {
 		x.RefreshFails++
 		x.LastRefreshErr = detail
+		x.LastFailRefresh = time.Now()
 	})
 	s.store.LogEvent(name, "subupdate", fmt.Sprintf("обновление источника (%s) не удалось: %s", reason, detail))
 }
@@ -236,6 +260,16 @@ func (s *Server) applySourceToPool(p store.Pool, res store.Sub) (subApplyVerdict
 		return subApplyFail, "в источнике нет узлов"
 	}
 	if p.Settings.EngineMode == engineMode {
+		// Пул без единой привязки (группы МТ на его tun, каскады, бандлы)
+		// движок не пересобирает: SIGHUP/рестарт общего ядра рвёт сессии
+		// соседних пулов. Узлы пишем - применит первая же пересборка или
+		// досборка, когда у пула появятся привязки (engineCatchUpStale).
+		if !s.enginePoolRouted(p) {
+			if err := s.writePoolNodes(name, res.Nodes); err != nil {
+				return subApplyFail, err.Error()
+			}
+			return subApplyOK, fmt.Sprintf("%d узлов записано; пул не маршрутизируется - движок не тронут, узлы применятся при появлении привязок", len(res.Nodes))
+		}
 		if err := s.writePoolNodes(name, res.Nodes); err != nil {
 			return subApplyFail, err.Error()
 		}

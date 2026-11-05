@@ -3,6 +3,7 @@
 package singbox
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -462,6 +463,21 @@ func (m *Manager) ClashGroupDelay(ctx context.Context, group, testURL string, ti
 }
 
 func (m *Manager) fragmentPath() string { return filepath.Join(m.SharedDir, FragmentName) }
+
+// FragmentMTime - время последней записи применённого конфига движка
+// (фрагмент shared-режима или собственный config.json). Веб-слой
+// сравнивает с ним свежесть nodes.json пулов: узлы новее конфига -
+// движок их ещё не применял.
+func (m *Manager) FragmentMTime() time.Time {
+	path := m.cfgPath()
+	if m.Mode == "shared" {
+		path = m.fragmentPath()
+	}
+	if fi, err := os.Stat(path); err == nil {
+		return fi.ModTime()
+	}
+	return time.Time{}
+}
 
 func (m *Manager) alive() bool {
 	if m.pid == 0 {
@@ -1050,6 +1066,22 @@ func (m *Manager) applyShared(runnable []PoolSpec, skipped []string) ([]string, 
 	if err := m.writeConfig(runnable); err != nil {
 		return skipped, err
 	}
+	// Конфиг байт-в-байт прежний (типовой случай - откат неудачного
+	// обновления подписки): перезагрузка холостая, SIGHUP/рестарт общего
+	// ядра рвёт сессии соседних пулов (живой кейс trojan-test/телеграм,
+	// слово владельца 2026-11-05). Достаточно перепробовать пулы.
+	if cur, rerr := os.ReadFile(m.fragmentPath()); rerr == nil && hadPrev && bytes.Equal(prev, cur) {
+		m.sharedClash = facts.ClashPort
+		m.lastSpecs = runnable
+		for _, spec := range runnable {
+			m.probeSpec(spec)
+			if st, ok := m.PoolStatus(spec.Name); ok && !st.ProbeOK {
+				time.Sleep(2 * time.Second)
+				m.probeSpec(spec)
+			}
+		}
+		return skipped, nil
+	}
 	if err := m.checkShared(); err != nil {
 		m.restoreFragment(prev, hadPrev)
 		return skipped, err
@@ -1163,8 +1195,23 @@ func (m *Manager) Apply(pools []PoolSpec) ([]string, error) {
 	if m.Mode == "shared" {
 		return m.applyShared(runnable, skipped)
 	}
+	prevCfg, prevCfgErr := os.ReadFile(m.cfgPath())
 	if err := m.writeConfig(runnable); err != nil {
 		return skipped, err
+	}
+	// конфиг не изменился и процесс жив - рестарт холостой (рвёт сессии
+	// пулов на этом же экземпляре ядра), достаточно перепробовать пулы
+	if cur, rerr := os.ReadFile(m.cfgPath()); rerr == nil && prevCfgErr == nil &&
+		bytes.Equal(prevCfg, cur) && m.alive() {
+		m.lastSpecs = runnable
+		for _, spec := range runnable {
+			m.probeSpec(spec)
+			if st, ok := m.PoolStatus(spec.Name); ok && !st.ProbeOK {
+				time.Sleep(2 * time.Second)
+				m.probeSpec(spec)
+			}
+		}
+		return skipped, nil
 	}
 	m.stop()
 	// осиротевшие процессы нашего экземпляра (pid потерян прошлым mawg)

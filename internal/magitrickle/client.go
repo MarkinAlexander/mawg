@@ -256,6 +256,15 @@ var (
 	restoredOnce map[string]int
 )
 
+// ShadowGroups - копия теневого списка групп (без HTTP): обновляется
+// мониторами и мутациями. Пустая тень = «не знаем» - вызывающий решает
+// сам, доставать ли живой список.
+func ShadowGroups() []Group {
+	groupsMu.Lock()
+	defer groupsMu.Unlock()
+	return append([]Group(nil), mtShadow...)
+}
+
 func SetShadowStorage(load func() []Group, save func([]Group)) {
 	groupsMu.Lock()
 	defer groupsMu.Unlock()
