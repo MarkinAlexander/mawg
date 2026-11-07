@@ -8,12 +8,10 @@ import { useToast } from '../../stores/toast'
 import { cascadeOptions, wireCascadeSel } from './groupsLogic'
 import { G } from '../glossary'
 
-// Диалог каскада (легаси fillCascadeSelects 2067 + csCreate 2090): источник
-// и путь из пулов и интерфейсов (выбранное в одном дизейблится в другом),
-// hosts - только при iface-источнике, POST /cascades. С Ф5-полировки
-// адреса iface-источника автоподставляются (GET /cascades/iface-endpoints:
-// Кинетик отдаёт remote-endpoint-address пиров; баг владельца - каскад с
-// nwg7 требовал адреса от руки).
+// Диалог каскада (легаси fillCascadeSelects 2067 + csCreate 2090). С
+// Ф5-полировки адреса iface-источника автоподставляются (GET
+// /cascades/iface-endpoints: Кинетик отдаёт remote-endpoint-address
+// пиров; баг владельца - каскад с nwg7 требовал адреса от руки).
 const open = defineModel<boolean>('open', { default: false });
 
 const { state, createCascade } = useGroups();

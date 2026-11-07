@@ -78,8 +78,9 @@ type warpConfigFile struct {
 	AWG      string `json:"awg"`
 }
 
-// warpConfigZip - архив конфигов для скачивания одним файлом (base64;
-// собирается в памяти - в режиме download на роутере ничего не хранится).
+// warpPlan - итог генератора; ZipWG/ZipAWG - все конфиги одним архивом
+// (base64, собирается в памяти: в режиме download на роутере ничего
+// не хранится).
 type warpPlan struct {
 	Pool     string           `json:"pool,omitempty"`
 	Added    int              `json:"added,omitempty"`

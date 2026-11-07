@@ -22,8 +22,6 @@ const (
 // editCacheFile правит кэш ядра в конфиге, поддерживая обе схемы: 1.14 -
 // experimental.cache_file {enabled, path} (без path ядро кладёт cache.db в
 // свой рабочий каталог), 1.13 - строка experimental.clash_api.cache_file.
-// Возвращает новый конфиг, прежний эффективный путь и признак изменения;
-// выключенный кэш (off) или уже в /tmp (tmp) - без изменения.
 func editCacheFile(data []byte, mode string) (out []byte, oldPath string, changed bool, err error) {
 	var cfg map[string]any
 	if err := json.Unmarshal(data, &cfg); err != nil {

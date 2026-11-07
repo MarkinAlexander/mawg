@@ -19,7 +19,6 @@ import (
 // в disabled.<имя> в том же каталоге (паттерн как у mtinstall).
 const KeeneticDisabledPrefix = "disabled."
 
-// KeeneticDisabledPath - путь «выключенного» варианта init-скрипта.
 func KeeneticDisabledPath(initScript string) string {
 	return filepath.Join(filepath.Dir(initScript), KeeneticDisabledPrefix+filepath.Base(initScript))
 }
@@ -108,12 +107,10 @@ func UninstallLX(target LXTarget) (restored bool, err error) {
 	return restored, nil
 }
 
-// ManagedByMawg - ядро установлено mawg (маркер на месте).
 func ManagedByMawg(target LXTarget) bool {
 	return markerExists(target.MarkerDir)
 }
 
-// ServiceCmd - выполнить действие init-скрипта (start/stop/restart).
 func ServiceCmd(ctx context.Context, initScript, action string, run CmdRunner) error {
 	if run == nil {
 		run = func(ctx context.Context, name string, args ...string) error {

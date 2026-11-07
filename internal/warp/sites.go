@@ -16,7 +16,6 @@ import (
 // WireGuard в AllowedIPs понимает только подсети (домен - это снапшот
 // резолва, у CDN неполный и устаревает - не делаем).
 
-// SitePreset - один пресет: сколько CIDR-префиксов входит.
 type SitePreset struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`

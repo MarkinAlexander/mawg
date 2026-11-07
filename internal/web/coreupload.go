@@ -66,7 +66,6 @@ func detectUploadedBinary(staged, origName string) (kind, version, arch string, 
 	return "", "", arch, fmt.Errorf("бинарь не похож на sing-box или mihomo (version-запуск не распознан)")
 }
 
-// kindLabel - подпись для подтверждения в диалоге.
 func kindLabel(kind, version, name string) string {
 	switch kind {
 	case "singbox":
@@ -224,7 +223,6 @@ func (s *Server) takeUploadDraft() (uploadDraft, bool) {
 	return d, true
 }
 
-// assetLink - один файл релиза (прямая ссылка).
 type assetLink struct {
 	Asset string `json:"asset"`
 	URL   string `json:"url"`

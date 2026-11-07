@@ -27,7 +27,6 @@ type ClashProxy struct {
 	History []ClashHist `json:"history,omitempty"`
 }
 
-// ClashHist - точка истории задержек (мс).
 type ClashHist struct {
 	Time  time.Time `json:"time"`
 	Delay int       `json:"delay"`
@@ -73,7 +72,6 @@ func clashCall(ctx context.Context, base int, method, path string, body []byte, 
 	return nil
 }
 
-// ClashProxies - все прокси и группы движка (история задержек включена).
 func ClashProxies(ctx context.Context, base int) (map[string]ClashProxy, error) {
 	var out struct {
 		Proxies map[string]ClashProxy `json:"proxies"`

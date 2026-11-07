@@ -24,13 +24,12 @@ type DnsZoneState struct {
 	Upstreams []DnsUpstream `json:"upstreams"`
 }
 
-// DnsZonesState - снимок таблицы зон dns-proxy MT.
 type DnsZonesState struct {
 	Available bool           `json:"available"`
 	Zones     []DnsZoneState `json:"zones"`
 }
 
-// DnsZones - состояние таблицы зон (форк rev13+, GET /api/v1/dns/zones).
+// DnsZones - состояние таблицы зон (требует rev13+).
 func (c *Client) DnsZones(ctx context.Context) (*DnsZonesState, error) {
 	out := &DnsZonesState{Zones: []DnsZoneState{}}
 	if err := c.call(ctx, http.MethodGet, "/api/v1/dns/zones", nil, out); err != nil {

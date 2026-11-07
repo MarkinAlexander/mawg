@@ -28,14 +28,12 @@ import { useToast } from '../../stores/toast'
 const { push } = useToast()
 const { confirm } = useConfirm()
 
-// кнопки
 const busyBtn = ref(false)
 function spin() {
   busyBtn.value = true
   setTimeout(() => (busyBtn.value = false), 1500)
 }
 
-// поля
 const name = ref('')
 const nameValidator = (v: string) => (v && !/^[a-z][a-z0-9-]*$/.test(v) ? 'строчная латиница, цифры, дефис' : null)
 const pass = ref('s3cret')
@@ -50,13 +48,10 @@ const dimmed = ref(false)
 const guarded = ref(true)
 const demoCheck = ref(false)
 
-// карточка
 const collapsed = ref(false)
 
-// табы
 const tab = ref('a')
 
-// таблица с DnD
 interface Row {
   id: string
   name: string
@@ -76,7 +71,6 @@ function onReorder(from: number, to: number) {
   rows.splice(0, rows.length, ...next)
 }
 
-// диалог
 const dlgOpen = ref(false)
 const dlgBusy = ref(false)
 function dlgSave() {

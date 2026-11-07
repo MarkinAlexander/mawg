@@ -77,7 +77,6 @@ func NewManagerConfig(dir string, cfg RunConfig) (*Manager, error) {
 	return m, nil
 }
 
-// Info - найденный бинарь ядра.
 func (m *Manager) Info() Engine { return *m.eng }
 
 // EngineLog - путь лога движка (ротация при каждом старте): диагностика

@@ -1,7 +1,6 @@
-// ЗЕРКАЛО бэкенд-JSON (44-дока, Фаза 1): только поля, которыми панель
-// реально оперирует. Бэкенд - internal/web/server.go и соседние файлы;
-// при изменении payload'а на бэкенде правится и этот файл.
-// Даты приходят строками (time.Time JSON) - парсинг на стороне UI.
+// ЗЕРКАЛО бэкенд-JSON (44-дока): только поля, которыми панель реально
+// оперирует (бэкенд - internal/web/server.go; меняется payload - правится
+// и здесь). Даты строками (time.Time JSON) - парсинг на стороне UI.
 
 // --- MagiTrickle: группы/правила ---
 
@@ -129,13 +128,11 @@ export interface CascadesRes {
   backendFlavor?: string // семейство бэкенда MT: mawg-c | mawg-dev | upstream
 }
 
-// гистерезис политик (server.go getPolicyCycles): {failCycles, restoreCycles}
+// гистерезис политик (server.go getPolicyCycles)
 export interface PolicyCycles {
   failCycles: number
   restoreCycles: number
 }
-
-// --- бэкапы MT ---
 
 export interface BackupInfo {
   name: string
@@ -143,8 +140,6 @@ export interface BackupInfo {
   size: number
   modified: string
 }
-
-// --- настройки сервера ---
 
 export interface IPAllow {
   v: string
@@ -463,8 +458,6 @@ export interface DnsZonesRes {
   }
   warnings?: string[]
 }
-
-// --- интерфейсы/слоты/wan-probe ---
 
 // проба здоровья (store.ProbeConfig): цель - публичный IPv4 или http(s) URL;
 // PUT с target:'' = убрать проверку (бэкенд превращает в nil)

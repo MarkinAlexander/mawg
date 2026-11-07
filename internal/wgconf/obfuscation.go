@@ -70,7 +70,7 @@ func isAwgStripKey(key string) bool {
 	return false
 }
 
-// StripAWGParams - снуть поля обфускации, оставив чистый WireGuard:
+// StripAWGParams - снять поля обфускации, оставив чистый WireGuard:
 // комментарии (#/;) и все прочие строки сохраняются как есть.
 func StripAWGParams(data []byte) []byte {
 	lines := strings.Split(string(data), "\n")

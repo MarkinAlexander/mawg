@@ -64,7 +64,6 @@ func (s *Server) keeneticDNSGet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.keeneticDNSState())
 }
 
-// keeneticDNSReady - платформенный гейт: только Keenetic с шеллом.
 func (s *Server) keeneticDNSReady(w http.ResponseWriter) bool {
 	if s.backend.Name() != store.PlatformKeenetic {
 		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "режим «DNS самого роутера» есть только на Keenetic (на OpenWrt mawg сам направляет dnsmasq)"})
@@ -143,7 +142,6 @@ func (s *Server) keeneticDNSSet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "state": st})
 }
 
-// dnsRunnerFn - Runner для dnsmgr (панель веб-хендлеров держит его один раз).
 func (s *Server) dnsRunnerFn() dnsmgr.Runner {
 	run, _ := s.dnsRunner()
 	return run
@@ -189,7 +187,6 @@ func (s *Server) spareLoopGuard(args string) error {
 // ndm не принимает 127.0.0.1 как апстрим, портов не поддерживает -
 // MT:3553 через name-server невыразим).
 
-// keeneticDNSEventText - строка журнала по режиму.
 func (s *Server) keeneticDNSEventText(mode, applied string) string {
 	switch mode {
 	case "spare":

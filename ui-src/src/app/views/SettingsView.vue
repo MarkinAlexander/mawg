@@ -24,12 +24,7 @@ import { G } from '../glossary'
 import { startRestartWait } from '../restartFlow'
 import { ipValid, lanSubnet24, panelTargetOrigin, subnet24 } from './settingsLogic'
 
-// Настройки панели - паритет легаси-карточки «Настройки» (panel.js 2475-3064):
-// авторизация (гвард от отсутствующей учётки), сеть (адрес/порт, dirty-
-// «Сохранить», перезапуск демона с ожиданием возврата), разрешённые адреса
-// (автосохранение каждого изменения, чекер /24, устройства сети, мой адрес,
-// автодописывание адреса клиента на бэкенде), RCI-токен (только Keenetic),
-// смена пароля, проверка обновлений, выход.
+// Настройки панели - паритет легаси-карточки «Настройки» (panel.js 2475-3064)
 const srv = useServerSettings();
 const { state: status } = useStatus();
 const { checkUpdate, upd } = useSystem();
@@ -130,7 +125,7 @@ async function save(): Promise<void> {
   }
 }
 
-// --- разрешённые адреса: автосохранение каждого изменения ---
+// разрешённые адреса: автосохранение каждого изменения
 function addNew(): Promise<void> {
   return allowAdd(newAllowed.value).then(() => {
     newAllowed.value = '';
@@ -215,7 +210,7 @@ function addMine(): void {
   push('Адрес не определён', true);
 }
 
-// --- перезапуск панели (легаси ssRestart 2772 + waitForPanel 2746) ---
+// перезапуск панели (легаси ssRestart 2772 + waitForPanel 2746)
 const restart = ref<ReturnType<typeof startRestartWait> | null>(null);
 const restarting = computed(() => !!restart.value?.state.running);
 onBeforeUnmount(() => restart.value?.stop());
@@ -255,7 +250,7 @@ async function restartPanel(): Promise<void> {
   });
 }
 
-// --- смена пароля (легаси dlgPass/pwSave 2475-2500) ---
+// смена пароля (легаси dlgPass/pwSave 2475-2500)
 const pwDlg = ref(false);
 const pwBusy = ref(false);
 const pwOld = ref('');
@@ -293,7 +288,7 @@ async function pwSave(): Promise<void> {
   }
 }
 
-// --- проверка обновлений (легаси checkUpdates, ручной режим) ---
+// проверка обновлений (легаси checkUpdates, ручной режим)
 const updInfo = ref('');
 async function checkUpd(): Promise<void> {
   try {
@@ -321,7 +316,7 @@ async function logout(): Promise<void> {
   window.location.reload();
 }
 
-// --- RCI-токен (только Keenetic; легаси refreshRCIToken 2978) ---
+// RCI-токен (только Keenetic; легаси refreshRCIToken 2978)
 const isKeenetic = computed(() => status.data?.platform === 'keenetic');
 const rciConfigured = ref<boolean | null>(null);
 const rciToken = ref('');

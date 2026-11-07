@@ -197,7 +197,7 @@ function onInput(e: Event) {
             <UiIcon :name="showPassword ? 'eye-off' : 'eye'" />
           </button>
         </span>
-        <!-- парная кнопка: одной высоты с инпутом, на его линии -->
+        <!-- парная кнопка действия -->
         <div
           v-if="$slots.action"
           class="act"

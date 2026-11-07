@@ -84,7 +84,6 @@ var Sources = []Source{
 	},
 }
 
-// SourceByID - профиль источника по ключу выбора.
 func SourceByID(id string) (Source, bool) {
 	for _, s := range Sources {
 		if s.ID == id {
@@ -116,14 +115,13 @@ type Flavors struct {
 }
 
 type Release struct {
-	Tag       string             `json:"tag"`
-	URL       string             `json:"url"`
-	Published time.Time          `json:"published"`
-	SHA256SUM bool               `json:"sha256sums"`
-	Assets    int                `json:"assets"`
-	Matrix    map[string]Flavors `json:"matrix"`
-	// Names - имена и размеры ассетов по архитектуре, для скачивания
-	Names map[string]FlavorAssets `json:"-"`
+	Tag       string                  `json:"tag"`
+	URL       string                  `json:"url"`
+	Published time.Time               `json:"published"`
+	SHA256SUM bool                    `json:"sha256sums"`
+	Assets    int                     `json:"assets"`
+	Matrix    map[string]Flavors      `json:"matrix"`
+	Names     map[string]FlavorAssets `json:"-"`
 }
 
 // FlavorAssets - имена файлов plain/upx ассета одной архитектуры; суммы -

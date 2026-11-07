@@ -73,9 +73,9 @@ watch(menuOpen, (open) => {
   } else {
     document.removeEventListener('keydown', onKeydown);
     window.removeEventListener('popstate', onPopState);
-    // закрыли сами (тап по фону/жест/Esc/кнопка) - снять барьер своим
-    // history.back (вернёт на текущую запись - останемся на странице);
-    // при закрытии ПЕРЕХОДОМ back() нельзя - откатит роутерный pushState
+    // закрыли сами (тап/жест/Esc/кнопка) - снять барьер своим history.back
+    // (вернёт на текущую запись - останемся на странице); переходом нельзя
+    // (см. menuClosedByRoute)
     if (historyBarrier && !menuClosedByRoute) {
       historyBarrier = false;
       history.back();
@@ -97,7 +97,7 @@ function onSearchKeydown(e: KeyboardEvent) {
 
 // Приватный режим (62-док): eye/eye-off рядом с лупой, состояние - в стор
 // (localStorage mawg-privacy). Класс privacy-on на body навешивается здесь
-// (шейка видна на всех вкладках); при выключении снимаем и проявления полей.
+// (шапка видна на всех вкладках); при выключении снимаем и проявления полей.
 const privacy = usePrivacy();
 watch(
   () => privacy.state.on,
@@ -143,7 +143,7 @@ function onSecretKeydown(e: KeyboardEvent) {
 // задвинуть (закрыть шторку + спрятать кнопку). Тап без свайпа
 // пересылается содержимому под полосой (elementFromPoint), чтобы кромки
 // не стали мёртвыми.
-const SWIPE_PX = 40;  // порог срабатывания
+const SWIPE_PX = 40;
 let edgeStart: { x: number; y: number } | null = null;
 let edgeSwiped = false;
 function onEdgeDown(e: PointerEvent): void {
@@ -200,11 +200,7 @@ function onSheetNavClick(e: MouseEvent): void {
   menuOpen.value = false;
 }
 
-// кнопка «Назад» при открытом меню закрывает меню, а не уводит со
-// страницы (слово владельца): при открытии кладём барьер в историю
-// (pushState с тем же URL), Back съедает барьер и закрывает шторку;
-// закрыли сами (тап/жест/Esc/вкладка) - барьер снимаем history.back()
-// (URL тот же - перехода нет).
+// Back съедает барьер - шторка закрывается, страница остаётся (слово владельца)
 function onPopState(): void {
   historyBarrier = false; // барьер съел браузер (Back)
   if (menuOpen.value) menuOpen.value = false;
@@ -276,9 +272,7 @@ const appVisible = computed(() => !status.authNeeded && (status.loaded || !!stat
       >
         <UiIcon name="search" />
       </UiButton>
-      <!-- приватный режим (62-док): глобальный тумблер размытия; иконка -
-           текущее состояние, tooltip - что сделает клик + честная оговорка,
-           что скрытие визуальное -->
+      <!-- приватный режим (62-док): глобальный тумблер размытия -->
       <UiButton
         variant="icon"
         class="privacybtn"
@@ -300,16 +294,14 @@ const appVisible = computed(() => !status.authNeeded && (status.loaded || !!stat
         </RouterLink>
       </nav>
     </header>
-    <!-- гейт входа: при включённой авторизации за диалогом страница не
-         рендерится (слово владельца) - LoginDialog вне main, контент
+    <!-- гейт входа (слово владельца): LoginDialog вне main - контент
          размонтируется, а не прячется под оверлеем -->
     <LoginDialog :open="status.authNeeded" />
     <main v-if="appVisible">
       <RouterView />
     </main>
-    <!-- краевые полосы жестов (только мобильная ширина): правая -
-         вытянуть меню (и проявить кнопку), левая - задвинуть (закрыть
-         шторку и спрятать кнопку); тапы пересылаются содержимому -->
+    <!-- краевые полосы жестов (мобильная ширина): правая - вытянуть меню,
+         левая - задвинуть; тапы пересылаются содержимому -->
     <div
       v-if="appVisible"
       class="edge-zone right"
@@ -335,9 +327,7 @@ const appVisible = computed(() => !status.authNeeded && (status.loaded || !!stat
       v-model:open="searchOpen"
     />
 
-    <!-- мобильное меню: кнопка внизу справа + шторка снизу (в шапке места
-         не занимает и вёрстку не двигает); на десктопе скрыты media-query.
-         Кнопку прячут/проявляют жесты у правого края (67-док §3.7) -->
+    <!-- мобильное меню: FAB внизу справа + шторка снизу; на десктопе скрыты -->
     <button
       v-if="appVisible && !fabGone"
       type="button"
@@ -404,8 +394,7 @@ header h1 {
   color: var(--dim);
   font-size: 12px;
 }
-/* липкая шапка - только десктоп (мобильный - FAB и шторка): прижата
-   к верху, при скролле сжимается в одну строку без меты, с тенью */
+/* липкая шапка - только десктоп (мобильный - FAB и шторка) */
 @media (min-width: 821px) {
   header {
     position: sticky;
@@ -434,8 +423,7 @@ nav a {
   color: var(--text);
 }
 nav a.router-link-active {
-  /* активная вкладка - сразу видно (слово владельца): зелёная заливка,
-     тёмный текст; #3fb96a = --ok, тёмный - литерал владельца */
+  /* активная вкладка (слово владельца); тёмный текст - литерал владельца */
   background: var(--ok);
   font-weight: 600;
   color: #120b0b;
@@ -447,8 +435,6 @@ nav a.router-link-active {
 main {
   padding: 12px 0;
 }
-/* мобильное меню: на широких экранах всё скрыто; FAB - круглая кнопка
-   внизу справа, меню - шторка снизу на весь экран */
 .menu-fab {
   display: none;
 }
@@ -550,12 +536,11 @@ main {
   font-size: 15px;
 }
 .sheet a.router-link-active {
-  /* единая композиция с десктопом: зелёная заливка, тёмный текст */
+  /* единая композиция с десктопом */
   background: var(--ok);
   font-weight: 600;
   color: #120b0b;
 }
-/* анимация шторки: фон гаснет, панель выезжает снизу */
 .sheet-enter-active,
 .sheet-leave-active {
   transition: opacity 0.18s ease;

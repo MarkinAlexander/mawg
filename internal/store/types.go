@@ -91,9 +91,9 @@ type PoolSettings struct {
 	MagitrickleGroupID string `json:"magitrickleGroupID,omitempty"`
 	Source             string `json:"source,omitempty"`     // URL/ссылка, из которой собраны конфиги пула (для цикла обновлений)
 	EngineMode         string `json:"engineMode,omitempty"` // "singbox" - узлы пула в tun-интерфейсе движка, а не в нативном слоте
-	// EngineCore - какое ядро крутит пул (88-док): "" = sing-box (как
-	// все пулы до mihomo), "mihomo" - второй движок. EngineMode при этом
-	// остаётся "singbox" (значение = «движковый пул» вообще).
+	// EngineCore - какое ядро крутит пул (88-док): "" = sing-box (как все
+	// пулы до mihomo), "mihomo" - второй движок; EngineMode остаётся
+	// "singbox" (= «движковый пул» вообще).
 	EngineCore string `json:"engineCore,omitempty"`
 	// EngineDetour - каскад движка: туннель пула (wireguard-эндпоинт)
 	// заводится через группу другого движкового пула (detour в sing-box).
@@ -107,27 +107,25 @@ type PoolSettings struct {
 	// NodeOff - выключенные узлы подписки (ключ - имя узла, ConfName):
 	// в конфиг движка не попадают, переживают обновление источника.
 	NodeOff map[string]bool `json:"nodeOff,omitempty"`
-	// NativeAWG3 - free-пул поднимается нативным kmod amneziawg 3.x
-	// (OpenWrt), без движка sing-box. Служебный: задаёт web-слой при
-	// создании, в JSON настроек не пишем.
+	// NativeAWG3 - free-пул поднимается нативным kmod amneziawg 3.x (OpenWrt),
+	// без движка. Служебный: задаёт web-слой при создании, в JSON не пишем.
 	NativeAWG3 bool         `json:"-"`
 	TunName    string       `json:"tunName,omitempty"`
 	Amnezia    *AmneziaMeta `json:"amnezia,omitempty"`
 	// UpdateIntervalH - интервал автообновления источника в часах;
 	// 0 = из заголовка подписки Profile-Update-Interval, без него сутки.
 	UpdateIntervalH float64 `json:"updateIntervalH,omitempty"`
-	// Warp - параметры генератора WARP у пулов, созданных им (режим
-	// эндпоинтов, сайты маскировки): кнопка «Генерация нового конфига»
-	// в карточке добавляет конфиг с теми же параметрами, без мастера.
+	// Warp - параметры генератора WARP у созданных им пулов: кнопка
+	// «Генерация нового конфига» в карточке добавляет конфиг с теми же
+	// параметрами, без мастера.
 	Warp *WarpMeta `json:"warp,omitempty"`
 	// SmartCascade - умный каскад (86-док): при блокировке пула его
 	// трафик заворачивается через первый живой пул Via штатным каскадом,
 	// с возвратом на прямой путь по интервалу/расписанию/кнопке.
 	SmartCascade *SmartCascadeSettings `json:"smartCascade,omitempty"`
 	// Excludes - исключения пула (94-док, слово владельца 2026-10-29):
-	// эти адреса не обрабатываются ЭТИМ пулом (RETURN в его цепочке
-	// MT_<id>); общий список на все пулы - Settings.Excludes.
-	// Каноничные IPv4/CIDR ("1.2.3.4/32"), валидация и лимит - web-слой.
+	// не обрабатываются ЭТИМ пулом (RETURN в его цепочке MT_<id>); общий
+	// список - Settings.Excludes. Каноничные IPv4/CIDR, лимит - web-слой.
 	Excludes []string `json:"excludes,omitempty"`
 }
 
@@ -137,10 +135,9 @@ type SmartCascadeSettings struct {
 	// живой (Mode==up, не Disabled).
 	Via []string `json:"via,omitempty"`
 	// TriggerMode - когда включать каскад: "fails" - после TriggerFails
-	// отказов подряд активного конфига (тот же конфиг сразу пробуется
-	// через Via, без перебора остальных); "exhaust" (пусто) - после
-	// исчерпания всех конфигов пула, перед фоллбэком (слово владельца:
-	// гибкость - пусть пользователь выбирает).
+	// отказов подряд активного конфига (он же сразу пробуется через Via,
+	// без перебора остальных); "exhaust" (пусто) - все конфиги исчерпаны,
+	// перед фоллбэком (слово владельца: гибкость).
 	TriggerMode  string `json:"triggerMode,omitempty"`
 	TriggerFails int    `json:"triggerFails,omitempty"` // для fails; 0 = 3
 	// Return - стратегия возврата на прямой путь.
@@ -264,10 +261,9 @@ type ManagedConfig struct {
 	PublicKey string   `json:"publicKey"`
 	Enabled   bool     `json:"enabled"`
 	Addresses []string `json:"addresses,omitempty"`
-	// Awg - уровень обфускации: plain | awg2 | awg3 (wgconf.AwgLevelOf).
-	// Панель по нему решает, какие кнопки скачивания показывать: голому
-	// конфигу - AWG-вариант, obfuscation 2.0 - снутый вариант, 3.x -
-	// никаких преобразований (слово владельца: «до ВГ смысла нет»).
+	// Awg - уровень обфускации: plain | awg2 | awg3 (wgconf.AwgLevelOf);
+	// панель по нему выбирает кнопки скачивания (3.x - без преобразований,
+	// слово владельца: «до ВГ смысла нет»).
 	Awg string `json:"awg,omitempty"`
 }
 
@@ -351,10 +347,9 @@ func (p GroupPolicy) RouterHook() bool {
 	return p.SourcesMode == "all+router" || (p.SourcesMode == "list" && p.SourcesRouter)
 }
 
-// EffectiveSources - список источников для MagiTrickle. Режимы all и
-// all+router guard не ставят (локалка не ограничена); в list адреса
-// роутера дописываются к пользовательскому списку - его трафик проходит
-// guard в OUTPUT-пути по собственным адресам.
+// EffectiveSources - список источников для MagiTrickle: all и all+router
+// guard не ставят; в list адреса роутера дописываются к пользовательскому
+// списку (его трафик проходит guard в OUTPUT по собственным адресам).
 func (p GroupPolicy) EffectiveSources(routerIPs []string) []string {
 	if p.SourcesMode != "list" {
 		return nil
@@ -388,7 +383,7 @@ type CascadeEntry struct {
 	Via     string   `json:"via"`    // "pool:proton" | "iface:wg0"
 	Domains []string `json:"domains,omitempty"`
 	// AutoDisabled - каскад погас сам sync (пул-источник опустел/удалён):
-	// при оживания пула вернуть. Ручное выключение не трогаем.
+	// при оживании пула вернуть. Ручное выключение не трогаем.
 	AutoDisabled bool `json:"autoDisabled,omitempty"`
 }
 
@@ -448,27 +443,25 @@ type Settings struct {
 	// EngineDisabled - движок sing-box выключен совсем (Система → Ядра
 	// VPN): не стартует ни своим процессом, ни фрагментом в чужом ядре.
 	EngineDisabled bool `json:"engineDisabled,omitempty"`
-	// CoreDisabled - мастер-выключатели ядер по id («Система → Ядра
-	// VPN», 88-док): у каждого ядра свой стоп/старт. Ключ "singbox"
-	// читается с фолбэком на EngineDisabled (историческое поле) - миграция
-	// конфигов не нужна.
+	// CoreDisabled - мастер-выключатели ядер по id («Система → Ядра VPN»,
+	// 88-док); ключ "singbox" читается с фолбэком на историческое
+	// EngineDisabled - миграция конфигов не нужна.
 	CoreDisabled map[string]bool `json:"coreDisabled,omitempty"`
 	// BackupKeep - сколько последних копий каждого вида бэкапа держать
 	// в base/backups (2..10, слово владельца; 0 = дефолт 10).
 	BackupKeep int `json:"backupKeep,omitempty"`
-	// PolicyFailCycles/PolicyRestoreCycles - гистерезис политик групп
-	// МагиТрикла: сколько отказных циклов до переключения с исходного
-	// интерфейса и сколько здоровых до возврата (по умолчанию 2 и 2).
+	// PolicyFailCycles/PolicyRestoreCycles - гистерезис политик групп:
+	// отказных циклов до переключения с исходного интерфейса и здоровых
+	// до возврата (дефолт 2 и 2).
 	PolicyFailCycles    int `json:"policyFailCycles,omitempty"`
 	PolicyRestoreCycles int `json:"policyRestoreCycles,omitempty"`
 	// MTGlitchy - проба совместимости при старте поймала усечение на
 	// no-op PUT: глючная сборка MagiTrickle, панели показывают баннер со
 	// ссылкой на форк.
 	MTGlitchy bool `json:"mtGlitchy,omitempty"`
-	// DNSCascade - политика каскада DNS (46-док §3, 66-док): уровни
-	// L1-L5 компоновщиком mawg превращаются в упорядоченный список
-	// апстримов dns-proxy MT (один PUT в форк); гистерезис переключений
-	// K/M/restoreGap живёт в форке.
+	// DNSCascade - политика каскада DNS (46-док §3, 66-док): уровни L1-L5
+	// компоновщик mawg превращает в упорядоченные апстримы dns-proxy MT
+	// (один PUT в форк); гистерезис K/M/restoreGap живёт в форке.
 	DNSCascade *DnsCascadePolicy `json:"dnsCascade,omitempty"`
 	// DNSProbe - свои серверы в карточке «Проверка DNS и сети» (слово
 	// владельца 2026-10-18): пользователь добавляет udp/dot/doh - зонд
@@ -478,33 +471,29 @@ type Settings struct {
 	// упорядоченные DNS-серверы, путь до них - через пул (группа
 	// dnszone-*); каскад и health серверов живёт в форке.
 	DnsZones []DnsZone `json:"dnsZones,omitempty"`
-	// Excludes - глобальный список исключений из обработки (94-док,
-	// слово владельца 2026-10-29): трафик на эти адреса и с них не
-	// маркируется НИ ОДНОЙ группой (RETURN в цепочках MT_<id>) - ходит
-	// напрямую, новые группы покрываются автоматически. Каноничные
-	// IPv4/CIDR, валидация и лимит - web-слой.
+	// Excludes - глобальный список исключений из обработки (94-док, слово
+	// владельца 2026-10-29): трафик на эти адреса и с них не маркируется
+	// НИ ОДНОЙ группой (RETURN в цепочках MT_<id>), новые группы
+	// покрываются автоматически. Каноничные IPv4/CIDR, лимит - web-слой.
 	Excludes []string `json:"excludes,omitempty"`
 	// ExcludesDisabled - функционал исключений выключен целиком (95-док,
-	// слово владельца 30.10): PUT-запросы отклоняются (503/400), синк
-	// спит (никакой активности фичи), списки остаются на месте. Связано
-	// со странным ростом нагрузки CPU на Кинетике (96-док).
+	// слово владельца 30.10): PUT-запросы отклоняются, синк спит, списки
+	// остаются. Причина - странный рост нагрузки CPU на Кинетике (96-док).
 	ExcludesDisabled bool `json:"excludesDisabled,omitempty"`
-	// DeviceBindings - реестр «пул ↔ устройство через пул» (97-док,
-	// слово владельца 30.10: «не видно, что с чем связано»): связка
-	// существует только как MT-группа - реестр хранит её зеркало для
-	// карточки/настроек пула и поиска коллизий адресов между пулами.
-	// Глобальный (не в PoolSettings) - коллизии ищутся одним проходом.
-	// ID MT-группы не храним (форк пересоздаёт группы, ID меняются) -
-	// связь по имени группы + составу. Заполняется при создании/правке
-	// группы устройства, сверкой по снапшоту MT и бэкфиллом старых.
+	// DeviceBindings - реестр «пул ↔ устройство через пул» (97-док, слово
+	// владельца 30.10: «не видно, что с чем связано»): связка существует
+	// только как MT-группа, реестр - её зеркало для карточки пула и поиска
+	// коллизий адресов (глобальный, не в PoolSettings: коллизии ищутся
+	// одним проходом). ID MT-группы не храним (форк пересоздаёт группы,
+	// ID меняются) - связь по имени группы + составу. Пишется при правке
+	// группы устройства и бэкфиллом старых по снапшоту MT.
 	DeviceBindings []DeviceBinding `json:"deviceBindings,omitempty"`
 	// KeeneticDNS - режим «DNS самого роутера» на Keenetic (98-док):
-	// исторически панель в ndm не пишет (дизайн-слово 69-док §5), но ndm
-	// без единого апстрима оглохнет (кейс 31.10: галки «игнорировать
-	// провайдера» + стёртый DoH). По ЯВНОМУ согласию пользователя mawg
-	// пишет в ndm одну запись ip name-server (страховочный сервер или
-	// MT:3553) и снимает её при выключении; Applied - что записано
-	// (аргументы RCI после "ip name-server", по ним же рестор).
+	// панель в ndm исторически не пишет (дизайн-слово 69-док §5), но ndm
+	// без апстримов глохнет (кейс 31.10: «игнорировать провайдера» +
+	// стёртый DoH). По явному согласию пользователя mawg пишет одну запись
+	// ip name-server (страховочный сервер или MT:3553) и снимает её при
+	// выключении; Applied - что записано (аргументы RCI, по ним же рестор).
 	KeeneticDNS KeeneticDNS `json:"keeneticDns,omitempty"`
 }
 

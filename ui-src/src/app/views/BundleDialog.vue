@@ -9,9 +9,7 @@ import { useToast } from '../../stores/toast'
 import type { BundleView } from '../../api/types'
 import { G } from '../glossary'
 
-// Диалог набора (легаси openBundleDlg/bdSave 2342-2384): имя (при правке
-// фиксировано), участники по приоритету (выше/ниже/убрать + добавление из
-// пулов и внешних интерфейсов), группы MagiTrickle тумблерами.
+// Диалог набора (легаси openBundleDlg/bdSave 2342-2384)
 const props = defineProps<{ editing: BundleView | null }>();
 const open = defineModel<boolean>('open', { default: false });
 

@@ -303,7 +303,6 @@ func UninstallCore(target Target) (restored bool, err error) {
 	return restored, nil
 }
 
-// ManagedByMawg - mihomo установлен mawg (маркер на месте).
 func ManagedByMawg(target Target) bool {
 	return markerExists(target.MarkerDir)
 }

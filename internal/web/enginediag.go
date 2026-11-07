@@ -97,8 +97,6 @@ func pidStartedAt(pidFile string) string {
 	return st.ModTime().Format(time.RFC3339)
 }
 
-// --- маскировка секретов в собираемой диагностике ---
-
 var (
 	reUUID     = regexp.MustCompile(`[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`)
 	reSecretKV = regexp.MustCompile(`(?i)(password|passwd|secret|private[_-]?key|auth)["']?\s*[:=]\s*("[^"]*"|\S+)`)

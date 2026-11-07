@@ -5,11 +5,10 @@ import { useSystem } from '../../stores/system'
 import type { UploadAnalyzeRes } from '../../api/types'
 
 // Диалог загрузки бинаря/пакета движка (112-док 4.1, слово владельца
-// 04.11: «понимать что пользователь ставит и что загружает» - замена
-// ядер sing-box/mihomo/MT без GitHub). Панель САМА распознаёт файл:
-// бинарь sing-box / mihomo (ELF + version-запуск, архитектура против
-// роутера) или пакет MagiTrickle (.ipk/.apk) - и показывает, что
-// собирается менять, замена по подтверждению.
+// 04.11: «понимать что пользователь ставит и что загружает»): замена
+// ядер sing-box/mihomo/MT без GitHub; панель сама распознаёт файл
+// (бинарь: ELF + version-запуск, архитектура против роутера; .ipk/.apk
+// MT), показывает, что меняет, замена по подтверждению.
 const open = defineModel<boolean>('open', { default: false });
 const emit = defineEmits<{ installed: [] }>();
 

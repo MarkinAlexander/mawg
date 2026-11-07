@@ -93,7 +93,6 @@ func parseAssetName(name string) (string, bool) {
 	return arch, true
 }
 
-// PickAsset - первый (самый свежий) релиз с ассетом под архитектуру.
 type PickedAsset struct {
 	Tag    string
 	Asset  string
@@ -105,6 +104,7 @@ func (p PickedAsset) URL() string {
 	return fmt.Sprintf("https://github.com/MetaCubeX/mihomo/releases/download/%s/%s", p.Tag, p.Asset)
 }
 
+// PickAsset - первый (самый свежий) релиз с ассетом под архитектуру.
 func PickAsset(releases []Release, arch string) (*PickedAsset, error) {
 	var have []string
 	for _, rel := range releases {

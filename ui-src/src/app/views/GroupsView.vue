@@ -23,13 +23,8 @@ import CascadeDialog from './CascadeDialog.vue'
 import GroupDialog from './GroupDialog.vue'
 import { useSecrets } from '../secrets'
 
-// Фаза 3.7 «Группы правил» (легаси #rulescard, renderRules 1591).
-// 3.7а: список+поиск+правила+редактор базы; DnD групп и правил - порт
-// attachDnD (panel.js 1284) на хелперах dnd.ts; inline-правка правила и
-// фокус в полях списка держат editingLock стора (легаси editingRulesPanel
-// 1512) - перерендер откладывается до выхода. 3.7б: пресеты (ряд
-// «шаблон на интерфейс», легаси 2148-2259) и каскады (CascadeDialog,
-// легаси 2050-2107). Бэкапы и импорт/выгрузка файлом - Ф3.7в.
+// Фаза 3.7 «Группы правил» (легаси #rulescard, renderRules 1591): пресеты
+// (легаси 2148-2259) и каскады (2050-2107); бэкапы и импорт/выгрузка - Ф3.7в.
 
 const groups = useGroups();
 const { state } = groups;
@@ -41,8 +36,8 @@ const route = useRoute();
 const secrets = useSecrets();
 
 onMounted(() => {
-  groups.start(30000); // легаси: setInterval(refreshRules, 30000)
-  void groups.loadPresets(); // легаси loadPresets() на старте, без поллинга
+  groups.start(30000);
+  void groups.loadPresets(); // легаси: на старте, без поллинга
   if (!groups.state.bindingsLoaded) void groups.loadBindings(); // реестр устройств (97-док)
 });
 onBeforeUnmount(() => groups.stop());
@@ -72,7 +67,6 @@ async function run(fn: () => Promise<unknown>): Promise<void> {
   }
 }
 
-// --- создание группы (легаси rgCreate 2109) ---
 const newName = ref('');
 const newColor = ref('#4a9eff');
 const newIface = ref('');
@@ -112,7 +106,6 @@ async function createG(): Promise<void> {
   creating.value = false;
 }
 
-// --- пресеты (легаси 2148-2259) ---
 const presetSel = ref('');
 const presetIface = ref('');
 const applying = ref(false);
@@ -155,12 +148,10 @@ async function applyPreset(): Promise<void> {
   applying.value = false;
 }
 
-// --- каскад (легаси 2050-2107) ---
 const cascadeOpen = ref(false);
 
-// --- гистерезис политик (легаси 1213-1246) ---
-// --- исключения из обработки (94-док): черновик + пачка через разделители ---
-// функционал выключен флагом (95-док, слово владельца 30.10): блок
+// исключения из обработки (94-док): черновик + пачка через разделители.
+// Функционал выключен флагом (95-док, слово владельца 30.10): блок
 // гасится плашкой, кнопки disabled; PUT бэкенд всё равно отклонит (503)
 const { state: status } = useStatus();
 const excludesDisabled = computed(() => !!status.data?.excludesDisabled);
@@ -227,13 +218,12 @@ async function saveCycles(): Promise<void> {
   cycSaving.value = false;
 }
 
-// --- поиск (легаси ruleSearch 1733 + renderRules 1591) ---
 const q = ref('');
 const searchQ = ref('');
 const savedOpen = ref<Set<string> | null>(null);
 const openMt = ref<Set<string>>(new Set()); // открытые details, переживают перерендер
 
-// --- чекер скрытия выключенного (80-док, бонус): групп много, глазами
+// чекер скрытия выключенного (80-док, бонус): групп много, глазами
 // фильтровать тяжело. ДВА РАЗДЕЛЬНЫХ тумблера (слово владельца 2026-10-21:
 // «скрыть совсем не активные группы, но правила видеть, чтобы включать
 // выключать») + счётчики «выключено: N» рядом. Состояние - в localStorage
@@ -260,7 +250,6 @@ function setHideOffRules(v: boolean): void {
   try { localStorage.setItem(HIDE_OFF_R_LS, v ? '1' : '0'); } catch { /* сессия */ }
 }
 
-// открытость details в openMt (легаси det.ontoggle 1673)
 function onDetToggle(gid: string, e: Event): void {
   const opened = (e.target as HTMLDetailsElement).open;
   if (opened) openMt.value.add(gid);
@@ -285,7 +274,6 @@ const visible = computed(() => {
   return hideOffGroups(base, hideOffGroupsFlag.value);
 });
 
-// счётчики «выключено: N» рядом с тумблерами
 const offGroupsCount = computed(() => offGroupsTotal(state.groups));
 const offRulesCount = computed(() => offRulesTotal(state.groups));
 
@@ -299,13 +287,10 @@ function ruleRows(g: GroupView): Rule[] {
   return hideOffRules(filtered, hideOffRulesFlag.value);
 }
 
-// --- editingLock: фокус в ТЕКСТОВЫХ полях списка (легаси
-// editingRulesPanel 1512 + focusout 1555): перерендер не сносит ввод.
-// Живая приёмка на телефоне: тумблер группы - тоже INPUT(checkbox), тап
-// по нему ставит фокус и ДЕРЖИТ его - editingLock не отпускался,
-// refresh откладывался и строки правил при открытой группе не
-// перерисовывались. Лочим только текстовый ввод: чекбоксы/кнопки
-// перерендер не теряют.
+// editingLock: фокус в ТЕКСТОВЫХ полях списка (легаси editingRulesPanel
+// 1512 + focusout 1555) - перерендер не сносит ввод. Только текстовый
+// ввод: тап по чекбоксу (живая приёмка на телефоне) тоже ставит фокус и
+// ДЕРЖИТ его - refresh откладывался; чекбоксы/кнопки перерендер не теряют.
 const listBox = ref<HTMLElement | null>(null);
 function isTextInput(el: EventTarget | null): boolean {
   const t = el as HTMLElement | null;
@@ -326,8 +311,7 @@ function onFocusout(): void {
   }, 0);
 }
 
-// --- DnD порядка групп и правил (легаси attachDnD 1284; при поиске
-// отключён - фильтрованный список отправил бы частичный список id) ---
+// DnD порядка групп и правил (легаси attachDnD 1284)
 const armed = ref(''); // «scope:id» строки, чей grip нажат
 const dragCtx = ref<{ scope: string; id: string } | null>(null);
 const dropMark = ref<{ id: string; before: boolean } | null>(null);
@@ -388,7 +372,6 @@ function onDragEnd(): void {
   void groups.setEditing(-1);
 }
 
-// --- мутации строк (легаси 1665-1671) ---
 async function delGroup(g: GroupView): Promise<void> {
   const ok = await confirm({
     title: 'Удаление группы',
@@ -399,7 +382,6 @@ async function delGroup(g: GroupView): Promise<void> {
   await run(() => groups.deleteGroup(g.id));
 }
 
-// --- inline-редактор правила (легаси editRule 1325) ---
 const er = ref<{ groupId: string; ruleId: string; type: string; value: string; name: string } | null>(null);
 
 function editRule(g: GroupView, rl: Rule): void {
@@ -431,7 +413,6 @@ async function cancelRule(): Promise<void> {
   await groups.setEditing(-1);
 }
 
-// --- добавление правила (легаси nr-add 1713) ---
 const nrType = reactive<Record<string, string>>({});
 const nrValue = reactive<Record<string, string>>({});
 const nrBusy = ref('');
@@ -456,7 +437,6 @@ async function addRule(g: GroupView): Promise<void> {
   nrBusy.value = '';
 }
 
-// --- импорт правил текстом (легаси dlgImport 1440-1470) ---
 const imOpen = ref(false);
 const imG = ref<GroupView | null>(null);
 const imType = ref('auto');
@@ -496,7 +476,6 @@ async function doImport(): Promise<void> {
   imBusy.value = false;
 }
 
-// --- копирование правил (легаси copyGroupRules 1472) ---
 const cpOpen = ref(false);
 const cpText = ref('');
 const cpTitle = ref('');
@@ -520,14 +499,11 @@ async function copyRules(g: GroupView): Promise<void> {
   cpOpen.value = true;
 }
 
-// --- совпадения в группах (легаси showMTDupsDlg 1752) ---
 const dupsOpen = ref(false);
 const dupsList = computed(() => dupsEntries(state.groups, state.duplicates, searchQ.value));
 
-// --- резервные копии: кнопка ведёт на общую страницу (52/53-доки) ---
 const router = useRouter();
 
-// --- диалог группы ---
 const editOpen = ref(false);
 const editing = ref<GroupView | null>(null);
 function editGroup(g: GroupView): void {
@@ -535,7 +511,6 @@ function editGroup(g: GroupView): void {
   editOpen.value = true;
 }
 
-// --- массовое включение/выключение правил группы (слово владельца) ---
 const bulkBusy = ref('');
 async function bulkRules(g: GroupView, enable: boolean): Promise<void> {
   const total = (g.rules || []).length;
@@ -587,8 +562,8 @@ onMounted(openFromLink);
       >
         показать совпадения в группах
       </UiButton>
-      <!-- слово владельца: кнопка ведёт на общую страницу резервных копий
-           (там раскрыто - полный бэкап, восстановление, импорт/выгрузка) -->
+      <!-- слово владельца (52/53-доки): кнопка ведёт на общую страницу
+           резервных копий - там раскрыто: полный бэкап, восстановление, импорт/выгрузка -->
       <UiButton
         tooltip="страница резервных копий: полный бэкап панели, восстановление, импорт и выгрузка файлом"
         @click="router.push('/next/backups')"
@@ -643,7 +618,6 @@ onMounted(openFromLink);
       </UiButton>
     </div>
 
-    <!-- ряд пресетов (легаси presetSel/presetIface/presetApply/presetSrc) -->
     <div class="crow psetrow">
       <UiSelect
         v-model="presetSel"
@@ -674,8 +648,8 @@ onMounted(openFromLink);
       >github.com/itdoginfo/allow-domains</a>{{ state.presets.sourceNote ? ' (' + state.presets.sourceNote + ')' : '' }}. Более точные и свежие списки - в репозитории источника.
     </div>
 
-    <!-- исключения из обработки (94-док): глобальный список, действует
-         на все группы - включая добавленные позже - и на новые правила -->
+    <!-- исключения из обработки (94-док): глобальный список - на все
+         группы, включая добавленные позже, и на новые правила -->
     <UiBanner
       v-if="excludesDisabled"
       kind="warn"
@@ -736,7 +710,7 @@ onMounted(openFromLink);
       </div>
     </div>
 
-    <!-- гистерезис политик (легаси polFailCycles/polRestoreCycles) -
+    <!-- гистерезис политик (легаси polFailCycles/polRestoreCycles):
          предложение в одну линию, как в легаси -->
     <div class="cycles">
       <span class="muted">Канал пропал: переводить группы на запасной после</span>
@@ -799,9 +773,8 @@ onMounted(openFromLink);
       class="mtnote"
     />
 
-    <!-- фильтры выключенного (80-док, бонус): два раздельных тумблера со
-         счётчиками (слово владельца: группы скрывать, правила видеть,
-         чтобы их включать/выключать) -->
+    <!-- фильтры выключенного (80-док, бонус): два раздельных тумблера
+         (слово владельца: группы скрывать, правила видеть) со счётчиками -->
     <div class="offrow">
       <span class="offitem offgroups">
         <UiSwitch
@@ -821,7 +794,6 @@ onMounted(openFromLink);
       </span>
     </div>
 
-    <!-- поиск (легаси ruleSearch) -->
     <div class="srow">
       <UiInput
         v-model="q"
@@ -831,7 +803,6 @@ onMounted(openFromLink);
       />
     </div>
 
-    <!-- список групп (легаси renderRules 1591) -->
     <div
       ref="listBox"
       class="mtlist"
@@ -1083,7 +1054,6 @@ onMounted(openFromLink);
                 v-for="rl in ruleRows(g)"
                 :key="rl.id"
               >
-                <!-- inline-редактор вместо строки (легаси editRule 1325) -->
                 <tr
                   v-if="er && er.groupId === g.id && er.ruleId === rl.id"
                   class="erow"
@@ -1212,7 +1182,6 @@ onMounted(openFromLink);
       </div>
     </div>
 
-    <!-- импорт правил текстом (легаси dlgImport) -->
     <UiDialog
       v-model:open="imOpen"
       :title="imG ? 'Импорт правил в ' + imG.name : 'Импорт правил'"
@@ -1286,7 +1255,6 @@ onMounted(openFromLink);
       </template>
     </UiDialog>
 
-    <!-- совпадения в группах (легаси dlgMTDups) -->
     <UiDialog
       v-model:open="dupsOpen"
       title="Совпадения в группах"
@@ -1573,7 +1541,7 @@ summary {
 }
 .rval mark,
 .gname mark {
-  background: rgba(217, 160, 50, 0.35); /* легаси mark: подсветка поиска */
+  background: rgba(217, 160, 50, 0.35);
   color: inherit;
   padding: 0 2px;
   border-radius: 3px;
@@ -1674,7 +1642,6 @@ tr.drop-after td {
     order: 4;
     flex: 1 1 100%;
   }
-  /* inline-редактор на мобиле - блоком, поля в столбик на всю ширину */
   .rules tr.erow {
     display: block;
   }

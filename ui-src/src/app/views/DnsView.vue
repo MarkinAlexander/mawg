@@ -12,8 +12,8 @@ import { useSecrets } from '../secrets';
 
 // DNS-раздел: состояние службы DNS, резервные серверы MT (каскад) и
 // правила автопереключения L1-L5. Формулировки - «язык задач» (слово
-// владельца 2026-10-16: без внутреннего жаргона; подробности - по знакам
-// вопроса UiHelp, самодокументация вместо ссылок на журналы сессий).
+// владельца 2026-10-16: без жаргона; подробности - по знакам вопроса
+// UiHelp, самодокументация вместо ссылок на журналы сессий).
 const { push } = useToast();
 const { confirm } = useConfirm();
 const { state: statusState } = useStatus();
@@ -59,8 +59,8 @@ const notSupported = computed(() => loadErr.value.includes('платформа')
 // только перехват MT_DNSOR и управляемую MT-часть
 const isKeen = computed(() => state.value?.platform === 'keenetic');
 
-// --- собственные серверы Keenetic (только просмотр + проба, 71-док):
-// reading running-config - панель их не меняет ---
+// собственные серверы Keenetic (71-док): только просмотр + проба;
+// reading running-config - панель их не меняет
 const own = ref<KeeneticOwn | null>(null);
 const ownLoaded = ref(false);
 const ownProbing = ref(false);
@@ -78,12 +78,11 @@ watch(isKeen, (v) => {
   if (v && !ownLoaded.value) void loadOwn();
 }, { immediate: true });
 
-// --- DNS самого роутера (98-док): историческая граница «панель в ndm не
-// пишет» остаётся дефолтом. Режимы записи ip name-server (spare/mt)
-// ВЫВЕДЕНЫ (решение владельца 01.11, инцидент с ndm): ndm не принимает
-// loopback/порты, перехват DNS клиентов делает сам MagiTrickle, а
-// легаси-записи пользователей снимаются сервером автоматически при
-// открытии карточки. В карточке остаётся только перехват ndm. ---
+// DNS самого роутера (98-док): граница «панель в ndm не пишет» остаётся
+// дефолтом. Режимы записи ip name-server (spare/mt) ВЫВЕДЕНЫ (решение
+// владельца 01.11, инцидент с ndm): ndm не принимает loopback/порты,
+// перехват DNS клиентов делает сам MagiTrickle; легаси-записи
+// пользователей снимаются сервером автоматически при открытии карточки.
 const keenDNS = ref<KeeneticDNSState | null>(null);
 const kdbBusy = ref(false);
 
@@ -212,16 +211,15 @@ function upTooltip(u: DnsUpstream, z?: DnsZone): string {
   return bits.join(' · ');
 }
 
-// последняя проба зоны (кнопка «проверить») прошла - хотя бы один сервер
-// чисто ответил через путь клиентов
+// последняя проба зоны прошла: хотя бы один сервер чисто ответил
+// через путь клиентов
 function zoneProbeOk(z: DnsZone): boolean {
   const rows = zoneVerdicts.value[z.id];
   return !!rows && rows.length > 0 && rows.some((r) => r.verdict === 'clean');
 }
 
-// --- политика автопроверки серверов (форк rev14+, 82-док): частота,
-// таймаут, гистерезис; правка уходит в MT health-only PUT-ом (список
-// серверов не трогается, петлезащита не спрашивается) ---
+// политика автопроверки серверов (форк rev14+, 82-док): правка уходит в MT
+// health-only PUT-ом - список серверов не трогается, петлезащита не спрашивается
 const healthCapable = computed(() => cascade.value?.healthCapable === true);
 
 const hEnabled = ref(true);
@@ -343,7 +341,7 @@ async function toggle(): Promise<void> {
   busy.value = false;
 }
 
-// --- редактор списка серверов MT (порядок = приоритет) ---
+// редактор списка серверов MT: порядок = приоритет
 const edit = ref<string[] | null>(null);
 const newAddr = ref('');
 const editList = computed(() => edit.value ?? []);
@@ -438,8 +436,8 @@ async function saveEdit(): Promise<void> {
   busy.value = false;
 }
 
-// --- правила автопереключения L1-L5: уровни -> порядок серверов MT,
-// применение одним запросом в MT; переключает уровни сам MT ---
+// правила автопереключения L1-L5: уровни -> порядок серверов MT,
+// применение одним запросом; переключает уровни сам MT
 const policy = ref<DnsPolicyRes | null>(null);
 const polEnabled = ref(false);
 const polPrimary = ref('');
@@ -561,9 +559,9 @@ async function probePolicy(): Promise<void> {
   probing.value = false;
 }
 
-// --- зонный DNS (форк rev13): зона -> свои серверы, путь через пул.
-// Каскад и автопроверка серверов зоны живут в MT; полный отвал - SERVFAIL
-// (fail-closed), переключатель fallback - сознательное исключение ---
+// зонный DNS (форк rev13): зона -> свои серверы, путь через пул. Каскад и
+// автопроверка серверов зоны живут в MT; полный отвал - SERVFAIL
+// (fail-closed), переключатель fallback - сознательное исключение
 const zonesRes = ref<DnsZonesRes | null>(null);
 const zoneVerdicts = ref<Record<string, DnsProbeRow[]>>({});
 const zoneProbingId = ref('');
@@ -673,8 +671,6 @@ function zValidate(): string[] | null {
   }
   return servers;
 }
-
-// рискованные адреса (петля dnsmasq->MT) собираются в putZones по списку
 
 async function putZones(list: DnsZone[], ask?: { title: string; text: string; ok: string }): Promise<boolean> {
   const risky = list.flatMap((z) => (z.upstreams || []).filter(loopRisk));
@@ -1011,8 +1007,8 @@ function a2key(z: DnsZone, i: number): string {
         </div>
         <UiHint text="Автопроверка: контрольный запрос к deb.torproject.org; честный сервер возвращает известный набор адресов, подменённый - виден сразу и помечается «не работает»." />
 
-        <!-- политика автопроверки (форк rev14+, 82-док): частота и
-             гистерезис переключений; каждое поле - с минусами в обе стороны -->
+        <!-- политика автопроверки (форк rev14+, 82-док): каждое поле -
+             с минусами в обе стороны -->
         <template v-if="healthCapable">
           <div class="cycles">
             <UiSwitch
@@ -1090,7 +1086,6 @@ function a2key(z: DnsZone, i: number): string {
           </div>
         </template>
 
-        <!-- редактор: список/порядок/добавление -->
         <div
           v-if="edit === null"
           class="dnsactions"

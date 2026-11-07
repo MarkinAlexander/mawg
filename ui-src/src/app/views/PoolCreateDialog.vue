@@ -13,9 +13,8 @@ import LxInstallDialog from './LxInstallDialog.vue'
 import { addrSecretIn } from '../secrets'
 import { G } from '../glossary'
 
-// Диалог создания пула (легаси dlgPool/setPoolMode 404-805). Режимы:
-// конфиги | ссылка или подписка | Amnezia Free. Слоты - только Keenetic,
-// протокол - только OpenWrt. Капча Free - встроенной фазой диалога.
+// Диалог создания пула (легаси dlgPool/setPoolMode 404-805): конфиги |
+// ссылка/подписка | Amnezia Free; капча Free - встроенной фазой диалога
 const open = defineModel<boolean>('open', { default: false });
 
 const { state: status, refresh: refreshStatus } = useStatus();
@@ -122,7 +121,7 @@ watch(coreOptions, (opts) => {
   }
 });
 
-// --- cfg-режим: конфиги сразу в диалоге (слово владельца 30.10) ---
+// cfg-режим: конфиги сразу в диалоге (слово владельца 30.10)
 // файлы разбираем на клиенте (снифф AWG 3.x по полям конфига), сервер
 // остаётся последней инстанцией: нативный пул движковый конфиг не
 // сохранит, движковый пул создаётся сразу с ядром из установленных
@@ -217,8 +216,8 @@ const inspectText = computed(() => {
 });
 const isAmneziaKey = computed(() => !!inspectRes.value?.amnezia);
 
-// --- предложение установить движок прямо в потоке (слово владельца
-// 2026-10-17): узлы требуют sing-box, а его на роутере нет ---
+// предложение установить движок прямо в потоке (слово владельца 2026-10-17):
+// узлы требуют sing-box, а его на роутере нет
 const lxOpen = ref(false);
 const engineMissing = computed(() => !status.data?.engine?.available);
 const engineWanted = computed(() => {
@@ -297,7 +296,7 @@ async function withBusy(fn: () => Promise<void>): Promise<void> {
   }
 }
 
-// --- капча Free (легаси requestFreePool 571): цикл «запрос - капча - повтор»
+// капча Free (легаси requestFreePool 571): цикл «запрос - капча - повтор»
 // через общий хост; «обновить картинку» = перезапрос без решения
 async function askFree(fields: { name: string; fallback: string; keeneticSlot?: string }, answer?: { id: string; solution: string }): Promise<SourcePlan | null> {
   try {
@@ -383,7 +382,6 @@ async function create(): Promise<void> {
     });
     return;
   }
-  // link / free
   const src = source.value.trim();
   if (mode.value === 'link' && !src) {
     push('Вставьте ссылку, vpn:// или URL подписки', true);
@@ -441,7 +439,6 @@ const fallbackOptions: UiSelectOption[] = [
     :busy="busy"
     width="560px"
   >
-    <!-- фаза результата (план создания) -->
     <template v-if="done && pv">
       <div class="plan">
         <div class="planrow">
@@ -502,7 +499,6 @@ const fallbackOptions: UiSelectOption[] = [
       </div>
     </template>
 
-    <!-- фаза формы -->
     <template v-else>
       <div class="modes">
         <UiButton

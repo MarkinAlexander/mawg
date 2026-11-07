@@ -14,14 +14,11 @@ package singbox
 // empty reply).
 
 type CoreCaps struct {
-	// XHTTP - транспорт vless xhttp
-	XHTTP bool
-	// VlessEncrypt - vless encryption= (mlkem768x25519plus... и прочие)
-	VlessEncrypt bool
+	XHTTP        bool
+	VlessEncrypt bool // vless encryption= (mlkem768x25519plus... и прочие)
 	// MlkemReality - REALITY несёт X25519MLKEM768 key share (SPEC 083):
 	// пост-квантовые узлы (Xray 26.9.8+) работают только на таких ядрах
-	MlkemReality bool
-	// KeyShareParam - конфиг понимает tls.reality.key_share (LxBox §457)
+	MlkemReality  bool
 	KeyShareParam bool
 	// AWG - обфускация AmneziaWG в wireguard-эндпоинтах
 	AWG bool
@@ -38,12 +35,10 @@ const (
 // lxVerSrc - источник lx для семвер-сравнения суффиксных версий (-lx.N)
 var lxVerSrc = Source{ID: SourceLXID}
 
-// lxAtLeast - версия ядра lx не ниже минимальной.
 func lxAtLeast(ver, min string) bool {
 	return ver == min || lxVerSrc.Newer(ver, min)
 }
 
-// Caps - способности этого ядра по источнику и версии.
 func (e Engine) Caps() CoreCaps {
 	c := CoreCaps{Hysteria2: true}
 	switch e.SourceID {

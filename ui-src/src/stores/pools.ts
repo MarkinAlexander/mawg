@@ -95,8 +95,6 @@ export function usePoolActions() {
     void refresh();
   }
 
-  // --- Ф3.5б: создание/настройки ---
-
   async function create(body: CreatePoolBody): Promise<void> {
     await api('POST', '/pools', body);
     void refresh();
@@ -196,5 +194,5 @@ export function usePoolActions() {
   };
 }
 
-// SourcePlan из api/types (план создания/обновления из источника)
+// SourcePlan из api/types
 type SourcePlanRes = import('../api/types').SourcePlan;

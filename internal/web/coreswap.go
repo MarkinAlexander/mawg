@@ -89,7 +89,7 @@ func swapEngineBinary(p swapParams) (*swapResult, error) {
 		}
 	}
 
-	// --- pre-проверки ДО остановки движка: мусор и чужая архитектура
+	// pre-проверки до остановки движка: мусор и чужая архитектура
 	// отвергаются без простоя
 	st, err := os.Stat(p.Staged)
 	if err != nil {
@@ -128,7 +128,7 @@ func swapEngineBinary(p swapParams) (*swapResult, error) {
 	res.Version = newVer
 	note("тест-запуск загруженного бинаря: версия %s", newVer)
 
-	// --- место: пик = новый (+ бэкап, если сохраняем); старый снимается
+	// место: пик = новый (+ бэкап, если сохраняем); старый снимается
 	// до копии нового, его место освобождается
 	var prevVer string
 	var oldSize int64
@@ -155,7 +155,6 @@ func swapEngineBinary(p swapParams) (*swapResult, error) {
 		return res, fmt.Errorf("не хватает места: нужно %s, свободно %s", mbSize(need), mbSize(free))
 	}
 
-	// --- остановка движка
 	if err := p.StopFn(); err != nil {
 		return res, fmt.Errorf("движок не остановился, замена отменена: %v", err)
 	}
@@ -184,7 +183,6 @@ func swapEngineBinary(p swapParams) (*swapResult, error) {
 		return res, fmt.Errorf("замена не удалась (%v); прежний бинарь не сохранялся - залейте рабочий бинарь заново кнопкой «Загрузить бинарь»", reason)
 	}
 
-	// --- бэкап старого -> rm старого (место) -> копия нового
 	_ = os.Remove(backup)
 	if p.KeepBackup && oldSize > 0 {
 		if err := swapCopyFile(p.Bin, backup, 0o755); err != nil {
@@ -210,14 +208,12 @@ func swapEngineBinary(p swapParams) (*swapResult, error) {
 	}
 	note("новый бинарь записан: %s", p.Bin)
 
-	// --- версия на месте = ожиданию
 	final, err := p.VersionFn(p.Bin)
 	if err != nil || final != newVer {
 		return rollback(fmt.Errorf("бинарь на месте отвечает %q, ожидалось %q (%v)", final, newVer, err))
 	}
 	note("версия на месте: %s", final)
 
-	// --- старт
 	if err := p.StartFn(); err != nil {
 		return rollback(fmt.Errorf("движок с новым бинарём не стартовал: %v", err))
 	}

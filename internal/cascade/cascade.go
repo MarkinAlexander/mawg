@@ -41,7 +41,6 @@ type Manager struct {
 	iptRun   func(args ...string) (string, error) // подменяется в тестах
 }
 
-// retry применяет самолечение, если оно подключено, иначе прямую запись.
 func (m *Manager) retry(key string, attempt func() error) error {
 	if m.Retry == nil {
 		return attempt()
@@ -421,7 +420,6 @@ func (m *Manager) SyncHooks() {
 	}
 }
 
-// routerHookPolicies - политики групп, которым нужен OUTPUT-хук.
 func (m *Manager) routerHookPolicies() map[string]store.GroupPolicy {
 	out := map[string]store.GroupPolicy{}
 	for id, p := range m.Store.GroupPoliciesAll() {
@@ -1028,7 +1026,6 @@ func (m *Manager) reEnableAuto(ctx context.Context, entry store.CascadeEntry) {
 	clear() // группа исчезла - метка больше не имеет смысла
 }
 
-// updateCascade - правит запись каскада в сторе
 func (m *Manager) updateCascade(group string, fn func(*store.CascadeEntry)) {
 	cs := m.Store.Cascades()
 	for i := range cs {

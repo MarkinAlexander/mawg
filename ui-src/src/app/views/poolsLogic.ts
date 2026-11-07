@@ -7,7 +7,6 @@ export function slotBusy(s: SlotInfo): boolean {
   return !!(s.linkUp || s.connected || s.description);
 }
 
-// опции селекта слотов: занятые пулами mawg - прячутся, пометка занят/свободен
 export function slotOptions(all: SlotInfo[], mawgSlots: Set<string>): {
   options: { value: string; label: string; busy: boolean }[]
   firstFree: string
@@ -151,7 +150,7 @@ export function fallbackHint(
     : `Внимание: у интерфейса ${ifaceLabel(dev)} нет проверки здоровья. Задайте её в разделе Интерфейсы роутера, иначе момент отката и возврата будет определяться неточно.`;
 }
 
-// --- Генератор WARP (77-док) ---
+// Генератор WARP (77-док)
 
 // Сети датацентров WARP: anycast-блоки LxBox (warp_endpoints.json) +
 // /24-префиксы warp-generator. Сверено с internal/warp/endpoints.go -
@@ -173,7 +172,6 @@ export function hostOf(endpoint: string): string {
   return c > 0 ? endpoint.slice(0, c) : endpoint;
 }
 
-// isWarpEndpoint - эндпоинт указывает на датацентры Cloudflare WARP.
 export function isWarpEndpoint(endpoint?: string): boolean {
   if (!endpoint) return false;
   const h = hostOf(endpoint).toLowerCase();

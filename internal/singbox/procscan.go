@@ -23,7 +23,6 @@ var procDir = "/proc"
 // требует привилегий).
 var readlinkFn = os.Readlink
 
-// ProcInfo - живой процесс по данным /proc.
 type ProcInfo struct {
 	PID     int
 	Comm    string // /proc/<pid>/comm: имя бинаря

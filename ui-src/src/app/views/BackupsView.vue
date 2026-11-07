@@ -12,10 +12,8 @@ import {
 } from './groupsLogic'
 
 // Страница «Резервные копии» (44-дока §6, слово владельца: вынести из
-// диалога в разделе групп раскрытым видом). Серверные копии - полный
-// архив панели (mawg-full: настройки, пулы, каскады, shadow, конфиг MT)
-// и авто-верёвки MT (shadow/mt-config) перед массовыми записями. Ниже -
-// перенос групп файлом: выгрузка на ПК и импорт с выбором, без модалок.
+// диалога в разделе групп раскрытым видом); ниже - перенос групп файлом:
+// выгрузка на ПК и импорт с выбором, без модалок.
 
 const { state, loadBackups, loadBackupKeep, saveBackupKeep, createBackup, restoreBackup, importGroups, setPolicy, start, stop } = useGroups();
 const { push } = useToast();
@@ -23,7 +21,7 @@ const { confirm } = useConfirm();
 
 onMounted(() => {
   start(); // группы для выгрузки/импорта-дублей
-  void loadBackups(); // свежий список при входе на вкладку
+  void loadBackups();
 });
 onBeforeUnmount(stop);
 
@@ -106,7 +104,7 @@ async function backupNow(): Promise<void> {
   backupBusy.value = '';
 }
 
-// --- выгрузка на ПК (легаси 1968-2010), всегда развёрнута ---
+// выгрузка на ПК (легаси 1968-2010), всегда развёрнута
 const expChecked = ref<boolean[]>([]);
 const expBusy = ref(false);
 
@@ -146,7 +144,7 @@ async function expGo(): Promise<void> {
   }
 }
 
-// --- импорт из файла (легаси mtImportPick 1841), инлайн без модалки ---
+// импорт из файла (легаси mtImportPick 1841), инлайн без модалки
 const fileEl = ref<HTMLInputElement | null>(null);
 const impParsed = ref<{ name: string; groups: ImportGroupSrc[]; bad: number } | null>(null);
 const impMode = ref<'add' | 'replace'>('add');

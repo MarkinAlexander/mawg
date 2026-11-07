@@ -31,7 +31,6 @@ const (
 	LXMarkerName = ".installed-by-mawg"
 )
 
-// LXTarget - пути установки ядра на платформе.
 type LXTarget struct {
 	Bin       string
 	MarkerDir string
@@ -74,7 +73,6 @@ func DetectLxArch() (arch string, detail string, err error) {
 	return a, detail, nil
 }
 
-// archFromOpkg разбирает вывод `opkg print-architecture`.
 func archFromOpkg(out string) string {
 	for _, line := range strings.Split(out, "\n") {
 		f := strings.Fields(line)
@@ -348,7 +346,6 @@ func (s Source) Newer(candidate, installed string) bool {
 	return false
 }
 
-// SingBoxVersion запускает `bin version` и достаёт версию из первой строки.
 func SingBoxVersion(bin string, run func(argv0 string, args ...string) ([]byte, error)) (string, error) {
 	if run == nil {
 		run = func(argv0 string, args ...string) ([]byte, error) {
@@ -720,7 +717,6 @@ func mb(n int64) string {
 	return fmt.Sprintf("%.0f МБ", float64(n)/float64(1<<20))
 }
 
-// findSingBox ищет бинарь sing-box в распакованном дереве.
 func findSingBox(dir string) (string, error) {
 	var found string
 	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
@@ -744,7 +740,6 @@ func findSingBox(dir string) (string, error) {
 	return found, nil
 }
 
-// sumsLineFor достаёт сумму строки с ассетом из SHA256SUMS.
 func sumsLineFor(path, asset string) (string, bool) {
 	data, err := os.ReadFile(path)
 	if err != nil {

@@ -383,7 +383,6 @@ func (s *Server) getDeviceBindings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"bindings": bindings})
 }
 
-// bindingConflicts409 - ответ 409 со списком конфликтов (без confirm).
 func bindingConflicts409(w http.ResponseWriter, conflicts []string) {
 	writeJSON(w, http.StatusConflict, map[string]any{
 		"error":     "адреса уже заняты: " + strings.Join(conflicts, "; ") + ". Применить всё равно?",

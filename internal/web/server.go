@@ -376,8 +376,6 @@ func (s *Server) putServerSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !ip.IsLoopback() && !gate.Allowed(ip) && !gate.OwnAddress(ip) {
-			// адрес клиента не покрыт новым списком - дописываем его,
-			// не отказываем: доступ к панели не теряется
 			req.AllowedIPs = append(req.AllowedIPs, store.IPAllow{Value: ip.String(), On: true})
 			enabledIPs = append(enabledIPs, ip.String())
 			gate.Set(enabledIPs)
@@ -427,9 +425,9 @@ func (s *Server) updateRun(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "started", "to": info.Latest})
 }
 
-// restartPanel перезапускает сервис панели в отложенной горутине (ответ
-// вызывающий шлёт сам). Ошибка - только отсутствующий init-скрипт: тогда
-// вызывающий не трогает состояние.
+// restartPanel - рестарт в отложенной горутине (ответ уходит раньше);
+// ошибка - только отсутствующий init-скрипт: тогда вызывающий не трогает
+// состояние.
 func restartPanel(s *Server) error {
 	script := mawgServiceScript(s.backend.Name() == store.PlatformKeenetic)
 	if _, err := os.Stat(script); err != nil {
@@ -689,12 +687,12 @@ type configView struct {
 	Awg string `json:"awg,omitempty"`
 }
 
-// configConflict: первый занятый адрес конфига (не считая собственного
-// интерфейса пула) с описанием, пусто если конфликтов нет.
 func normAddr(a string) string {
 	return strings.TrimSpace(strings.SplitN(strings.TrimSpace(a), "/", 2)[0])
 }
 
+// configConflict: первый занятый адрес конфига (не считая собственного
+// интерфейса пула) с описанием, пусто если конфликтов нет.
 func (s *Server) configConflict(poolName, device string, addrs []string) string {
 	if len(addrs) == 0 {
 		return ""
@@ -881,10 +879,10 @@ func (s *Server) buildIfaces(r *http.Request) ([]byte, error) {
 	return json.Marshal(map[string]any{"interfaces": out})
 }
 
-// poolProbeInfo - итог последней пробы пула одним местом: нативные пулы
-// из состояния ротатора, движковые из PoolStatus менеджера. /status и
-// /ifaces читают только его - проба не выполняется повторно, время
-// переиспользуется. ok=nil - пробы ещё не было.
+// poolProbeInfo - единый источник итога пробы пула (/status и /ifaces
+// читают только его, повторно проба не выполняется): нативные пулы - из
+// состояния ротатора, движковые - из PoolStatus менеджера. ok=nil - пробы
+// ещё не было.
 func (s *Server) poolProbeInfo(p store.Pool) (ok *bool, ms int, at int64, mode, text string) {
 	if p.Settings.EngineMode != engineMode {
 		st := s.store.State(p.Name)
@@ -1077,7 +1075,6 @@ func (s *Server) dnsProbe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"results": dnsprobe.Run(levels, 3*time.Second)})
 }
 
-// dnsRunner - ShellRunner платформы для DNS-менеджера (openwrt).
 func (s *Server) dnsRunner() (dnsmgr.Runner, bool) {
 	if sr, ok := s.backend.(platform.ShellRunner); ok {
 		return sr.RunShell, true
@@ -2272,15 +2269,12 @@ func (s *Server) mtDuplicates(w http.ResponseWriter, r *http.Request) {
 		RuleID    string `json:"ruleId"`
 		RuleType  string `json:"ruleType"`
 	}
-	// ключ - только паттерн: domain и namespace на один домен перекрываются
-	// полностью, для владельца это тот же дубликат.
-	// Не участвуют: выключенные правила и группы целиком - в маршрутизации
-	// их нет, пересечением они быть не могут. Служебные группы (путь
-	// зонного DNS dnszone-*, включая dnszone-included-* самого форка, и
-	// каскадные «Служебная: ») тоже не участвуют: они управляются mawg,
-	// «разобрать дубль» там нельзя, а адрес DNS-сервера зоны обязан
-	// жить и в группе пути, и в группе форка (живая жалоба: треугольник
-	// висел на обеих без возможности что-то сделать).
+	// ключ - только паттерн: domain и namespace на один домен для владельца -
+	// тот же дубликат. Выключенные правила/группы не участвуют (в
+	// маршрутизации их нет). Служебные группы (dnszone-*, включая
+	// dnszone-included-* форка, и каскадные «Служебная: ») тоже: ими
+	// управляет mawg, а адрес DNS-сервера зоны обязан жить и в группе
+	// пути, и в группе форка (живая жалоба: треугольник висел на обеих).
 	byKey := map[string][]ref{}
 	for _, g := range groups {
 		if !g.Enable || isServiceGroup(g.Name) {
@@ -2412,8 +2406,6 @@ func (s *Server) mtGetPresets(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// normalizeSources чистит список источников группы (IP/CIDR): пробелы,
-// пустые записи; кривое значение - ошибка с понятным текстом
 func normalizeSources(srcs []string) ([]string, error) {
 	out := make([]string, 0, len(srcs))
 	for _, src := range srcs {

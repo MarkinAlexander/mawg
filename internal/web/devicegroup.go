@@ -33,8 +33,6 @@ const deviceGroupColor = "#27d1ce"
 
 const deviceGroupRule = "0.0.0.0/0"
 
-// deviceGroupName - имя группы по умолчанию: «Устройство: <IP>» (+« +N»
-// при нескольких адресах).
 func deviceGroupName(first string, n int) string {
 	if n > 1 {
 		return fmt.Sprintf("Устройство: %s +%d", first, n-1)
@@ -42,7 +40,6 @@ func deviceGroupName(first string, n int) string {
 	return "Устройство: " + first
 }
 
-// buildDeviceGroup собирает группу устройства для пула.
 func buildDeviceGroup(pool store.Pool, name string, sources []string) magitrickle.Group {
 	return magitrickle.Group{
 		Name:      name,

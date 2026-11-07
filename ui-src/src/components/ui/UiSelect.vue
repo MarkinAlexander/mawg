@@ -203,7 +203,7 @@ function pick(o: UiSelectOption) {
             </button>
           </div>
         </div>
-        <!-- парная кнопка: одной высоты с селектом, на его линии -->
+        <!-- парная кнопка действия -->
         <div
           v-if="$slots.action"
           class="act"
@@ -254,8 +254,7 @@ function pick(o: UiSelectOption) {
   border-radius: 6px;
   cursor: pointer;
 }
-/* стрелка-индикатор списка; при открытии разворачивается, при наведении
-   зеленеет (единый стиль контролов через --ctl/--ctl-hover) */
+/* стрелка-индикатор списка (единый стиль контролов через --ctl/--ctl-hover) */
 .psel-btn::after {
   content: '';
   position: absolute;

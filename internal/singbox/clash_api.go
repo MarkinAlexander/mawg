@@ -10,9 +10,7 @@ import (
 // может ни пробовать узлы, ни переключать их) и разгружает inbound'ы,
 // чьи listen_port заняты службами роутера (пакетный дефолт sing-box
 // слушает shadowsocks на :::8080 - это API MagiTrickle). Существующий
-// external_controller не трогается. pick подбирает свободный порт для
-// переноса; возвращает новый конфиг, признак изменения и примечание для
-// журнала событий.
+// external_controller не трогается.
 func editClashAPI(data []byte, port int, reserved map[int]string, pick func() int) (out []byte, changed bool, note string, err error) {
 	var cfg map[string]any
 	if err := json.Unmarshal(data, &cfg); err != nil {

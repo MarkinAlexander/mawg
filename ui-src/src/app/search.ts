@@ -11,7 +11,6 @@ export interface SearchPlace {
 }
 
 export const SEARCH_PLACES: SearchPlace[] = [
-  // --- Интерфейсы ---
   {
     title: 'Интерфейсы роутера (AWG/WireGuard)',
     keywords: ['интерфейсы', 'awg', 'amnezia', 'амнезия', 'wireguard', 'туннели', 'подключения'],
@@ -41,7 +40,6 @@ export const SEARCH_PLACES: SearchPlace[] = [
     route: '/next/interfaces',
     anchor: 'card-probe',
   },
-  // --- Группы правил ---
   {
     title: 'Правила маршрутизации (группы MagiTrickle)',
     keywords: ['группы правил', 'правила', 'mt', 'magitrickle', 'магитрикл', 'ipset', 'маршрутизация', 'туннель'],
@@ -90,7 +88,6 @@ export const SEARCH_PLACES: SearchPlace[] = [
     route: '/next/backups',
     anchor: 'card-transfer',
   },
-  // --- Система ---
   {
     title: 'Система: зависимости и обновление',
     keywords: ['система', 'зависимости', 'обновление', 'provision', 'sing-box', 'сингбокс', 'mihomo', 'клаш', 'ядра', 'версия'],
@@ -103,7 +100,6 @@ export const SEARCH_PLACES: SearchPlace[] = [
     route: '/next/system',
     anchor: 'card-events',
   },
-  // --- Настройки ---
   {
     title: 'Настройки панели',
     keywords: ['настройки', 'сервер', 'панель', 'settings'],

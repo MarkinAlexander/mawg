@@ -49,7 +49,7 @@ const bundleEditing = ref<BundleView | null>(null);
 
 onMounted(() => {
   ifaces.start(30000);
-  bundles.start(30000); // легаси: setInterval(refreshBundles, 30000)
+  bundles.start(30000);
   void ifaces.refreshWan();
 });
 onBeforeUnmount(() => {
@@ -87,7 +87,7 @@ async function delBundle(b: BundleView): Promise<void> {
   }
 }
 
-// --- список интерфейсов (легаси renderIfaces 1060) ---
+// список интерфейсов (легаси renderIfaces 1060)
 const showHidden = ref(false);
 const hiddenCount = computed(() => ifaces.state.list.filter((i) => i.mode === 'hidden').length);
 const rows = computed(() =>
@@ -107,7 +107,7 @@ const rows = computed(() =>
       pwhen: it.mode === 'managed' ? agoText(it.probeAt) : '',
     })));
 
-// заголовок строки: слот+описание или описание (легаси title в renderIfaces)
+// заголовок строки (легаси title в renderIfaces)
 function rowTitle(it: IfaceInfo): string {
   if (it.slot && it.slot !== it.device)
     return it.slot + (it.description && it.description !== it.slot ? ' - ' + it.description : '');
@@ -134,7 +134,7 @@ async function showProbeDetail(it: IfaceInfo): Promise<void> {
   await confirm({ title: 'Проверка ' + it.device, text: pb.detail + (when ? ` · ${when}` : ''), okLabel: 'Закрыть', info: true });
 }
 
-// --- диалог пробы интерфейса (легаси openIfaceProbeDlg 1124) ---
+// диалог пробы интерфейса (легаси openIfaceProbeDlg 1124)
 const dlg = ref<{
   open: boolean
   device: string
@@ -215,7 +215,7 @@ async function removeProbe(): Promise<void> {
   }
 }
 
-// --- проверка канала провайдера (легаси refreshWAN 1161/wanSave 1177) ---
+// проверка канала провайдера (легаси refreshWAN 1161/wanSave 1177)
 const wanOn = ref(false);
 const wanType = ref('http');
 const wanTarget = ref('');

@@ -35,8 +35,8 @@ export function useBundles() {
     }
   }
 
-  // body: имя (создание/переименование запрещено бэкендом у правки - имя
-  // фиксировано), участники по приоритету, группы MagiTrickle
+  // у правки имя фиксировано (бэкенд запрещает переименование);
+  // members идут по приоритету
   async function save(editing: string | null, body: { name: string; members: string[]; groups: string[] }): Promise<void> {
     if (editing) await api('PUT', `/bundles/${encodeURIComponent(editing)}`, body);
     else await api('POST', '/bundles', body);

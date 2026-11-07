@@ -296,7 +296,6 @@ func (s *Server) putDnsZones(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "zones": zones, "warnings": warnings})
 }
 
-// zoneListShort - имена зон для строки журнала.
 func zoneListShort(zones []store.DnsZone) string {
 	names := make([]string, 0, len(zones))
 	for _, z := range zones {

@@ -7,7 +7,6 @@ export const PROBE_DEFAULTS: Record<string, string> = {
   icmp: '1.1.1.1',
 };
 
-// http для URL, всё остальное (в т.ч. пустое) - icmp (легаси probeTypeOf)
 export function probeTypeOf(target: string): 'http' | 'icmp' {
   return /^https?:\/\//.test(target) ? 'http' : 'icmp';
 }

@@ -47,7 +47,7 @@ var CanaryIPs = map[string]bool{
 	"116.202.120.166":  true,
 }
 
-// Вер dict'ы результата (JSON-контракт с панелью).
+// Вердикты (JSON-контракт с панелью).
 const (
 	VerdictClean    = "clean"    // в ответе есть адрес из канонического набора
 	VerdictSpoof    = "spoof"    // ответ есть, но канонических адресов ноль
@@ -55,7 +55,6 @@ const (
 	VerdictError    = "error"    // сеть/таймаут/кривой ответ
 )
 
-// Level - один зондимый уровень.
 type Level struct {
 	Level  string `json:"level"`         // подпись для панели
 	Kind   string `json:"kind"`          // udp | dot | doh | tcp
@@ -67,7 +66,6 @@ type Level struct {
 	IPs []string `json:"ips,omitempty"`
 }
 
-// Result - исход пробы одного уровня.
 type Result struct {
 	Level     string `json:"level"`
 	Kind      string `json:"kind"`
@@ -161,8 +159,7 @@ func firstNameserver(path string) string {
 	return ""
 }
 
-// Run прогоняет уровни параллельно (каждый со своим таймаутом), порядок
-// результата соответствует порядку levels.
+// Run: уровни параллельно, порядок результата соответствует порядку levels.
 func Run(levels []Level, timeout time.Duration) []Result {
 	out := make([]Result, len(levels))
 	var wg sync.WaitGroup
@@ -267,8 +264,7 @@ func probeLegs(l Level, timeout time.Duration) (leg, verdict string, canonical, 
 	return "", VerdictError, 0, 0, detail
 }
 
-// legRank - «лучше» среди нечистых ответов: транспорт ответил
-// (spoof/noanswer) ценнее ошибки транспорта.
+// legRank: транспорт ответил (spoof/noanswer) ценнее ошибки транспорта.
 func legRank(v string) int {
 	if v == VerdictSpoof || v == VerdictNoAnswer {
 		return 1
@@ -283,7 +279,6 @@ func legLabel(l Level, ip string) string {
 	return ip
 }
 
-// probeLeg - одна проба одной ноги: обмен канарейкой выбранным транспортом.
 func probeLeg(l Level, ip string, budget time.Duration) ([]string, error) {
 	switch l.Kind {
 	case "udp":
@@ -301,8 +296,6 @@ func probeLeg(l Level, ip string, budget time.Duration) ([]string, error) {
 	return nil, fmt.Errorf("неизвестный транспорт %q", l.Kind)
 }
 
-// legAddr - адрес ноги: ip:port из ноги (если в ней указан свой порт),
-// иначе ip + порт из Server (или defPort); пустая нога = Server как есть.
 func legAddr(server, ip, defPort string) string {
 	if ip == "" {
 		return server
@@ -314,7 +307,6 @@ func legAddr(server, ip, defPort string) string {
 	return net.JoinHostPort(ip, port)
 }
 
-// hostPort - host:port из адреса уровня; без порта подставляется defPort.
 func hostPort(server, defPort string) (host, port string) {
 	if h, p, err := net.SplitHostPort(server); err == nil && p != "" {
 		return h, p
@@ -339,7 +331,6 @@ func verdictOf(ips []string) (verdict string, canonical, total int) {
 	}
 }
 
-// buildQuery - DNS-запрос A по домену (RD=1, QTYPE=A, QCLASS=IN).
 func buildQuery(domain string, id uint16) []byte {
 	var b []byte
 	b = binary.BigEndian.AppendUint16(b, id)
@@ -455,7 +446,6 @@ func exchangeUDP(server, domain string, timeout time.Duration) ([]string, error)
 	return nil, fmt.Errorf("udp %s: ответ без совпадения id", server)
 }
 
-// exchangeDoT - DNS по TLS (RFC 7858): тот же TCP-фрейминг внутри TLS.
 func exchangeDoT(server, sni, domain string, timeout time.Duration) ([]string, error) {
 	id := randomID()
 	q := framed(buildQuery(domain, id))
@@ -536,7 +526,6 @@ func exchangeDoH(urlStr, ip, domain string, timeout time.Duration) ([]string, er
 	return parseA(body), nil
 }
 
-// urlHost - имя хоста из URL без порта (для TLS ServerName).
 func urlHost(urlStr string) string {
 	if u, err := url.Parse(urlStr); err == nil {
 		return u.Hostname()

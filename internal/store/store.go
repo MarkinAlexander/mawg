@@ -295,7 +295,6 @@ func (s *Store) AllowedIPList() []string {
 	return out
 }
 
-// SetServerSettings валидирует и сохраняет адрес/порт/allowlist/авторизацию.
 func (s *Store) SetServerSettings(addr string, port int, allowed []IPAllow, authDisabled bool) error {
 	addr = strings.TrimSpace(addr)
 	if addr == "" {
@@ -385,7 +384,6 @@ func (s *Store) SetDNSProbeServers(list []DnsProbeServer) error {
 	return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
 }
 
-// DnsZones - таблица зонного DNS.
 func (s *Store) DnsZones() []DnsZone {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -455,7 +453,6 @@ func (s *Store) SetExcludesDisabled(v bool) error {
 	return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
 }
 
-// GroupPolicy - политика поведения группы при отвале интерфейса.
 func (s *Store) GroupPolicy(id string) GroupPolicy {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1275,11 +1272,10 @@ func (s *Store) BackupKeep() int {
 	return s.root.Settings.BackupKeep
 }
 
-// SaveBackupRotated пишет бэкап и подчищает старые копии того же имени,
-// оставляя столько самых свежих, сколько задано настройкой BackupKeep
-// (формат имени name-YYYYMMDD-HHMMSS.ext). Авто-бэкапы перед массовыми
-// записями могут сыпаться часто - без ротации каталог распухает на флеше
-// роутера.
+// SaveBackupRotated пишет бэкап (name-YYYYMMDD-HHMMSS.ext) и подчищает
+// старые копии того же имени, оставляя BackupKeep свежих: авто-бэкапы
+// перед массовыми записями сыплются часто - без ротации каталог
+// распухает на флеше роутера.
 func (s *Store) SaveBackupRotated(name, ext, content string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

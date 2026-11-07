@@ -38,7 +38,7 @@ const srcSupported = computed(() => state.sourcesCapable);
 const srcVisible = computed(() => !isCascade.value && srcSupported.value);
 const srcListVisible = computed(() => srcMode.value === 'list');
 
-// интерфейсы группы (легаси 1370-1376): устройства + blackhole + текущий
+// интерфейсы группы (легаси 1370-1376)
 const ifaceOptions = computed<UiSelectOption[]>(() => {
   const list = state.ifaces.map((i) => ({
     value: i.device,
@@ -51,7 +51,7 @@ const ifaceOptions = computed<UiSelectOption[]>(() => {
   return out;
 });
 
-// запасной интерфейс (легаси 1392-1394): без blackhole, текущий если пропал
+// запасной интерфейс (легаси 1392-1394)
 const policyIfaceOptions = computed<UiSelectOption[]>(() => {
   const list = state.ifaces.filter((i) => i.device !== 'blackhole');
   const out = list.map((i) => ({
@@ -136,7 +136,6 @@ async function save(): Promise<void> {
       :tooltip="isCascade ? 'интерфейс каскадной группы задается при создании каскада' : ''"
     />
 
-    <!-- кто ходит в группу (легаси egSrcMode/egSources/egSrcRouter) -->
     <template v-if="srcVisible">
       <UiSelect
         v-model="srcMode"

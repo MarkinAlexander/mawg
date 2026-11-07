@@ -38,8 +38,7 @@ type DnsUpstreamsState struct {
 	Upstreams []DnsUpstream `json:"upstreams"`
 }
 
-// DnsUpstreams - состояние каскада апстримов dns-proxy (форк rev8+,
-// GET /api/v1/dns/upstreams).
+// DnsUpstreams - состояние каскада апстримов dns-proxy (требует rev8+).
 func (c *Client) DnsUpstreams(ctx context.Context) (*DnsUpstreamsState, error) {
 	out := &DnsUpstreamsState{Upstreams: []DnsUpstream{}}
 	if err := c.call(ctx, http.MethodGet, "/api/v1/dns/upstreams", nil, out); err != nil {

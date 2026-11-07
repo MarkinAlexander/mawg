@@ -276,7 +276,6 @@ func CollectKeeneticOwn(r Runner) (KeeneticOwn, error) {
 	return ParseKeeneticOwn(out), nil
 }
 
-// dnsmasqLive - живые директивы из сгенерированного конфига dnsmasq.
 type dnsmasqLive struct {
 	servers  []string
 	noResolv bool

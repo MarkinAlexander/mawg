@@ -180,7 +180,6 @@ export function useGroups() {
     await refresh(true);
   }
 
-  // --- бэкапы и импорт/выгрузка групп файлом (легаси 1786-2010) ---
   // сколько копий каждого вида бэкапа хранить (2..10)
   async function loadBackupKeep(): Promise<number> {
     const r = await api<{ keep: number }>('GET', '/mt/backup-keep');
@@ -236,7 +235,6 @@ export function useGroups() {
     }
   }
 
-  // --- мутации: API, затем force-refresh ---
   async function createGroup(body: { name: string; interface: string; color?: string; sources?: string[] }): Promise<GroupView | null> {
     const g = await api<GroupView>('POST', '/mt/groups', body);
     await refresh(true);

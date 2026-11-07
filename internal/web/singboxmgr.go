@@ -120,7 +120,6 @@ type engineManager interface {
 	FragmentMTime() time.Time
 }
 
-// engineMgr - менеджер ядра, которым крутится пул.
 func (s *Server) engineMgr(p store.Pool) (engineManager, error) {
 	if p.Settings.EngineCore == engineCoreMihomo {
 		return s.mh()
@@ -254,11 +253,10 @@ func (s *Server) rotateEngineConfigs(fails map[string]int) {
 
 // awg3Cores - какие ядра сейчас способны крутить конфиг, требующий
 // движка (AWG 3.x / <r>-случайность на старом kmod): sing-box любого
-// флейвора (lx несёт AWG-поля в корне, extended - объектом amnezia;
-// билдер строит оба формата) и mihomo (amnezia-wg-option, Version 3).
-// Учитываем мастер-выключатели ядер («Система -> Ядра VPN»). Слово
-// владельца 30.10: гейты не должны затыкаться на sing-box-lx - движков
-// может быть несколько, и движковый пул можно создать под любой из них.
+// флейвора (lx - AWG-поля в корне, extended - объектом amnezia; билдер
+// строит оба формата) и mihomo (amnezia-wg-option, Version 3). Учитываем
+// мастер-выключатели ядер. Слово владельца 30.10: гейты не должны
+// затыкаться на sing-box-lx - движковый пул можно создать под любой.
 func (s *Server) awg3Cores() (singboxOK, mihomoOK bool) {
 	if !s.store.CoreDisabled("singbox") {
 		if _, err := s.sb(); err == nil {
@@ -419,7 +417,6 @@ func (s *Server) enginePools() []store.Pool {
 	return out
 }
 
-// enginePoolsOfCore - движковые пулы конкретного ядра.
 func (s *Server) enginePoolsOfCore(core string) []store.Pool {
 	var out []store.Pool
 	for _, p := range s.enginePools() {
@@ -459,7 +456,6 @@ func (s *Server) claimTun(settings store.PoolSettings, name string) (store.Pool,
 	return pool, nil
 }
 
-// applyEngineWarn - применить конфиг движка, приложив проблемы к плану.
 func (s *Server) applyEngineWarn(plan *sourcePlan) {
 	skipped, err := s.applyEngine()
 	plan.Skipped = append(plan.Skipped, skipped...)
@@ -468,7 +464,6 @@ func (s *Server) applyEngineWarn(plan *sourcePlan) {
 	}
 }
 
-// engineSpec - спецификация движкового пула + ядро, которое его крутит.
 type engineSpec struct {
 	core string // "" = sing-box | "mihomo"
 	spec singbox.PoolSpec

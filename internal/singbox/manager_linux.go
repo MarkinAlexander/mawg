@@ -134,9 +134,8 @@ func (m *Manager) setStartErr(msg string) {
 	}
 }
 
-// StopOwn - гасит собственный процесс ядра (own-режим), менеджер жив:
-// статус читается, следующий Apply поднимет ядро снова. Используется
-// мастер-выключателем движка (Система → Ядра VPN).
+// StopOwn - гасит собственный процесс ядра (own-режим), менеджер жив
+// (следующий Apply поднимет ядро). Мастер-выключатель движка (Система → Ядра VPN).
 func (m *Manager) StopOwn() {
 	m.mu.Lock()
 	mode := m.Mode
@@ -452,12 +451,10 @@ func (m *Manager) ClashProxies(ctx context.Context) (map[string]ClashProxy, erro
 	return ClashProxies(ctx, m.clashBase())
 }
 
-// ClashSelect - ручной выбор узла в selector-группе пула.
 func (m *Manager) ClashSelect(ctx context.Context, group, name string) error {
 	return ClashSelect(ctx, m.clashBase(), group, name)
 }
 
-// ClashGroupDelay - перемерить urltest-группу пула сейчас.
 func (m *Manager) ClashGroupDelay(ctx context.Context, group, testURL string, timeout time.Duration) (map[string]int, error) {
 	return ClashGroupDelay(ctx, m.clashBase(), group, testURL, timeout)
 }
@@ -611,8 +608,6 @@ func (m *Manager) writeConfig(pools []PoolSpec) error {
 	return m.writeFragment(data)
 }
 
-// --- общий экземпляр (shared): фрагмент в чужой каталог + рестарт чужого сервиса ---
-
 type sharedFacts struct {
 	ClashPort   int
 	InTags      map[string]bool
@@ -753,7 +748,6 @@ func (m *Manager) restartShared(timeout time.Duration) error {
 	return m.waitClash(timeout)
 }
 
-// startShared - старт остановленного shared-сервиса (init-скрипт start).
 func (m *Manager) startShared(timeout time.Duration) error {
 	if m.SharedInit == "" {
 		return fmt.Errorf("init-скрипт чужого ядра не задан")
@@ -811,11 +805,10 @@ func (m *Manager) sharedAlive() bool {
 	return len(m.sharedPids()) > 0
 }
 
-// SetCacheFile выключает кэш (off) или переносит его в /tmp (tmp); clash
-// носителя в /tmp: база пишется через mmap без остановки, на флешке это
-// постоянный износ. Конфиг правится с бэкапом, проверяется check-ом,
-// при провале - откат; применение через рестарт (bbolt открывает базу
-// на старте, горячего переезда пути она не умеет).
+// SetCacheFile выключает кэш (off) или переносит его в /tmp (tmp): база
+// пишется через mmap без остановки - на флешке это постоянный износ.
+// Применение через рестарт: bbolt открывает базу только на старте,
+// горячего переезда пути не умеет.
 func (m *Manager) SetCacheFile(mode string) (string, error) {
 	if m.Mode != "shared" {
 		return "", fmt.Errorf("управление кэшем нужно только в режиме общего ядра")
@@ -868,7 +861,6 @@ func (m *Manager) SetCacheFile(mode string) (string, error) {
 	return "ок", nil
 }
 
-// sharedPids - pid'ы работающего ядра.
 func (m *Manager) sharedPids() []string {
 	out, err := exec.Command("pidof", filepath.Base(m.eng.Bin)).Output()
 	if err != nil {
@@ -939,8 +931,7 @@ func (m *Manager) freePort() int {
 
 // ensureSharedClashAPI включает clash_api в чужой config.json (и разгружает
 // занятые порты его inbound'ов): без clash_api пробы и переключение узлов
-// невозможны, а пакетный дефолт конфига его не ставит. Правка с бэкапом и
-// проверкой check-ом, при провале - откат.
+// невозможны, а пакетный дефолт конфига его не ставит.
 func (m *Manager) ensureSharedClashAPI() error {
 	path := filepath.Join(m.SharedDir, "config.json")
 	data, err := os.ReadFile(path)
@@ -971,8 +962,6 @@ func (m *Manager) ensureSharedClashAPI() error {
 	return nil
 }
 
-// PatchNote - что mawg поправил в чужом config.json при последнем Apply
-// (пусто, если ничего).
 func (m *Manager) PatchNote() string {
 	return m.patchNote
 }

@@ -36,8 +36,7 @@ func (s *Server) mtSourcesCapable(ctx context.Context) bool {
 
 // mtDnsUpstreamsCapable - умеет ли подключённый MT отдавать состояние
 // каскада апстримов dns-proxy и принимать правку списка (форк rev8+,
-// GET/PUT /api/v1/dns/upstreams). Порядок тот же, что у sources:
-// живой /api/v1/version, фолбэк - configVersion дискового config.yaml.
+// GET/PUT /api/v1/dns/upstreams). Порядок тот же, что у sources.
 func (s *Server) mtDnsUpstreamsCapable(ctx context.Context) bool {
 	if v, err := s.mtClient().GetVersion(ctx); err == nil && v != "" {
 		return magitrickle.DnsUpstreamsSupported(v)
@@ -57,8 +56,8 @@ func (s *Server) mtDnsUpstreamsCapable(ctx context.Context) bool {
 }
 
 // mtDohUpstreamsCapable - умеет ли подключённый MT зашифрованные апстримы
-// каскада (форк rev11+, DoT tls:// и DoH https://). Порядок тот же:
-// живой /api/v1/version, фолбэк - configVersion дискового config.yaml.
+// каскада (форк rev11+, DoT tls:// и DoH https://). Порядок тот же, что
+// у sources.
 func (s *Server) mtDohUpstreamsCapable(ctx context.Context) bool {
 	if v, err := s.mtClient().GetVersion(ctx); err == nil && v != "" {
 		return magitrickle.DohUpstreamsSupported(v)
@@ -79,7 +78,7 @@ func (s *Server) mtDohUpstreamsCapable(ctx context.Context) bool {
 
 // mtDnsHealthCapable - умеет ли подключённый MT правку политики зондов
 // каскада (форк rev14+, health в PUT /api/v1/dns/upstreams). Порядок тот
-// же: живой /api/v1/version, фолбэк - configVersion дискового config.yaml.
+// же, что у sources.
 func (s *Server) mtDnsHealthCapable(ctx context.Context) bool {
 	if v, err := s.mtClient().GetVersion(ctx); err == nil && v != "" {
 		return magitrickle.DnsHealthSupported(v)
@@ -99,8 +98,7 @@ func (s *Server) mtDnsHealthCapable(ctx context.Context) bool {
 }
 
 // mtDnsZonesCapable - умеет ли подключённый MT зонный DNS (форк rev13+,
-// GET/PUT /api/v1/dns/zones). Порядок тот же: живой /api/v1/version,
-// фолбэк - configVersion дискового config.yaml.
+// GET/PUT /api/v1/dns/zones). Порядок тот же, что у sources.
 func (s *Server) mtDnsZonesCapable(ctx context.Context) bool {
 	if v, err := s.mtClient().GetVersion(ctx); err == nil && v != "" {
 		return magitrickle.DnsZonesSupported(v)

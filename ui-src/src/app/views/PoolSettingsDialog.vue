@@ -14,9 +14,7 @@ import { fallbackHint } from './poolsLogic'
 import { addrSecretIn, hostOf } from '../secrets'
 import { G } from '../glossary'
 
-// Диалог настроек пула (легаси openSettings/spSave 935-1043): источник,
-// переименование, Free (конфиг/перевыпуск/лок пробы), premium-страна,
-// состав пула, проба, интервалы, фоллбек с подсказкой.
+// Диалог настроек пула (легаси openSettings/spSave 935-1043)
 const props = defineProps<{ poolName: string }>();
 const open = defineModel<boolean>('open', { default: false });
 
@@ -250,7 +248,6 @@ const fbOptions = computed<UiSelectOption[]>(() => {
 });
 const probeLocked = computed(() => isFree.value || isEng.value);
 
-// другие пулы - кандидаты запасного пути умного каскада
 const scPoolOptions = computed(() =>
   (status.data?.pools || [])
     .filter((p) => p.name !== props.poolName && !p.disabled)

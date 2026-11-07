@@ -344,8 +344,7 @@ func repairFromShadow(groups []Group) ([]Group, bool) {
 		return groups, false
 	}
 	if restoredOnce == nil {
-		// клиент без SetShadowStorage (тесты/встраивание): карта счётчиков
-		// не инициализирована продом - писать в nil нельзя
+		// клиент без SetShadowStorage (тесты/встраивание): карта не инициализирована
 		restoredOnce = map[string]int{}
 	}
 	for _, g := range lost {
@@ -414,9 +413,8 @@ func (c *Client) AddGroup(ctx context.Context, g Group) error {
 	})
 }
 
-// AddGroups добавляет несколько групп с правилами одним bulk PUT (импорт
-// из файла): тот же атомарный путь, что у AddGroup - append в mutate-
-// замыкании наружу не выходит, поэтому отдельный transform.
+// AddGroups - как AddGroup, но несколько групп (импорт из файла) одним
+// bulk PUT: append в mutate-замыкании наружу не выходит.
 func (c *Client) AddGroups(ctx context.Context, add []Group) error {
 	return c.transformGroups(ctx, func(groups []Group) ([]Group, bool) {
 		if len(add) == 0 {
@@ -426,9 +424,8 @@ func (c *Client) AddGroups(ctx context.Context, add []Group) error {
 	})
 }
 
-// ReplaceGroups заменяет ВЕСЬ список групп в рантайме MT - восстановление
-// из бэкапа. Одна массовая запись; валидация, дедуп и контроль усечения
-// transformGroups действуют.
+// ReplaceGroups заменяет ВЕСЬ список групп (восстановление из бэкапа)
+// одной массовой записью; дедуп и контроль усечения transformGroups действуют.
 func (c *Client) ReplaceGroups(ctx context.Context, groups []Group) error {
 	return c.transformGroups(ctx, func([]Group) ([]Group, bool) {
 		return groups, true

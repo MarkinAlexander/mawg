@@ -11,15 +11,14 @@ import { useSecrets } from '../secrets'
 import LxInstallDialog from './LxInstallDialog.vue'
 import CoreUploadDialog from './CoreUploadDialog.vue'
 
-// Журнал событий (легаси refreshLog): хвост 80, НОВЫЕ СВЕРХУ, k-цвета
-// пяти видов. Место - вкладка «Система» (44-дока §6). Опрос таб-локальный:
-// start/stop на монтировании вьюхи, интервал 15с как легаси.
+// Журнал событий (легаси refreshLog): место - вкладка «Система» (44-док §6).
+// Опрос таб-локальный: start/stop на монтировании вьюхи, интервал 15с как легаси.
 const { state, start, stop } = useEvents();
 // приватный режим: строка журнала размыта, только если в ней адрес из конфигов
 const secrets = useSecrets();
 
-// системная проверка опрашивается на этой же вкладке раз в 60с (легаси
-// startPanel: setInterval(refreshSystem, 60000)), форс - по кнопке
+// системная проверка - на этой же вкладке раз в 60с, форс - по кнопке
+// (легаси refreshSystem)
 onMounted(() => {
   start();
   void sys.start(60000);
@@ -32,9 +31,8 @@ onBeforeUnmount(() => {
 // UiCard - контролируемый: без v-model свёртывание не работает
 const collapsed = ref(false);
 
-// Ф5 §7 «страница событий с фильтрами»: тип события (из данных, не
-// захардкожен) + поиск по пулу/тексту. Фильтр применяется ко всему
-// списку, хвост 80 - уже отфильтрованного.
+// Ф5 §7 «страница событий с фильтрами»: тип события из данных, не
+// захардкожен; фильтр - по всему списку, хвост 80 - уже отфильтрованного.
 const evKind = ref('');
 const evQuery = ref('');
 // человеческие лейблы типов событий (ключи kind - API, не трогаем)
@@ -63,12 +61,10 @@ const evFiltered = computed<AppEvent[]>(() => {
 });
 const evFiltering = computed(() => !!evKind.value || !!evQuery.value.trim());
 
-// легаси fmtTime: toLocaleTimeString('ru-RU')
 function fmtTime(iso: string): string {
   return iso ? new Date(iso).toLocaleTimeString('ru-RU') : '';
 }
 
-// --- Системная проверка (легаси refreshSystem/systable 2385-2405) ---
 const sys = useSystem();
 const { state: status, refresh: refreshStatus } = useStatus();
 const { confirm } = useConfirm();
@@ -122,9 +118,8 @@ async function mtRestart(): Promise<void> {
   }
 }
 
-// --- установка компонента (легаси installComp 2890 + dlgLx 2928); диалог
-// ядра sing-box-lx (профиль/бэкап) - общий компонент LxInstallDialog, он
-// нужен и в потоке создания пула ---
+// установка компонента (легаси installComp 2890 + dlgLx 2928); диалог ядра
+// sing-box-lx - общий компонент LxInstallDialog, нужен и в создании пула
 const lxOpen = ref(false);
 
 // установка идёт минуты (MagiTrickle качает релиз из GitHub) - молчаливое
@@ -176,7 +171,7 @@ function showResult(ok: boolean, output: string, errText: string): void {
   // пользователи присылают ошибки без указания, где они произошли)
   const meta = [status.data?.version, status.data?.backendName].filter(Boolean).join(' · ');
   result.value = { open: true, ok, out: (meta ? meta + '\n' : '') + (errText ? errText + '\n\n' : '') + output.trim() };
-  void sys.refresh(); // легаси: после установки перечитываем системную проверку
+  void sys.refresh();
   void sys.refreshCores(); // строка ядра могла ожить/обновиться
 }
 const result = ref<{ open: boolean; ok: boolean; out: string } | null>(null);
@@ -187,7 +182,6 @@ const resultOpen = computed({
   },
 });
 
-// --- режим движка sing-box (легаси updateSbMode/setSbMode/cacheAct) ---
 const sbMode = ref('own');
 watch(
   () => status.data?.engine?.mode,
@@ -237,14 +231,13 @@ async function applySbMode(): Promise<void> {
     push(e instanceof Error ? e.message : String(e), true);
   }
   sbApplying.value = false;
-  setTimeout(() => void refreshStatus(), 500); // легаси setTimeout(refresh, 500)
+  setTimeout(() => void refreshStatus(), 500);
 }
 const sbCacheWarn = computed(() => {
   const eng = engine.value;
   return !!eng && eng.mode === 'shared' && !!eng.cacheFile && !eng.cacheFile.startsWith('/tmp');
 });
 const SB_CACHE_TEXT = 'Кэш ядра пишется на флешку - постоянный износ ~170МБ/сутки. Выключить совсем: ничего не пишется, выборы сбрасываются при рестарте ядра. В /tmp: не пишется на флешку, выборы живут до ребута роутера.';
-// --- «Ядра VPN»: lifecycle ядра sing-box (start/stop/автозагрузка/удаление)
 const coreBusy = ref('');
 async function corePower(c: CoreInfo, action: 'start' | 'stop' | 'enable' | 'disable'): Promise<void> {
   if (action === 'stop') {
@@ -299,7 +292,7 @@ const coreStateBadge = (c: CoreInfo): { text: string; variant: 'ok' | 'err' | 'w
   return c.running ? { text: 'работает', variant: 'ok' } : { text: 'остановлен', variant: 'warn' };
 };
 
-// --- заливка/скачивание бинарей движков (112-док 4.1): две кнопки на всё ---
+// заливка/скачивание бинарей движков (112-док 4.1): две кнопки на всё
 const uploadOpen = ref(false);
 
 const dlOpen = ref(false);
@@ -324,7 +317,7 @@ async function openDownloads(): Promise<void> {
 }
 const dlMb = (b?: number) => (b ? (b / 1048576).toFixed(0) + ' МБ' : '');
 
-// --- диагностика движков (112-док 3.7, слово владельца 04.11) ---
+// диагностика движков (112-док 3.7, слово владельца 04.11)
 const diagOpen = ref(false);
 const diagBusy = ref(false);
 const diagEngines = ref<EngineDiagInfo[]>([]);

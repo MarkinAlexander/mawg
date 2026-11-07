@@ -16,12 +16,9 @@ import DeviceGroupDialog from './DeviceGroupDialog.vue'
 import LxInstallDialog from './LxInstallDialog.vue'
 import type { ConfigView, PoolEngine, PoolView, TunInfo } from '../../api/types'
 
-// Карточка пула (легаси ensureCard/updateCard 67-265). Данные приходят из
-// /status (5с) - карточка чисто отображает + мутации. Шестерёнка настроек и
-// «+ интерфейс» - Ф3.5б (диалоги). Вкл/выкл - свитчем в шапке (слово
-// владельца: красная кнопка «Выключить» пугала; чекер в едином стиле рядом
-// с состоянием). «Сделать активным» конфига - POST /activate (эндпоинт
-// был в бэкенде, UI его не выставлял).
+// Карточка пула (легаси ensureCard/updateCard 67-265): данные из /status
+// (5с), карточка чисто отображает + мутации. Шестерёнка настроек и
+// «+ интерфейс» - Ф3.5б (диалоги).
 const props = defineProps<{ pool: PoolView }>();
 defineEmits<{ settings: [] }>();
 
@@ -128,7 +125,7 @@ async function delPool(): Promise<void> {
   void run(`${props.pool.name}:del`, () => a.del(props.pool.name));
 }
 
-// --- генератор WARP (77-док): +1 конфиг в живой варп-пул ---
+// генератор WARP (77-док): +1 конфиг в живой варп-пул
 const warpStore = useWarp();
 // пул варповый: создан генератором или конфиги смотрят в сети Cloudflare
 const isWarp = computed(() => isWarpPool(props.pool));
@@ -151,7 +148,6 @@ function genWarp(): void {
   });
 }
 
-// --- строка карточки (легаси updateCard 174) ---
 const engine = computed(() => status.data?.engine);
 const isEng = computed(() => props.pool.settings.engineMode === 'singbox');
 
@@ -171,9 +167,8 @@ const engineWaits = computed<{ detail: string; needsLx: boolean } | null>(() => 
 });
 const lxOpen = ref(false);
 
-// --- узлы движкового пула (60-док): список + пинги из clash_api движка,
-// ручной выбор в selector (⚡), перемер в urltest. Ленивая загрузка по
-// открытию секции - как «Конфиги» у нативных пулов. ---
+// узлы движкового пула (60-док): список + пинги из clash_api движка;
+// ленивая загрузка по открытию секции - как «Конфиги» у нативных пулов
 const nodesOpen = ref(false);
 // «устройство целиком через пул» (слово владельца 2026-10-28)
 const devOpen = ref(false);
@@ -223,7 +218,7 @@ const modeBadge = computed(() => {
   return { text: 'работает', variant: 'ok' as const, tooltip: '' };
 });
 
-// --- умный каскад (86-док): бейдж «через Via», план возврата, кнопки ---
+// умный каскад (86-док)
 const smart = computed(() => props.pool.smart || null);
 const smartShown = computed(() =>
   !!(props.pool.settings.smartCascade?.via?.length || smart.value?.on));
@@ -279,8 +274,8 @@ const result = computed(() => {
 // плашки протоколов движка (что именно гоняет: AWG 3.x, vless/ws, ...)
 const protoTitle = (kind: string) => (kind === 'proxy' ? 'узел подписки (vless/trojan и др.)' : 'конфиг WireGuard/AmneziaWG');
 
-// --- премиум (легаси 209-227): импорт только с nativeAWG3, смена страны -
-// только у импортированного ---
+// премиум (легаси 209-227): импорт только с nativeAWG3, смена страны -
+// только у импортированного
 const premium = computed(() => props.pool.premium || {});
 const nativePrem = computed(() => !!status.data?.nativeAWG3);
 const premPanelShown = computed(() =>
@@ -342,7 +337,6 @@ async function doSwitchCountry(): Promise<void> {
   }
 }
 
-// --- конфиги (легаси 230-264 + upload) ---
 const cfgOpen = ref(false); // легаси <details> - открытое состояние держится
 const fileInput = ref<HTMLInputElement | null>(null);
 const dragOver = ref(false);

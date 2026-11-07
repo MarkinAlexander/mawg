@@ -62,7 +62,7 @@ function plural(n: number, one: string, few: string, many: string): string {
   return `${n} ${many}`;
 }
 
-// --- Проверка DNS (канарейка-зонд, 63-док) ---
+// Проверка DNS (канарейка-зонд, 63-док)
 const probeRows = ref<DnsProbeRow[]>([]);
 const probeBusy = ref(false);
 // путь проверки (слово владельца: переключатель «напрямую / через MT»):
@@ -91,9 +91,8 @@ async function runDnsProbe(): Promise<void> {
   probeBusy.value = false;
 }
 
-// --- свои серверы для проверки (слово владельца: «свои списки для
-// проверок, dot, doh, udp, но чтобы пользователь чётко понимал что куда
-// он добавляет») ---
+// свои серверы для проверки (слово владельца: «свои списки для проверок,
+// dot, doh, udp, но чтобы пользователь чётко понимал что куда он добавляет»)
 interface ProbeServerDraft { name: string; kind: string; server: string }
 const customServers = ref<ProbeServerDraft[]>([]);
 const customBusy = ref(false);

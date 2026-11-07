@@ -70,7 +70,6 @@ function onResize() {
 // «document is not defined» ПОСЛЕ всех пройденных тестов, RC=1)
 let scrollGen = 0
 
-// при открытии - позиция, чистый запрос и фокус в инпут
 watch(
   () => props.open,
   async (v) => {
@@ -92,7 +91,6 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', onResize)
 })
 
-// запрос меняется - выбор к первой строке
 watch(q, () => {
   sel.value = 0
 })

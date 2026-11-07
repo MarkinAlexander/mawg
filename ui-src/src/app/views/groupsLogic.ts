@@ -75,8 +75,6 @@ export function degradedText(g: GroupView): string {
   return DEGRADED_TXT[g.degraded.split(':')[0]] || 'состояние: ' + g.degraded;
 }
 
-// --- поиск ---
-
 export interface HlSeg {
   text: string
   hit: boolean
@@ -124,9 +122,8 @@ export function showAllRules(g: GroupView, q: string): boolean {
 
 // чекер скрытия выключенного (80-док, бонус; слово владельца: два
 // РАЗДЕЛЬНЫХ тумблера - можно скрыть неактивные группы, а правила
-// оставить видимыми, чтобы их включать): фильтры отображения выключенных
-// групп и выключенных правил. Чистые функции - юнит-тесты без DOM;
-// composing с поиском - на стороне вьюхи (сначала поиск, потом скрытие).
+// оставить видимыми, чтобы их включать). Composing с поиском - на стороне
+// вьюхи (сначала поиск, потом скрытие).
 export function hideOffGroups(groups: GroupView[], hide: boolean): GroupView[] {
   return hide ? groups.filter((g) => g.enable) : groups;
 }
@@ -135,7 +132,6 @@ export function hideOffRules(rules: Rule[], hide: boolean): Rule[] {
   return hide ? rules.filter((rl) => rl.enable) : rules;
 }
 
-// счётчики для тумблеров («выключено: N» рядом с каждым)
 export function offGroupsTotal(groups: GroupView[]): number {
   return groups.reduce((n, g) => (g.enable ? n : n + 1), 0);
 }
@@ -148,8 +144,6 @@ export function offRulesTotal(groups: GroupView[]): number {
 export function normRuleValue(type: string, value: string): string {
   return type === 'subnet' && /^\d{1,3}(\.\d{1,3}){3}$/.test(value) ? value + '/32' : value;
 }
-
-// --- бейджи ---
 
 // тултип warn-бейджа дубликата (легаси warnTitle 1494); refs из
 // /mt/duplicates - {groupName, ruleType}, из диалога поиска - {group, type}
@@ -200,7 +194,7 @@ export function srcBadge(g: GroupView): { text: string; tooltip: string } | null
   return null;
 }
 
-// --- диалог дубликатов (легаси showMTDupsDlg 1752-1784) ---
+// диалог дубликатов (легаси showMTDupsDlg 1752-1784)
 
 export interface DupsEntry {
   pat: string
@@ -245,15 +239,14 @@ export function dupsEntries(
   });
 }
 
-// --- гистерезис политик (легаси polCyclesValid 1213) ---
-
+// гистерезис политик (легаси polCyclesValid 1213)
 export function cyclesValid(fail: string, restore: string): boolean {
   const okF = /^[1-9][0-9]?$/.test(fail) && +fail <= 20;
   const okR = /^[1-9][0-9]?$/.test(restore) && +restore <= 20;
   return okF && okR;
 }
 
-// --- источники группы (легаси SRC_MODE_HINTS 1411, заполнение 1379-1389) ---
+// источники группы (легаси SRC_MODE_HINTS 1411, заполнение 1379-1389)
 
 export const SRC_MODE_HINTS: Record<string, string> = {
   all: 'Любое устройство локальной сети: группа ловит весь трафик к своим доменам. Роутер в группу не ходит.',
@@ -299,7 +292,7 @@ export function parseSources(text: string): string[] {
   return text.split(/[,\n]+/).map((s) => s.trim()).filter(Boolean);
 }
 
-// --- пресеты (легаси presetApply 2240-2259) ---
+// пресеты (легаси presetApply 2240-2259)
 
 export const PRESET_TYPE_LABELS: Record<string, string> = {
   namespace: 'домен+поддомены',
@@ -309,7 +302,6 @@ export const PRESET_TYPE_LABELS: Record<string, string> = {
   regex: 'регулярки',
 };
 
-// сводка для confirm: «{title} - правил: N (домен+поддомены: X, подсети IPv4: Y)»
 export function presetRulesLine(p: { title: string; rules: { type: string }[] } | null, presetId: string): string {
   if (!p) return `Шаблон: ${presetId}`;
   const cnt: Record<string, number> = {};
@@ -318,7 +310,7 @@ export function presetRulesLine(p: { title: string; rules: { type: string }[] } 
   return `${p.title} - правил: ${(p.rules || []).length}${parts.length ? ' (' + parts.join(', ') + ')' : ''}`;
 }
 
-// --- каскады (легаси cascadeOptions 2050, fillCascadeSel 2057) ---
+// каскады (легаси cascadeOptions 2050, fillCascadeSel 2057)
 
 export interface CascadeOpt {
   ref: string
@@ -326,7 +318,6 @@ export interface CascadeOpt {
   disabled?: boolean
 }
 
-// варианты: пулы + интерфейсы (без blackhole)
 export function cascadeOptions(
   pools: { name: string }[],
   ifaces: { device: string; title?: string }[],
@@ -352,7 +343,7 @@ export function wireCascadeSel(opts: CascadeOpt[], otherValue: string, current: 
   return { opts: list, value };
 }
 
-// --- бэкапы / импорт / выгрузка файлом (легаси 1786-2010) ---
+// бэкапы / импорт / выгрузка файлом (легаси 1786-2010)
 
 export interface ImportGroupSrc {
   name: string
@@ -405,8 +396,7 @@ export function parseImportFile(fileName: string, text: string): ImportFileRes {
   return { name: fileName, groups: ok, bad };
 }
 
-// дубликаты правил внутри группы вычищаем сразу, счётчик - в отчёт
-// (легаси 1929-1940)
+// дубликаты правил внутри группы вычищаем сразу, счётчик - в отчёт (легаси 1929-1940)
 export function dedupImportRules(groups: ImportGroupSrc[]): { groups: ImportGroupSrc[]; dedup: number } {
   let dedup = 0;
   const out = groups.map((g) => {

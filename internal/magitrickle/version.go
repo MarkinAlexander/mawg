@@ -21,13 +21,12 @@ func (c *Client) GetVersion(ctx context.Context) (string, error) {
 	return out.Version, nil
 }
 
-// sourcesRevMin - первая ревизия форка с полем sources (0.8.2-rev3).
-const sourcesRevMin = 3
+const sourcesRevMin = 3 // первая ревизия с полем sources (0.8.2-rev3)
 
 var revRe = regexp.MustCompile(`rev(\d+)`)
 
-// SourcesSupported говорит, понимает ли MT поле sources: ревизии форка
-// rev3+ - да; апстрим, старые ревизии и нечитаемые строки - нет.
+// SourcesSupported: ревизии форка rev3+ (0.8.2-rev3) знают поле sources;
+// апстрим, старые ревизии и нечитаемые строки - нет.
 func SourcesSupported(version string) bool {
 	m := revRe.FindStringSubmatch(version)
 	if m == nil {
@@ -37,15 +36,12 @@ func SourcesSupported(version string) bool {
 	return err == nil && n >= sourcesRevMin
 }
 
-// dnsUpstreamsRevMin - первая ревизия форка с API
-// /api/v1/dns/upstreams: состояние каскада апстримов dns-proxy и его
-// правка без рестарта демона (0.8.2-rev8).
-const dnsUpstreamsRevMin = 8
+const dnsUpstreamsRevMin = 8 // первая ревизия с /api/v1/dns/upstreams (0.8.2-rev8)
 
-// DnsUpstreamsSupported говорит, умеет ли MT отдавать живой стейт
-// каскада апстримов и принимать правку списка (rev8+). На старых
-// ревизиях панель показывает апстримы из дискового config.yaml и честно
-// сообщает, что статус/редактор требуют обновления MT.
+// DnsUpstreamsSupported: rev8+ отдают живой стейт каскада апстримов
+// dns-proxy и принимают правку без рестарта демона; на старых ревизиях
+// панель показывает апстримы из дискового config.yaml и честно просит
+// обновления MT.
 func DnsUpstreamsSupported(version string) bool {
 	m := revRe.FindStringSubmatch(version)
 	if m == nil {
@@ -55,14 +51,11 @@ func DnsUpstreamsSupported(version string) bool {
 	return err == nil && n >= dnsUpstreamsRevMin
 }
 
-// dohUpstreamsRevMin - первая ревизия форка с зашифрованными апстримами
-// каскада: DoT tls://host:853 (RFC 7858) и DoH https://host/dns-query
-// (RFC 8484), 0.8.2-rev11.
-const dohUpstreamsRevMin = 11
+const dohUpstreamsRevMin = 11 // первая ревизия с DoT/DoH-апстримами каскада (0.8.2-rev11)
 
-// DohUpstreamsSupported говорит, понимает ли MT схемы tls:// и https://
-// в списке апстримов dns-proxy (rev11+); на старых ревизиях политика с
-// DoT/DoH-уровнями честно отказывается применяться.
+// DohUpstreamsSupported: rev11+ понимают схемы tls:// (DoT, RFC 7858) и
+// https:// (DoH, RFC 8484) в списке апстримов dns-proxy; на старых
+// ревизиях политика с DoT/DoH-уровнями честно отказывается применяться.
 func DohUpstreamsSupported(version string) bool {
 	m := revRe.FindStringSubmatch(version)
 	if m == nil {
@@ -72,13 +65,11 @@ func DohUpstreamsSupported(version string) bool {
 	return err == nil && n >= dohUpstreamsRevMin
 }
 
-// dnsZonesRevMin - первая ревизия форка с зонным DNS: таблица зон
-// dns-proxy (зона -> свои упорядоченные апстримы, fail-closed) и API
-// GET/PUT /api/v1/dns/zones (0.8.2-rev13).
-const dnsZonesRevMin = 13
+const dnsZonesRevMin = 13 // первая ревизия с зонным DNS (0.8.2-rev13)
 
-// DnsZonesSupported говорит, умеет ли MT зонный DNS (rev13+); на старых
-// ревизиях карточка «Зонные DNS» честно скрыта.
+// DnsZonesSupported: rev13+ умеют зонный DNS - таблица зон dns-proxy
+// (зона -> свои упорядоченные апстримы, fail-closed) и API
+// GET/PUT /api/v1/dns/zones; на старых ревизиях карточка «Зонные DNS» скрыта.
 func DnsZonesSupported(version string) bool {
 	m := revRe.FindStringSubmatch(version)
 	if m == nil {
@@ -88,14 +79,12 @@ func DnsZonesSupported(version string) bool {
 	return err == nil && n >= dnsZonesRevMin
 }
 
-// dnsHealthRevMin - первая ревизия форка с правкой политики зондов
-// каскада через API: health-блок в PUT /api/v1/dns/upstreams (enabled,
-// интервал/таймаут/циклы/пауза) и stagger залпа проб (0.8.2-rev14).
-const dnsHealthRevMin = 14
+const dnsHealthRevMin = 14 // первая ревизия с health-политикой зондов (0.8.2-rev14)
 
-// DnsHealthSupported говорит, умеет ли MT принимать настройку health
-// каскада (rev14+); на старых ревизиях редактор политики зондов в панели
-// честно скрыт - тело со старым форком посылать бессмысленно.
+// DnsHealthSupported: rev14+ принимают health-блок в PUT
+// /api/v1/dns/upstreams (enabled, интервал/таймаут/циклы/пауза) и stagger
+// залпа проб; на старых ревизиях редактор зондов скрыт - тело со старым
+// форком посылать бессмысленно.
 func DnsHealthSupported(version string) bool {
 	m := revRe.FindStringSubmatch(version)
 	if m == nil {

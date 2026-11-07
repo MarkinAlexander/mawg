@@ -19,7 +19,6 @@ import (
 )
 
 const (
-	// Repo - репозиторий mawg-форка MagiTrickle с релизными пакетами.
 	Repo = "MarkinAlexander/magitrickle"
 
 	latestAPI  = "https://api.github.com/repos/" + Repo + "/releases/latest"
@@ -27,8 +26,7 @@ const (
 
 	cmdTimeout = 180 * time.Second
 
-	// opkgPackage - имя пакета в базе opkg (для снятия битой записи).
-	opkgPackage = "magitrickle"
+	opkgPackage = "magitrickle" // имя в базе opkg: снятие битой записи
 )
 
 // Asset - файл релиза (magitrickle_<ver>_<PLATFORM>_<TARGET>.ipk/.apk).
@@ -38,7 +36,6 @@ type Asset struct {
 	Size int64  `json:"size"`
 }
 
-// Release - ответ GitHub API о последнем релизе форка.
 type Release struct {
 	TagName string  `json:"tag_name"`
 	Assets  []Asset `json:"assets"`
@@ -72,8 +69,7 @@ type Options struct {
 	// PackageManagerFn - подмена менеджера пакетов (тесты: apk на раннере без apk).
 	PackageManagerFn func() (mgr, ext string)
 
-	// OpkgConf - подмена пути opkg.conf (тесты); пусто - стандартный путь
-	// платформы (/opt/etc/opkg.conf на Кинетике, /etc/opkg.conf на OpenWrt).
+	// OpkgConf - подмена пути opkg.conf (тесты); пусто - путь платформы.
 	OpkgConf string
 }
 
@@ -177,7 +173,6 @@ func PickAsset(rel *Release, platform, target, ext string) (*Asset, error) {
 		rel.TagName, platform, target, assetNames(pkgs))
 }
 
-// assetCandidates - суффиксы имён ассетов в порядке приоритета.
 func assetCandidates(platform, target, ext string) []string {
 	p := "_" + platform + "_" + target + ext
 	if platform == "entware" {
@@ -199,8 +194,7 @@ func assetNames(pkgs []*Asset) string {
 	return strings.Join(names, ", ")
 }
 
-// assetPlatform переводит имя бекенда в PLATFORM ассетов: Keenetic ставится
-// из entware-таргетов (пути /opt), OpenWrt - из openwrt (/usr).
+// assetPlatform: Keenetic ставится из entware-таргетов, OpenWrt - из openwrt.
 func assetPlatform(backendName string) string {
 	if backendName == "keenetic" {
 		return "entware"
@@ -208,7 +202,6 @@ func assetPlatform(backendName string) string {
 	return "openwrt"
 }
 
-// ServicePaths - init-скрипт, сокет и бинарь MT на платформе.
 func ServicePaths(platform string) (initScript, socket, bin string) {
 	if platform == "keenetic" {
 		return "/opt/etc/init.d/S99magitrickle", "/opt/var/run/magitrickle.sock", "/opt/bin/magitrickled"
@@ -296,7 +289,6 @@ func Install(ctx context.Context, opts Options) (Result, error) {
 	var size int64
 	assetName := ""
 	if opts.LocalPackage != "" {
-		// ручная загрузка пакета через панель (без GitHub): ставим как есть
 		dest = opts.LocalPackage
 		st, serr := os.Stat(dest)
 		if serr != nil {
@@ -554,7 +546,6 @@ func opkgArchRefused(out string) bool {
 	return false
 }
 
-// defaultOpkgConf - путь opkg.conf платформы (пусто - права/файла нет).
 func defaultOpkgConf(platform string) string {
 	if platform == "keenetic" {
 		return "/opt/etc/opkg.conf"
@@ -597,8 +588,7 @@ func ensureOpkgArch(path, arch string, prio int) bool {
 	return os.WriteFile(path, []byte(out), 0o644) == nil
 }
 
-// procDir - каталог процессов для magitricklePids (подмена в тестах).
-var procDir = "/proc"
+var procDir = "/proc" // подмена в тестах
 
 // procAlive - есть ли у процесса mawg /proc (Linux-роутер - да, Windows -
 // нет); подмена в тестах через TestMain.
@@ -607,8 +597,7 @@ var procAlive = func() bool {
 	return err == nil
 }
 
-// postStartDelay - пауза перед перепроверкой живости демона (подмена в тестах).
-var postStartDelay = 3 * time.Second
+var postStartDelay = 3 * time.Second // подмена в тестах
 
 // magitricklePids - живые процессы magitrickled: pid -> путь бинаря.
 // Чужие установки ставят MT мимо пакета, гасить их нечем (init-скрипта

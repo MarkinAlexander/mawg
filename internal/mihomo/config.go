@@ -20,7 +20,7 @@ type PoolSpec = singbox.PoolSpec
 // gvisor/mixed - запасные варианты на живом брингапе.
 const tunStack = "system"
 
-// --- YAML-схема (типизированная: детерминированный порядок полей) ---
+// YAML-схема типизированная: порядок полей в конфиге детерминированный.
 
 type wsOpts struct {
 	Path    string            `yaml:"path,omitempty"`

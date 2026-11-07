@@ -12,7 +12,6 @@ const props = withDefaults(
     modelValue: string
     label?: string
     tooltip?: string
-    // ширина кнопки-свотча; в labeled-режиме контрол занимает всю ширину
     bare?: boolean
   }>(),
   { label: undefined, tooltip: undefined, bare: false },
@@ -60,7 +59,6 @@ function onHexInput(e: Event): void {
   }
 }
 
-// --- SV-квадрат и полоса оттенка: драг указателем ---
 const svEl = ref<HTMLElement | null>(null);
 const hueEl = ref<HTMLElement | null>(null);
 let dragKind: 'sv' | 'hue' | null = null;

@@ -97,7 +97,6 @@ func randomHost() string {
 	return shortPrefixes[randInt(len(shortPrefixes))] + "." + strconv.Itoa(1+randInt(10))
 }
 
-// RandomEndpoint - случайная пара адрес:порт из объединённого пула.
 func RandomEndpoint() string {
 	return randomHost() + ":" + strconv.Itoa(Ports[randInt(len(Ports))])
 }

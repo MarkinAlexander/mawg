@@ -19,7 +19,6 @@ export function durToSec(s: string): number | null {
   return Math.round(total);
 }
 
-// healthFieldValid - целое в диапазоне (поля ввода политики автопроверки)
 export function healthFieldValid(v: string, min: number, max: number): boolean {
   return /^[0-9]+$/.test(v) && +v >= min && +v <= max;
 }

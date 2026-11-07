@@ -40,7 +40,6 @@ func Detect() (*Engine, error) {
 // системной проверки зависимостей (provision).
 func (e Engine) FullCaps() bool { return e.LX || e.Extended }
 
-// DetectSourceID - источник по форме версии.
 func DetectSourceID(ver string) string {
 	switch {
 	case HasLXSuffix(ver):

@@ -1469,7 +1469,6 @@ func (e *Engine) healMagitrickle(key string, cooldown time.Duration) bool {
 // глючная сборка не должны превращаться в рестарт-лупп.
 const mtHealHourlyCap = 6
 
-// mtRestartBudget учитывает рестарты за скользящий час.
 func (e *Engine) mtRestartBudget() bool {
 	now := e.now()
 	var kept []time.Time
@@ -1503,12 +1502,11 @@ func (e *Engine) BackupMagitrickleState() {
 	}
 }
 
-// BackupFull собирает полный бэкап панели одним tar.gz: config.json
-// (настройки сервера: порт/доступ/RCI, пулы, каскады, наборы), state.json,
-// premium/free, shadow-правила, журнал, папка пулов и конфиг MT.
-// Архив пишет сама Go (archive/tar + gzip) - системный tar на роутере
-// не нужен. Вызывается вручную из панели; автокопии перед записями MT
-// остаются частичными (mt-shadow/mt-config) - они про усечение рантайма.
+// BackupFull собирает полный бэкап панели одним tar.gz: config.json,
+// state.json, premium/free, shadow-правила, журнал, папка пулов, конфиг
+// MT. Архив пишет сама Go (archive/tar + gzip) - системный tar на роутере
+// не нужен. Вызывается вручную; автокопии перед записями MT остаются
+// частичными (mt-shadow/mt-config) - они про усечение рантайма.
 func (e *Engine) BackupFull() error {
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
