@@ -140,6 +140,14 @@ export function offRulesTotal(groups: GroupView[]): number {
   return groups.reduce((n, g) => n + (g.rules || []).filter((rl) => !rl.enable).length, 0);
 }
 
+// счётчики строки группы (формат владельца «всего/включено»)
+export function enabledRulesCount(g: GroupView): number {
+  return (g.rules || []).filter((r) => r.enable).length;
+}
+export function disabledRulesCount(g: GroupView): number {
+  return (g.rules || []).length - enabledRulesCount(g);
+}
+
 // subnet без маски получает /32 (легаси 1349, 1717)
 export function normRuleValue(type: string, value: string): string {
   return type === 'subnet' && /^\d{1,3}(\.\d{1,3}){3}$/.test(value) ? value + '/32' : value;
