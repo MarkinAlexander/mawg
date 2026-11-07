@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { UiBadge, UiBanner, UiButton, UiDialog, UiHelp, UiHint, UiInput, UiOrderList, UiSelect, type UiSelectOption, UiSwitch, UiTextarea } from '../../components/ui'
+import { UiButton, UiDialog, UiHelp, UiHint, UiInput, UiSelect, type UiSelectOption, UiSwitch, UiTextarea } from '../../components/ui'
 import { useIfaces } from '../../stores/ifaces'
 import { usePoolActions } from '../../stores/pools'
 import { useStatus } from '../../stores/status'
@@ -11,23 +11,27 @@ import { useGroups } from '../../stores/groups'
 import { ApiError } from '../../api/client'
 import type { DeviceBinding, PoolMember, PoolView } from '../../api/types'
 import { fallbackHint } from './poolsLogic'
-import { addrSecretIn, hostOf } from '../secrets'
+import {
+  DEV_IP_RE, amnCountryOptionsOf, coreOptions, fbOptionsOf, groupModeOptions,
+  nodeOptionsOf, nodeShortName, premCountryOptionsOf, premNoteOf,
+  probeHostFor, probeTypeFor, probeTypeOptions, refreshSourceMsg,
+  scDraftOf, scPoolOptionsOf, showAmnCountryOf, smartCascadeBody, splitIps,
+} from './poolSettingsLogic'
 import { G } from '../glossary'
+import PoolMembersSection from './PoolMembersSection.vue'
+import PoolExcludesSection from './PoolExcludesSection.vue'
+import PoolDevicesSection from './PoolDevicesSection.vue'
+import PoolCascadeSection from './PoolCascadeSection.vue'
 
-// Диалог настроек пула (легаси openSettings/spSave 935-1043)
+// Диалог настроек пула (легаси openSettings/spSave 935-1043). Секции
+// «Состав», «Исключения», «Устройства», «Умный каскад» - отдельные
+// компоненты; чистая логика (опции, дефолты, тела запросов) - в
+// poolSettingsLogic.ts
 const props = defineProps<{ poolName: string }>();
 const open = defineModel<boolean>('open', { default: false });
 
 const { state: status } = useStatus();
 const a = usePoolActions();
-
-// имя участника скрывается, если в нём сидит хост его же endpoint или
-// просто IPv4 (слово владельца 2026-10-17: тег узла выдаёт адрес)
-function nameSecret(m: PoolMember): boolean {
-  if (!m.name) return false;
-  if (addrSecretIn(m.name)) return true;
-  return !!m.endpoint && m.name.includes(hostOf(m.endpoint));
-}
 const { push } = useToast();
 const { confirm } = useConfirm();
 const { state: ifaces } = useIfaces();
@@ -57,19 +61,6 @@ const exclNew = ref('');
 // excludes в payload, пока секцию не меняли
 const excludesDisabled = computed(() => !!status.data?.excludesDisabled);
 const exclDirty = computed(() => JSON.stringify(exclList.value) !== exclInit.value);
-function exclAdd(): void {
-  const parts = exclNew.value
-    .split(/[\s,;]+/)
-    .map((x) => x.trim())
-    .filter(Boolean);
-  for (const x of parts) {
-    if (!exclList.value.includes(x)) exclList.value.push(x);
-  }
-  exclNew.value = '';
-}
-function exclRemove(i: number): void {
-  exclList.value.splice(i, 1);
-}
 // устройства через пул (97-док): реестр связок - чипы адресов с ✕
 // (снять привязку = удалить MT-группу), добавление сразу в MT (каждая
 // операция - запись групп). Коллизия адреса - 409 сервера + подтверждение
@@ -78,11 +69,10 @@ const groups = useGroups();
 const devList = computed(() => groups.state.bindings.filter((b) => b.pool === props.poolName));
 const devNew = ref('');
 const devBusy = ref(false);
-const devIpRe = /^\d{1,3}(\.\d{1,3}){3}(\/\d{1,2})?$/;
 function devParse(): string[] {
-  const parts = devNew.value.split(/[\s,;]+/).map((x) => x.trim()).filter(Boolean);
+  const parts = splitIps(devNew.value);
   if (!parts.length) return [];
-  const bad = parts.filter((x) => !devIpRe.test(x));
+  const bad = parts.filter((x) => !DEV_IP_RE.test(x));
   if (bad.length) {
     push('Не похоже на IP/подсеть: ' + bad.join(', '), true);
     return [];
@@ -159,10 +149,6 @@ const isFree = computed(() => !!pool.value?.free);
 const engineCore = ref('');
 const mihomoAvailable = computed(() => !!status.data?.engines?.mihomo?.available);
 const showCoreSelect = computed(() => isEng.value && mihomoAvailable.value && !isFree.value);
-const coreOptions: UiSelectOption[] = [
-  { value: '', label: 'sing-box' },
-  { value: 'mihomo', label: 'mihomo (Clash.Meta)' },
-];
 const isPrem = computed(() => !!(pool.value?.premium || {}).imported);
 const sourceRowShown = computed(() =>
   !isFree.value && !isPrem.value && (isEng.value || !!pool.value?.settings.source));
@@ -176,30 +162,14 @@ const fbHintText = computed(() => fallbackHint(
   },
 ));
 
-const probeTypeOptions: UiSelectOption[] = [
-  { value: 'http', label: 'HTTP-страница 204 (надежнее, ICMP режут)' },
-  { value: 'icmp', label: 'Ping публичного IP' },
-];
-const groupModeOptions: UiSelectOption[] = [
-  { value: 'urltest', label: 'лучший пинг (авто)' },
-  { value: 'selector', label: 'ручной выбор узла' },
-  { value: 'rotate', label: 'ротация по таймеру (только рабочие)' },
-];
-const nodeOptions = computed<UiSelectOption[]>(() =>
-  engineNodes.value
-    .filter((n) => !n.off)
-    .map((n) => {
-      const nm = n.tag.includes('|') ? n.tag.slice(n.tag.indexOf('|') + 1) : n.tag;
-      return { value: n.tag, label: `${nm}${n.delay > 0 ? ` - ${n.delay} мс` : ''}` };
-    }));
+const nodeOptions = computed<UiSelectOption[]>(() => nodeOptionsOf(engineNodes.value));
 async function pickEngineNode(tag: string): Promise<void> {
   if (!tag || tag === engineNow.value || busy.value) return;
   busy.value = true;
   try {
     await a.engineSelect(props.poolName, tag);
     engineNow.value = tag;
-    const nm = tag.includes('|') ? tag.slice(tag.indexOf('|') + 1) : tag;
-    push('Узел выбран: ' + nm);
+    push('Узел выбран: ' + nodeShortName(tag));
   } catch (e) {
     push(e instanceof Error ? e.message : String(e), true);
   } finally {
@@ -216,51 +186,15 @@ async function loadEngineNodes(): Promise<void> {
     engineNow.value = '';
   }
 }
-const amnCountryOptions = computed<UiSelectOption[]>(() =>
-  (pool.value?.settings.amnezia?.countries || [])
-    .filter((c) => (c.protocols ? c.protocols.length > 0 : true))
-    .map((c) => ({
-      value: c.code,
-      label: c.code + (c.name ? ' - ' + c.name : '') + (c.protocols && c.protocols.length ? ` [${c.protocols.join('/')}]` : ''),
-    })));
-const showAmnCountry = computed(() => (pool.value?.settings.amnezia?.countries || []).length >= 2);
-const premCountryOptions = computed<UiSelectOption[]>(() =>
-  (pool.value?.premium?.countries || []).map((c) => ({ value: c.code, label: `${c.name} (${c.code})` })));
-const premNote = computed(() =>
-  pool.value?.premium?.pending
-    ? 'Смена не завершена: регистрация у gateway могла измениться - повторите выбор страны.'
-    : 'Один слот устройства. Страны не добавляются в пул конфигов.');
-const fbOptions = computed<UiSelectOption[]>(() => {
-  const opts: UiSelectOption[] = [
-    { value: 'direct', label: 'пустить трафик напрямую' },
-    { value: 'hold', label: 'держать последний конфиг' },
-  ];
-  for (const other of status.data?.pools || []) {
-    if (other.name !== props.poolName) {
-      opts.push({ value: `pool:${other.name}`, label: `перевести группы на пул ${other.name}` });
-    }
-  }
-  for (const i of ifaces.list) {
-    if (i.device === pool.value?.device || i.mode === 'managed') continue;
-    opts.push({ value: `iface:${i.device}`, label: `перевести группы на интерфейс ${i.device}${i.probe ? '' : ' (без проверки)'}` });
-  }
-  return opts;
-});
+const amnCountryOptions = computed<UiSelectOption[]>(() => amnCountryOptionsOf(pool.value?.settings.amnezia?.countries));
+const showAmnCountry = computed(() => showAmnCountryOf(pool.value?.settings.amnezia?.countries));
+const premCountryOptions = computed<UiSelectOption[]>(() => premCountryOptionsOf(pool.value?.premium?.countries || []));
+const premNote = computed(() => premNoteOf(pool.value?.premium?.pending));
+const fbOptions = computed<UiSelectOption[]>(() =>
+  fbOptionsOf(status.data?.pools || [], ifaces.list, props.poolName, pool.value?.device));
 const probeLocked = computed(() => isFree.value || isEng.value);
 
-const scPoolOptions = computed(() =>
-  (status.data?.pools || [])
-    .filter((p) => p.name !== props.poolName && !p.disabled)
-    .map((p) => ({ value: p.name, label: p.name })));
-const scModeOptions: UiSelectOption[] = [
-  { value: 'schedule', label: 'по расписанию (в определённое время)' },
-  { value: 'interval', label: 'по интервалу (раз в N часов)' },
-  { value: 'manual', label: 'только кнопкой' },
-];
-const scTrigOptions: UiSelectOption[] = [
-  { value: 'exhaust', label: 'после перебора всех конфигов пула' },
-  { value: 'fails', label: 'после отказов подряд (быстрее)' },
-];
+const scPoolOptions = computed<UiSelectOption[]>(() => scPoolOptionsOf(status.data?.pools || [], props.poolName));
 
 watch(open, (v) => {
   if (!v) return;
@@ -271,9 +205,8 @@ watch(open, (v) => {
   freeConf.value = '';
   source.value = p.settings.source || '';
   newName.value = p.name;
-  const ptype = /^https?:\/\//.test(p.settings.probeHost || '') ? 'http' : 'icmp';
-  probeType.value = isEng.value ? 'http' : ptype;
-  probeHost.value = p.settings.probeHost || (isFree.value ? 'http://1.1.1.1/' : 'http://www.gstatic.com/generate_204');
+  probeType.value = probeTypeFor(p.settings, isEng.value);
+  probeHost.value = probeHostFor(p.settings, isFree.value);
   rttOn.value = (p.settings.maxRttMs || 0) > 0;
   rtt.value = String((p.settings.maxRttMs || 0) > 0 ? p.settings.maxRttMs : 300);
   interval.value = String(p.settings.checkIntervalSec ?? 30);
@@ -291,16 +224,15 @@ watch(open, (v) => {
   exclList.value = [...(p.settings.excludes || [])];
   exclInit.value = JSON.stringify(exclList.value);
   exclNew.value = '';
-  const sc = p.settings.smartCascade;
-  const scRet = sc?.return || {};
-  scOn.value = !!(sc?.via && sc.via.length);
-  scVia.value = [...(sc?.via || [])]; // порядок = приоритет, храним как есть
-  scMode.value = scRet.mode === 'interval' || scRet.mode === 'manual' ? scRet.mode : 'schedule';
-  scTrigMode.value = sc?.triggerMode === 'fails' ? 'fails' : 'exhaust';
-  scTrigFails.value = String((sc?.triggerFails || 0) > 0 ? sc!.triggerFails! : 3);
-  scInterval.value = String((scRet.intervalH || 0) > 0 ? (scRet.intervalH as number) : 6);
-  scTimes.value = (scRet.timeOfDay && scRet.timeOfDay.length ? scRet.timeOfDay : ['03:00']).join(', ');
-  scDwell.value = String((sc?.minDwellMin || 0) > 0 ? sc!.minDwellMin! : 10);
+  const d = scDraftOf(p.settings.smartCascade);
+  scOn.value = d.on;
+  scVia.value = d.via;
+  scMode.value = d.mode;
+  scTrigMode.value = d.trigMode;
+  scTrigFails.value = d.trigFails;
+  scInterval.value = d.interval;
+  scTimes.value = d.times;
+  scDwell.value = d.dwell;
   amnCountry.value = p.settings.amnezia?.country || '';
   premCountry.value = p.premium?.country || '';
   void loadMembers();
@@ -380,12 +312,7 @@ async function doRefreshSource(): Promise<void> {
       const body: { source: string; country?: string } = { source: src };
       if (showAmnCountry.value && amnCountry.value) body.country = amnCountry.value;
       const plan = await a.refreshSource(props.poolName, body);
-      let msg = 'источник обновлён';
-      if (plan.amnezia) msg = 'ключ Amnezia обменян' + (plan.amnezia.serverCountry ? ` (локация ${plan.amnezia.serverCountry})` : '');
-      if (plan.added) msg += `: конфигов ${plan.added}`;
-      if (plan.engine && plan.engine.length) msg += `, узлов ${plan.engine.length}`;
-      if (plan.warnings && plan.warnings.length) msg += '; ' + plan.warnings.join('; ');
-      push(msg, !!(plan.warnings && plan.warnings.length));
+      push(refreshSourceMsg(plan), !!(plan.warnings && plan.warnings.length));
       open.value = false;
     } catch (e) {
       push(e instanceof Error ? e.message : String(e), true);
@@ -456,27 +383,13 @@ async function save(): Promise<void> {
   await withBusy(async () => {
     try {
       const renamed = newName.value.trim();
-      // умный каскад: полный объект при включении, пустой via = выключить
-      let smartBody: Record<string, unknown> | undefined;
-      if (!isEng.value) {
-        const known = new Set(scPoolOptions.value.map((o) => o.value));
-        const via = scVia.value.filter((v) => known.has(v)); // порядок списка = приоритет
-        smartBody = scOn.value && via.length
-          ? {
-            smartCascade: {
-              via,
-              triggerMode: scTrigMode.value,
-              ...(scTrigMode.value === 'fails' ? { triggerFails: Math.max(1, +scTrigFails.value || 3) } : {}),
-              return: {
-                mode: scMode.value,
-                ...(scMode.value === 'interval' ? { intervalH: Math.max(1, +scInterval.value || 6) } : {}),
-                ...(scMode.value === 'schedule' ? { timeOfDay: scTimes.value.split(/[,\s]+/).map((t) => t.trim()).filter(Boolean) } : {}),
-              },
-              minDwellMin: Math.max(0, +scDwell.value || 0),
-            },
-          }
-          : { smartCascade: { via: [] } };
-      }
+      const smartBody = isEng.value ? undefined : smartCascadeBody(
+        {
+          on: scOn.value, via: scVia.value, mode: scMode.value, trigMode: scTrigMode.value,
+          trigFails: scTrigFails.value, interval: scInterval.value, times: scTimes.value, dwell: scDwell.value,
+        },
+        new Set(scPoolOptions.value.map((o) => o.value)),
+      );
       await a.update(p.name, {
         probeHost: probeHost.value.trim(),
         checkIntervalSec: +interval.value,
@@ -605,41 +518,7 @@ async function save(): Promise<void> {
         <UiHint :text="premNote" />
       </template>
 
-      <template v-if="members.length">
-        <div class="sect">
-          Состав пула (протоколы и адреса)
-        </div>
-        <div class="members">
-          <div
-            v-for="(m, i) in members"
-            :key="i"
-            class="member"
-          >
-            <UiBadge :text="m.proto + (m.detail ? '/' + m.detail : '')" />
-            <!-- имя тоже может нести адрес (host|узел, файл-имя с хостом):
-                 скрываем вместе с endpoint (слово владельца 2026-10-17) -->
-            <span
-              class="mname"
-              :title="m.name"
-              :class="{ secret: nameSecret(m) }"
-            >{{ m.name }}</span>
-            <span
-              class="mend"
-              :class="{ secret: !!m.endpoint }"
-            >{{ m.endpoint || '' }}</span>
-            <UiBadge
-              v-if="m.active"
-              text="активен"
-              variant="ok"
-            />
-            <UiBadge
-              v-if="m.enabled === false"
-              text="выключен"
-              variant="muted"
-            />
-          </div>
-        </div>
-      </template>
+      <PoolMembersSection :members="members" />
 
       <UiHint
         v-if="isFree"
@@ -771,147 +650,30 @@ async function save(): Promise<void> {
         v-if="fbHintText"
         :text="fbHintText"
       />
-      <div class="sect">
-        Исключения пула<UiHelp text="Эти адреса пул не обрабатывает - трафик на них и с них идёт напрямую, мимо туннеля (свои серверы за этим пулом и т.п.). Общий список на все пулы - на странице правил." />
-      </div>
-      <UiBanner
-        v-if="excludesDisabled"
-        kind="warn"
-        text="Исключения временно выключены: разбираемся со странным ростом нагрузки на CPU"
+      <PoolExcludesSection
+        v-model:list="exclList"
+        v-model:draft="exclNew"
+        :disabled="excludesDisabled"
       />
-      <div
-        v-if="exclList.length"
-        class="excllist"
-      >
-        <span
-          v-for="(e, i) in exclList"
-          :key="e"
-          class="exclitem"
-        >
-          {{ e }}
-          <button
-            type="button"
-            class="exclrm"
-            title="убрать из списка"
-            :disabled="excludesDisabled"
-            @click="exclRemove(i)"
-          >✕</button>
-        </span>
-      </div>
-      <div class="hrow">
-        <UiInput
-          v-model="exclNew"
-          bare
-          placeholder="IP или подсеть; можно несколько через запятую/пробел"
-          :disabled="excludesDisabled"
-          @keydown.enter="exclAdd"
-        />
-        <UiButton
-          :disabled="excludesDisabled"
-          @click="exclAdd"
-        >
-          + добавить
-        </UiButton>
-      </div>
-      <div class="sect">
-        Устройства через пул<UiHelp :text="G.deviceBinding" />
-      </div>
-      <div
-        v-if="devList.length"
-        class="excllist"
-      >
-        <span
-          v-for="b in devList"
-          :key="b.name"
-          class="exclitem"
-        >
-          {{ b.ips.join(', ') }}
-          <button
-            type="button"
-            class="exclrm"
-            title="снять привязку: группа удаляется, трафик устройств пойдёт напрямую"
-            @click="devRemove(b)"
-          >✕</button>
-        </span>
-      </div>
-      <div class="hrow">
-        <UiInput
-          v-model="devNew"
-          bare
-          placeholder="IP устройства (несколько через запятую/пробел)"
-          @keydown.enter="devAdd"
-        />
-        <UiButton
-          :busy="devBusy"
-          :disabled="devBusy"
-          @click="devAdd"
-        >
-          + привязать
-        </UiButton>
-      </div>
-      <UiHint text="Весь трафик перечисленных адресов уйдёт в этот пул целиком (группа «Устройство: …» в списке групп). Один адрес может быть привязан только к одному пулу; адрес из глобальных исключений привязкой не оживить. Привязки применяются сразу - «Сохранить» для них нажимать не нужно (оно для остальных настроек)." />
-      <template v-if="!isEng">
-        <div class="sect">
-          Умный каскад
-        </div>
-        <div class="hrow">
-          <UiSwitch
-            v-model="scOn"
-            label="спасать пул через запасной при блокировке"
-            tooltip="адрес VPN сохраняется: трафик пула идёт внутри туннеля запасного"
-          />
-          <UiHelp :text="G.smartCascade" />
-        </div>
-        <template v-if="scOn">
-          <div class="hrow">
-            <UiSelect
-              v-model="scTrigMode"
-              :options="scTrigOptions"
-              label="Когда включать каскад"
-            />
-          </div>
-          <UiInput
-            v-if="scTrigMode === 'fails'"
-            v-model="scTrigFails"
-            type="number"
-            label="Отказов подряд до каскада"
-            tooltip="после N отказов активного конфига mawg сразу пробует ЭТОТ ЖЕ конфиг через запасной пул; не ожил - следующий конфиг напрямую, и так по кругу"
-          />
-          <UiOrderList
-            v-model="scVia"
-            :options="scPoolOptions"
-            label="добавить запасной пул"
-            empty-hint="Запасных нет: при блокировке пул не сможет уйти в каскад - добавьте хотя бы один пул."
-            order-hint="Первый живой сверху становится запасным путём; порядок списка = приоритет."
-          />
-          <div class="hrow">
-            <UiSelect
-              v-model="scMode"
-              :options="scModeOptions"
-              label="Когда пробовать прямой путь обратно"
-            />
-          </div>
-          <UiInput
-            v-if="scMode === 'interval'"
-            v-model="scInterval"
-            type="number"
-            label="Интервал проверки, часов"
-          />
-          <UiInput
-            v-if="scMode === 'schedule'"
-            v-model="scTimes"
-            label="Время проверки, ЧЧ:ММ через запятую"
-            tooltip="например: 03:00, 05:30 - в эти моменты панель пробует прямой путь и снимает каскад, если он ожил"
-          />
-          <UiInput
-            v-model="scDwell"
-            type="number"
-            label="Антифлап: минут в состоянии до авто-возврата"
-            tooltip="0 = 10 минут; кнопка «проверить сейчас» гейт минует"
-          />
-          <UiHint text="При срабатывании создаётся выключенная служебная группа «Служебная: этот пул через запасной». Пробы возврата идут в коротком окне без её правила: на секунды трафик пробует прямой путь." />
-        </template>
-      </template>
+      <PoolDevicesSection
+        v-model:draft="devNew"
+        :list="devList"
+        :busy="devBusy"
+        @add="devAdd"
+        @remove="devRemove"
+      />
+      <PoolCascadeSection
+        v-if="!isEng"
+        v-model:on="scOn"
+        v-model:via="scVia"
+        v-model:trig-mode="scTrigMode"
+        v-model:trig-fails="scTrigFails"
+        v-model:mode="scMode"
+        v-model:interval="scInterval"
+        v-model:times="scTimes"
+        v-model:dwell="scDwell"
+        :pool-options="scPoolOptions"
+      />
     </template>
     <template #footer>
       <UiButton @click="open = false">
@@ -969,54 +731,5 @@ async function save(): Promise<void> {
   word-break: break-all;
   max-height: 220px;
   overflow: auto;
-}
-.members {
-  display: grid;
-  gap: 4px;
-  max-height: 180px;
-  overflow: auto;
-  font-size: 12px;
-}
-.member {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-.mname {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.mend {
-  color: var(--dim);
-  font-size: 11px;
-}
-.excllist {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.exclitem {
-  display: inline-flex;
-  gap: 6px;
-  align-items: center;
-  font-size: 12px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 3px 8px;
-}
-.exclrm {
-  background: none;
-  border: 0;
-  color: var(--dim);
-  cursor: pointer;
-  padding: 0 2px;
-  font-size: 12px;
-}
-.exclrm:hover {
-  color: var(--err);
 }
 </style>

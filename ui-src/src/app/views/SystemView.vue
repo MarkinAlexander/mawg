@@ -1,89 +1,38 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { UiBadge, UiBanner, UiButton, UiCard, UiDialog, UiHelp, UiHint, UiIcon, UiInput, UiSelect, type UiSelectOption, UiSwitch, UiTable, type UiTableColumn } from '../../components/ui'
-import { useEvents } from '../../stores/events'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { UiBadge, UiButton, UiCard, UiDialog, UiHint, UiIcon, UiTable } from '../../components/ui'
 import { useStatus } from '../../stores/status'
 import { useSystem } from '../../stores/system'
 import { useConfirm } from '../../stores/confirm'
 import { useToast } from '../../stores/toast'
-import type { AppEvent, CoreDownloadInfo, CoreInfo, EngineDiagInfo, SystemItem } from '../../api/types'
-import { useSecrets } from '../secrets'
+import type { SystemItem } from '../../api/types'
 import LxInstallDialog from './LxInstallDialog.vue'
-import CoreUploadDialog from './CoreUploadDialog.vue'
+import SystemCores from './SystemCores.vue'
+import SystemDiag from './SystemDiag.vue'
+import SystemJournal from './SystemJournal.vue'
+import { SYSTEM_COLUMNS, busyTextOf, sourceLabel } from './systemLogic'
 
-// Журнал событий (легаси refreshLog): место - вкладка «Система» (44-док §6).
-// Опрос таб-локальный: start/stop на монтировании вьюхи, интервал 15с как легаси.
-const { state, start, stop } = useEvents();
-// приватный режим: строка журнала размыта, только если в ней адрес из конфигов
-const secrets = useSecrets();
+// Вкладка «Система»: таблица зависимостей (проверка/установка) и рестарт
+// MT - здесь; ядра VPN с режимом движка - SystemCores, диагностика
+// движков - SystemDiag, журнал событий - SystemJournal, прямые ссылки на
+// бинари - SystemDownloads, чистые функции - systemLogic.ts.
+const sys = useSystem();
 
 // системная проверка - на этой же вкладке раз в 60с, форс - по кнопке
 // (легаси refreshSystem)
 onMounted(() => {
-  start();
   void sys.start(60000);
 });
 onBeforeUnmount(() => {
-  stop();
   sys.stop();
 });
 
-// UiCard - контролируемый: без v-model свёртывание не работает
-const collapsed = ref(false);
-
-// Ф5 §7 «страница событий с фильтрами»: тип события из данных, не
-// захардкожен; фильтр - по всему списку, хвост 80 - уже отфильтрованного.
-const evKind = ref('');
-const evQuery = ref('');
-// человеческие лейблы типов событий (ключи kind - API, не трогаем)
-const KIND_RU: Record<string, string> = {
-  rotate: 'ротация', applied: 'применено', fallback: 'фоллбек',
-  magitrickle: 'MagiTrickle', install: 'установка', policy: 'политика',
-  sources: 'источник', probe: 'проверка', subupdate: 'подписка',
-  restore: 'восстановление', 'smart-cascade': 'умный каскад',
-  cascade: 'каскад', slots: 'слоты', warp: 'WARP',
-};
-const kindRu = (k: string) => KIND_RU[k] || k;
-const evKindOptions = computed<UiSelectOption[]>(() => [
-  { value: '', label: 'все события' },
-  ...[...new Set(state.list.map((e) => e.kind))].sort().map((k) => ({ value: k, label: kindRu(k) })),
-]);
-const evFiltered = computed<AppEvent[]>(() => {
-  const q = evQuery.value.trim().toLowerCase();
-  return state.list
-    .filter(
-      (e) =>
-        (!evKind.value || e.kind === evKind.value) &&
-        (!q || e.message.toLowerCase().includes(q) || (e.pool || '').toLowerCase().includes(q)),
-    )
-    .slice(-80)
-    .reverse();
-});
-const evFiltering = computed(() => !!evKind.value || !!evQuery.value.trim());
-
-function fmtTime(iso: string): string {
-  return iso ? new Date(iso).toLocaleTimeString('ru-RU') : '';
-}
-
-const sys = useSystem();
-const { state: status, refresh: refreshStatus } = useStatus();
+const { state: status } = useStatus();
 const { confirm } = useConfirm();
 const { push } = useToast();
 
 const items = computed<SystemItem[]>(() => sys.state.data?.items ?? []);
 
-// источник сборки ядра sing-box (Item.Source) - бейдж рядом с версией:
-// владелец путается, чьё ядро стоит (92-док)
-const sourceLabels: Record<string, string> = {
-  extended: 'extended', lx: 'lx', 'lx-own': 'lx-own', upstream: 'апстрим',
-};
-const sourceLabel = (s: string): string => sourceLabels[s] || s;
-const columns: UiTableColumn[] = [
-  { key: 'title', label: 'компонент' },
-  { key: 'version', label: 'версия' },
-  { key: 'state', label: 'состояние' },
-  { key: 'action', label: '' },
-];
 const refreshing = ref(false);
 async function refreshSystem(): Promise<void> {
   refreshing.value = true;
@@ -127,13 +76,7 @@ const lxOpen = ref(false);
 // было нажать второй раз (слово владельца 2026-10-18). Держим диалог хода
 // со спиннером до результата, кнопки блокируем.
 const busyId = ref('');
-const busyText = computed(() => {
-  if (busyId.value === 'magitrickle')
-    return 'Качаем релиз форка из GitHub и обновляем штатным менеджером пакетов; конфиг и группы сохраняются, служба MagiTrickle перезапустится. Это занимает до пары минут.';
-  if (busyId.value === 'mihomo')
-    return 'Качаем релиз mihomo (Clash.Meta) из GitHub, проверяем сумму и тест-запуск. Распакованное ядро ~54 МБ - это до пары минут.';
-  return 'Идёт установка. Это может занять до пары минут - не закрывайте панель.';
-});
+const busyText = computed(() => busyTextOf(busyId.value));
 
 async function openInstall(item: SystemItem): Promise<void> {
   if (busyId.value) return;
@@ -181,175 +124,6 @@ const resultOpen = computed({
     if (result.value) result.value.open = v;
   },
 });
-
-const sbMode = ref('own');
-watch(
-  () => status.data?.engine?.mode,
-  (m) => {
-    if (m) sbMode.value = m;
-  },
-  { immediate: true },
-);
-const engine = computed(() => status.data?.engine);
-const engineInfo = computed(() => {
-  const eng = engine.value;
-  if (!eng || !eng.available) return 'движок не найден';
-  // честные состояния (слово владельца 2026-10-17): «не запущено» -
-  // процесса нет; «запущено, но не отвечает» - API молчит
-  const state = !eng.running
-    ? 'ядро не запущено'
-    : eng.api === false
-      ? 'ядро запущено, но не отвечает'
-      : 'ядро работает';
-  const parts = [state];
-  if (eng.mode === 'shared' && eng.fragment) parts.push(eng.fragment);
-  return parts.join(' | ');
-});
-const sbApplying = ref(false);
-const sbModeOptions: UiSelectOption[] = [
-  { value: 'own', label: 'свой экземпляр' },
-  { value: 'shared', label: 'общее ядро (-C merge)' },
-];
-async function applySbMode(): Promise<void> {
-  const mode = sbMode.value;
-  const ok = await confirm({
-    title: 'Сменить режим движка',
-    text: mode === 'shared'
-      ? 'Пулы mawg переедут в общий конфиг sing-box (mawg-pools.json в каталоге основного ядра). Ваш sing-box будет перезапущен - соединения коротко прервутся.'
-      : 'Вернуть отдельный экземпляр движка mawg. Ваш sing-box будет перезапущен без фрагмента mawg.',
-    okLabel: 'Сменить',
-  });
-  if (!ok) {
-    sbMode.value = engine.value?.mode || 'own';
-    return;
-  }
-  sbApplying.value = true;
-  try {
-    const r = await sys.setSingboxMode(mode);
-    push(r.warning ? 'Режим сменён, но: ' + r.warning : 'Режим движка: ' + (r.mode || mode), !!r.warning);
-  } catch (e) {
-    push(e instanceof Error ? e.message : String(e), true);
-  }
-  sbApplying.value = false;
-  setTimeout(() => void refreshStatus(), 500);
-}
-const sbCacheWarn = computed(() => {
-  const eng = engine.value;
-  return !!eng && eng.mode === 'shared' && !!eng.cacheFile && !eng.cacheFile.startsWith('/tmp');
-});
-const SB_CACHE_TEXT = 'Кэш ядра пишется на флешку - постоянный износ ~170МБ/сутки. Выключить совсем: ничего не пишется, выборы сбрасываются при рестарте ядра. В /tmp: не пишется на флешку, выборы живут до ребута роутера.';
-const coreBusy = ref('');
-async function corePower(c: CoreInfo, action: 'start' | 'stop' | 'enable' | 'disable'): Promise<void> {
-  if (action === 'stop') {
-    const ok = await confirm({
-      title: 'Остановить ' + c.title,
-      text: 'Ядро выключается совсем: движковые пулы (tun) перестанут работать, пока вы не включите его обратно. Нативные пулы не затрагиваются.',
-      okLabel: 'Остановить',
-    });
-    if (!ok) return;
-  }
-  coreBusy.value = action;
-  try {
-    await sys.corePower(c.id, action);
-    push(action === 'start' ? 'Ядро включено, конфиг применён' : action === 'stop' ? 'Ядро остановлено' : 'Автозагрузка сервиса sing-box: ' + (action === 'enable' ? 'включена' : 'выключена'));
-    void refreshStatus();
-  } catch (e) {
-    push(e instanceof Error ? e.message : String(e), true);
-  }
-  coreBusy.value = '';
-}
-async function coreUninstall(c: CoreInfo): Promise<void> {
-  const ok = await confirm({
-    title: 'Удалить ' + c.title,
-    text: 'Ядро удаляется полностью (маркер mawg). Если при установке сохранялся ваш прежний бинарь - он вернётся на место. Движковые пулы этого ядра перестанут работать, пока ядро не установить снова.',
-    okLabel: 'Удалить',
-  });
-  if (!ok) return;
-  coreBusy.value = 'uninstall';
-  try {
-    await sys.corePower(c.id, 'uninstall');
-    push('Ядро удалено');
-    void refreshStatus();
-    void sys.refresh();
-  } catch (e) {
-    push(e instanceof Error ? e.message : String(e), true);
-  }
-  coreBusy.value = '';
-}
-// установка ядра из релиза (88-док, mihomo): confirm -> busy-диалог -> результат
-async function coreInstall(c: CoreInfo): Promise<void> {
-  if (busyId.value) return;
-  const ok = await confirm({
-    title: 'Установить ' + c.title,
-    text: 'Ядро скачивается из релиза на GitHub (gz-бинарь, до пары минут), проверяется контрольная сумма и тест-запуск. Если в системе уже стоит чужой mihomo - он будет сохранён рядом как .pre-mawg.',
-    okLabel: 'Установить',
-  });
-  if (!ok) return;
-  await runInstall({ id: c.id });
-}
-const coreStateBadge = (c: CoreInfo): { text: string; variant: 'ok' | 'err' | 'warn' } => {
-  if (c.disabled) return { text: 'выключен', variant: 'err' };
-  return c.running ? { text: 'работает', variant: 'ok' } : { text: 'остановлен', variant: 'warn' };
-};
-
-// заливка/скачивание бинарей движков (112-док 4.1): две кнопки на всё
-const uploadOpen = ref(false);
-
-const dlOpen = ref(false);
-const dlBusy = ref(false);
-const dlSingbox = ref<CoreDownloadInfo[]>([]);
-const dlSingboxAlt = ref<CoreDownloadInfo[]>([]);
-const dlMihomo = ref<CoreDownloadInfo[]>([]);
-const dlMt = ref<CoreDownloadInfo[]>([]);
-const dlArch = ref('');
-async function openDownloads(): Promise<void> {
-  dlOpen.value = true;
-  dlBusy.value = true;
-  const r = await sys.coreDownloads();
-  if (r) {
-    dlArch.value = r.arch;
-    dlSingbox.value = r.singbox || [];
-    dlSingboxAlt.value = r.singboxAlt || [];
-    dlMihomo.value = r.mihomo || [];
-    dlMt.value = r.magitrickle || [];
-  }
-  dlBusy.value = false;
-}
-const dlMb = (b?: number) => (b ? (b / 1048576).toFixed(0) + ' МБ' : '');
-
-// диагностика движков (112-док 3.7, слово владельца 04.11)
-const diagOpen = ref(false);
-const diagBusy = ref(false);
-const diagEngines = ref<EngineDiagInfo[]>([]);
-const diagMt = ref<EngineDiagInfo | null>(null);
-async function loadDiag(): Promise<void> {
-  diagOpen.value = !diagOpen.value;
-  if (!diagOpen.value) return;
-  diagBusy.value = true;
-  const r = await sys.enginesDiag();
-  if (r) {
-    diagEngines.value = r.engines || [];
-    diagMt.value = r.mt;
-  }
-  diagBusy.value = false;
-}
-const fmtStarted = (iso?: string) => (iso ? new Date(iso).toLocaleTimeString('ru-RU') : '');
-
-async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
-  const texts = {
-    off: ['Выключить кэш ядра', 'Кэш будет выключен (experimental.cache_file.enabled = false): запись на флешку прекратится совсем. Ваш sing-box будет перезапущен - соединения коротко прервутся. Запомненные выборы селекторов сбросятся - urltest-пулы восстановятся сами.', 'Выключить'],
-    tmp: ['Перенести кэш ядра в /tmp', 'cache_file переедет в /tmp/sing-box/cache.db: на флешку писаться перестанет, выборы живут до ребута роутера. Ваш sing-box будет перезапущен - соединения коротко прервутся.', 'Перенести'],
-  }[mode];
-  const ok = await confirm({ title: texts[0], text: texts[1], okLabel: texts[2] });
-  if (!ok) return;
-  try {
-    await sys.setSingboxCache(mode);
-    push(mode === 'off' ? 'Кэш ядра выключен - запись на флешку прекращена' : 'Кэш перенесён в /tmp');
-    void refreshStatus();
-  } catch (e) {
-    push(e instanceof Error ? e.message : String(e), true);
-  }
-}
 </script>
 
 <template>
@@ -382,7 +156,7 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
       </UiButton>
     </template>
     <UiTable
-      :columns="columns"
+      :columns="SYSTEM_COLUMNS"
       :rows="items"
       :row-key="(r: SystemItem) => r.id"
     >
@@ -426,366 +200,14 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
       </template>
     </UiTable>
 
-    <div class="sect coresect">
-      <span>Ядра VPN<UiHelp text="Жизненный цикл туннельных движков: включить/выключить совсем, автозагрузка сервиса, удаление. Ядра: sing-box и mihomo (Clash.Meta) - второе ядро для движковых пулов, ставится кнопкой «Установить». Остановка выключает ядро целиком: его движковые пулы перестают работать, нативные (WireGuard-слоты) и пулы другого ядра не затрагиваются." /></span>
-      <!-- две кнопки на всё (слово владельца 04.11): заменить ядро sing-box/
-           mihomo или пакет MT можно и без GitHub - скачать где есть доступ,
-           залить здесь, панель сама поймёт что это -->
-      <span class="coresect-btns">
-        <UiButton
-          tooltip="прямые ссылки на файлы под архитектуру этого роутера: sing-box, mihomo, пакет MagiTrickle - если с роутера GitHub недоступен, скачайте где есть доступ"
-          @click="openDownloads"
-        >
-          Скачать
-        </UiButton>
-        <UiButton
-          variant="primary"
-          tooltip="залить скачанный бинарь sing-box/mihomo или пакет MagiTrickle (.ipk/.apk): панель сама распознает файл, покажет что нашла и заменит по подтверждению"
-          @click="uploadOpen = true"
-        >
-          Загрузить
-        </UiButton>
-      </span>
-    </div>
-    <div
-      v-for="c in sys.cores.list"
-      :key="c.id"
-      class="corerow"
-    >
-      <div class="coreline">
-        <b>{{ c.title }}</b>
-        <template v-if="c.installed">
-          <UiBadge
-            :text="c.version || '?'"
-            variant="info"
-          />
-          <UiBadge
-            v-if="c.lx"
-            text="lx"
-            variant="ok"
-          />
-          <UiBadge
-            v-if="c.extended"
-            text="extended"
-            variant="ok"
-            tooltip="форк sing-box-extended (shtorm-7): xhttp, vless-шифрование и AWG доступны"
-          />
-          <UiBadge
-            :text="c.mode || '?'"
-            variant="muted"
-          />
-          <UiBadge
-            :text="coreStateBadge(c).text"
-            :variant="coreStateBadge(c).variant"
-          />
-          <UiBadge
-            v-if="c.mode === 'shared'"
-            :text="c.autostart ? 'автозагрузка вкл' : 'автозагрузка выкл'"
-            :variant="c.autostart ? 'ok' : 'warn'"
-            tooltip="автозапуск сервиса sing-box при загрузке роутера"
-          />
-          <span
-            v-if="c.autostartNote"
-            class="corenote"
-          >{{ c.autostartNote }}</span>
-        </template>
-        <UiBadge
-          v-else
-          text="не установлен"
-          variant="muted"
-        />
-      </div>
-      <div
-        v-if="c.lastError && !c.running"
-        class="coreerr"
-      >
-        не запущен: {{ c.lastError }}
-      </div>
-      <div
-        v-if="c.installed"
-        class="coreact"
-      >
-        <UiButton
-          v-if="c.caps.start"
-          variant="primary"
-          :busy="coreBusy === 'start'"
-          @click="corePower(c, 'start')"
-        >
-          Запустить
-        </UiButton>
-        <UiButton
-          v-if="c.caps.stop"
-          :busy="coreBusy === 'stop'"
-          @click="corePower(c, 'stop')"
-        >
-          Остановить
-        </UiButton>
-        <UiSwitch
-          v-if="c.mode === 'shared'"
-          :model-value="c.autostart"
-          :busy="coreBusy === 'enable' || coreBusy === 'disable'"
-          label="автозагрузка"
-          @update:model-value="(v: boolean) => corePower(c, v ? 'enable' : 'disable')"
-        />
-        <UiButton
-          v-if="c.caps.uninstall"
-          variant="danger"
-          :busy="coreBusy === 'uninstall'"
-          @click="coreUninstall(c)"
-        >
-          Удалить ядро
-        </UiButton>
-      </div>
-      <div
-        v-else-if="c.caps.install"
-        class="coreact"
-      >
-        <UiButton
-          variant="primary"
-          :busy="busyId === c.id"
-          @click="coreInstall(c)"
-        >
-          Установить
-        </UiButton>
-      </div>
-      <UiHint
-        v-if="c.note"
-        :text="c.note"
-      />
-    </div>
-    <UiHint text="«Свой экземпляр» - панель держит движок сама; «Общее ядро» - пулы живут внутри вашего sing-box, обновляются без разрыва соединений." />
-    <UiSelect
-      v-model="sbMode"
-      :options="sbModeOptions"
-      label="режим движка"
-    >
-      <template #action>
-        <UiButton
-          variant="primary"
-          :busy="sbApplying"
-          @click="applySbMode"
-        >
-          применить
-        </UiButton>
-      </template>
-    </UiSelect>
-    <UiHint :text="engineInfo" />
-    <UiBanner
-      v-if="sbCacheWarn"
-      kind="warn"
-      :text="SB_CACHE_TEXT"
-    >
-      <UiButton
-        variant="primary"
-        @click="cacheAct('off')"
-      >
-        выключить кэш
-      </UiButton>
-      <UiButton @click="cacheAct('tmp')">
-        в /tmp
-      </UiButton>
-    </UiBanner>
-
-    <div class="sect">
-      Диагностика движков<UiHelp text="Живость, версии, причины отказов и хвосты логов sing-box/mihomo/MagiTrickle (112-док 3.7): когда «движок не запускается», причина видна здесь, без SSH." />
-    </div>
-    <div class="diagrow">
-      <UiButton
-        :busy="diagBusy"
-        @click="loadDiag"
-      >
-        {{ diagOpen ? 'скрыть' : 'показать состояние' }}
-      </UiButton>
-      <a
-        class="dlbund"
-        href="/api/v1/system/diagnostics"
-        download="mawg-diagnostics.txt"
-      >собрать диагностику (текстовый файл: версии, конфиги без секретов, логи, события)</a>
-    </div>
-    <div v-if="diagOpen">
-      <div
-        v-for="d in diagEngines"
-        :key="d.id"
-        class="diageng"
-      >
-        <b>{{ d.id === 'singbox' ? 'sing-box' : d.id }}</b>
-        <UiBadge
-          :text="d.running ? 'работает' : 'не запущен'"
-          :variant="d.running ? 'ok' : 'err'"
-        />
-        <span
-          v-if="d.version"
-          class="corenote"
-        >{{ d.version }}</span>
-        <span
-          v-if="d.pid"
-          class="corenote"
-        >pid {{ d.pid }} c {{ fmtStarted(d.startedAt) }}</span>
-        <div
-          v-if="d.lastError"
-          class="coreerr"
-        >
-          {{ d.lastError }}
-        </div>
-        <div
-          v-if="d.note"
-          class="corenote"
-        >
-          {{ d.note }}
-        </div>
-        <div
-          v-if="d.logTail && d.logTail.length"
-          class="diaglog"
-        >
-          <div class="corenote">
-            лог: {{ d.logPath }}
-          </div>
-          <div
-            v-for="(l, i) in d.logTail"
-            :key="i"
-          >
-            {{ l }}
-          </div>
-        </div>
-      </div>
-      <div
-        v-if="diagMt"
-        class="diageng"
-      >
-        <b>MagiTrickle</b>
-        <span
-          v-if="diagMt.version"
-          class="corenote"
-        >{{ diagMt.version }}</span>
-        <span
-          v-else
-          class="corenote"
-        >{{ diagMt.note }}</span>
-        <div
-          v-if="diagMt.logTail && diagMt.logTail.length"
-          class="diaglog"
-        >
-          <div class="corenote">
-            лог: {{ diagMt.logPath }}
-          </div>
-          <div
-            v-for="(l, i) in diagMt.logTail"
-            :key="i"
-          >
-            {{ l }}
-          </div>
-        </div>
-      </div>
-    </div>
+    <SystemCores
+      :busy-id="busyId"
+      :run-install="runInstall"
+    />
+    <SystemDiag />
   </UiCard>
 
   <LxInstallDialog v-model:open="lxOpen" />
-  <CoreUploadDialog v-model:open="uploadOpen" />
-
-  <UiDialog
-    v-model:open="dlOpen"
-    title="Скачать бинари движков"
-    width="520px"
-  >
-    <div class="lxtext">
-      Файлы под этот роутер{{ dlArch ? ` (архитектура ${dlArch})` : '' }} - если с роутера
-      GitHub недоступен, скачайте где есть доступ (точные имена файлов - под ссылками,
-      их же можно найти на GitHub вручную), затем залейте кнопкой «Загрузить».
-      Бинари sing-box/mihomo - распаковать на компьютере (tar.gz / gz), пакет MT - как есть.
-    </div>
-    <div v-if="dlBusy">
-      ссылки уточняются (GitHub)...
-    </div>
-    <template v-else>
-      <div class="dlhead">
-        sing-box
-      </div>
-      <div
-        v-for="d in dlSingbox"
-        :key="d.label"
-        class="dllink"
-      >
-        <b>{{ d.label }}</b>
-        <a
-          v-if="d.plain"
-          :href="d.plain.url"
-          target="_blank"
-          rel="noopener"
-        >скачать ({{ dlMb(d.plain.size) }})</a>
-        <a
-          v-if="d.compact"
-          :href="d.compact.url"
-          target="_blank"
-          rel="noopener"
-        >сжатый upx ({{ dlMb(d.compact.size) }})</a>
-        <span class="corenote mono">{{ d.plain?.asset }}</span>
-      </div>
-      <details
-        v-if="dlSingboxAlt.length"
-        class="dlalt"
-      >
-        <summary>другие сборки sing-box</summary>
-        <div
-          v-for="d in dlSingboxAlt"
-          :key="d.label"
-          class="dllink"
-        >
-          <span>{{ d.label }}</span>
-          <a
-            v-if="d.plain"
-            :href="d.plain.url"
-            target="_blank"
-            rel="noopener"
-          >скачать ({{ dlMb(d.plain.size) }})</a>
-          <a
-            v-if="d.compact"
-            :href="d.compact.url"
-            target="_blank"
-            rel="noopener"
-          >сжатый ({{ dlMb(d.compact.size) }})</a>
-          <span class="corenote mono">{{ d.plain?.asset }}</span>
-        </div>
-      </details>
-      <div class="dlhead">
-        mihomo
-      </div>
-      <div
-        v-for="d in dlMihomo"
-        :key="d.label"
-        class="dllink"
-      >
-        <b>{{ d.label }}</b>
-        <a
-          v-if="d.plain"
-          :href="d.plain.url"
-          target="_blank"
-          rel="noopener"
-        >скачать ({{ dlMb(d.plain.size) }})</a>
-        <span class="corenote mono">{{ d.plain?.asset }}</span>
-      </div>
-      <div class="dlhead">
-        MagiTrickle
-      </div>
-      <div
-        v-for="d in dlMt"
-        :key="d.label"
-        class="dllink"
-      >
-        <b>{{ d.label }}</b>
-        <a
-          v-if="d.plain"
-          :href="d.plain.url"
-          target="_blank"
-          rel="noopener"
-        >скачать ({{ dlMb(d.plain.size) }})</a>
-        <span class="corenote mono">{{ d.plain?.asset }}</span>
-      </div>
-      <UiHint
-        v-if="!dlMt.length"
-        text="пакет MagiTrickle под этот роутер не определился - обновляйте MT пунктом в таблице зависимостей выше"
-      />
-    </template>
-  </UiDialog>
 
   <UiDialog
     :open="!!busyId"
@@ -823,48 +245,7 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
     </template>
   </UiDialog>
 
-  <UiCard
-    id="card-events"
-    v-model:collapsed="collapsed"
-    title="Журнал событий"
-    subtitle="последние 80 записей, новые сверху"
-    collapsible
-  >
-    <div class="evfilters">
-      <UiSelect
-        v-model="evKind"
-        :options="evKindOptions"
-        label="Тип события"
-      />
-      <UiInput
-        v-model="evQuery"
-        label="Поиск"
-        placeholder="по пулу или тексту"
-      />
-    </div>
-    <div
-      v-if="evFiltering"
-      class="evcount"
-    >
-      показано {{ evFiltered.length }} из {{ state.list.length }}
-    </div>
-    <div class="log">
-      <!-- secret по содержимому: строки с адресами из конфигов; прочие
-           события видны (слово владельца 2026-10-15) -->
-      <div
-        v-for="(ev, i) in evFiltered"
-        :key="i"
-        :class="{ secret: secrets.line(ev.message) }"
-      >
-        [{{ fmtTime(ev.time) }}] {{ ev.pool }}:
-        <span
-          :class="'k-' + ev.kind"
-          :title="ev.kind"
-        >{{ kindRu(ev.kind) }}</span>
-        {{ ev.message }}
-      </div>
-    </div>
-  </UiCard>
+  <SystemJournal />
 </template>
 
 <style scoped>
@@ -883,139 +264,6 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
 .hrow > :first-child {
   flex: 1;
   min-width: 0;
-}
-.evfilters {
-  display: flex;
-  gap: 10px;
-  align-items: flex-end;
-  margin-bottom: 8px;
-}
-.evfilters > :first-child {
-  flex: 0 1 240px;
-}
-.evfilters > :last-child {
-  flex: 1;
-}
-.evcount {
-  color: var(--dim);
-  font-size: 12px;
-  margin-bottom: 6px;
-}
-.sect {
-  font-weight: 600;
-  font-size: 13px;
-  margin: 16px 0 6px;
-}
-.corerow {
-  padding: 8px 0 4px;
-  border-bottom: 1px dashed var(--border);
-}
-.corerow:last-of-type {
-  border-bottom: none;
-}
-.coreline {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-}
-.coreline > b {
-  margin-right: 4px;
-}
-.corenote {
-  color: var(--dim);
-  font-size: 12px;
-}
-.coreerr {
-  color: var(--warn, #b8860b);
-  font-size: 12px;
-  margin-top: 4px;
-  word-break: break-word;
-}
-.coresect {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-.coresect-btns {
-  display: flex;
-  gap: 8px;
-}
-.dlhead {
-  font-weight: 600;
-  font-size: 12.5px;
-  margin: 10px 0 2px;
-}
-.mono {
-  font-family: ui-monospace, monospace;
-  word-break: break-all;
-}
-.diagrow {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  margin: 6px 0;
-}
-.dlbund {
-  color: var(--dim);
-  font-size: 12px;
-}
-.diageng {
-  margin: 6px 0 10px;
-}
-.diageng > b {
-  margin-right: 6px;
-}
-.diaglog {
-  font: 11.5px/1.5 ui-monospace, monospace;
-  color: var(--dim);
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 6px 8px;
-  margin-top: 4px;
-  max-height: 160px;
-  overflow: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-.dllink {
-  margin: 6px 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: baseline;
-}
-.dllink > a {
-  font-size: 12px;
-}
-.dllink > b {
-  font-size: 12.5px;
-}
-.dlalt,
-.dlmt {
-  margin-top: 10px;
-}
-.dlalt summary,
-.dlmt summary {
-  color: var(--dim);
-  font-size: 11.5px;
-  cursor: pointer;
-}
-.lxtext {
-  color: var(--dim);
-  font-size: 12px;
-  line-height: 1.5;
-  margin-bottom: 10px;
-}
-.coreact {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  align-items: center;
-  margin-top: 6px;
 }
 .ver {
   color: var(--dim);
@@ -1040,41 +288,6 @@ async function cacheAct(mode: 'off' | 'tmp'): Promise<void> {
   word-break: break-word;
   max-height: 40vh;
   overflow: auto;
-}
-</style>
-
-<style scoped>
-.hrow {
-  display: flex;
-  gap: 6px;
-  align-items: flex-start;
-  margin-top: 4px;
-}
-.hrow > :first-child {
-  flex: 1;
-  min-width: 0;
-}
-/* легаси #log; классы k-* scoped - с легаси-глобальными не пересекаются */
-.log {
-  font: 11.5px/1.5 ui-monospace, monospace;
-  color: var(--dim);
-  max-height: 220px;
-  overflow: auto;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 8px;
-}
-.k-rotate,
-.k-applied {
-  color: var(--accent);
-}
-.k-fallback {
-  color: var(--err);
-}
-.k-magitrickle,
-.k-install {
-  color: var(--warn);
 }
 .busy {
   display: flex;
