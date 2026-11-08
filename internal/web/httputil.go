@@ -11,6 +11,10 @@ import (
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	// API опрашивается по интервалу и мутациями - браузерный HTTP-кэш тут
+	// враг: stale GET /mt/groups возвращал панель черновика после «Сохранить»
+	// (кейс владельца 08.11). Статика раздаётся отдельным хендлером.
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(v)
 }

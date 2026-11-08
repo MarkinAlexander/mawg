@@ -58,7 +58,7 @@ const state = reactive<GroupsState>({
 
 let timer: ReturnType<typeof setInterval> | null = null;
 let ifacesTimer: ReturnType<typeof setInterval> | null = null;
-let inflight = false;
+let inflight: Promise<void> | null = null;
 
 // мутационные ответы групп/правил содержат свежий draft (114-док) - в стор
 // сразу, не дожидаясь force-refresh; ответ без draft (пусто/не мутация MT)
@@ -70,9 +70,19 @@ function takeDraft(r: unknown): void {
 }
 
 export function useGroups() {
-  async function refresh(force = false): Promise<void> {
-    if (inflight) return;
-    inflight = true;
+  // force-refresh мутаций НЕ дедупится с 30-с опросом: опрос, ушедший до
+  // мутации, мог вернуть ответ со СТАРЫМ draft - его ответ затирал свежий
+  // статус черновика (кейс владельца 08.11: обводка «на мгновение», панель
+  // возвращалась после «Сохранить»)
+  function refresh(force = false): Promise<void> {
+    if (inflight && !force) return inflight;
+    const p = doRefresh(force).finally(() => {
+      if (inflight === p) inflight = null;
+    });
+    inflight = p;
+    return p;
+  }
+  async function doRefresh(force = false): Promise<void> {
     try {
       const r = await api<MtGroupsRes>('GET', '/mt/groups');
       if (!r.available) {
@@ -104,8 +114,6 @@ export function useGroups() {
       // сеть - как легаси: группы недоступны, держим прошлый список;
       // refresh зовут и fire-and-forget (диалог наборов) - не бросаем наверх
       state.available = false;
-    } finally {
-      inflight = false;
     }
   }
 
