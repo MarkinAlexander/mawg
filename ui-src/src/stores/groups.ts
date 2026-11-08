@@ -89,7 +89,7 @@ export function useGroups() {
       // Поля нет (переходный старый бэкенд) - не затираем draft, полученный
       // из ответа мутации
       if (r.autoSave !== undefined) state.autoSave = !!r.autoSave;
-      if (r.draft) state.draft = { active: !!r.draft.active, dirty: r.draft.dirty || 0 };
+      if (r.draft) state.draft = { active: !!r.draft.active, dirty: r.draft.dirty || 0, groupIds: r.draft.groupIds || [], ruleIds: r.draft.ruleIds || [] };
       const json = JSON.stringify(r.groups || []);
       const changed = force || json !== state.lastJSON;
       state.lastJSON = json;

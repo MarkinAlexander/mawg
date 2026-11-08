@@ -167,18 +167,18 @@ describe('groups store - черновик записей MT (114-док)', () =>
     const { state, refresh } = useGroups();
     await refresh(true);
     expect(state.autoSave).toBe(true);
-    expect(state.draft).toEqual({ active: false, dirty: 0 });
+    expect(state.draft).toEqual({ active: false, dirty: 0, groupIds: [], ruleIds: [] });
 
     mtGroups({ available: true, autoSave: false, draft: { active: true, dirty: 4 }, groups: [] });
     await refresh(true);
     expect(state.autoSave).toBe(false);
-    expect(state.draft).toEqual({ active: true, dirty: 4 });
+    expect(state.draft).toEqual({ active: true, dirty: 4, groupIds: [], ruleIds: [] });
 
     // переходный старый бэкенд без полей: предыдущее состояние живо
     mtGroups({ available: true, groups: [] });
     await refresh(true);
     expect(state.autoSave).toBe(false);
-    expect(state.draft).toEqual({ active: true, dirty: 4 });
+    expect(state.draft).toEqual({ active: true, dirty: 4, groupIds: [], ruleIds: [] });
   });
 
   it('мутация под busy: busy на время записи+перечитывания, draft из ответа мутации - в стор', async () => {
