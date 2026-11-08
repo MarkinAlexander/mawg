@@ -66,6 +66,10 @@ export interface DeviceBinding {
 export interface MtDraft {
   active: boolean
   dirty: number
+  // ID затронутых черновиком групп/правил ("gid/rid") - золотая обводка
+  // «что уйдёт в Сохранить» (114-док, слово владельца 08.11)
+  groupIds?: string[]
+  ruleIds?: string[]
 }
 
 export interface MtGroupsRes {

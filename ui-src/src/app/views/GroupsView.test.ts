@@ -867,7 +867,7 @@ describe('GroupsView - черновик записей MT (114-док)', () => {
     w.unmount();
   });
 
-  it('busy при автосохранении: блокирующий оверлей над списком, снимается после; в режиме черновика оверлея нет', async () => {
+  it('busy блокирует список при ЛЮБОЙ записи: PUT автосохранения и «Сохранить» черновика (кейс владельца 08.11: во время apply можно было щёлкать)', async () => {
     const { w } = await makeView({}, { autoSave: true });
     const list = w.find('.mtlist');
     expect(list.classes()).not.toContain('mtbusy');
@@ -884,12 +884,13 @@ describe('GroupsView - черновик записей MT (114-док)', () => {
     expect(w.find('.busyover').exists()).toBe(false);
     expect(list.classes()).not.toContain('mtbusy');
 
-    // режим черновика: мутации быстрые, блокировка не нужна
+    // режим черновика: applyDraft тоже держит busy - список блокируется
     await w.find('.actions .uiswitch input[type=checkbox]').setValue(false);
     await vi.waitFor(() => expect(useGroups().state.autoSave).toBe(false));
     useGroups().state.busy = true;
     await nextTick();
-    expect(w.find('.busyover').exists()).toBe(false);
+    expect(w.find('.busyover').exists()).toBe(true);
+    expect(list.classes()).toContain('mtbusy');
     useGroups().state.busy = false;
     w.unmount();
   });

@@ -195,7 +195,7 @@ describe('groups store - черновик записей MT (114-док)', () =>
     release();
     await p;
     expect(state.busy).toBe(false);
-    expect(state.draft).toEqual({ active: true, dirty: 2 }); // из ответа мутации
+    expect(state.draft).toEqual({ active: true, dirty: 2, groupIds: [], ruleIds: [] }); // из ответа мутации
     expect(state.autoSave).toBe(true); // из force-refresh
   });
 

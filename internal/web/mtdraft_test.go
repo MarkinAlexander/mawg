@@ -80,7 +80,8 @@ func TestMTDraftDirty(t *testing.T) {
 		}, 1},
 	}
 	for _, tc := range cases {
-		if d := srv.draftDirty(base, tc.mut(clone())); d != tc.want {
+		d, _, _ := srv.draftDiffs(base, tc.mut(clone()))
+		if d != tc.want {
 			t.Fatalf("%s: dirty %d, want %d", tc.name, d, tc.want)
 		}
 	}
@@ -89,8 +90,9 @@ func TestMTDraftDirty(t *testing.T) {
 	cur[0].Rules[0].Enable = false
 	cur[1].Enable = false
 	cur = append(cur, magitrickle.Group{ID: "g3", Name: "новая", Enable: true})
-	if d := srv.draftDirty(base, cur); d != 3 {
-		t.Fatalf("сумма правок: dirty %d, want 3", d)
+	d2, _, _ := srv.draftDiffs(base, cur)
+	if d2 != 3 {
+		t.Fatalf("сумма правок: dirty %d, want 3", d2)
 	}
 }
 

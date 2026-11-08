@@ -165,10 +165,12 @@ func (s *Server) draftRead() ([]magitrickle.Group, bool) {
 	return groups, true
 }
 
-// draftDirty - число правок черновика против базы: изменённые/добавленные/
-// удалённые группы и правила плюс один балл за изменившийся порядок
-// (порядок - тоже правка пользователя, 114-док).
-func (s *Server) draftDirty(base, cur []magitrickle.Group) int {
+// draftDiffs - правки черновика против базы: число (изменённые/добавленные/
+// удалённые группы и правила + один балл за изменившийся порядок - порядок
+// тоже правка пользователя, 114-док) и ID затронутых групп и правил
+// ("gid/rid") - панель золотой обводкой показывает, что уйдёт в «Сохранить»
+// (слово владельца 08.11: «подсвечивать какие именно поля попали в черновик»).
+func (s *Server) draftDiffs(base, cur []magitrickle.Group) (int, []string, []string) {
 	baseByID := make(map[string]magitrickle.Group, len(base))
 	baseOrder := make([]string, 0, len(base))
 	for _, g := range base {
@@ -178,28 +180,45 @@ func (s *Server) draftDirty(base, cur []magitrickle.Group) int {
 	curByID := make(map[string]bool, len(cur))
 	curOrder := make([]string, 0, len(cur))
 	dirty := 0
+	groupIDs := make([]string, 0, len(cur))
+	ruleIDs := make([]string, 0, len(cur))
 	for _, g := range cur {
 		curByID[g.ID] = true
 		curOrder = append(curOrder, g.ID)
 		bg, ok := baseByID[g.ID]
 		if !ok {
 			dirty++ // добавленная группа
+			groupIDs = append(groupIDs, g.ID)
+			for _, rl := range g.Rules {
+				ruleIDs = append(ruleIDs, g.ID+"/"+rl.ID)
+			}
 			continue
 		}
+		gChanged := false
 		if draftGroupChanged(bg, g) {
 			dirty++ // поля группы
+			gChanged = true
 		}
-		dirty += draftRulesDirty(bg.Rules, g.Rules)
+		rd, rules := draftRulesDiffs(g.ID, bg.Rules, g.Rules)
+		dirty += rd
+		if gChanged || rd > 0 {
+			groupIDs = append(groupIDs, g.ID)
+		}
+		ruleIDs = append(ruleIDs, rules...)
 	}
 	for _, g := range base {
 		if !curByID[g.ID] {
 			dirty++ // удалённая группа
+			groupIDs = append(groupIDs, g.ID)
 		}
 	}
 	if draftOrderChanged(baseOrder, curOrder) {
 		dirty++
+		for _, g := range cur {
+			groupIDs = append(groupIDs, g.ID) // порядок виден на всех строках
+		}
 	}
-	return dirty
+	return dirty, groupIDs, ruleIDs
 }
 
 func draftGroupChanged(a, b magitrickle.Group) bool {
@@ -207,7 +226,7 @@ func draftGroupChanged(a, b magitrickle.Group) bool {
 		a.Enable != b.Enable || !slices.Equal(a.Sources, b.Sources)
 }
 
-func draftRulesDirty(base, cur []magitrickle.Rule) int {
+func draftRulesDiffs(gid string, base, cur []magitrickle.Rule) (int, []string) {
 	baseByID := make(map[string]magitrickle.Rule, len(base))
 	baseOrder := make([]string, 0, len(base))
 	for _, rl := range base {
@@ -217,27 +236,31 @@ func draftRulesDirty(base, cur []magitrickle.Rule) int {
 	curByID := make(map[string]bool, len(cur))
 	curOrder := make([]string, 0, len(cur))
 	dirty := 0
+	ids := make([]string, 0, len(cur))
 	for _, rl := range cur {
 		curByID[rl.ID] = true
 		curOrder = append(curOrder, rl.ID)
 		br, ok := baseByID[rl.ID]
 		if !ok {
 			dirty++ // добавленное правило
+			ids = append(ids, gid+"/"+rl.ID)
 			continue
 		}
 		if rl.Type != br.Type || rl.Rule != br.Rule || rl.Name != br.Name || rl.Enable != br.Enable {
 			dirty++ // поля правила
+			ids = append(ids, gid+"/"+rl.ID)
 		}
 	}
 	for _, rl := range base {
 		if !curByID[rl.ID] {
 			dirty++ // удалённое правило
+			ids = append(ids, gid+"/"+rl.ID)
 		}
 	}
 	if draftOrderChanged(baseOrder, curOrder) {
 		dirty++
 	}
-	return dirty
+	return dirty, ids
 }
 
 // draftOrderChanged - взаимный порядок общих ID изменился; добавленные/
@@ -284,7 +307,8 @@ func (s *Server) draftStatus() map[string]any {
 	if errBase != nil || errCur != nil {
 		return map[string]any{"active": true, "dirty": 0}
 	}
-	return map[string]any{"active": true, "dirty": s.draftDirty(base, cur)}
+	dirty, groupIDs, ruleIDs := s.draftDiffs(base, cur)
+	return map[string]any{"active": true, "dirty": dirty, "groupIds": groupIDs, "ruleIds": ruleIDs}
 }
 
 // draftResponse - ответ мутационного хендлера с добавленным статусом

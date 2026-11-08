@@ -66,7 +66,7 @@ let inflight = false;
 function takeDraft(r: unknown): void {
   const d = (r as { draft?: MtDraft | null } | undefined)?.draft;
   if (!d) return;
-  state.draft = { active: !!d.active, dirty: d.dirty || 0 };
+  state.draft = { active: !!d.active, dirty: d.dirty || 0, groupIds: d.groupIds || [], ruleIds: d.ruleIds || [] };
 }
 
 export function useGroups() {
@@ -250,20 +250,35 @@ export function useGroups() {
   async function setAutoSave(enable: boolean): Promise<AutoSaveRes> {
     const r = await api<AutoSaveRes>('POST', '/mt/autosave', { enable });
     state.autoSave = r.autoSave;
-    state.draft = { active: !!r.draft?.active, dirty: r.draft?.dirty || 0 };
+    state.draft = { active: !!r.draft?.active, dirty: r.draft?.dirty || 0, groupIds: r.draft?.groupIds || [], ruleIds: r.draft?.ruleIds || [] };
     await refresh(true);
     return r;
   }
   // применить черновик одной записью (114-док); 404 уходит наверх - панель
   // черновика видна только при draft.active, до неё это гонка
+  // «Сохранить»/«Сбросить» - тоже запись в MT: busy блокирует список (114-док);
+  // статус черновика сбрасывается НЕМЕДЛЕННО - ждать перечитывания нельзя
+  // (кейс владельца 08.11: панель «Сбросить» висела до следующего опроса)
   async function applyDraft(): Promise<number> {
-    const r = await api<ApplyDraftRes>('POST', '/mt/apply-draft');
-    await refresh(true);
-    return r.applied;
+    state.busy = true;
+    try {
+      const r = await api<ApplyDraftRes>('POST', '/mt/apply-draft');
+      state.draft = { active: false, dirty: 0, groupIds: [], ruleIds: [] };
+      await refresh(true);
+      return r.applied;
+    } finally {
+      state.busy = false;
+    }
   }
   async function discardDraft(): Promise<void> {
-    await api('POST', '/mt/discard-draft');
-    await refresh(true);
+    state.busy = true;
+    try {
+      await api('POST', '/mt/discard-draft');
+      state.draft = { active: false, dirty: 0, groupIds: [], ruleIds: [] };
+      await refresh(true);
+    } finally {
+      state.busy = false;
+    }
   }
 
   function start(intervalMs = 30000) {

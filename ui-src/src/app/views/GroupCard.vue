@@ -35,7 +35,7 @@ const {
   <div
     :data-gid="g.id"
     class="mtgroup"
-    :class="{ block: g.interface === 'blackhole', dragging: dragCtx?.scope === 'groups' && dragCtx?.id === g.id, 'drop-before': dropMark?.id === g.id && dropMark?.before === true, 'drop-after': dropMark?.id === g.id && dropMark?.before === false }"
+    :class="{ block: g.interface === 'blackhole', dragging: dragCtx?.scope === 'groups' && dragCtx?.id === g.id, 'drop-before': dropMark?.id === g.id && dropMark?.before === true, 'drop-after': dropMark?.id === g.id && dropMark?.before === false, draftmark: state.draft.groupIds?.includes(g.id) }"
     :style="{ '--gcol': g.color || '#4a9eff' }"
     :draggable="isDragRow('groups', g.id)"
     @dragstart="onDragStart($event, 'groups', g.id)"
@@ -297,7 +297,7 @@ const {
             </tr>
             <tr
               v-else
-              :class="{ dimmed: !rl.enable || !g.enable, dragging: dragCtx?.scope === 'rules:' + g.id && dragCtx?.id === rl.id, 'drop-before': dropMark?.id === rl.id && dropMark?.before === true, 'drop-after': dropMark?.id === rl.id && dropMark?.before === false }"
+              :class="{ dimmed: !rl.enable || !g.enable, dragging: dragCtx?.scope === 'rules:' + g.id && dragCtx?.id === rl.id, 'drop-before': dropMark?.id === rl.id && dropMark?.before === true, 'drop-after': dropMark?.id === rl.id && dropMark?.before === false, draftmark: state.draft.ruleIds?.includes(g.id + '/' + rl.id) }"
               :draggable="isDragRow('rules:' + g.id, rl.id)"
               @dragstart="onDragStart($event, 'rules:' + g.id, rl.id)"
               @dragover="onDragOver($event, 'rules:' + g.id, rl.id)"
@@ -393,6 +393,22 @@ const {
 }
 .mtgroup.block {
   border-left-color: var(--err);
+}
+/* золотая обводка «попало в черновик» (114-док, слово владельца 08.11):
+   показывает, что уйдёт в «Сохранить» до его нажатия */
+.draftmark {
+  outline: 2px solid var(--warn);
+  outline-offset: -1px;
+}
+tr.draftmark td {
+  border-top: 1px solid var(--warn);
+  border-bottom: 1px solid var(--warn);
+}
+tr.draftmark td:first-child {
+  border-left: 1px solid var(--warn);
+}
+tr.draftmark td:last-child {
+  border-right: 1px solid var(--warn);
 }
 .grow {
   display: flex;
