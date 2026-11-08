@@ -26,6 +26,12 @@ type mtDraftFile struct {
 	Base   json.RawMessage `json:"base"`
 	Groups json.RawMessage `json:"groups"`
 	At     time.Time       `json:"at"`
+	// touched - накопленные за сессию черновика ID тронутых групп/правил:
+	// горят золотой обводкой ДО «Сохранить/Сбросить» даже если правку
+	// откатили (выключил группу - включил обратно: дифф пуст, а «здесь было
+	// изменение» остаётся - кейс владельца 08.11)
+	TouchedGroupIDs []string `json:"touchedGroupIds,omitempty"`
+	TouchedRuleIDs  []string `json:"touchedRuleIds,omitempty"`
 }
 
 // mtDraftIDPrefix - локальные ID групп/правил, созданных в черновике: ID
@@ -64,6 +70,38 @@ func draftLocalRuleID(rules []magitrickle.Rule) string {
 func marshalDraftFile(base, groups json.RawMessage) json.RawMessage {
 	env, _ := json.MarshalIndent(mtDraftFile{Base: base, Groups: groups, At: time.Now()}, "", "  ")
 	return env
+}
+
+// unionStrings - накопление touched: порядок сохраняем, дубли не плодим.
+func unionStrings(a, b []string) []string {
+	seen := make(map[string]bool, len(a)+len(b))
+	out := make([]string, 0, len(a)+len(b))
+	for _, s := range a {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	for _, s := range b {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// touchDraft - дописать в файл черновика накопленные тронутые ID (вызывается
+// после каждой мутации: текущий дифф поверх уже накопленного - откат правки
+// снимает её из диффа, но не из подсветки).
+func (s *Server) touchDraft(df *mtDraftFile, dirtyGroupIDs, dirtyRuleIDs []string) error {
+	df.TouchedGroupIDs = unionStrings(df.TouchedGroupIDs, dirtyGroupIDs)
+	df.TouchedRuleIDs = unionStrings(df.TouchedRuleIDs, dirtyRuleIDs)
+	env, err := json.Marshal(df)
+	if err != nil {
+		return err
+	}
+	return s.store.MTDraftSave(env)
 }
 
 func decodeDraftGroups(raw json.RawMessage) ([]magitrickle.Group, error) {
@@ -132,7 +170,7 @@ func (s *Server) draftEnsure(ctx context.Context) ([]magitrickle.Group, []magitr
 func (s *Server) draftMutate(ctx context.Context, mutate func([]magitrickle.Group) []magitrickle.Group) error {
 	s.mtDraftMu.Lock()
 	defer s.mtDraftMu.Unlock()
-	baseRaw, _, cur, err := s.draftEnsureLocked(ctx)
+	baseRaw, dfRaw, cur, err := s.draftEnsureLocked(ctx)
 	if err != nil {
 		return err
 	}
@@ -141,7 +179,20 @@ func (s *Server) draftMutate(ctx context.Context, mutate func([]magitrickle.Grou
 	if err != nil {
 		return err
 	}
-	return s.store.MTDraftSave(marshalDraftFile(baseRaw, data))
+	if err := s.store.MTDraftSave(marshalDraftFile(baseRaw, data)); err != nil {
+		return err
+	}
+	// touched накапливается: дифф новой правки поверх уже накопленного
+	base, errB := decodeDraftGroups(baseRaw)
+	if errB != nil {
+		return nil // статус посчитается без touched - не блокируем правку
+	}
+	var df mtDraftFile
+	if json.Unmarshal(dfRaw, &df) != nil {
+		return nil
+	}
+	_, gIDs, rIDs := s.draftDiffs(base, cur)
+	return s.touchDraft(&df, gIDs, rIDs)
 }
 
 // draftRead - группы черновика для mtGetGroups; false = черновика нет.
@@ -307,7 +358,11 @@ func (s *Server) draftStatus() map[string]any {
 	if errBase != nil || errCur != nil {
 		return map[string]any{"active": true, "dirty": 0}
 	}
-	dirty, groupIDs, ruleIDs := s.draftDiffs(base, cur)
+	dirty, diffGroups, diffRules := s.draftDiffs(base, cur)
+	// подсветка = накопленное touched поверх текущего диффа: файлы старого
+	// формата (до touched) показывают дифф, откат не гасит подсветку
+	groupIDs := unionStrings(df.TouchedGroupIDs, diffGroups)
+	ruleIDs := unionStrings(df.TouchedRuleIDs, diffRules)
 	return map[string]any{"active": true, "dirty": dirty, "groupIds": groupIDs, "ruleIds": ruleIDs}
 }
 
