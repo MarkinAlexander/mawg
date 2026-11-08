@@ -463,3 +463,13 @@ export function backupKind(name: string): { label: string; restoreAsk: string } 
   }
   return { label: 'правила (shadow)', restoreAsk: 'правила из shadow: ВСЕ группы будут заменены на сохранённые' };
 }
+
+// русские склонения для счётчиков (1 изменение, 2 изменения, 5 изменений;
+// 11-14 - «много») - как локальный plural в OverviewView
+export function plural(n: number, one: string, few: string, many: string): string {
+  const m10 = n % 10;
+  const m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return one;
+  if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return few;
+  return many;
+}

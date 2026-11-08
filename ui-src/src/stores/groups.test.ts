@@ -19,6 +19,9 @@ beforeEach(() => {
   state.presets = { list: [], sourceUrl: '', sourceNote: '', loaded: false };
   state.available = true;
   state.loaded = false;
+  state.autoSave = false;
+  state.draft = { active: false, dirty: 0 };
+  state.busy = false;
 });
 
 describe('groups store', () => {
@@ -155,5 +158,75 @@ describe('groups store', () => {
     expect(fetchMock.mock.calls[0][0]).toBe('/api/v1/cascades');
     expect(JSON.parse(fetchMock.mock.calls[0][1]!.body as string)).toEqual({ source: 'pool:warp', via: 'iface:nwg7', hosts: ['8.8.8.8'] });
     expect(state.groups).toHaveLength(1);
+  });
+});
+
+describe('groups store - черновик записей MT (114-док)', () => {
+  it('refresh читает autoSave и draft из /mt/groups; отсутствие полей не затирает их', async () => {
+    mtGroups({ available: true, autoSave: true, draft: { active: false, dirty: 0 }, groups: [] });
+    const { state, refresh } = useGroups();
+    await refresh(true);
+    expect(state.autoSave).toBe(true);
+    expect(state.draft).toEqual({ active: false, dirty: 0 });
+
+    mtGroups({ available: true, autoSave: false, draft: { active: true, dirty: 4 }, groups: [] });
+    await refresh(true);
+    expect(state.autoSave).toBe(false);
+    expect(state.draft).toEqual({ active: true, dirty: 4 });
+
+    // переходный старый бэкенд без полей: предыдущее состояние живо
+    mtGroups({ available: true, groups: [] });
+    await refresh(true);
+    expect(state.autoSave).toBe(false);
+    expect(state.draft).toEqual({ active: true, dirty: 4 });
+  });
+
+  it('мутация под busy: busy на время записи+перечитывания, draft из ответа мутации - в стор', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const fetchMock = vi.fn()
+      // POST enable висит, пока не отпустим - busy наблюдаем в процессе
+      .mockImplementationOnce(() => gate.then(() => new Response(JSON.stringify({ ok: true, draft: { active: true, dirty: 2 } }), { status: 200 })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ available: true, autoSave: true, groups: [] }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { state, toggleGroup } = useGroups();
+    const p = toggleGroup('g1', true);
+    expect(state.busy).toBe(true); // блокировка выставлена до ответа
+    release();
+    await p;
+    expect(state.busy).toBe(false);
+    expect(state.draft).toEqual({ active: true, dirty: 2 }); // из ответа мутации
+    expect(state.autoSave).toBe(true); // из force-refresh
+  });
+
+  it('setAutoSave: POST и стор из ответа; 409 бросается наверх (тост решает UI)', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, autoSave: true, draft: { active: false, dirty: 0 } }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ available: true, groups: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'черновик активен' }), { status: 409 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { state, setAutoSave } = useGroups();
+    await setAutoSave(true);
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/v1/mt/autosave');
+    expect(JSON.parse(fetchMock.mock.calls[0][1]!.body as string)).toEqual({ enable: true });
+    expect(state.autoSave).toBe(true);
+
+    await expect(setAutoSave(true)).rejects.toMatchObject({ status: 409 });
+    expect(state.autoSave).toBe(true); // ошибкой не перезаписан
+  });
+
+  it('applyDraft/discardDraft: POST + перечитывание, applied наверх для тоста', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, applied: 3 }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ available: true, groups: [], draft: { active: false, dirty: 0 } }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ available: true, groups: [], draft: { active: false, dirty: 0 } }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { applyDraft, discardDraft } = useGroups();
+    const n = await applyDraft();
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/v1/mt/apply-draft');
+    expect(n).toBe(3);
+    await discardDraft();
+    expect(fetchMock.mock.calls[2][0]).toBe('/api/v1/mt/discard-draft');
   });
 });

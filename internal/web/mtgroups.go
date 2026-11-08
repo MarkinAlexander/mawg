@@ -144,9 +144,16 @@ func (s *Server) mtDuplicates(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) mtGetGroups(w http.ResponseWriter, r *http.Request) {
+	// активный черновик (114-док) отдаётся вместо снапшота: панель видит
+	// правки до применения; MT не дёргаем - правки живут локально
+	if groups, active := s.draftRead(); active {
+		s.mtGroupsView(w, r, groups, s.mtInterfaceTitles())
+		return
+	}
 	groups, titles, err := s.mtSnapshotCached()
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"available": false, "error": err.Error()})
+		writeJSON(w, http.StatusOK, map[string]any{"available": false, "error": err.Error(),
+			"autoSave": s.autoSaveOn(), "draft": s.draftStatus()})
 		return
 	}
 	// сверка реестра устройств со снапшотом (97-док) - только по
@@ -159,6 +166,12 @@ func (s *Server) mtGetGroups(w http.ResponseWriter, r *http.Request) {
 	} else {
 		s.mtCacheMu.Unlock()
 	}
+	s.mtGroupsView(w, r, groups, titles)
+}
+
+// mtGroupsView - groupView-обёртка списка групп (снапшот или черновик,
+// 114-док) в общем ответе mtGetGroups.
+func (s *Server) mtGroupsView(w http.ResponseWriter, r *http.Request, groups []magitrickle.Group, titles map[string]string) {
 	type groupView struct {
 		magitrickle.Group
 		InterfaceTitle string              `json:"interfaceTitle,omitempty"`
@@ -208,7 +221,8 @@ func (s *Server) mtGetGroups(w http.ResponseWriter, r *http.Request) {
 		flavor = string(c.BackendFlavor())
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"available": true, "groups": out, "glitchy": s.store.MTGlitchy(), "wrapper": wrapper,
-		"sources": s.mtSourcesCapable(r.Context()), "backendFlavor": flavor})
+		"sources": s.mtSourcesCapable(r.Context()), "backendFlavor": flavor,
+		"autoSave": s.autoSaveOn(), "draft": s.draftStatus()})
 }
 
 func (s *Server) mtGetInterfaces(w http.ResponseWriter, r *http.Request) {
@@ -282,14 +296,26 @@ func (s *Server) mtCreateGroup(w http.ResponseWriter, r *http.Request) {
 	if color == "" {
 		color = "#4a9eff"
 	}
+	created := magitrickle.Group{Name: req.Name, Interface: req.Interface, Color: color, Enable: true, Sources: sources}
+	if !s.autoSaveOn() {
+		// 114-док: правка копится в черновике, MT не дёргаем
+		if err := s.draftMutate(r.Context(), func(groups []magitrickle.Group) []magitrickle.Group {
+			created.ID = draftLocalID(groups)
+			return append(groups, created)
+		}); err != nil {
+			writeErr(w, err)
+			return
+		}
+		s.store.LogEvent("rules", "magitrickle", "создана группа "+req.Name+" на "+req.Interface)
+		s.draftResponse(w, http.StatusOK, created)
+		return
+	}
 	client := s.mtClient()
 	if err := client.EnsureHealthy(r.Context()); err != nil {
 		writeErr(w, err)
 		return
 	}
-	g, err := client.CreateGroup(r.Context(), magitrickle.Group{
-		Name: req.Name, Interface: req.Interface, Color: color, Enable: true, Sources: sources,
-	})
+	g, err := client.CreateGroup(r.Context(), created)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -336,6 +362,74 @@ func (s *Server) mtUpdateGroup(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, fmt.Errorf("интерфейс каскадной группы задается при создании каскада"))
 			return
 		}
+	}
+	if !s.autoSaveOn() {
+		// 114-док: правка копится в черновике; коллизии адресов (97-док)
+		// проверяются по черновику, зеркало реестра обновится после
+		// применения сверкой снапшота
+		if req.Sources != nil {
+			_, dgroups, err := s.draftEnsure(r.Context())
+			if err != nil {
+				writeErr(w, err)
+				return
+			}
+			for _, g := range dgroups {
+				if g.ID != id || !deviceGroupOf(g) {
+					continue
+				}
+				iface := g.Interface
+				if req.Interface != "" {
+					iface = req.Interface
+				}
+				if pool := s.poolNameByDevice(iface); pool != "" {
+					conflicts := findBindingConflicts(s.store.DeviceBindings(), s.store.Excludes(), pool, sources)
+					if len(conflicts) > 0 && !req.Confirm {
+						bindingConflicts409(w, conflicts)
+						return
+					}
+					if len(conflicts) > 0 {
+						s.store.LogEvent("rules", "device-bindings", fmt.Sprintf(
+							"коллизия адресов подтверждена вручную (правка %q): %s", g.Name, strings.Join(sources, ", ")))
+					}
+				}
+				break
+			}
+		}
+		found := false
+		err := s.draftMutate(r.Context(), func(groups []magitrickle.Group) []magitrickle.Group {
+			for i := range groups {
+				g := &groups[i]
+				if g.ID != id {
+					continue
+				}
+				if req.Name != "" {
+					g.Name = req.Name
+				}
+				if req.Color != "" {
+					g.Color = req.Color
+				}
+				if req.Interface != "" {
+					g.Interface = req.Interface
+				}
+				if req.Sources != nil {
+					g.Sources = sources
+				}
+				found = true
+				break
+			}
+			return groups
+		})
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		if !found {
+			http.NotFound(w, r)
+			return
+		}
+		s.store.LogEvent("rules", "magitrickle", "изменена группа "+req.Name)
+		s.draftResponse(w, http.StatusOK, map[string]string{"ok": "updated"})
+		return
 	}
 	// правка источников группы устройства - те же коллизии, что при
 	// создании (97-док): 409 + подтверждение, свою запись не считаем
@@ -451,6 +545,28 @@ func (s *Server) mtGroupsOrder(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	if !s.autoSaveOn() {
+		// 114-док: порядок копится в черновике
+		ordered := false
+		if err := s.draftMutate(r.Context(), func(groups []magitrickle.Group) []magitrickle.Group {
+			out, ok := reorderIDs(groups, func(g magitrickle.Group) string { return g.ID }, req.IDs)
+			ordered = ok
+			if !ok {
+				return groups
+			}
+			return out
+		}); err != nil {
+			writeErr(w, err)
+			return
+		}
+		if !ordered {
+			writeErr(w, fmt.Errorf("список ids не совпадает с текущими группами"))
+			return
+		}
+		s.store.LogEvent("rules", "magitrickle", "изменён порядок групп")
+		s.draftResponse(w, http.StatusOK, map[string]string{"ok": "reordered"})
+		return
+	}
 	client := s.mtClient()
 	groups, err := client.GroupsWithRules(r.Context())
 	if err != nil {
@@ -532,6 +648,29 @@ func (s *Server) mtToggleGroup(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	found := false
+	if !s.autoSaveOn() {
+		// 114-док: тумблер копится в черновике
+		if err := s.draftMutate(r.Context(), func(groups []magitrickle.Group) []magitrickle.Group {
+			for i := range groups {
+				if groups[i].ID != id {
+					continue
+				}
+				found = true
+				groups[i].Enable = req.Enable
+				break
+			}
+			return groups
+		}); err != nil {
+			writeErr(w, err)
+			return
+		}
+		if !found {
+			http.NotFound(w, r)
+			return
+		}
+		s.draftResponse(w, http.StatusOK, map[string]string{"ok": "ok"})
+		return
+	}
 	err := s.mtApplyGroups(r.Context(), func(groups []magitrickle.Group) bool {
 		for i := range groups {
 			if groups[i].ID != id {
@@ -558,8 +697,9 @@ func (s *Server) mtToggleGroup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) mtDeleteGroup(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
 	if c := s.casc(); c != nil {
-		if _, isCasc := s.store.CascadeByGroup(r.PathValue("id")); isCasc {
+		if _, isCasc := s.store.CascadeByGroup(id); isCasc {
 			if err := c.Delete(r.Context(), r.PathValue("id")); err != nil {
 				writeErr(w, err)
 				return
@@ -568,158 +708,45 @@ func (s *Server) mtDeleteGroup(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if !s.autoSaveOn() {
+		// 114-док: удаление копится в черновике; рантайм-следы группы
+		// (хук, политика, реестр) не трогаем - группа ещё жива в MT
+		removed := false
+		if err := s.draftMutate(r.Context(), func(groups []magitrickle.Group) []magitrickle.Group {
+			for i := range groups {
+				if groups[i].ID != id {
+					continue
+				}
+				removed = true
+				return append(groups[:i], groups[i+1:]...)
+			}
+			return groups
+		}); err != nil {
+			writeErr(w, err)
+			return
+		}
+		if !removed {
+			http.NotFound(w, r)
+			return
+		}
+		s.store.LogEvent("rules", "magitrickle", "удалена группа "+id)
+		s.draftResponse(w, http.StatusOK, map[string]string{"ok": "deleted"})
+		return
+	}
 	client := s.mtClient()
-	if err := client.DeleteGroup(r.Context(), r.PathValue("id")); err != nil {
+	if err := client.DeleteGroup(r.Context(), id); err != nil {
 		writeErr(w, err)
 		return
 	}
 	client.RefreshShadow(r.Context())
 	// роутерный OUTPUT-хук и политика - рантайм-след группы, чистим вслед
 	if c := s.casc(); c != nil {
-		_ = c.HookRemove(r.PathValue("id"))
+		_ = c.HookRemove(id)
 	}
-	_ = s.store.SetGroupPolicy(r.PathValue("id"), nil)
+	_ = s.store.SetGroupPolicy(id, nil)
 	// запись реестра устройств - тоже след группы (97-док): реестр хранит
 	// имена, id разрешаем по кэшу снапшота; мимо кэша снимет сверка
-	s.deviceBindingRemoveByID(r.PathValue("id"))
-	s.store.LogEvent("rules", "magitrickle", "удалена группа "+r.PathValue("id"))
+	s.deviceBindingRemoveByID(id)
+	s.store.LogEvent("rules", "magitrickle", "удалена группа "+id)
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "deleted"})
-}
-
-// getPolicyCycles/putPolicyCycles - гистерезис политик групп: сколько
-// циклов до переключения с исходного интерфейса и сколько до возврата.
-func (s *Server) getPolicyCycles(w http.ResponseWriter, r *http.Request) {
-	st := s.store.Settings()
-	writeJSON(w, http.StatusOK, map[string]int{
-		"failCycles":    st.PolicyFailCycles,
-		"restoreCycles": st.PolicyRestoreCycles,
-	})
-}
-
-func (s *Server) putPolicyCycles(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		FailCycles    int `json:"failCycles"`
-		RestoreCycles int `json:"restoreCycles"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, err)
-		return
-	}
-	if req.FailCycles < 1 || req.FailCycles > 20 || req.RestoreCycles < 1 || req.RestoreCycles > 20 {
-		writeErr(w, fmt.Errorf("циклы должны быть от 1 до 20"))
-		return
-	}
-	st := s.store.Settings()
-	st.PolicyFailCycles = req.FailCycles
-	st.PolicyRestoreCycles = req.RestoreCycles
-	if err := s.store.SetSettings(st); err != nil {
-		writeErr(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]int{
-		"failCycles":    st.PolicyFailCycles,
-		"restoreCycles": st.PolicyRestoreCycles,
-	})
-}
-
-func (s *Server) mtSetPolicy(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		OnDead        string   `json:"onDead"`
-		Iface         string   `json:"iface"`
-		SourcesMode   string   `json:"sourcesMode"` // "" | all | all+router | list
-		Sources       []string `json:"sources"`
-		SourcesRouter bool     `json:"sourcesRouter"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, err)
-		return
-	}
-	switch req.OnDead {
-	case "", store.PolicyDirect, store.PolicyIface:
-	default:
-		writeErr(w, fmt.Errorf("неизвестный режим %q", req.OnDead))
-		return
-	}
-	switch req.SourcesMode {
-	case "", "all", "all+router", "list":
-	default:
-		writeErr(w, fmt.Errorf("неизвестный режим источников %q", req.SourcesMode))
-		return
-	}
-	var userSources []string
-	if req.SourcesMode == "list" {
-		var err error
-		userSources, err = normalizeSources(req.Sources)
-		if err != nil {
-			writeErr(w, err)
-			return
-		}
-		if len(userSources) == 0 && !req.SourcesRouter {
-			writeErr(w, fmt.Errorf("пустой список: добавьте IP или включите роутер"))
-			return
-		}
-	} else {
-		userSources = nil
-	}
-	pol := store.GroupPolicy{
-		OnDead:        req.OnDead,
-		Iface:         req.Iface,
-		SourcesMode:   req.SourcesMode,
-		Sources:       userSources,
-		SourcesRouter: req.SourcesRouter,
-	}
-	if pol.OnDead == store.PolicyIface && pol.Iface == "" {
-		writeErr(w, fmt.Errorf("укажите запасной интерфейс"))
-		return
-	}
-	id := r.PathValue("id")
-	if req.SourcesMode != "" && req.SourcesMode != "all" {
-		if _, isCasc := s.store.CascadeByGroup(id); isCasc {
-			writeErr(w, fmt.Errorf("у каскадной группы источники задаются при создании каскада"))
-			return
-		}
-	}
-	if req.SourcesMode == "all+router" || req.SourcesMode == "list" {
-		if !s.mtSourcesCapable(r.Context()) {
-			writeErr(w, fmt.Errorf("подключённый MagiTrickle не умеет источники (нужен форк 0.8.2-rev3+)"))
-			return
-		}
-	}
-	if err := s.store.SetGroupPolicy(id, &pol); err != nil {
-		writeErr(w, err)
-		return
-	}
-	// применяем только если группа ещё жива: сторе можно задать политику
-	// и будущей группе, а писать в MT - только существующей
-	applied := false
-	if groups, err := s.mtClient().GroupsWithRules(r.Context()); err == nil {
-		for _, g := range groups {
-			if g.ID == id {
-				applied = true
-				break
-			}
-		}
-	}
-	if applied {
-		if c := s.casc(); c != nil {
-			if err := c.ApplyGroupSources(id, pol); err != nil {
-				writeErr(w, err)
-				return
-			}
-		}
-	}
-	switch {
-	case pol.SourcesEmpty():
-		s.store.LogEvent("policy", "sources", "группа "+id+": источники - вся локалка")
-	case pol.SourcesMode == "all+router":
-		s.store.LogEvent("policy", "sources", "группа "+id+": локалка + роутер")
-	case pol.SourcesRouter:
-		s.store.LogEvent("policy", "sources", fmt.Sprintf("группа %s: только выбранные IP (%d) + роутер", id, len(userSources)))
-	default:
-		s.store.LogEvent("policy", "sources", fmt.Sprintf("группа %s: только выбранные IP (%d)", id, len(userSources)))
-	}
-	if pol.OnDead != "" {
-		s.store.LogEvent("policy", "set", "группа "+id+": при отвале - "+pol.OnDead)
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"ok": "ok"})
 }

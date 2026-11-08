@@ -104,6 +104,33 @@ func (s *Store) MTGlitchy() bool {
 	return s.root.Settings.MTGlitchy
 }
 
+// AutoSaveMT - автосохранение правок групп MagiTrickle (114-док):
+// выключено - правки копятся в черновике base/mt-draft.json и пишутся
+// одним PUT по команде панели. nil = включено.
+func (s *Store) AutoSaveMT() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.root.Settings.AutoSaveMT == nil || *s.root.Settings.AutoSaveMT
+}
+
+// SetAutoSaveMT пишет только при смене эффективного значения (nil = вкл):
+// config.json не надо перезаписывать впустую.
+func (s *Store) SetAutoSaveMT(v bool) error {
+	s.mu.Lock()
+	cur := s.root.Settings.AutoSaveMT == nil || *s.root.Settings.AutoSaveMT
+	if cur == v {
+		s.mu.Unlock()
+		return nil
+	}
+	s.root.Settings.AutoSaveMT = &v
+	err := s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
+	s.mu.Unlock()
+	if err == nil {
+		s.LogEvent("settings", "mt", "автосохранение MT: "+map[bool]string{true: "вкл", false: "выкл"}[v])
+	}
+	return err
+}
+
 func (s *Store) SetSettings(v Settings) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

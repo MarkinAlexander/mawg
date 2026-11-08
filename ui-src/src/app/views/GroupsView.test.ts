@@ -37,18 +37,43 @@ function groupsFixture(): GroupView[] {
 
 type Rec = Record<string, unknown>;
 
-async function makeView(dups: Rec = {}) {
+async function makeView(
+  dups: Rec = {},
+  // 114-док: стартовое состояние автосохранения/черновика бэкенда
+  mtState: { autoSave?: boolean; draft?: { active: boolean; dirty: number } } = {},
+) {
   const data: {
     groups: GroupView[]
     dups: Rec
     cycles: { failCycles: number; restoreCycles: number }
     excludes: string[]
-  } = { groups: groupsFixture(), dups, cycles: { failCycles: 2, restoreCycles: 2 }, excludes: ['192.0.2.1/32'] };
+    autoSave: boolean
+    draft: { active: boolean; dirty: number }
+  } = {
+    groups: groupsFixture(), dups, cycles: { failCycles: 2, restoreCycles: 2 }, excludes: ['192.0.2.1/32'],
+    autoSave: mtState.autoSave ?? false,
+    draft: mtState.draft ?? { active: false, dirty: 0 },
+  };
   const ok = (x: unknown = { ok: true }) => new Response(JSON.stringify(x), { status: 200 });
   const f = vi.fn(async (url: string, init?: { method?: string; body?: string }) => {
     const u = url;
     const m = init?.method || 'GET';
     const body = init?.body ? JSON.parse(init.body) : {};
+    if (u.endsWith('/mt/autosave') && m === 'POST') {
+      // включить при активном черновике нельзя (114-док, 409 с сервера)
+      if (body.enable && data.draft.active) return new Response(JSON.stringify({ error: 'черновик активен' }), { status: 409 });
+      data.autoSave = !!body.enable;
+      return ok({ ok: true, autoSave: data.autoSave, draft: data.draft });
+    }
+    if (u.endsWith('/mt/apply-draft') && m === 'POST') {
+      if (!data.draft.active) return new Response(JSON.stringify({ error: 'черновика нет' }), { status: 404 });
+      data.draft = { active: false, dirty: 0 };
+      return ok({ ok: true, applied: 3 });
+    }
+    if (u.endsWith('/mt/discard-draft') && m === 'POST') {
+      data.draft = { active: false, dirty: 0 };
+      return ok({ ok: true });
+    }
     if (u.endsWith('/mt/duplicates')) return ok({ duplicates: data.dups });
     if (u.endsWith('/mt/interfaces')) return ok({ interfaces: [{ device: 'nwg0', title: 'пул proton' }, { device: 'nwg7' }] });
     if (u.endsWith('/mt/policy-cycles')) {
@@ -121,7 +146,7 @@ async function makeView(dups: Rec = {}) {
     } else if (m === 'DELETE' && /\/mt\/groups\/g1\?/.test(u)) {
       data.groups = data.groups.filter((g) => g.id !== 'g1');
     }
-    if (u.endsWith('/mt/groups')) return ok({ available: true, glitchy: false, wrapper: false, sources: true, groups: data.groups });
+    if (u.endsWith('/mt/groups')) return ok({ available: true, glitchy: false, wrapper: false, sources: true, autoSave: data.autoSave, draft: data.draft, groups: data.groups });
     return ok();
   });
   vi.stubGlobal('fetch', f);
@@ -158,6 +183,9 @@ beforeEach(() => {
   state.presets = { list: [], sourceUrl: '', sourceNote: '', loaded: false };
   state.available = true;
   state.loaded = false;
+  state.autoSave = false;
+  state.draft = { active: false, dirty: 0 };
+  state.busy = false;
   useConfirm().cancel();
   useToast().toasts.list.splice(0);
   useStatus().stop();
@@ -756,6 +784,113 @@ describe('GroupsView - бейдж «устройство целиком» к к�
     const plain = block(w, 'gdev2');
     expect(plain.find('button.devlink').exists()).toBe(false);
     expect(plain.text()).toContain('устройство целиком');
+    w.unmount();
+  });
+});
+
+describe('GroupsView - черновик записей MT (114-док)', () => {
+  it('тумблер «Автосохранение» в шапке: POST /mt/autosave, стор обновляется из ответа', async () => {
+    const { w, f } = await makeView({}, { autoSave: true });
+    const sw = w.find('.actions .uiswitch input[type=checkbox]');
+    expect(sw.exists()).toBe(true);
+    expect((sw.element as HTMLInputElement).checked).toBe(true);
+    // тултип-слово владельца: что вкл, что выкл
+    expect(w.find('.actions .uiswitch').attributes('title')).toContain('правки копятся в черновике');
+
+    await sw.setValue(false);
+    await vi.waitFor(() => {
+      const post = f.mock.calls.find((c) => (c[0] as string).endsWith('/mt/autosave'));
+      expect(post).toBeTruthy();
+      expect(JSON.parse(post![1]!.body as string)).toEqual({ enable: false });
+    });
+    await vi.waitFor(() => expect(useGroups().state.autoSave).toBe(false));
+    w.unmount();
+  });
+
+  it('включение при активном черновике - 409: тост, стор и тумблер остаются выключенными', async () => {
+    const { w } = await makeView({}, { draft: { active: true, dirty: 1 } });
+    const sw = w.find('.actions .uiswitch input[type=checkbox]');
+    expect((sw.element as HTMLInputElement).checked).toBe(false);
+    await sw.setValue(true);
+    await vi.waitFor(() =>
+      expect(useToast().toasts.list.map((t) => t.text)).toContain('Сначала примените или сбросьте черновик'));
+    expect(useGroups().state.autoSave).toBe(false);
+    // перечитывание вернуло чекбокс в положение по /mt/groups
+    await vi.waitFor(() =>
+      expect((w.find('.actions .uiswitch input[type=checkbox]').element as HTMLInputElement).checked).toBe(false));
+    w.unmount();
+  });
+
+  it('черновик активен: панели сверху и снизу списка с бейджем dirty; «Сохранить» -> apply-draft + тост, панели уходят', async () => {
+    const { w, f } = await makeView({}, { draft: { active: true, dirty: 5 } });
+    const bars = () => w.findAll('.draftbar');
+    expect(bars()).toHaveLength(2); // до и после списка
+    expect(w.text()).toContain('черновик: 5 изменений');
+    // кнопка с дискетой - primary в панели
+    const save = bars()[0].findAll('button').filter((b) => b.text().includes('Сохранить'))[0];
+    expect(save).toBeTruthy();
+    const reset = bars()[0].findAll('button').filter((b) => b.text().includes('Сбросить'))[0];
+    expect(reset).toBeTruthy();
+
+    await save.trigger('click');
+    await vi.waitFor(() => {
+      const post = f.mock.calls.find((c) => (c[0] as string).endsWith('/mt/apply-draft'));
+      expect(post).toBeTruthy();
+    });
+    await vi.waitFor(() => expect(useToast().toasts.list.map((t) => t.text)).toContain('Применено: 3 группы'));
+    // после применения бэкенд прислал draft.active=false - панелей больше нет
+    await vi.waitFor(() => expect(bars()).toHaveLength(0));
+    w.unmount();
+  });
+
+  it('«Сбросить»: confirm со словом владельца; отмена - без POST, подтверждение -> discard-draft + тост', async () => {
+    const { w, f } = await makeView({}, { draft: { active: true, dirty: 2 } });
+    expect(w.text()).toContain('черновик: 2 изменения'); // склонение
+    const resetBtn = () => w.findAll('.draftbar')[1].findAll('button').filter((b) => b.text().includes('Сбросить'))[0];
+    await resetBtn().trigger('click');
+    await nextTick();
+    expect(useConfirm().state.open).toBe(true);
+    expect(useConfirm().state.text).toContain('Сбросить черновик? Правки с момента последнего применения будут потеряны');
+    useConfirm().cancel();
+    await nextTick();
+    expect(f.mock.calls.filter((c) => (c[0] as string).endsWith('/mt/discard-draft'))).toHaveLength(0);
+
+    await resetBtn().trigger('click');
+    await nextTick();
+    useConfirm().ok();
+    await vi.waitFor(() => {
+      const post = f.mock.calls.find((c) => (c[0] as string).endsWith('/mt/discard-draft'));
+      expect(post).toBeTruthy();
+    });
+    await vi.waitFor(() => expect(useToast().toasts.list.map((t) => t.text)).toContain('Черновик сброшен'));
+    await vi.waitFor(() => expect(w.findAll('.draftbar')).toHaveLength(0));
+    w.unmount();
+  });
+
+  it('busy при автосохранении: блокирующий оверлей над списком, снимается после; в режиме черновика оверлея нет', async () => {
+    const { w } = await makeView({}, { autoSave: true });
+    const list = w.find('.mtlist');
+    expect(list.classes()).not.toContain('mtbusy');
+    expect(w.find('.busyover').exists()).toBe(false);
+
+    useGroups().state.busy = true;
+    await nextTick();
+    expect(list.classes()).toContain('mtbusy');
+    expect(w.find('.busyover').exists()).toBe(true);
+    expect(w.find('.busyover').text()).toContain('MT занят, пишем…');
+
+    useGroups().state.busy = false;
+    await nextTick();
+    expect(w.find('.busyover').exists()).toBe(false);
+    expect(list.classes()).not.toContain('mtbusy');
+
+    // режим черновика: мутации быстрые, блокировка не нужна
+    await w.find('.actions .uiswitch input[type=checkbox]').setValue(false);
+    await vi.waitFor(() => expect(useGroups().state.autoSave).toBe(false));
+    useGroups().state.busy = true;
+    await nextTick();
+    expect(w.find('.busyover').exists()).toBe(false);
+    useGroups().state.busy = false;
     w.unmount();
   });
 });

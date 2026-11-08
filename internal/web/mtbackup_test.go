@@ -24,6 +24,9 @@ type restoreMTState struct {
 	mu     sync.Mutex
 	groups []magitrickle.Group
 	n      int // счётчик ID для групп без ID - как настоящий MT
+	// writes - сколько записей (POST/PUT групп) дошло до MT: черновик
+	// (114-док) не должен писать до применения
+	writes int
 	// mtVersion имитирует /api/v1/version форка (rev5+); пусто = старый
 	// бинарь без эндпоинта (404) - тестирует configVersion-фолбэк
 	mtVersion string
@@ -57,6 +60,7 @@ func restoreMTServer(t *testing.T) (*httptest.Server, *restoreMTState) {
 				req.ID = fmt.Sprintf("mig%d", st.n)
 			}
 			st.groups = append(st.groups, req)
+			st.writes++
 			json.NewEncoder(w).Encode(req)
 		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/groups":
 			var req struct {
@@ -74,6 +78,7 @@ func restoreMTServer(t *testing.T) (*httptest.Server, *restoreMTState) {
 				}
 			}
 			st.groups = req.Groups
+			st.writes++
 			w.WriteHeader(200)
 		default:
 			w.WriteHeader(404)

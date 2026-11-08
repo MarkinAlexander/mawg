@@ -1,15 +1,17 @@
 <script setup lang="ts">
-// Список групп: тумблеры сокрытия выключенного, поиск, сам список
-// (GroupCard) и диалоги импорта/копирования правил. Биндинги - из
-// контекста useGroupsList (provide/inject), имена прежние - из GroupsView.
-import { inject } from 'vue'
+// Список групп: тумблеры сокрытия выключенного, поиск, панель черновика
+// (114-док: сверху и снизу списка - видна без прокрутки), сам список
+// (GroupCard) с оверлеем «MT занят» при автосохранении и диалоги
+// импорта/копирования правил. Биндинги - из контекста useGroupsList
+// (provide/inject), имена прежние - из GroupsView.
+import { computed, inject } from 'vue'
 import {
-  UiButton, UiDialog, UiHelp, UiHint, UiInput, UiSelect, UiSwitch, UiTextarea,
+  UiBadge, UiButton, UiDialog, UiHelp, UiHint, UiIcon, UiInput, UiSelect, UiSwitch, UiTextarea,
 } from '../../components/ui'
 import { useGroups } from '../../stores/groups'
 import { G } from '../glossary'
-import { IMPORT_TYPE_OPTIONS } from './groupsLogic'
-import { GROUPS_LIST } from './groupsRules'
+import { IMPORT_TYPE_OPTIONS, plural } from './groupsLogic'
+import { GROUPS_LIST, useDraftPanel } from './groupsRules'
 import GroupCard from './GroupCard.vue'
 
 const { state } = useGroups();
@@ -20,6 +22,14 @@ const {
   imOpen, imG, imType, imSecond, imEnable, imText, imBusy, doImport,
   cpOpen, cpText, cpTitle,
 } = inject(GROUPS_LIST)!;
+
+// панель черновика (114-док, слово владельца 08.11)
+const { applying, discarding, applyDraft, discardDraft } = useDraftPanel();
+const draftWord = computed(() => plural(state.draft.dirty, 'изменение', 'изменения', 'изменений'));
+// блокировка списка - только при автосохранении: каждое действие пишется
+// в MT сразу, ввод гасится до конца ответа+перечитывания; в режиме черновика
+// запись мгновенная, оверлей не нужен
+const busyOver = computed(() => state.busy && state.autoSave);
 </script>
 
 <template>
@@ -54,8 +64,35 @@ const {
   </div>
 
   <div
+    v-if="state.draft.active"
+    class="draftbar"
+  >
+    <UiBadge
+      :text="`черновик: ${state.draft.dirty} ${draftWord}`"
+      variant="warn"
+      tooltip="автосохранение выключено: правки применятся кнопкой «Сохранить»"
+    />
+    <span class="dgap" />
+    <UiButton
+      variant="primary"
+      :busy="applying"
+      @click="applyDraft"
+    >
+      <UiIcon name="save" /><span>Сохранить</span>
+    </UiButton>
+    <UiButton
+      variant="ghost"
+      :busy="discarding"
+      @click="discardDraft"
+    >
+      Сбросить
+    </UiButton>
+  </div>
+
+  <div
     ref="listBox"
     class="mtlist"
+    :class="{ mtbusy: busyOver }"
     @focusin="onFocusin"
     @focusout="onFocusout"
   >
@@ -85,6 +122,45 @@ const {
       :key="g.id"
       :g="g"
     />
+
+    <!-- оверлей «MT занят» (114-док, слово владельца 08.11): сам прозрачен
+         для событий - клики гасит pointer-events:none на списке, ввод не
+         копится, а игнорируется -->
+    <div
+      v-if="busyOver"
+      class="busyover"
+    >
+      <UiBadge
+        text="MT занят, пишем…"
+        variant="info"
+      />
+    </div>
+  </div>
+
+  <div
+    v-if="state.draft.active"
+    class="draftbar"
+  >
+    <UiBadge
+      :text="`черновик: ${state.draft.dirty} ${draftWord}`"
+      variant="warn"
+      tooltip="автосохранение выключено: правки применятся кнопкой «Сохранить»"
+    />
+    <span class="dgap" />
+    <UiButton
+      variant="primary"
+      :busy="applying"
+      @click="applyDraft"
+    >
+      <UiIcon name="save" /><span>Сохранить</span>
+    </UiButton>
+    <UiButton
+      variant="ghost"
+      :busy="discarding"
+      @click="discardDraft"
+    >
+      Сбросить
+    </UiButton>
   </div>
 
   <UiDialog
@@ -199,6 +275,41 @@ const {
 }
 .mtlist {
   margin-top: 10px;
+  position: relative;
+}
+/* блокировка ввода при автосохранении (114-док): оверлей только рисуется,
+   события гасит сам список - клики во время записи игнорируются */
+.mtlist.mtbusy {
+  pointer-events: none;
+}
+.busyover {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+  border-radius: 8px;
+}
+/* панель черновика (114-док): бейдж слева, кнопки справа */
+.draftbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.draftbar .dgap {
+  flex: 1;
+}
+.draftbar .uibtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }
 .cptext {
   width: 100%;

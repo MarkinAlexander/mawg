@@ -3,14 +3,14 @@ import { computed, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import {
   UiBadge, UiBanner, UiButton, UiCard, UiColor, UiDialog, UiHelp, UiHint,
-  UiInput, UiSelect,
+  UiInput, UiSelect, UiSwitch,
 } from '../../components/ui'
 import { useGroups } from '../../stores/groups'
 import { G } from '../glossary'
 import type { GroupView } from '../../api/types'
 import { dupsEntries } from './groupsLogic'
 import {
-  GROUPS_LIST, useCreateGroup, useCyclesForm, useExcludesDraft,
+  GROUPS_LIST, useAutosave, useCreateGroup, useCyclesForm, useExcludesDraft,
   useGroupsList, usePresetApply,
 } from './groupsRules'
 import CascadeDialog from './CascadeDialog.vue'
@@ -41,6 +41,10 @@ const cascadeOpen = ref(false);
 
 const { excludesDisabled, exclDraft, exclNew, exclSaving, exclDirty, exclAdd, exclRemove, exclSave } = useExcludesDraft();
 const { cycFail, cycRestore, cycSaving, cycChanged, saveCycles } = useCyclesForm();
+// автосохранение записей MT (114-док, слово владельца 08.11): тумблер в
+// шапке, рядом с действиями карточки; autoSaveUi - локальный ref для
+// визуального отката при 409 (см. useAutosave)
+const { autoSaveUi, setAutoSave } = useAutosave();
 
 // список групп/правил (поиск/DnD/правки/диалоги) - в groupsRules.ts;
 // карточкам списка (GroupsList/GroupCard) раздаётся через provide/inject
@@ -84,6 +88,15 @@ onMounted(openFromLink);
     subtitle="какой трафик идёт через VPN, а какой - напрямую: правила по доменам, подсетям и отдельным IP."
   >
     <template #actions>
+      <!-- автосохранение (114-док, слово владельца 08.11): состояние
+           приходит с /mt/groups; 409 при включении - тост в useAutosave -->
+      <UiSwitch
+        :model-value="autoSaveUi"
+        label="Автосохранение"
+        tight
+        tooltip="вкл — каждое действие сразу пишется в MagiTrickle; выкл — правки копятся в черновике, применяются одной кнопкой «Сохранить» (удобно на слабых роутерах и для больших списков)"
+        @update:model-value="setAutoSave"
+      />
       <UiHelp :text="G.group + ' ' + G.ruleTypes" />
       <UiButton
         tooltip="одинаковые правила в разных группах; с поиском - все группы, где встречается искомое"
@@ -360,6 +373,11 @@ onMounted(openFromLink);
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+}
+/* тумблер автосохранения в ряду действий: служебный вертикальный
+   margin UiSwitch раздувает шапку карточки */
+.actions .uiswitch {
+  margin: 0;
 }
 /* bare-контролы кита несут margin-top: 3px под лейбл - в инлайн-рядах он
    не нужен, вся линия по центру */

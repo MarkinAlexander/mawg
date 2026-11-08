@@ -495,6 +495,11 @@ type Settings struct {
 	// ip name-server (страховочный сервер или MT:3553) и снимает её при
 	// выключении; Applied - что записано (аргументы RCI, по ним же рестор).
 	KeeneticDNS KeeneticDNS `json:"keeneticDns,omitempty"`
+	// AutoSaveMT - автосохранение правок групп MagiTrickle (114-док):
+	// nil/true - каждая правка вкладки «Группы» сразу PUT в MT (как
+	// всегда); false - правки копятся в черновике base/mt-draft.json и
+	// пишутся одним PUT по команде панели.
+	AutoSaveMT *bool `json:"autoSaveMT,omitempty"`
 }
 
 // KeeneticDNS - режим «DNS самого роутера» (Settings.KeeneticDNS).

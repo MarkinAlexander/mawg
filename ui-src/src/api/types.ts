@@ -60,6 +60,14 @@ export interface DeviceBinding {
   created?: string
 }
 
+// черновик записей MagiTrickle (114-док): автосохранение выключено - правки
+// копятся в черновике и применяются одной кнопкой «Сохранить»;
+// active - черновик требует применения, dirty - число неприменённых изменений
+export interface MtDraft {
+  active: boolean
+  dirty: number
+}
+
 export interface MtGroupsRes {
   available: boolean
   groups: GroupView[]
@@ -67,6 +75,24 @@ export interface MtGroupsRes {
   wrapper: boolean // в OUTPUT видна обёртка юзера (MR_*)
   sources: boolean // MT понимает sources (форк rev3+)
   backendFlavor?: string // семейство бэкенда MT: mawg-c | mawg-dev | upstream
+  // черновик записей (114-док): включён - каждое действие сразу пишется в MT
+  autoSave?: boolean
+  draft?: MtDraft // состояние черновика записей; бэкенд шлёт всегда объектом
+}
+
+// POST /mt/autosave (114-док): переключение автосохранения;
+// 409 - черновик активен, включать автосохранение нельзя
+export interface AutoSaveRes {
+  ok: boolean
+  autoSave: boolean
+  draft: MtDraft
+}
+
+// POST /mt/apply-draft (114-док): applied - сколько групп записано в MT;
+// 404 - применять нечего
+export interface ApplyDraftRes {
+  ok: boolean
+  applied: number
 }
 
 // ссылка на вхождение паттерна (GET /mt/duplicates): где ещё живёт правило

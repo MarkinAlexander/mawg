@@ -26,6 +26,10 @@ export const COPY_SVG =
   '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>'
 export const SEARCH_SVG =
   '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>'
+// дискета «Сохранить» (114-док): классический floppy - контур со срезанным
+// углом + верхний прямоугольник-затвор
+export const SAVE_SVG =
+  '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><rect x="8" y="3" width="7" height="5"/></svg>'
 
 export type IconName =
   | 'grip'
@@ -36,6 +40,7 @@ export type IconName =
   | 'plus-circle'
   | 'copy'
   | 'search'
+  | 'save'
   | 'eye'
   | 'eye-off'
   | 'x'
@@ -59,6 +64,7 @@ export const ICONS: Record<IconName, string> = {
   'plus-circle': PLUS_CIRCLE_SVG,
   copy: COPY_SVG,
   search: SEARCH_SVG,
+  save: SAVE_SVG,
   eye: EYE_SVG,
   'eye-off': EYE_OFF_SVG,
   x: X_SVG,

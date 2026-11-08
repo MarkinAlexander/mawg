@@ -49,6 +49,47 @@ func (s *Server) mtImportRules(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	added, dup, found := 0, 0, false
 	groupName := id
+	if !s.autoSaveOn() {
+		// 114-док: импорт копится в черновике, правила получают локальные
+		// ID - настоящие назначит MT при применении
+		if err := s.draftMutate(r.Context(), func(groups []magitrickle.Group) []magitrickle.Group {
+			for i := range groups {
+				g := &groups[i]
+				if g.ID != id {
+					continue
+				}
+				found = true
+				groupName = g.Name
+				existing := map[string]bool{}
+				for _, rl := range g.Rules {
+					existing[rl.Type+" "+rl.Rule] = true
+				}
+				for _, rl := range parsed {
+					if existing[rl.Type+" "+rl.Rule] {
+						dup++
+						continue
+					}
+					rl.ID = draftLocalRuleID(g.Rules)
+					g.Rules = append(g.Rules, rl)
+					added++
+				}
+				break
+			}
+			return groups
+		}); err != nil {
+			writeErr(w, err)
+			return
+		}
+		if !found {
+			http.NotFound(w, r)
+			return
+		}
+		if added > 0 {
+			s.store.LogEvent("rules", "magitrickle", fmt.Sprintf("в группу %s импортировано правил: %d", groupName, added))
+		}
+		s.draftResponse(w, http.StatusOK, map[string]any{"added": added, "skipped": dup + badCount, "bad": reasons})
+		return
+	}
 	err := s.mtApplyGroups(r.Context(), func(groups []magitrickle.Group) bool {
 		for i := range groups {
 			g := &groups[i]
@@ -97,11 +138,6 @@ func (s *Server) mtCreateRule(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, fmt.Errorf("нужны type (domain/namespace/wildcard/regex/subnet) и rule"))
 		return
 	}
-	client := s.mtClient()
-	if err := client.EnsureHealthy(r.Context()); err != nil {
-		writeErr(w, err)
-		return
-	}
 	rule := magitrickle.Rule{Type: req.Type, Rule: req.Rule, Name: req.Name, Enable: true}
 	if req.Type != "regex" {
 		norm, ok := magitrickle.NormalizeRule(req.Type, req.Rule, false)
@@ -115,7 +151,38 @@ func (s *Server) mtCreateRule(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, fmt.Errorf("похоже на URL, а не на регулярку"))
 		return
 	}
-	if _, err := client.CreateRule(r.Context(), r.PathValue("id"), rule); err != nil {
+	id := r.PathValue("id")
+	if !s.autoSaveOn() {
+		// 114-док: правило копится в черновике с локальным ID
+		found := false
+		if err := s.draftMutate(r.Context(), func(groups []magitrickle.Group) []magitrickle.Group {
+			for i := range groups {
+				if groups[i].ID != id {
+					continue
+				}
+				rule.ID = draftLocalRuleID(groups[i].Rules)
+				groups[i].Rules = append(groups[i].Rules, rule)
+				found = true
+				break
+			}
+			return groups
+		}); err != nil {
+			writeErr(w, err)
+			return
+		}
+		if !found {
+			http.NotFound(w, r)
+			return
+		}
+		s.draftResponse(w, http.StatusOK, rule)
+		return
+	}
+	client := s.mtClient()
+	if err := client.EnsureHealthy(r.Context()); err != nil {
+		writeErr(w, err)
+		return
+	}
+	if _, err := client.CreateRule(r.Context(), id, rule); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -133,17 +200,49 @@ func (s *Server) mtUpdateRule(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, fmt.Errorf("нужны type (domain/namespace/wildcard/regex/subnet) и rule"))
 		return
 	}
+	id, ruleID := r.PathValue("id"), r.PathValue("rid")
+	if !s.autoSaveOn() {
+		// 114-док: правка копится в черновике
+		found := false
+		if err := s.draftMutate(r.Context(), func(groups []magitrickle.Group) []magitrickle.Group {
+			for i := range groups {
+				if groups[i].ID != id {
+					continue
+				}
+				for j := range groups[i].Rules {
+					if groups[i].Rules[j].ID != ruleID {
+						continue
+					}
+					groups[i].Rules[j].Type = req.Type
+					groups[i].Rules[j].Rule = req.Rule
+					groups[i].Rules[j].Name = req.Name
+					found = true
+					break
+				}
+				break
+			}
+			return groups
+		}); err != nil {
+			writeErr(w, err)
+			return
+		}
+		if !found {
+			http.NotFound(w, r)
+			return
+		}
+		s.draftResponse(w, http.StatusOK, map[string]string{"ok": "updated"})
+		return
+	}
 	client := s.mtClient()
 	if err := client.EnsureHealthy(r.Context()); err != nil {
 		writeErr(w, err)
 		return
 	}
-	g, err := client.GroupByID(r.Context(), r.PathValue("id"), true)
+	g, err := client.GroupByID(r.Context(), id, true)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	ruleID := r.PathValue("rid")
 	for _, rl := range g.Rules {
 		if rl.ID != ruleID {
 			continue
@@ -167,6 +266,37 @@ func (s *Server) mtToggleRule(w http.ResponseWriter, r *http.Request) {
 		Enable bool `json:"enable"`
 	}
 	json.NewDecoder(r.Body).Decode(&req)
+	groupID, ruleID := r.PathValue("id"), r.PathValue("rid")
+	if !s.autoSaveOn() {
+		// 114-док: тумблер правила копится в черновике
+		found := false
+		if err := s.draftMutate(r.Context(), func(groups []magitrickle.Group) []magitrickle.Group {
+			for i := range groups {
+				if groups[i].ID != groupID {
+					continue
+				}
+				for j := range groups[i].Rules {
+					if groups[i].Rules[j].ID != ruleID {
+						continue
+					}
+					groups[i].Rules[j].Enable = req.Enable
+					found = true
+					break
+				}
+				break
+			}
+			return groups
+		}); err != nil {
+			writeErr(w, err)
+			return
+		}
+		if !found {
+			http.NotFound(w, r)
+			return
+		}
+		s.draftResponse(w, http.StatusOK, map[string]string{"ok": "ok"})
+		return
+	}
 	client := s.mtClient()
 	if err := client.EnsureHealthy(r.Context()); err != nil {
 		writeErr(w, err)
@@ -177,7 +307,6 @@ func (s *Server) mtToggleRule(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	groupID, ruleID := r.PathValue("id"), r.PathValue("rid")
 	for _, g := range groups {
 		if g.ID != groupID {
 			continue
@@ -207,6 +336,45 @@ func (s *Server) mtRulesEnableAll(w http.ResponseWriter, r *http.Request) {
 		Enable bool `json:"enable"`
 	}
 	json.NewDecoder(r.Body).Decode(&req)
+	groupID := r.PathValue("id")
+	if !s.autoSaveOn() {
+		// 114-док: вкл-все копится в черновике одним махом над группой
+		found := false
+		total, changed := 0, 0
+		groupName := ""
+		if err := s.draftMutate(r.Context(), func(groups []magitrickle.Group) []magitrickle.Group {
+			for i := range groups {
+				if groups[i].ID != groupID {
+					continue
+				}
+				found = true
+				groupName = groups[i].Name
+				total = len(groups[i].Rules)
+				for j := range groups[i].Rules {
+					if groups[i].Rules[j].Enable != req.Enable {
+						groups[i].Rules[j].Enable = req.Enable
+						changed++
+					}
+				}
+				break
+			}
+			return groups
+		}); err != nil {
+			writeErr(w, err)
+			return
+		}
+		if !found {
+			writeErr(w, fmt.Errorf("группа не найдена"))
+			return
+		}
+		if changed > 0 {
+			action := map[bool]string{true: "включены", false: "выключены"}[req.Enable]
+			s.store.LogEvent("rules", "magitrickle",
+				fmt.Sprintf("в группе %s %s все правила (%d из %d)", groupName, action, changed, total))
+		}
+		s.draftResponse(w, http.StatusOK, map[string]any{"ok": true, "total": total, "changed": changed})
+		return
+	}
 	client := s.mtClient()
 	if err := client.EnsureHealthy(r.Context()); err != nil {
 		writeErr(w, err)
@@ -217,7 +385,6 @@ func (s *Server) mtRulesEnableAll(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	groupID := r.PathValue("id")
 	for i := range groups {
 		g := &groups[i]
 		if g.ID != groupID {
@@ -249,6 +416,37 @@ func (s *Server) mtRulesEnableAll(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) mtDeleteRule(w http.ResponseWriter, r *http.Request) {
+	id, rid := r.PathValue("id"), r.PathValue("rid")
+	if !s.autoSaveOn() {
+		// 114-док: удаление копится в черновике
+		found := false
+		if err := s.draftMutate(r.Context(), func(groups []magitrickle.Group) []magitrickle.Group {
+			for i := range groups {
+				if groups[i].ID != id {
+					continue
+				}
+				for j := range groups[i].Rules {
+					if groups[i].Rules[j].ID != rid {
+						continue
+					}
+					groups[i].Rules = append(groups[i].Rules[:j], groups[i].Rules[j+1:]...)
+					found = true
+					break
+				}
+				break
+			}
+			return groups
+		}); err != nil {
+			writeErr(w, err)
+			return
+		}
+		if !found {
+			http.NotFound(w, r)
+			return
+		}
+		s.draftResponse(w, http.StatusOK, map[string]string{"ok": "deleted"})
+		return
+	}
 	client := s.mtClient()
 	if err := client.EnsureHealthy(r.Context()); err != nil {
 		writeErr(w, err)
@@ -279,6 +477,28 @@ func (s *Server) mtApplyPreset(w http.ResponseWriter, r *http.Request) {
 	name := req.Name
 	if name == "" {
 		name = preset.ID
+	}
+	if !s.autoSaveOn() {
+		// 114-док: пресет копится в черновике как новая группа; правила
+		// получают локальные ID. Копия правил обязательна: preset.Rules -
+		// общий статический список, мутации в нём недопустимы
+		created := magitrickle.Group{Name: name, Interface: req.Interface, Enable: true,
+			Rules: append([]magitrickle.Rule(nil), preset.Rules...)}
+		gid := ""
+		if err := s.draftMutate(r.Context(), func(groups []magitrickle.Group) []magitrickle.Group {
+			created.ID = draftLocalID(groups)
+			for j := range created.Rules {
+				created.Rules[j].ID = draftLocalRuleID(created.Rules[:j])
+			}
+			gid = created.ID
+			return append(groups, created)
+		}); err != nil {
+			writeErr(w, err)
+			return
+		}
+		s.store.LogEvent("rules", "magitrickle", "применён шаблон "+preset.ID+" на "+req.Interface)
+		s.draftResponse(w, http.StatusOK, map[string]any{"ok": true, "groupId": gid, "rules": len(created.Rules)})
+		return
 	}
 	client := s.mtClient()
 	if err := client.EnsureHealthy(r.Context()); err != nil {

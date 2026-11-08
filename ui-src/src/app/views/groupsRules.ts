@@ -4,6 +4,7 @@
 // состояния - в groupsLogic.ts; здесь - то, что держит refs/store/watch.
 import { computed, nextTick, reactive, ref, watch, type InjectionKey, type Ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { ApiError } from '../../api/client'
 import { dropIndex, isBeforeHalf, reorder } from '../../components/ui/dnd'
 import type { UiSelectOption } from '../../components/ui'
 import { useConfirm } from '../../stores/confirm'
@@ -13,7 +14,7 @@ import { useToast } from '../../stores/toast'
 import type { GroupView, Preset, Rule } from '../../api/types'
 import {
   cyclesValid, groupMatches, hideOffGroups, hideOffRules, normRuleValue,
-  offGroupsTotal, offRulesTotal, presetRulesLine, showAllRules,
+  offGroupsTotal, offRulesTotal, plural, presetRulesLine, showAllRules,
 } from './groupsLogic'
 
 // контекст списка групп (provide/inject из GroupsView): биндинги шаблона
@@ -552,4 +553,64 @@ export function useGroupsList(openMt: Ref<Set<string>>) {
     cpOpen, cpText, cpTitle, copyRules,
     ruleRows, onDetToggle,
   };
+}
+
+// тумблер автосохранения (114-док, слово владельца 08.11): 409 - активный
+// черновик мешает включить. Значение держим локальным ref: при ошибке проп
+// не менялся бы, и Vue не перерисовал бы чекбокс - прогоняем клик через
+// промежуточный рендер, затем возвращаем к истине по /mt/groups
+export function useAutosave() {
+  const groups = useGroups();
+  const { push } = useToast();
+  const autoSaveUi = ref(groups.state.autoSave);
+  watch(() => groups.state.autoSave, (v) => { autoSaveUi.value = v; });
+  async function setAutoSave(v: boolean): Promise<void> {
+    autoSaveUi.value = v; // оптимистично: чекбокс остаётся в положении клика
+    try {
+      await groups.setAutoSave(v);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409) push('Сначала примените или сбросьте черновик', true);
+      else push(e instanceof Error ? e.message : String(e), true);
+    }
+    autoSaveUi.value = groups.state.autoSave; // откат при ошибке, синхронизация при успехе
+  }
+  return { autoSaveUi, setAutoSave };
+}
+
+// панель черновика (114-док, слово владельца 08.11): «Сохранить» применяет
+// черновик одной записью, «Сбросить» - с подтверждением; перечитывание
+// уже в store-методах
+export function useDraftPanel() {
+  const groups = useGroups();
+  const { push } = useToast();
+  const { confirm } = useConfirm();
+  const applying = ref(false);
+  const discarding = ref(false);
+  async function applyDraft(): Promise<void> {
+    applying.value = true;
+    try {
+      const n = await groups.applyDraft();
+      push(`Применено: ${n} ${plural(n, 'группа', 'группы', 'групп')}`);
+    } catch (e) {
+      push(e instanceof Error ? e.message : String(e), true);
+    }
+    applying.value = false;
+  }
+  async function discardDraft(): Promise<void> {
+    const ok = await confirm({
+      title: 'Сброс черновика',
+      text: 'Сбросить черновик? Правки с момента последнего применения будут потеряны',
+      okLabel: 'Сбросить',
+    });
+    if (!ok) return;
+    discarding.value = true;
+    try {
+      await groups.discardDraft();
+      push('Черновик сброшен');
+    } catch (e) {
+      push(e instanceof Error ? e.message : String(e), true);
+    }
+    discarding.value = false;
+  }
+  return { applying, discarding, applyDraft, discardDraft };
 }

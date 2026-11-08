@@ -27,6 +27,9 @@ type Server struct {
 	tunMu      sync.Mutex
 	mtCacheMu  sync.Mutex
 	mtCache    *mtSnapshot
+	// mtDraftMu - сериализация цикла «прочитать черновик - мутировать -
+	// записать» и применения черновика одним PUT (114-док).
+	mtDraftMu sync.Mutex
 	ifaceCache respCache
 	sysCache   respCache
 	sbSrcCache respCache // источники ядра sing-box: отдельный слот (respCache одно-тельный)
