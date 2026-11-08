@@ -50,6 +50,7 @@ type Engine struct {
 	// (перепроверка при смене версии: пользователь обновил MT - липкий
 	// флаг глючности с прошлого старта панели должен сняться сам).
 	lastProbeVersion string
+	mtRecheckAt      time.Time // часовая автоперепроверка липкого флага (mtcompat.go)
 
 	ifaceAt time.Time
 

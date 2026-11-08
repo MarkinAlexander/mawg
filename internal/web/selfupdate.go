@@ -78,3 +78,18 @@ func (s *Server) postMTRestart(w http.ResponseWriter, r *http.Request) {
 	s.store.LogEvent("settings", "server", "перезапуск MagiTrickle из веб-интерфейса")
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "restarting"})
 }
+
+// postMTrecheck - ручная перепроверка глючной сборки MT (кнопка панели,
+// 114-док): та же проба совместимости, чистая запись снимает липкий флаг.
+// Async: результат в журнале и в /status.
+func (s *Server) postMTrecheck(w http.ResponseWriter, r *http.Request) {
+	if s.engine == nil {
+		writeErr(w, fmt.Errorf("движок не запущен"))
+		return
+	}
+	if !s.engine.RecheckMagitrickle() {
+		writeErr(w, fmt.Errorf("MT не отвечает"))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"ok": "recheck started"})
+}

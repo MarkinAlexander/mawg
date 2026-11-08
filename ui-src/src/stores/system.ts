@@ -79,6 +79,11 @@ export function useSystem() {
   async function mtRestart(): Promise<void> {
     await api('POST', '/system/mt-restart', {});
   }
+  // ручная перепроверка глючной сборки MT (114-док): проба совместимости,
+  // чистая запись снимает липкий флаг; результат - в журнале и в статусе
+  async function mtRecheck(): Promise<void> {
+    await api('POST', '/system/mt-recheck', {});
+  }
   // lifecycle ядра: start|stop|restart|enable|disable|uninstall
   async function corePower(id: string, action: string): Promise<CoreInfo> {
     const r = await api<{ core: CoreInfo }>('POST', `/cores/${id}/power`, { action });
@@ -127,5 +132,5 @@ export function useSystem() {
       return null;
     }
   }
-  return { state, cores, upd, refresh, refreshCores, start, stop, checkUpdate, coreSources, install, setSingboxMode, setSingboxCache, corePower, mtRestart, analyzeCoreBinary, applyCoreBinary, coreDownloads, enginesDiag };
+  return { state, cores, upd, refresh, refreshCores, start, stop, checkUpdate, coreSources, install, setSingboxMode, setSingboxCache, corePower, mtRestart, mtRecheck, analyzeCoreBinary, applyCoreBinary, coreDownloads, enginesDiag };
 }

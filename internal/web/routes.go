@@ -129,6 +129,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/system/update/run", s.updateRun)
 	mux.HandleFunc("POST /api/v1/system/restart", s.postSystemRestart)
 	mux.HandleFunc("POST /api/v1/system/mt-restart", s.postMTRestart)
+	mux.HandleFunc("POST /api/v1/system/mt-recheck", s.postMTrecheck)
 	mux.HandleFunc("GET /api/v1/cascades/iface-endpoints", s.ifaceEndpointsHint)
 	mux.HandleFunc("GET /api/v1/cascades", s.cascList)
 	mux.HandleFunc("POST /api/v1/cascades", s.cascCreate)

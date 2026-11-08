@@ -42,6 +42,40 @@ func (e *Engine) watchMagitrickleVersion(ctx context.Context) {
 	}
 }
 
+// RecheckMagitrickle - ручная перепроверка глючной сборки (кнопка панели):
+// та же проба совместимости, при чистой записи снимает липкий флаг.
+// Кейс IesusChristus (NetCraze Viva, 2 потока 800МГц, 07.11): версия MT не
+// менялась - вотчер версии не срабатывал, флаг висел вечно; на слабом CPU
+// проба честно может поймать усечение снова - тогда флаг останется.
+// true = проба запущена (async: результат в журнале и в /status).
+func (e *Engine) RecheckMagitrickle() bool {
+	if !e.waitMagitrickleAlive(10 * time.Second) {
+		e.store.LogEvent("magitrickle", "probe", "перепроверка глючной сборки: MT не отвечает - сначала поднимите демона")
+		return false
+	}
+	e.store.LogEvent("magitrickle", "probe", "перепроверка глючной сборки запущена вручную")
+	go e.runMagitrickleProbe(context.Background())
+	return true
+}
+
+// mtRecheckEvery - часовая автоперепроверка при установленном липком флаге:
+// вотчер версии ловит только смену версии, а пересобранная сборка без смены
+// версии (или изменившийся роутер-окружение) флаг не снимала вовсе.
+const mtRecheckEvery = time.Hour
+
+func (e *Engine) maybeRecheckGlitchy() {
+	if !e.store.MTGlitchy() {
+		return
+	}
+	now := e.now()
+	if !e.mtRecheckAt.IsZero() && now.Sub(e.mtRecheckAt) < mtRecheckEvery {
+		return
+	}
+	e.mtRecheckAt = now
+	e.store.LogEvent("magitrickle", "probe", "липкий флаг глючной сборки: часовая перепроверка")
+	go e.runMagitrickleProbe(context.Background())
+}
+
 // maybeReprobeOnVersionChange - одна проверка версии: изменилась -
 // повторная проба. true = проба выполнялась.
 func (e *Engine) maybeReprobeOnVersionChange(ctx context.Context) bool {
@@ -101,6 +135,9 @@ func (e *Engine) runMagitrickleProbe(ctx context.Context) {
 		e.store.LogEvent("magitrickle", "probe", fmt.Sprintf("глючная сборка MT: no-op PUT усёк список групп (%d -> %d) - рестартую демона, ставьте форк mawgfix", len(before), len(after)))
 		e.healMagitrickle("probe", time.Minute)
 		return
+	}
+	if e.store.MTGlitchy() {
+		e.store.LogEvent("magitrickle", "probe", "проба совместимости чиста - липкий флаг глючной сборки снят")
 	}
 	e.store.SetMTGlitchy(false)
 }

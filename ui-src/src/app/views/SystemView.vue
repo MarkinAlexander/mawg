@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { UiBadge, UiButton, UiCard, UiDialog, UiHint, UiIcon, UiTable } from '../../components/ui'
 import { useStatus } from '../../stores/status'
+import { useGroups } from '../../stores/groups'
 import { useSystem } from '../../stores/system'
 import { useConfirm } from '../../stores/confirm'
 import { useToast } from '../../stores/toast'
@@ -28,6 +29,9 @@ onBeforeUnmount(() => {
 });
 
 const { state: status } = useStatus();
+// флаг глючной сборки MT живёт в /mt/groups (стора groups стартует глобально
+// в AppView) - кнопка «перепроверить MT» показывается только при флаге
+const { state: mt } = useGroups();
 const { confirm } = useConfirm();
 const { push } = useToast();
 
@@ -64,6 +68,20 @@ async function mtRestart(): Promise<void> {
     push(e instanceof Error ? e.message : String(e), true);
   } finally {
     mtBusy.value = false;
+  }
+}
+
+const mtRecheckBusy = ref(false);
+async function mtRecheck(): Promise<void> {
+  if (mtRecheckBusy.value) return;
+  mtRecheckBusy.value = true;
+  try {
+    await sys.mtRecheck();
+    push('Перепроверка MT запущена: результат будет в журнале и здесь, через 1-2 минуты', false);
+  } catch (e) {
+    push(e instanceof Error ? e.message : String(e), true);
+  } finally {
+    mtRecheckBusy.value = false;
   }
 }
 
@@ -140,6 +158,17 @@ const resultOpen = computed({
         @click="mtRestart"
       >
         перезапустить MT
+      </UiButton>
+      <!-- 114-док: липкий флаг «глючная сборка MT» снимался только сменой
+           версии MT или рестартом панели; на роутере без обновления он висел
+           вечно (кейс NetCraze Viva) - кнопка запускает пробу совместимости -->
+      <UiButton
+        v-if="mt.glitchy"
+        :busy="mtRecheckBusy"
+        tooltip="повторная проба совместимости MT: при чистой записи флаг глючной сборки снимется сам"
+        @click="mtRecheck"
+      >
+        перепроверить MT
       </UiButton>
       <!-- круглая стрелка вместо слова «обновить» (слово владельца 04.11:
            читалось как «обновление всего», а это лишь перечитывание

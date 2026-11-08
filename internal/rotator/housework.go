@@ -25,6 +25,7 @@ func (e *Engine) runHousework() {
 	e.syncCascadeHooks()
 	e.checkGroupPolicies()
 	e.checkSmartCascades()
+	e.maybeRecheckGlitchy()
 }
 
 // houseworkBundles - чётные 30-с тики отданы бандлам, нечётные хукам и политикам.
