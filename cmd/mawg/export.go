@@ -71,30 +71,40 @@ func sanitizedConfig(c wgconf.Config) map[string]any {
 
 // cmdExport - "mawg export sanitized [пул|all] [файл|-]": JSON-дамп базы
 // для передачи в анализ (нейросети/чаты) без риска утечки ключей.
+// Служебные сообщения - в stderr: stdout при выводе в консоль - чистый JSON,
+// чтобы `mawg export sanitized all > dump.json` не пачкал файл
+// (кейс владельца 08.11: «sanitized» съедался как имя пула, «all» - как
+// имя файла, дамп уезжал в ~/all, в редирект попадало только сообщение).
 func cmdExport(dir string, args []string) int {
+	if len(args) == 0 || args[0] != "sanitized" {
+		fmt.Fprintln(os.Stderr, "использование: mawg export sanitized [пул|all] [файл|-]")
+		fmt.Fprintln(os.Stderr, "  пул не задан/\"all\" - все пулы; файл не задан/\"-\" - JSON в stdout")
+		return 2
+	}
+	rest := args[1:]
 	wantPool := "all"
 	out := ""
-	if len(args) > 0 {
-		wantPool = args[0]
+	if len(rest) > 0 {
+		wantPool = rest[0]
 	}
-	if len(args) > 1 {
-		out = args[1]
+	if len(rest) > 1 {
+		out = rest[1]
 	}
 
 	st, err := store.Open(dir)
 	if err != nil {
-		fmt.Println("store:", err)
+		fmt.Fprintln(os.Stderr, "store:", err)
 		return 1
 	}
 
 	rootJSON, err := st.ConfigJSON()
 	if err != nil {
-		fmt.Println("config:", err)
+		fmt.Fprintln(os.Stderr, "config:", err)
 		return 1
 	}
 	var root map[string]any
 	if json.Unmarshal(rootJSON, &root) != nil {
-		fmt.Println("config.json не читается как JSON")
+		fmt.Fprintln(os.Stderr, "config.json не читается как JSON")
 		return 1
 	}
 	delete(root, "pools") // пулы идут отдельной секцией с санитайзом конфигов
@@ -143,7 +153,7 @@ func cmdExport(dir string, args []string) int {
 
 	final, err := json.MarshalIndent(dump, "", "  ")
 	if err != nil {
-		fmt.Println("marshal:", err)
+		fmt.Fprintln(os.Stderr, "marshal:", err)
 		return 1
 	}
 	if out == "" || out == "-" {
@@ -151,9 +161,9 @@ func cmdExport(dir string, args []string) int {
 		return 0
 	}
 	if err := os.WriteFile(out, final, 0o600); err != nil {
-		fmt.Println("запись:", err)
+		fmt.Fprintln(os.Stderr, "запись:", err)
 		return 1
 	}
-	fmt.Printf("обезличенный дамп записан: %s (%d пул(ов))\n", out, len(pools))
+	fmt.Fprintf(os.Stderr, "обезличенный дамп записан: %s (%d пул(ов))\n", out, len(pools))
 	return 0
 }

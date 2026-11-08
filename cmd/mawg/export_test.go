@@ -45,11 +45,13 @@ func TestCmdExportSanitized(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// stdout - ЧИСТЫЙ JSON (кейс владельца: редирект `> dump.json` ловил
+	// служебное сообщение, а дамп уезжал в файл-мусор); сообщения - в stderr
 	var buf bytes.Buffer
 	old := os.Stdout
 	r, w, _ := os.Pipe()
 	os.Stdout = w
-	code := cmdExport(dir, []string{"all"})
+	code := cmdExport(dir, []string{"sanitized"})
 	w.Close()
 	os.Stdout = old
 	if code != 0 {
@@ -59,6 +61,14 @@ func TestCmdExportSanitized(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := buf.String()
+	if !strings.HasPrefix(strings.TrimSpace(out), "{") || strings.Contains(out, "дамп записан") {
+		t.Fatalf("stdout не чистый JSON:\n%s", out)
+	}
+
+	// без слова sanitized - usage-ошибка, код 2
+	if code := cmdExport(dir, []string{"all"}); code != 2 {
+		t.Fatalf("аргумент без режима должен давать код 2, получил %d", code)
+	}
 
 	if strings.Contains(out, priv) || strings.Contains(out, psk) || strings.Contains(out, "top-secret-rci-token") {
 		t.Fatal("секрет утёк в дамп")
