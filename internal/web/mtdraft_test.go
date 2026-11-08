@@ -355,9 +355,9 @@ func TestMTDraftRules(t *testing.T) {
 	}
 }
 
-// откат правки (выключил - включил обратно): dirty 0, но touched хранит
-// затронутую группу до «Сохранить/Сбросить» (кейс владельца 08.11).
-func TestMTDraftRollbackKeepsTouched(t *testing.T) {
+// откат правки (выключил - включил обратно): дифф пуст - черновик закрывается
+// сам (слово владельца 08.11: «случайно задел и вернул» не требует Сбросить).
+func TestMTDraftRollbackClosesDraft(t *testing.T) {
 	ts, mtState, st := newDraftTestServer(t)
 	draftFixture(t, mtState)
 	if err := st.SetAutoSaveMT(false); err != nil {
@@ -366,26 +366,17 @@ func TestMTDraftRollbackKeepsTouched(t *testing.T) {
 	if code, raw := httpDo(t, ts.URL, "POST", "/api/v1/mt/groups/g1/enable", `{"enable":false}`); code != 200 {
 		t.Fatalf("off: %d %s", code, raw)
 	}
+	if _, ok := st.MTDraftGet(); !ok {
+		t.Fatal("файл черновика не создался на правке")
+	}
 	if code, raw := httpDo(t, ts.URL, "POST", "/api/v1/mt/groups/g1/enable", `{"enable":true}`); code != 200 {
 		t.Fatalf("on: %d %s", code, raw)
 	}
-	var df struct {
-		TouchedGroupIDs []string          `json:"touchedGroupIds"`
-		Groups          []magitrickle.Group `json:"groups"`
+	if _, ok := st.MTDraftGet(); ok {
+		t.Fatal("пустой дифф должен закрыть черновик (файл удалён)")
 	}
-	raw, ok := st.MTDraftGet()
-	if !ok {
-		t.Fatal("файл черновика не существует")
-	}
-	if err := json.Unmarshal(raw, &df); err != nil {
-		t.Fatal(err)
-	}
-	if len(df.TouchedGroupIDs) == 0 || df.TouchedGroupIDs[0] != "g1" {
-		t.Fatalf("touched пуст после отката: %+v", df.TouchedGroupIDs)
-	}
-	for _, g := range df.Groups {
-		if g.ID == "g1" && !g.Enable {
-			t.Fatal("откат не вернул включённость")
-		}
-	}
+	if !mtState.groups[0].Enable {
+		t.Fatal("MT изменился при черновике")
+	} // группа осталась в исходном включённом состоянии
+
 }
