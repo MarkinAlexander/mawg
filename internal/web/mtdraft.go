@@ -170,29 +170,45 @@ func (s *Server) draftEnsure(ctx context.Context) ([]magitrickle.Group, []magitr
 func (s *Server) draftMutate(ctx context.Context, mutate func([]magitrickle.Group) []magitrickle.Group) error {
 	s.mtDraftMu.Lock()
 	defer s.mtDraftMu.Unlock()
-	baseRaw, dfRaw, cur, err := s.draftEnsureLocked(ctx)
+	raw, ok := s.store.MTDraftGet()
+	if !ok {
+		if _, _, _, err := s.draftEnsureLocked(ctx); err != nil {
+			return err
+		}
+		if raw, ok = s.store.MTDraftGet(); !ok {
+			return fmt.Errorf("черновик не создался")
+		}
+	}
+	// весь файл правится и сохраняется ОДНОЙ записью: перезапись через
+	// marshalDraftFile затирала накопленный touched (кейс владельца 08.11:
+	// выключил группу - включил обратно - обводка исчезала)
+	var df mtDraftFile
+	if err := json.Unmarshal(raw, &df); err != nil {
+		return fmt.Errorf("черновик повреждён, применить нельзя - сбросьте его: %v", err)
+	}
+	cur, err := decodeDraftGroups(df.Groups)
 	if err != nil {
-		return err
+		return fmt.Errorf("черновик повреждён, применить нельзя - сбросьте его: %v", err)
+	}
+	base, errB := decodeDraftGroups(df.Base)
+	if errB != nil {
+		return fmt.Errorf("черновик повреждён, применить нельзя - сбросьте его: %v", errB)
 	}
 	cur = mutate(cur)
-	data, err := json.Marshal(cur)
+	g, err := json.Marshal(cur)
 	if err != nil {
 		return err
 	}
-	if err := s.store.MTDraftSave(marshalDraftFile(baseRaw, data)); err != nil {
+	df.Groups = g
+	_, gIDs, rIDs := s.draftDiffs(base, cur)
+	df.TouchedGroupIDs = unionStrings(df.TouchedGroupIDs, gIDs)
+	df.TouchedRuleIDs = unionStrings(df.TouchedRuleIDs, rIDs)
+	df.At = time.Now()
+	env, err := json.Marshal(df)
+	if err != nil {
 		return err
 	}
-	// touched накапливается: дифф новой правки поверх уже накопленного
-	base, errB := decodeDraftGroups(baseRaw)
-	if errB != nil {
-		return nil // статус посчитается без touched - не блокируем правку
-	}
-	var df mtDraftFile
-	if json.Unmarshal(dfRaw, &df) != nil {
-		return nil
-	}
-	_, gIDs, rIDs := s.draftDiffs(base, cur)
-	return s.touchDraft(&df, gIDs, rIDs)
+	return s.store.MTDraftSave(env)
 }
 
 // draftRead - группы черновика для mtGetGroups; false = черновика нет.
