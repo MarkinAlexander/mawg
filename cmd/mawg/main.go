@@ -119,6 +119,9 @@ const usage = `mawg - Multi-AWG Changer ` + `
   mawg links amnezia <vpn://> [-via socks5://127.0.0.1:2282]
                           обменять ключ Amnezia Premium/Free у gateway на AWG-узлы
   mawg singbox discover   релизы ядра sing-box-lx: матрица arch x flavor обоих источников
+  mawg export sanitized [пул|all] [файл|-]
+                          обезличенный дамп базы и конфигов пулов для анализа:
+                          ключи/PSK/пароли/токены -> ***, функционал сохранён
   mawg -reset-auth        задать новый пароль панели интерактивно
   mawg -password <pass>   задать пароль без вопросов
 
@@ -195,6 +198,8 @@ func main() {
 		os.Exit(cmdResetAccess(dir, flag.Arg(1)))
 	case "allow":
 		os.Exit(cmdAllow(dir, flag.Arg(1)))
+	case "export":
+		os.Exit(cmdExport(dir, flag.Args()[1:]))
 	case "":
 	default:
 		fmt.Fprintf(os.Stderr, "неизвестная команда %q\n\n%s", cmd, usage)
