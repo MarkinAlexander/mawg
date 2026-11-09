@@ -118,6 +118,12 @@ func (s *Server) dnsDnsmasq(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, fmt.Errorf("mode: mt|direct"))
 		return
 	}
+	if req.Mode == "mt" && s.dnsmasqMTLoopRisk() {
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": "замкнёт петлю: MagiTrickle сейчас отвечает через резолвер роутера (127.0.0.1:53), и его проверка уже падает - направить dnsmasq в MT значит зациклить dnsmasq → MT → dnsmasq. Верните dnsmasq на прямые серверы (он уже там) или задайте внешний список в «Резервных серверах»",
+		})
+		return
+	}
 	if err := dnsmgr.SetDnsmasqTarget(run, req.Mode); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return

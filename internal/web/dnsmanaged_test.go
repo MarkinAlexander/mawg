@@ -43,11 +43,12 @@ func httpGetJSON(t *testing.T, url string) map[string]any {
 // fakeMTAPI - синтетический форк MT: апстримы/зоны держит в памяти
 // (PUT горячо применяет, как настоящий форк), версию отдаёт rev19.
 type fakeMTAPI struct {
-	mu       sync.Mutex
-	ups      []string
-	zones    int
-	upPuts   int
-	zonePuts []int // len таблицы на каждый PUT
+	mu         sync.Mutex
+	ups        []string
+	zones      int
+	upPuts     int
+	zonePuts   []int // len таблицы на каждый PUT
+	routerDead bool  // health-проба 127.0.0.1:53 валится (петля)
 }
 
 func (f *fakeMTAPI) handler() http.Handler {
@@ -67,7 +68,11 @@ func (f *fakeMTAPI) handler() http.Handler {
 			}
 			list := make([]up, 0, len(f.ups))
 			for _, a := range f.ups {
-				list = append(list, up{Address: a, Alive: true, Active: a == f.ups[0]})
+				alive := true
+				if a == "127.0.0.1:53" && f.routerDead {
+					alive = false
+				}
+				list = append(list, up{Address: a, Alive: alive, Active: a == f.ups[0]})
 			}
 			json.NewEncoder(w).Encode(map[string]any{"available": true, "health": map[string]any{"enabled": true}, "upstreams": list})
 		case r.URL.Path == "/api/v1/dns/upstreams" && r.Method == http.MethodPut:
@@ -237,5 +242,38 @@ func TestDNSRoutingOnNoop(t *testing.T) {
 	defer mt.mu.Unlock()
 	if mt.upPuts != 0 {
 		t.Fatalf("noop on трогает форк: puts %d", mt.upPuts)
+	}
+}
+
+// Гард петли (живой кейс 0.62 09.11): MT отвечает через резолвер роутера,
+// health-проба валится - направить dnsmasq в MT нельзя, иначе
+// dnsmasq → MT → dnsmasq роняет DNS устройств.
+func TestDNSDnsmasqLoopGuard(t *testing.T) {
+	ts, _, mt := dnsRoutingTestEnv(t)
+	mt.mu.Lock()
+	mt.ups = []string{"127.0.0.1:53"}
+	mt.routerDead = true
+	mt.mu.Unlock()
+
+	resp, err := http.Post(ts.URL+"/api/v1/dns/dnsmasq", "application/json", strings.NewReader(`{"mode":"mt"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := readBody(resp)
+	if resp.StatusCode != http.StatusConflict || !strings.Contains(body, "замкнёт петлю") {
+		t.Fatalf("гард петли: status %d, body %s", resp.StatusCode, body)
+	}
+
+	// живой апстрим роутера - историческая форма, не блокируем
+	mt.mu.Lock()
+	mt.routerDead = false
+	mt.mu.Unlock()
+	resp, err = http.Post(ts.URL+"/api/v1/dns/dnsmasq", "application/json", strings.NewReader(`{"mode":"mt"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	readBody(resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("живой апстрим роутера не должен блокироваться: status %d", resp.StatusCode)
 	}
 }

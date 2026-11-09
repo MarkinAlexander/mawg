@@ -242,6 +242,25 @@ func (s *Server) applyRouterUpstream(router bool) error {
 // dnsManagedGate - PUT-ы DNS-раздела при выключенной маршрутизации DNS:
 // править каскад/зоны/политику/dnsmasq/ndm нельзя (их ответы всё равно не
 // используются). false = ответ уже записан (409).
+// dnsmasqMTLoopRisk - направить dnsmasq в MT опасно, когда MT отвечает
+// через резолвер роутера (апстрим 127.0.0.1:53) и health его пробу валит
+// (петля dnsmasq → MT → dnsmasq уже кусается; живой кейс 0.62 09.11:
+// историческая форма «dnsmasq в MT» маскировалась параллельным ISP-
+// апстримом dnsmasq, явный список включил health-пробы - и петля стала
+// видимой и сломала DNS устройств). Рестор из dead - хистерезис форка.
+func (s *Server) dnsmasqMTLoopRisk() bool {
+	st, err := s.mtClient().DnsUpstreams(rContext())
+	if err != nil || st == nil {
+		return false // MT молчит - нечего утверждать, пусть механика покажет
+	}
+	for _, u := range st.Upstreams {
+		if u.Address == routerUpstream && !u.Alive {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Server) dnsManagedGate(w http.ResponseWriter) bool {
 	if v := s.store.DnsRouting(); v != nil && !*v {
 		writeJSON(w, http.StatusConflict, map[string]string{
