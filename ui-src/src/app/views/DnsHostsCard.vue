@@ -27,7 +27,12 @@ async function load(): Promise<void> {
   } catch (e) {
     res.value = null;
     push(e instanceof Error ? e.message : String(e), true);
+    return;
   }
+  // свой список - редакторская копия стора; dirty до применения
+  // (гард: старый бинарь/стаб могет отдать объект без own)
+  ownList.value = (res.value?.own ?? []).map((h) => ({ ...h }));
+  ownDirty.value = false;
 }
 onMounted(load);
 
