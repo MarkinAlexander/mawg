@@ -155,13 +155,27 @@ async function removeRouter(e: { name: string; ipv4?: string; ipv6?: string; sou
 
 // пробы: запрос через путь устройств, сравнение с ожидаемым
 async function probeOne(name: string, v4?: string, v6?: string): Promise<void> {
-  try {
-    const r = await api<DnsHostProbeRes>('GET', `/dns/hosts/probe?name=${encodeURIComponent(name)}`);
-    probes.value[name] = r;
-    void v4;
-    void v6;
-  } catch (e) {
-    probes.value[name] = { name, error: e instanceof Error ? e.message : String(e) };
+  // один ретрай: разовые транзиенты (рестарт MT/панели, окно деплоя)
+  // не должны оставлять ложное «MT молчит» (живой кейс 0.62 09.11)
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const r = await api<DnsHostProbeRes>('GET', `/dns/hosts/probe?name=${encodeURIComponent(name)}`);
+      if (!r.error || attempt === 1) {
+        probes.value[name] = r;
+        void v4;
+        void v6;
+        return;
+      }
+      await new Promise((res) => setTimeout(res, 600));
+    } catch (e) {
+      if (attempt === 1) {
+        probes.value[name] = { name, error: e instanceof Error ? e.message : String(e) };
+        void v4;
+        void v6;
+        return;
+      }
+      await new Promise((res) => setTimeout(res, 600));
+    }
   }
 }
 
