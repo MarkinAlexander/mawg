@@ -70,6 +70,17 @@ const dnsZonesRevMin = 13 // первая ревизия с зонным DNS (0.
 // DnsZonesSupported: rev13+ умеют зонный DNS - таблица зон dns-proxy
 // (зона -> свои упорядоченные апстримы, fail-closed) и API
 // GET/PUT /api/v1/dns/zones; на старых ревизиях карточка «Зонные DNS» скрыта.
+// DnsHostsSupported: rev21+ умеют статические hosts - имена, на которые
+// dns-proxy отвечает сам (мимо апстримов и AAAA-фильтра).
+func DnsHostsSupported(version string) bool {
+	m := revRe.FindStringSubmatch(version)
+	if m == nil {
+		return false
+	}
+	n, err := strconv.Atoi(m[1])
+	return err == nil && n >= dnsHostsRevMin
+}
+
 func DnsZonesSupported(version string) bool {
 	m := revRe.FindStringSubmatch(version)
 	if m == nil {
@@ -141,3 +152,5 @@ func ConfigVersion(configYAML []byte) string {
 	}
 	return string(m[1])
 }
+
+const dnsHostsRevMin = 21 // rev21: статические hosts

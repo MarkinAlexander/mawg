@@ -99,6 +99,15 @@ func (s *Server) mtDnsHealthCapable(ctx context.Context) bool {
 
 // mtDnsZonesCapable - умеет ли подключённый MT зонный DNS (форк rev13+,
 // GET/PUT /api/v1/dns/zones). Порядок тот же, что у sources.
+// mtDnsHostsCapable - форк умеет статические hosts (rev21+): имена,
+// на которые dns-proxy отвечает сам, мимо апстримов и AAAA-фильтра.
+func (s *Server) mtDnsHostsCapable(ctx context.Context) bool {
+	if v, err := s.mtClient().GetVersion(ctx); err == nil && v != "" {
+		return magitrickle.DnsHostsSupported(v)
+	}
+	return false
+}
+
 func (s *Server) mtDnsZonesCapable(ctx context.Context) bool {
 	if v, err := s.mtClient().GetVersion(ctx); err == nil && v != "" {
 		return magitrickle.DnsZonesSupported(v)

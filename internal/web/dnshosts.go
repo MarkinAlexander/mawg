@@ -23,6 +23,7 @@ import (
 
 	"mawg/internal/dnsmgr"
 	"mawg/internal/dnsprobe"
+	"mawg/internal/magitrickle"
 	"mawg/internal/store"
 )
 
@@ -95,6 +96,7 @@ func (s *Server) dnsHostsGet(w http.ResponseWriter, r *http.Request) {
 		// Keenetic: ipv6-половина своих записей неприменима (ndm не знает
 		// ipv6 host, проверено 09.11) - панель честно показывает это
 		"v6Capable": !isKeen,
+		"mtCapable": s.mtDnsHostsCapable(r.Context()),
 	})
 }
 
@@ -118,6 +120,35 @@ func (s *Server) dnsHostsSet(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	// 1) записи в dns-proxy MT (rev21+): MT сам отвечает на перехвате -
+	// своё (владельца) и все записи роутера (ip host, /etc/hosts)
+	mtSynced := 0
+	if s.mtDnsHostsCapable(r.Context()) {
+		pairs := ownHostPairs(want)
+		var routerEntries []dnsmgr.HostEntry
+		if s.backend.Name() == store.PlatformKeenetic {
+			if cfg, err := dnsmgr.KeeneticRunningConfig(run); err == nil {
+				routerEntries = dnsmgr.ParseKeeneticHosts(cfg)
+			}
+		} else if collected, err := dnsmgr.CollectHostsOpenWrt(run); err == nil {
+			routerEntries = collected
+		}
+		for _, e := range routerEntries {
+			if e.IPv4 != "" {
+				pairs = append(pairs, magitrickle.DnsHostPair{Name: e.Name, Address: e.IPv4})
+			}
+			if e.IPv6 != "" {
+				pairs = append(pairs, magitrickle.DnsHostPair{Name: e.Name, Address: e.IPv6})
+			}
+		}
+		if err := s.mtClient().SetDnsHosts(r.Context(), pairs); err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "MT: " + err.Error()})
+			return
+		}
+		mtSynced = len(pairs)
+	}
+	// 2) резолвер роутера (режим «Маршрутизация DNS выключена»: отвечает
+	// он сам) - Keenetic: ip host через ndmc; OpenWrt: файл /etc/hosts.d/mawg
 	if s.backend.Name() == store.PlatformKeenetic {
 		if err := dnsmgr.ApplyKeeneticHosts(run, hostsToWant(want), hostsToWant(s.store.DnsHosts())); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -133,8 +164,12 @@ func (s *Server) dnsHostsSet(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	s.store.LogEvent("dns", "hosts", fmt.Sprintf("свой список локальных записей применён (%d шт.)", len(want)))
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "own": want})
+	if mtSynced > 0 {
+		s.store.LogEvent("dns", "hosts", fmt.Sprintf("свой список применён (%d шт.); в MT загружено %d записей (свои + роутер) - отвечает сам на перехвате", len(want), mtSynced))
+	} else {
+		s.store.LogEvent("dns", "hosts", fmt.Sprintf("свой список локальных записей применён (%d шт.)", len(want)))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "own": want, "mtSynced": mtSynced})
 }
 
 // dnsHostsRouterSet - POST /dns/hosts/router: правка «его данных» -
@@ -277,6 +312,21 @@ func validateDnsHosts(list []store.DnsHost) ([]store.DnsHost, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
+}
+
+// ownHostPairs - свой список -> пары таблицы форка
+// (v4 и v6 - отдельные записи, как в hosts-файле).
+func ownHostPairs(list []store.DnsHost) []magitrickle.DnsHostPair {
+	out := make([]magitrickle.DnsHostPair, 0, len(list)*2)
+	for _, h := range list {
+		if h.IPv4 != "" {
+			out = append(out, magitrickle.DnsHostPair{Name: h.Name, Address: h.IPv4})
+		}
+		if h.IPv6 != "" {
+			out = append(out, magitrickle.DnsHostPair{Name: h.Name, Address: h.IPv6})
+		}
+	}
+	return out
 }
 
 // hostsToWant - стор -> параметры применения.
