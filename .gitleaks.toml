@@ -91,4 +91,5 @@ regexes = [
   '''^gEyQZ7ioEGZMg6xF8Wwf0A9mifQodrcdrjDEzIwjNmw=$''',
   '''^kLKh8p7664kHCd8rKtcfHWgmaWqzv1mTUAQxtCf/GVU=$''',
   '''^uJd2xK5t0mFvqWz\+YbN8cLrA3eHh7oPqQ1wZsX4dC6k=$''',
+  '''^q9Xk1AbCdefGHIjklMNOpqrsTUVwxyz0123456789stu=$''',
 ]

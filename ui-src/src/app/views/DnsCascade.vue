@@ -284,6 +284,7 @@ async function saveEdit(): Promise<void> {
       </UiButton>
     </div>
     <template v-else-if="!routingOff">
+      <UiHint text="Список - порядок, в котором MagiTrickle отвечает на DNS-запросы устройств: верхний - главный, при его сбое запросы идут вниз. Обычно здесь внешние серверы (8.8.8.8, DoH). Адрес резолвера роутера (127.0.0.1) допустим, только когда служба DNS роутера НЕ направлена в MT - иначе петля, панель предупредит бейджем." />
       <div class="editrows">
         <div
           v-for="(a, i) in editList"
@@ -299,8 +300,8 @@ async function saveEdit(): Promise<void> {
           <UiBadge
             v-if="loopRisk(a)"
             variant="warn"
-            text="петля?"
-            tooltip="Это адрес службы DNS самого роутера (dnsmasq), а она сейчас направлена в MT: такой адрес замкнёт петлю и уронит DNS. На Кинетике такой адрес легален, на OpenWrt - нет."
+            text="риск петли"
+            tooltip="Это адрес резолвера самого роутера (dnsmasq/ndm). Сейчас служба DNS роутера направлена в MT - такой адрес зациклит её (dnsmasq → MT → dnsmasq) и уронит DNS устройств. Ставить только если понимаете зачем: сейчас этот адрес уже отвечает через MT, список обычно нужен с внешними серверами."
           />
           <span class="rowbtns">
             <UiButton

@@ -518,3 +518,20 @@ func (s *Store) SetDnsSavedUpstreams(list []string) error {
 	s.root.Settings.DnsSavedUpstreams = list
 	return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
 }
+
+// DnsHosts - свой список локальных записей (Settings.DnsHosts, 115-док).
+func (s *Store) DnsHosts() []DnsHost {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]DnsHost(nil), s.root.Settings.DnsHosts...)
+}
+
+func (s *Store) SetDnsHosts(list []DnsHost) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if list == nil {
+		list = []DnsHost{}
+	}
+	s.root.Settings.DnsHosts = list
+	return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
+}

@@ -804,3 +804,40 @@ export interface PoolEngine {
   now: string
   nodes: EngineNode[]
 }
+
+// GET/PUT /dns/hosts: «Локальные записи» (115-док, слово владельца 09.11
+// третье). Своё список (имя + IPv4 и/или IPv6) mawg применяет в резолвер
+// роутера: Keenetic - ip host через ndmc (ipv6-половина неприменима -
+// ndm не знает ipv6 host, v6Capable=false), OpenWrt - файл
+// /etc/hosts.d/mawg из addn-hosts dnsmasq. router - записи резолвера
+// роутера как он их хранит; own=true - имя есть в своём списке.
+// Проба GET /dns/hosts/probe?name= - запрос через путь устройств
+// (dns-proxy MT :3553): то, что реально увидит устройство.
+export interface DnsHostEntry {
+  name: string
+  ipv4?: string
+  ipv6?: string
+  source: 'ndm' | 'hosts' | 'mawg'
+  own: boolean
+}
+
+export interface DnsHostRecord {
+  id: string
+  name: string
+  ipv4?: string
+  ipv6?: string
+}
+
+export interface DnsHostsRes {
+  platform: 'openwrt' | 'keenetic'
+  router: DnsHostEntry[]
+  own: DnsHostRecord[]
+  v6Capable: boolean
+}
+
+export interface DnsHostProbeRes {
+  name: string
+  ipv4?: string[]
+  ipv6?: string[]
+  error?: string
+}

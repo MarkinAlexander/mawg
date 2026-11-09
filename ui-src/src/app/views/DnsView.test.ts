@@ -312,9 +312,9 @@ describe('DnsView - резервные серверы MT (форк rev8+)', () =
     await btn('Добавить')!.trigger('click')
     await vi.waitFor(() => expect(w.findAll('#card-dns .editrow').length).toBe(3))
 
-    // строка подсвечена честным «петля?»
+    // строка подсвечена честным «риск петли»
     const rows = () => w.findAll('#card-dns .editrow')
-    expect(rows()[2].text()).toContain('петля')
+    expect(rows()[2].text()).toContain('риск петли')
     // кнопка сохранения доступна, но рядом предупреждение
     await vi.waitFor(() => expect(w.find('#card-dns').text()).toContain('спросит подтверждение'))
 

@@ -40,11 +40,11 @@ const CanaryDomain = "deb.torproject.org"
 const ControlDomain = "ya.ru"
 
 var CanaryIPs = map[string]bool{
-	"204.8.99.144":     true,
-	"204.8.99.146":     true,
-	"95.216.163.36":    true,
-	"116.202.120.165":  true,
-	"116.202.120.166":  true,
+	"204.8.99.144":    true,
+	"204.8.99.146":    true,
+	"95.216.163.36":   true,
+	"116.202.120.165": true,
+	"116.202.120.166": true,
 }
 
 // Вердикты (JSON-контракт с панелью).
@@ -481,7 +481,7 @@ func exchangeDoH(urlStr, ip, domain string, timeout time.Duration) ([]string, er
 	tr := &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
 		// #nosec G402 - зонд публичных DoH, имя хоста задаёт уровень
-		TLSClientConfig:  &tls.Config{ServerName: urlHost(urlStr)},
+		TLSClientConfig:   &tls.Config{ServerName: urlHost(urlStr)},
 		ForceAttemptHTTP2: true,
 	}
 	if ip != "" {
@@ -550,4 +550,118 @@ func readFramed(r io.Reader) ([]byte, error) {
 		return nil, err
 	}
 	return msg, nil
+}
+
+// Lookup - A и AAAA ответы одного UDP-резолвера одним именем (карточка
+// «Локальные записи», 115-док: проба записи через путь устройств).
+func Lookup(server, name string, timeout time.Duration) (a, aaaa []string, err error) {
+	a, err = exchangeUDPType(server, name, 1, timeout)
+	if err != nil {
+		return nil, nil, err
+	}
+	aaaa, err = exchangeUDPType(server, name, 28, timeout)
+	if err != nil {
+		return nil, nil, err
+	}
+	return a, aaaa, nil
+}
+
+// exchangeUDPType - exchangeUDP с выбором типа запроса (1=A, 28=AAAA);
+// ответ парсится по запрошенному типу.
+func exchangeUDPType(server, domain string, qtype uint16, timeout time.Duration) ([]string, error) {
+	id := randomID()
+	q := buildQueryType(domain, id, qtype)
+	conn, err := net.DialTimeout("udp", server, timeout)
+	if err != nil {
+		return nil, fmt.Errorf("dial udp %s: %w", server, err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(timeout))
+	if _, err = conn.Write(q); err != nil {
+		return nil, fmt.Errorf("write udp %s: %w", server, err)
+	}
+	buf := make([]byte, 4096)
+	for attempt := 0; attempt < 2; attempt++ {
+		n, err := conn.Read(buf)
+		if err != nil {
+			return nil, fmt.Errorf("read udp %s: %w", server, err)
+		}
+		if n >= 12 && binary.BigEndian.Uint16(buf[:2]) == id {
+			return parseAnswers(buf[:n], qtype), nil
+		}
+	}
+	return nil, fmt.Errorf("udp %s: ответ без совпадения id", server)
+}
+
+// buildQueryType - buildQuery с явным QTYPE (1=A, 28=AAAA).
+func buildQueryType(domain string, id uint16, qtype uint16) []byte {
+	var b []byte
+	b = binary.BigEndian.AppendUint16(b, id)
+	b = binary.BigEndian.AppendUint16(b, 0x0100) // флаги: RD
+	b = binary.BigEndian.AppendUint16(b, 1)      // QDCOUNT
+	b = binary.BigEndian.AppendUint16(b, 0)      // ANCOUNT
+	b = binary.BigEndian.AppendUint16(b, 0)      // NSCOUNT
+	b = binary.BigEndian.AppendUint16(b, 0)      // ARCOUNT
+	for _, label := range strings.Split(strings.TrimSuffix(domain, "."), ".") {
+		if label == "" {
+			continue
+		}
+		b = append(b, byte(len(label)))
+		b = append(b, label...)
+	}
+	b = append(b, 0)
+	b = binary.BigEndian.AppendUint16(b, qtype)
+	b = binary.BigEndian.AppendUint16(b, 1) // QCLASS = IN
+	return b
+}
+
+// parseAnswers - parseA с явным ожидаемым типом записи (1=A, 28=AAAA).
+func parseAnswers(resp []byte, qtype uint16) []string {
+	if len(resp) < 12 {
+		return nil
+	}
+	qd := int(binary.BigEndian.Uint16(resp[4:6]))
+	an := int(binary.BigEndian.Uint16(resp[6:8]))
+	off := 12
+	skipName := func() {
+		for off < len(resp) {
+			l := int(resp[off])
+			if l == 0 {
+				off++
+				return
+			}
+			if l&0xC0 == 0xC0 {
+				off += 2
+				return
+			}
+			off += 1 + l
+		}
+	}
+	for i := 0; i < qd && off < len(resp); i++ {
+		skipName()
+		off += 4
+	}
+	seen := map[string]bool{}
+	var out []string
+	for i := 0; i < an && off < len(resp); i++ {
+		skipName()
+		if off+10 > len(resp) {
+			return out
+		}
+		typ := binary.BigEndian.Uint16(resp[off : off+2])
+		rdlen := int(binary.BigEndian.Uint16(resp[off+8 : off+10]))
+		off += 10
+		if off+rdlen > len(resp) {
+			return out
+		}
+		if typ == qtype && ((qtype == 1 && rdlen == 4) || (qtype == 28 && rdlen == 16)) {
+			ip := net.IP(resp[off : off+rdlen]).String()
+			if !seen[ip] {
+				seen[ip] = true
+				out = append(out, ip)
+			}
+		}
+		off += rdlen
+	}
+	return out
 }

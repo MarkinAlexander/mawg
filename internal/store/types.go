@@ -514,6 +514,21 @@ type Settings struct {
 	// выключения маршрутизации DNS (жил только в конфиге форка -
 	// рестор по нему при включении).
 	DnsSavedUpstreams []string `json:"dnsSavedUpstreams,omitempty"`
+	// DnsHosts - свой список локальных записей (115-док, слово владельца
+	// 09.11 третье): имя + IPv4 и/или IPv6; mawg применяет его в
+	// резолвер роутера (Keenetic: ip host через ndmc, OpenWrt: файл
+	// /etc/hosts.d/mawg из addn-hosts dnsmasq) и проверяет пробой через
+	// путь устройств. Keenetic ipv6-часть не применяется (ndm не имеет
+	// ipv6 host - проверено 09.11), честно показывается в панели.
+	DnsHosts []DnsHost `json:"dnsHosts,omitempty"`
+}
+
+// DnsHost - запись своего списка локальных имён (Settings.DnsHosts).
+type DnsHost struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	IPv4 string `json:"ipv4,omitempty"`
+	IPv6 string `json:"ipv6,omitempty"`
 }
 
 // KeeneticDNS - режим «DNS самого роутера» (Settings.KeeneticDNS).

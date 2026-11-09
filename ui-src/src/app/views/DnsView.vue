@@ -8,6 +8,7 @@ import DnsKeenetic from './DnsKeenetic.vue';
 import DnsCascade from './DnsCascade.vue';
 import DnsPolicyCard from './DnsPolicyCard.vue';
 import DnsZonesCard from './DnsZonesCard.vue';
+import DnsHostsCard from './DnsHostsCard.vue';
 import { useToast } from '../../stores/toast';
 import { useConfirm } from '../../stores/confirm';
 
@@ -281,6 +282,8 @@ async function toggleRouting(): Promise<void> {
     :state="state"
     :routing-off="routingOff"
   />
+
+  <DnsHostsCard />
 </template>
 
 <style scoped>
