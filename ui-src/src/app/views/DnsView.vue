@@ -170,7 +170,7 @@ async function toggleRouting(): Promise<void> {
         class="kv"
       >
         <b>Маршрутизация DNS<UiHelp :text="'Вторая роль MagiTrickle: помимо ловли запросов для маршрутизации трафика (это работает всегда - индикатор «Перехват DNS MagiTrickle» ниже не трогается), он сам отвечает на запросы устройств через свой каскад («Резервные серверы»). Выключить - отвечать будет ' + routerDNS + ': ' + localRecords + ' заработают, ответы пойдут нативным путём роутера; каскад и зоны приостановятся и вернутся при включении. Наблюдение не отключается: пробы, статусы и журнал показывают, куда что пошло.'" /></b>
-        <span>
+        <span class="rowpair">
           <UiBadge
             v-if="routing"
             :text="routingOff ? 'отвечает ' + routerDNS : 'через MT'"
@@ -287,6 +287,11 @@ async function toggleRouting(): Promise<void> {
 </template>
 
 <style scoped>
+.rowpair {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+}
 .dnsactions {
   display: flex;
   gap: 8px;

@@ -168,7 +168,7 @@ async function probeOwn(): Promise<void> {
   >
     <UiHint text="Сам роутер резолвит через собственные серверы Keenetic: обновления, opkg, поднятие пулов с доменными адресами (например WARP). Локальные записи (ip host) тоже знает только он: если устройства их не видят - проверьте индикатор «Перехват DNS MagiTrickle» выше: при перехвате устройства смотрят в MagiTrickle, а не сюда. Режимы записи ip name-server в ndm выведены из панели; ваши записи не трогаются." />
     <b>Перехват DNS прошивки Keenetic<UiHelp text="Опция самой прошивки (не mawg): Keenetic отвечает на ВСЕ запросы порта 53 - даже если на устройстве прописан чужой DNS (8.8.8.8). Тогда резолвером для всего становится Keenetic: его серверы и локальные записи (ip host) видят все устройства. Выключено - запросы с чужим DNS уходят провайдеру напрямую. При включённом перехвате MagiTrickle этот переключатель на путь устройств не влияет: их порт 53 уже забирает MagiTrickle." /></b>
-    <span>
+    <span class="rowpair">
       <UiBadge
         :text="keenDNS.intercept ? 'включён' : 'выключен'"
         :variant="keenDNS.intercept ? 'ok' : 'muted'"
@@ -251,6 +251,11 @@ async function probeOwn(): Promise<void> {
 </template>
 
 <style scoped>
+.rowpair {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+}
 .subhead {
   display: flex;
   gap: 10px;
