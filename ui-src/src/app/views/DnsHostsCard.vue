@@ -329,7 +329,7 @@ async function removeRouter(e: { name: string; ipv4?: string; ipv6?: string }): 
     >
       {{ dlgErr }}
     </div>
-    <template #actions>
+    <template #footer>
       <UiButton
         :disabled="!dlgName.trim() || (!dlgIPv4.trim() && !dlgIPv6.trim()) || !!dlgErr"
         @click="saveOwnRow"
@@ -357,7 +357,7 @@ async function removeRouter(e: { name: string; ipv4?: string; ipv6?: string }): 
       mono
     />
     <UiHint text="Запись будет переписана командой ndm (ip host) и проверена чтением running-config." />
-    <template #actions>
+    <template #footer>
       <UiButton
         :busy="busy"
         :disabled="!dlgRouterName.trim() || !dlgRouterIPv4.trim()"
