@@ -170,7 +170,7 @@ func (s *Server) Handler() http.Handler {
 		panic(err)
 	}
 	mux.Handle("GET /app", http.RedirectHandler("/app/", http.StatusMovedPermanently))
-	mux.Handle("GET /app/", http.StripPrefix("/app/", http.FileServer(http.FS(appSub))))
+	mux.Handle("GET /app/", noHTMLCache(http.StripPrefix("/app/", http.FileServer(http.FS(appSub)))))
 	if s.auth != nil {
 		mux.HandleFunc("POST /api/v1/auth/login", s.auth.HandleLogin)
 		mux.HandleFunc("POST /api/v1/auth/logout", s.auth.HandleLogout)
@@ -197,6 +197,19 @@ func limitBody(next http.Handler) http.Handler {
 			limit = maxCoreUpload
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, limit)
+		next.ServeHTTP(w, r)
+	})
+}
+
+// noHTMLCache - HTML-документы без кэша: браузер с закэшированным
+// index.html подхватывал старый app.js?v=hash и показывал СТАРЫЙ UI при
+// новом бинаре (живой кейс 10.11: владелец после деплоя видел прежнюю
+// карточку хостов - тот же класс бага, что черновик mt 08.11).
+func noHTMLCache(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/") || strings.HasSuffix(r.URL.Path, ".html") {
+			w.Header().Set("Cache-Control", "no-store")
+		}
 		next.ServeHTTP(w, r)
 	})
 }

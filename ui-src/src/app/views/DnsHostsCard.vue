@@ -1,25 +1,23 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { UiBadge, UiBanner, UiButton, UiCard, UiDialog, UiHint, UiIcon, UiInput } from '../../components/ui';
+import { UiBadge, UiButton, UiCard, UiDialog, UiHint, UiIcon, UiInput } from '../../components/ui';
 import { api } from '../../api/client';
-import type { DnsHostProbeRes, DnsHostRecord, DnsHostsRes } from '../../api/types';
+import type { DnsHostRecord, DnsHostsRes } from '../../api/types';
 import { useToast } from '../../stores/toast';
 import { useConfirm } from '../../stores/confirm';
 
-// Карточка «Локальные записи» (115-док, слово владельца 09.11 третье):
-// две вкладки - «Роутер» (его записи: ip host Keenetic / /etc/hosts
-// OpenWrt - читать, проверять, править/удалять по явному действию) и
-// «Свои» (список mawg: имя + IPv4 и/или IPv6, применяется в резолвер
-// роутера). Проба каждой записи - запрос через путь устройств (dns-proxy
-// MT :3553): видно устройству или нет - прозрачность без догадок.
+// Карточка «Локальные записи» (115-док, слово владельца 09.11 третье +
+// упрощение 10.11: «просто оставить инфу по доменам и адресам» - пробы
+// из UI убраны, доступность сайта - забота пользователя; эндпоинт
+// /dns/hosts/probe остался в API для диагностики): две вкладки -
+// «Свои» (список mawg, применяется в резолвер роутера) и «Роутер»
+// (его записи: ip host Keenetic, /etc/hosts + файл mawg OpenWrt).
 const { push } = useToast();
 const { confirm } = useConfirm();
 
 const res = ref<DnsHostsRes | null>(null);
 const tab = ref<'router' | 'own'>('own');
 const busy = ref(false);
-const probes = ref<Record<string, DnsHostProbeRes>>({});
-const probingAll = ref(false);
 
 async function load(): Promise<void> {
   try {
@@ -30,7 +28,7 @@ async function load(): Promise<void> {
     return;
   }
   // свой список - редакторская копия стора; dirty до применения
-  // (гард: старый бинарь/стаб могет отдать объект без own)
+  // (гард: старый бинарь/стаб может отдать объект без own)
   ownList.value = (res.value?.own ?? []).map((h) => ({ ...h }));
   ownDirty.value = false;
 }
@@ -42,7 +40,6 @@ const v6Capable = computed(() => res.value?.v6Capable === true);
 // свой список: локальная редакторская копия + применяется целиком
 const ownList = ref<DnsHostRecord[]>([]);
 const ownDirty = ref(false);
-
 
 // диалог своей записи
 const dlgOwn = ref(false);
@@ -135,7 +132,7 @@ async function saveRouterRow(): Promise<void> {
   busy.value = false;
 }
 
-async function removeRouter(e: { name: string; ipv4?: string; ipv6?: string; source: string }): Promise<void> {
+async function removeRouter(e: { name: string; ipv4?: string; ipv6?: string }): Promise<void> {
   const ok = await confirm({
     title: 'Удалить запись роутера?',
     text: `"${e.name}" будет удалена из резолвера роутера` + (isKeen.value ? ' (no ip host в Keenetic).' : ' (строка /etc/hosts).'),
@@ -152,95 +149,6 @@ async function removeRouter(e: { name: string; ipv4?: string; ipv6?: string; sou
   }
   busy.value = false;
 }
-
-// пробы: запрос через путь устройств, сравнение с ожидаемым
-async function probeOne(name: string, v4?: string, v6?: string): Promise<void> {
-  // один ретрай: разовые транзиенты (рестарт MT/панели, окно деплоя)
-  // не должны оставлять ложное «MT молчит» (живой кейс 0.62 09.11)
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const r = await api<DnsHostProbeRes>('GET', `/dns/hosts/probe?name=${encodeURIComponent(name)}`);
-      if (!r.error || attempt === 1) {
-        probes.value[name] = r;
-        void v4;
-        void v6;
-        return;
-      }
-      await new Promise((res) => setTimeout(res, 600));
-    } catch (e) {
-      if (attempt === 1) {
-        probes.value[name] = { name, error: e instanceof Error ? e.message : String(e) };
-        void v4;
-        void v6;
-        return;
-      }
-      await new Promise((res) => setTimeout(res, 600));
-    }
-  }
-}
-
-async function probeAll(): Promise<void> {
-  if (probingAll.value) return;
-  probingAll.value = true;
-  const rows: { name: string; v4?: string; v6?: string }[] = tab.value === 'router'
-    ? (res.value?.router ?? []).map((e) => ({ name: e.name, v4: e.ipv4, v6: e.ipv6 }))
-    : ownList.value.map((h) => ({ name: h.name, v4: h.ipv4, v6: h.ipv6 }));
-  for (const row of rows) {
-    await probeOne(row.name, row.v4, row.v6);
-  }
-  probingAll.value = false;
-}
-
-// вердикт пробы записи по двум путям: device (dns-proxy MT - то, что
-// увидит устройство) и router (резолвер роутера - ip host/hosts).
-// Атрибуция принципиальна (кейс владельца: ntc.party - у домена НЕТ
-// публичного A-записи вовсе, сайт доступен только по IPv6 или пиннингу:
-// запись живёт только в резолвере роутера; github-пиновки наоборот -
-// их IP совпадают с публичными и «видны» через внешний каскад без
-// участия ip host).
-function probeBadge(name: string, v4?: string, v6?: string): { text: string; variant: 'ok' | 'err' | 'warn'; tip: string } | null {
-  const p = probes.value[name];
-  if (!p) return null;
-  if (p.error) return { text: 'MT молчит', variant: 'warn', tip: p.error };
-  const dev4 = p.device?.ipv4 ?? [];
-  const dev6 = p.device?.ipv6 ?? [];
-  const rtr4 = p.router?.ipv4 ?? [];
-  const rtr6 = p.router?.ipv6 ?? [];
-  const want4 = v4 && v4 !== '' ? v4 : null;
-  const want6 = v6 && v6 !== '' ? v6 : null;
-  const wantHere = (list: string[]) => (want4 ? list.includes(want4) : !!(want6 && list.includes(want6)));
-  const seenAll = [...dev4, ...dev6].join(', ');
-  if (wantHere(dev4)) {
-    const viaRouter = wantHere(rtr4) || wantHere(rtr6);
-    const fam = want4 && dev4.includes(want4) ? want4 : `v6 ${want6}`;
-    return {
-      text: 'видна',
-      variant: 'ok',
-      tip: viaRouter
-        ? `путь устройств ответил ${fam} - совпадает и с ответом резолвера роутера`
-        : `путь устройств ответил ${fam}`,
-    };
-  }
-  if (wantHere(rtr4) || wantHere(rtr6)) {
-    // у роутера запись есть, на пути устройств её нет
-    const alt = seenAll ? `, устройство видит: ${seenAll}` : ', на пути устройств ответа нет вовсе';
-    return {
-      text: 'видит только роутер',
-      variant: 'warn',
-      tip: `резолвер роутера отвечает верно${alt} - на пути устройств работает внешний каскад (Маршрутизация DNS включена), и у имени может не быть публичного A-записи вовсе (как ntc.party: доступ только по IPv6 или пиннингу). Чтобы устройства увидели запись - выключите «Маршрутизацию DNS» выше`,
-    };
-  }
-  if (dev4.length || dev6.length) {
-    return { text: 'другой адрес', variant: 'warn', tip: `устройство видит: ${seenAll} - на пути DNS стоит кто-то другой (внешний каскад/подмена)` };
-  }
-  if (want6 && !want4) {
-    // dns-прокси MagiTrickle по умолчанию вырезает AAAA из ответов
-    // (DisableDropAAAA=false - политика IPv4-маршрутизации: без этого
-    // IPv6-трафик обходил бы ipset-ы доменных групп); живой кейс 0.62
-    return { text: 'AAAA режется', variant: 'warn', tip: 'запись в файле резолвера есть, но dns-прокси MagiTrickle по умолчанию вырезает AAAA-ответы (политика IPv4-маршрутизации: IPv6 не должен обходить группы). Увидеть v6 на пути устройств можно только с disableDropAAAA в конфиге MagiTrickle - осознанно' };
-  }
-  return { text: 'не видна', variant: 'err', tip: 'ни путь устройств, ни резолвер роутера не вернули записанный адрес: имя не резолвится или отвечающий его не знает' };
-}
 </script>
 
 <template>
@@ -250,7 +158,7 @@ function probeBadge(name: string, v4?: string, v6?: string): { text: string; var
     title="Локальные записи"
     subtitle="имена, которые отвечает сам роутер: свои + его записи"
   >
-    <UiHint text="Две вкладки: «Свои» - ваш список (имя + IPv4 и/или IPv6), mawg применяет его в резолвер роутера; «Роутер» - то, что роутер уже знает (ip host в Keenetic, /etc/hosts в OpenWrt). Кнопка «Проверить» спрашивает имя через путь устройств (dns-прокси MagiTrickle) и показывает, что реально увидит устройство: если на пути стоит внешний каскад - записи честно помечаются «другой адрес/не видна»." />
+    <UiHint text="Две вкладки: «Свои» - ваш список (имя + IPv4 и/или IPv6), mawg применяет его в резолвер роутера; «Роутер» - то, что роутер уже знает (ip host в Keenetic, /etc/hosts в OpenWrt). Записи резолвера роутера видны устройствам, когда отвечать должен он сам - индикатор «Маршрутизация DNS» выше." />
 
     <UiBanner
       v-if="res && isKeen && !v6Capable"
@@ -271,17 +179,10 @@ function probeBadge(name: string, v4?: string, v6?: string): { text: string; var
       >
         Роутер ({{ res?.router?.length ?? 0 }})
       </UiButton>
-      <span class="spacer" />
-      <UiButton
-        :busy="probingAll"
-        @click="probeAll"
-      >
-        Проверить
-      </UiButton>
     </div>
 
     <template v-if="tab === 'own'">
-      <UiHint text="Имя + адрес: применяется в резолвер роутера (Keenetic: ip host - только IPv4; OpenWrt: свой файл dnsmasq /etc/hosts.d/mawg - IPv4 и IPv6). Чтобы устройства увидели записи, отвечать должен резолвер роутера - проверка ниже показывает правду. IPv6-оговорка: dns-прокси MagiTrickle по умолчанию режет AAAA-ответы (политика IPv4-маршрутизации), поэтому v6-запись может быть в файле резолвера, но не видна устройствам - проба это помечает." />
+      <UiHint text="Имя + адрес: применяется в резолвер роутера (Keenetic: ip host - только IPv4; OpenWrt: свой файл dnsmasq /etc/hosts.d/mawg - IPv4 и IPv6)." />
       <div
         v-if="!ownList.length"
         class="kv"
@@ -304,19 +205,6 @@ function probeBadge(name: string, v4?: string, v6?: string): { text: string; var
             v-if="h.ipv6"
             class="addr"
           >{{ h.ipv6 }}</code>
-          <UiBadge
-            v-if="probeBadge(h.name, h.ipv4, h.ipv6)"
-            :text="probeBadge(h.name, h.ipv4, h.ipv6)!.text"
-            :variant="probeBadge(h.name, h.ipv4, h.ipv6)!.variant"
-            :tooltip="probeBadge(h.name, h.ipv4, h.ipv6)!.tip"
-          />
-          <UiButton
-            variant="icon"
-            tooltip="проверить запись"
-            @click="probeOne(h.name, h.ipv4, h.ipv6)"
-          >
-            <UiIcon name="refresh" />
-          </UiButton>
           <UiButton
             variant="icon"
             tooltip="изменить"
@@ -387,19 +275,6 @@ function probeBadge(name: string, v4?: string, v6?: string): { text: string; var
             variant="muted"
             :text="e.source === 'ndm' ? 'ip host' : (e.source === 'mawg' ? 'файл mawg' : '/etc/hosts')"
           />
-          <UiBadge
-            v-if="probeBadge(e.name, e.ipv4, e.ipv6)"
-            :text="probeBadge(e.name, e.ipv4, e.ipv6)!.text"
-            :variant="probeBadge(e.name, e.ipv4, e.ipv6)!.variant"
-            :tooltip="probeBadge(e.name, e.ipv4, e.ipv6)!.tip"
-          />
-          <UiButton
-            variant="icon"
-            tooltip="проверить запись"
-            @click="probeOne(e.name, e.ipv4, e.ipv6)"
-          >
-            <UiIcon name="refresh" />
-          </UiButton>
           <UiButton
             v-if="isKeen"
             variant="icon"
@@ -503,9 +378,6 @@ function probeBadge(name: string, v4?: string, v6?: string): { text: string; var
   gap: 8px;
   align-items: center;
   margin-top: 4px;
-}
-.spacer {
-  flex: 1;
 }
 .hostrow {
   display: flex;
