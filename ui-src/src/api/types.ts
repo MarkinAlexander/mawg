@@ -837,7 +837,11 @@ export interface DnsHostsRes {
 
 export interface DnsHostProbeRes {
   name: string
-  ipv4?: string[]
-  ipv6?: string[]
+  // device - путь устройств (dns-proxy MT :3553), router - резолвер
+  // роутера (:53, ip host/hosts); разница атрибутирует ответ
+  device?: { ipv4?: string[]; ipv6?: string[] }
+  router?: { ipv4?: string[]; ipv6?: string[] }
+  deviceError?: string
+  routerError?: string
   error?: string
 }

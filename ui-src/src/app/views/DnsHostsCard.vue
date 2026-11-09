@@ -191,19 +191,47 @@ async function probeAll(): Promise<void> {
   probingAll.value = false;
 }
 
-// вердикт пробы записи: увиденное совпало с ожидаемым (v4 или v6)
+// вердикт пробы записи по двум путям: device (dns-proxy MT - то, что
+// увидит устройство) и router (резолвер роутера - ip host/hosts).
+// Атрибуция принципиальна (кейс владельца: ntc.party - у домена НЕТ
+// публичного A-записи вовсе, сайт доступен только по IPv6 или пиннингу:
+// запись живёт только в резолвере роутера; github-пиновки наоборот -
+// их IP совпадают с публичными и «видны» через внешний каскад без
+// участия ip host).
 function probeBadge(name: string, v4?: string, v6?: string): { text: string; variant: 'ok' | 'err' | 'warn'; tip: string } | null {
   const p = probes.value[name];
   if (!p) return null;
   if (p.error) return { text: 'MT молчит', variant: 'warn', tip: p.error };
-  const seen4 = p.ipv4 ?? [];
-  const seen6 = p.ipv6 ?? [];
+  const dev4 = p.device?.ipv4 ?? [];
+  const dev6 = p.device?.ipv6 ?? [];
+  const rtr4 = p.router?.ipv4 ?? [];
+  const rtr6 = p.router?.ipv6 ?? [];
   const want4 = v4 && v4 !== '' ? v4 : null;
   const want6 = v6 && v6 !== '' ? v6 : null;
-  if (want4 && seen4.includes(want4)) return { text: 'видна', variant: 'ok', tip: `через путь устройств ответило ${want4}` };
-  if (want6 && seen6.includes(want6)) return { text: 'видна (v6)', variant: 'ok', tip: `через путь устройств ответило ${want6}` };
-  if (seen4.length || seen6.length) {
-    return { text: 'другой адрес', variant: 'warn', tip: `устройство видит: ${[...seen4, ...seen6].join(', ')} - на пути DNS стоит кто-то другой (внешний каскад/подмена)` };
+  const wantHere = (list: string[]) => (want4 ? list.includes(want4) : !!(want6 && list.includes(want6)));
+  const seenAll = [...dev4, ...dev6].join(', ');
+  if (wantHere(dev4)) {
+    const viaRouter = wantHere(rtr4) || wantHere(rtr6);
+    const fam = want4 && dev4.includes(want4) ? want4 : `v6 ${want6}`;
+    return {
+      text: 'видна',
+      variant: 'ok',
+      tip: viaRouter
+        ? `путь устройств ответил ${fam} - совпадает и с ответом резолвера роутера`
+        : `путь устройств ответил ${fam}`,
+    };
+  }
+  if (wantHere(rtr4) || wantHere(rtr6)) {
+    // у роутера запись есть, на пути устройств её нет
+    const alt = seenAll ? `, устройство видит: ${seenAll}` : ', на пути устройств ответа нет вовсе';
+    return {
+      text: 'видит только роутер',
+      variant: 'warn',
+      tip: `резолвер роутера отвечает верно${alt} - на пути устройств работает внешний каскад (Маршрутизация DNS включена), и у имени может не быть публичного A-записи вовсе (как ntc.party: доступ только по IPv6 или пиннингу). Чтобы устройства увидели запись - выключите «Маршрутизацию DNS» выше`,
+    };
+  }
+  if (dev4.length || dev6.length) {
+    return { text: 'другой адрес', variant: 'warn', tip: `устройство видит: ${seenAll} - на пути DNS стоит кто-то другой (внешний каскад/подмена)` };
   }
   if (want6 && !want4) {
     // dns-прокси MagiTrickle по умолчанию вырезает AAAA из ответов
@@ -211,7 +239,7 @@ function probeBadge(name: string, v4?: string, v6?: string): { text: string; var
     // IPv6-трафик обходил бы ipset-ы доменных групп); живой кейс 0.62
     return { text: 'AAAA режется', variant: 'warn', tip: 'запись в файле резолвера есть, но dns-прокси MagiTrickle по умолчанию вырезает AAAA-ответы (политика IPv4-маршрутизации: IPv6 не должен обходить группы). Увидеть v6 на пути устройств можно только с disableDropAAAA в конфиге MagiTrickle - осознанно' };
   }
-  return { text: 'не видна', variant: 'err', tip: 'путь устройств не вернул адрес: записи нет у отвечающего, имя не резолвится или MT молчит' };
+  return { text: 'не видна', variant: 'err', tip: 'ни путь устройств, ни резолвер роутера не вернули записанный адрес: имя не резолвится или отвечающий его не знает' };
 }
 </script>
 

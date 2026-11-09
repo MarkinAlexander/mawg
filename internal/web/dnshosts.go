@@ -31,6 +31,14 @@ import (
 // ровно то, что увидит устройство.
 const hostProbeServer = "127.0.0.1:3553"
 
+// hostRouterServer - резолвер роутера (ndnproxy Keenetic / dnsmasq
+// OpenWrt): проба на 127.0.0.1:53 показывает, что роутер знает сам
+// (ip host/hosts). Совместно с пробой пути устройств атрибутирует
+// ответ: «видна», «видит только роутер» (на пути устройств внешний
+// каскад - живой кейс владельца: ntc.party vs github-пиновки, чьи IP
+// совпадают с публичными), «видна, но мимо роутера».
+const hostRouterServer = "127.0.0.1:53"
+
 func (s *Server) dnsHostsReady(w http.ResponseWriter) (dnsmgr.Runner, bool) {
 	run, ok := s.dnsRunner()
 	if !ok {
@@ -199,21 +207,38 @@ func (s *Server) dnsHostsRouterSet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// dnsHostsProbe - GET /dns/hosts/probe?name=X: проба записи через путь
-// устройств (127.0.0.1:3553): что реально ответит устройство при любом
-// положении «Маршрутизации DNS». Возвращает увиденные IPv4/IPv6.
+// dnsHostsProbe - GET /dns/hosts/probe?name=X: проба записи по ДВУМ
+// путям: устройство (127.0.0.1:3553 - dns-proxy MT, то, что реально
+// увидит устройство) и резолвер роутера (127.0.0.1:53 - ip host/hosts).
+// Разница атрибутирует ответ: совпадение на обоих - «видна»; только у
+// роутера - «видит только роутер» (на пути устройств внешний каскад);
+// только на пути - «мимо роутера» (совпадение с публичным IP).
 func (s *Server) dnsHostsProbe(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimSpace(r.URL.Query().Get("name"))
 	if name == "" {
 		writeErr(w, fmt.Errorf("нужен name"))
 		return
 	}
-	a, aaaa, err := dnsprobe.Lookup(hostProbeServer, name, 3*time.Second)
-	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"name": name, "error": err.Error()})
+	deviceA, deviceAAAA, devErr := dnsprobe.Lookup(hostProbeServer, name, 3*time.Second)
+	routerA, routerAAAA, rtrErr := dnsprobe.Lookup(hostRouterServer, name, 3*time.Second)
+	if devErr != nil && rtrErr != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"name": name, "error": devErr.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"name": name, "ipv4": a, "ipv6": aaaa})
+	res := map[string]any{"name": name}
+	if devErr != nil {
+		res["deviceError"] = devErr.Error()
+	} else {
+		res["device"] = map[string]any{"ipv4": deviceA, "ipv6": deviceAAAA}
+	}
+	if rtrErr != nil {
+		// резолвер роутера молчит (OpenWrt-профиль без параллельного
+		// апстрима) - не ошибка всей пробы: путь устройств показан
+		res["routerError"] = rtrErr.Error()
+	} else {
+		res["router"] = map[string]any{"ipv4": routerA, "ipv6": routerAAAA}
+	}
+	writeJSON(w, http.StatusOK, res)
 }
 
 // validateDnsHosts - валидация+канонизация своего списка: имена доменные
