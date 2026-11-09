@@ -404,3 +404,20 @@ app:
 		t.Fatal("нет секции dnsProxy - ожидалась ошибка")
 	}
 }
+
+// Пустой список серверов = [] а не null: UI делает servers.length, JSON
+// null ронял рендер карточки DNS (живой кейс 0.62 09.11 - прямой режим
+// с пустым uci server).
+func TestCollectEmptyServersNotNil(t *testing.T) {
+	r := func(script string, timeout time.Duration) (string, error) { return "", nil }
+	st, err := Collect(r, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Dnsmasq.Servers == nil {
+		t.Fatal("Servers = nil, want пустой []")
+	}
+	if len(st.Dnsmasq.Servers) != 0 {
+		t.Fatalf("Servers = %v, want пустой", st.Dnsmasq.Servers)
+	}
+}

@@ -98,6 +98,12 @@ func Collect(r Runner, mtConfigPath string) (State, error) {
 			st.MT.Upstream, st.MT.Upstreams = ParseMTUpstreams(string(data))
 		}
 	}
+	// пустой список = [] а не null: UI делает servers.length, null ронял
+	// рендер карточки DNS (живой кейс 0.62 09.11: прямой режим с пустым
+	// uci server - карточка исчезала целиком)
+	if st.Dnsmasq.Servers == nil {
+		st.Dnsmasq.Servers = []string{}
+	}
 	st.Self = SelfIPs()
 	return st, nil
 }

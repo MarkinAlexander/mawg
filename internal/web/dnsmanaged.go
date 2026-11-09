@@ -69,12 +69,18 @@ func (s *Server) dnsManagedSet(w http.ResponseWriter, r *http.Request) {
 	}
 	prev := s.store.DnsManaged()
 	if !req.Managed && !req.Confirm {
+		// формулировки зависят от платформы: локальные записи ndm - ip host,
+		// dnsmasq - hosts (словарь §0 115-дока)
+		routerDNS, localRec := "DNS Keenetic", "локальные записи (ip host)"
+		if s.backend.Name() != store.PlatformKeenetic {
+			routerDNS, localRec = "DNS роутера", "локальные записи роутера (hosts)"
+		}
 		writeJSON(w, http.StatusConflict, map[string]any{
 			"needConfirm": true,
 			"error": "mawg и MagiTrickle перестанут вмешиваться в DNS: перехват порта 53 снимается " +
 				"(правка настроек MagiTrickle + его перезапуск), доменные группы MagiTrickle перестанут " +
 				"работать - им нужен перехват DNS (пулы по устройствам продолжат). Устройства будут " +
-				"резолвить через DNS Keenetic - локальные записи (ip host) заработают. Проверки DNS " +
+				"резолвить через " + routerDNS + " - " + localRec + " заработают. Проверки DNS " +
 				"(канарейки) останутся.",
 		})
 		return

@@ -109,8 +109,11 @@ async function toggle(): Promise<void> {
 }
 
 // главный переключатель раздела (115-док задача B): off = правка настроек
-// MagiTrickle (disableRemap53) + его перезапуск; тексты согласованы со
-// словарём §0 дока - ip host видит только DNS Keenetic
+// MagiTrickle (disableRemap53) + его перезапуск; формулировки - по словарю
+// §0 дока и платформе (ip host - записи Keenetic, hosts - OpenWrt)
+const routerDNS = computed(() => (isKeen.value ? 'DNS Keenetic' : 'DNS роутера'));
+const localRecords = computed(() => (isKeen.value ? 'локальные записи (ip host)' : 'локальные записи роутера (hosts)'));
+
 async function toggleManaged(): Promise<void> {
   if (busy.value || !managed.value) return;
   const toOn = managedOff.value;
@@ -118,14 +121,14 @@ async function toggleManaged(): Promise<void> {
     title: toOn ? 'Вернуть DNS-управление?' : 'Отключить DNS-управление?',
     text: toOn
       ? 'mawg вернёт перехват DNS MagiTrickle: правка настроек MagiTrickle и его перезапуск - краткий перерыв. Доменные группы MagiTrickle снова заработают. Проверки DNS (канарейки) продолжат работать.'
-      : 'mawg и MagiTrickle перестанут вмешиваться в DNS: перехват порта 53 снимается (правка настроек MagiTrickle + его перезапуск), доменные группы MagiTrickle перестанут работать - пулы по устройствам продолжат. Устройства будут резолвить через DNS Keenetic - локальные записи (ip host) заработают. Проверки DNS (канарейки) останутся.',
+      : `mawg и MagiTrickle перестанут вмешиваться в DNS: перехват порта 53 снимается (правка настроек MagiTrickle + его перезапуск), доменные группы MagiTrickle перестанут работать - пулы по устройствам продолжат. Устройства будут резолвить через ${routerDNS.value} - ${localRecords.value} заработают. Проверки DNS (канарейки) останутся.`,
     okLabel: toOn ? 'Включить' : 'Отключить',
   });
   if (!ok) return;
   busy.value = true;
   try {
     await api('PUT', '/dns/managed', { managed: toOn, confirm: true });
-    push(toOn ? 'DNS-управление включено' : 'DNS-управление отключено: устройства резолвят через DNS Keenetic');
+    push(toOn ? 'DNS-управление включено' : `DNS-управление отключено: устройства резолвят через ${routerDNS.value}`);
     await reloadAll();
   } catch (e) {
     push(e instanceof Error ? e.message : String(e), true);
@@ -161,7 +164,7 @@ async function toggleManaged(): Promise<void> {
         v-if="state"
         class="kv"
       >
-        <b>DNS управляется mawg<UiHelp text="Главный переключатель раздела. Включено - mawg и MagiTrickle ведут DNS домашних устройств (перехват порта 53 в dns-прокси MagiTrickle). Выключено («mawg не лезет») - перехват снимается (правка настроек MagiTrickle + его перезапуск), устройства резолвят через DNS Keenetic: работают его локальные записи (ip host) и Интернет-фильтр. Проверки DNS (канарейки) работают в обоих режимах - они идут с роутера напрямую." /></b>
+        <b>DNS управляется mawg<UiHelp :text="'Главный переключатель раздела. Включено - mawg и MagiTrickle ведут DNS домашних устройств (перехват порта 53 в dns-прокси MagiTrickle). Выключено («mawg не лезет») - перехват снимается (правка настроек MagiTrickle + его перезапуск), устройства резолвят через ' + routerDNS + ': работают ' + localRecords + (isKeen ? ' и Интернет-фильтр' : '') + '. Проверки DNS (канарейки) работают в обоих режимах - они идут с роутера напрямую.'" /></b>
         <span>
           <UiBadge
             v-if="managed"
@@ -222,7 +225,7 @@ async function toggleManaged(): Promise<void> {
       <UiBanner
         v-if="managedOff"
         kind="info"
-        text="DNS никем не управляется: перехват MagiTrickle снят, устройства резолвят через DNS Keenetic - локальные записи (ip host) и Интернет-фильтр работают. Проверки ниже (канарейки) полностью доступны; редакторы серверов, зон и политики отключены."
+        :text="'DNS никем не управляется: перехват MagiTrickle снят, устройства резолвят через ' + routerDNS + ' - ' + localRecords + (isKeen ? ' и Интернет-фильтр' : '') + ' работают. Проверки ниже (канарейки) полностью доступны; редакторы серверов, зон и политики отключены.'"
       />
 
       <DnsKeenetic :state="state" />
