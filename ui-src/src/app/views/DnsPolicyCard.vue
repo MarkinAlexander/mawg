@@ -14,6 +14,8 @@ import { useConfirm } from '../../stores/confirm';
 // применение одним запросом; переключает уровни сам MT
 const props = defineProps<{
   state: DnsState | null;
+  // режим «mawg не лезет» (115-док): правка политики гасится, пробы живут
+  managedOff?: boolean;
   reloadAll: () => Promise<void>;
 }>();
 
@@ -135,9 +137,14 @@ async function probePolicy(): Promise<void> {
       text="Для автопереключения нужен MagiTrickle 0.8.2-rev8+ (список серверов с автопроверкой). Обновите MT - и настройте уровни здесь."
     />
     <template v-else>
+      <UiHint
+        v-if="managedOff"
+        text="Режим «mawg не лезет»: правка политики отключена - включите «DNS управляется mawg» вверху вкладки. Проверка уровней ниже работает."
+      />
       <div class="hrow">
         <UiSwitch
           v-model="polEnabled"
+          :disabled="managedOff"
           label="Автопереключение включено"
           tooltip="выключенная политика только сохраняется - текущие серверы не трогаются"
         />
@@ -245,7 +252,7 @@ async function probePolicy(): Promise<void> {
       <div class="dnsactions">
         <UiButton
           :busy="polBusy"
-          :disabled="!polDirty"
+          :disabled="!polDirty || managedOff"
           tooltip="становится доступной после правки любого уровня"
           @click="applyPolicy"
         >

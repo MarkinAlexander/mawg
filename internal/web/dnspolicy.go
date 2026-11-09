@@ -346,6 +346,9 @@ func (s *Server) putDnsPolicy(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, fmt.Errorf("кривой запрос"))
 		return
 	}
+	if !s.dnsManagedGate(w) {
+		return
+	}
 	p := req.DnsCascadePolicy
 	composed, err := composeCascadePolicy(p)
 	if err != nil {

@@ -25,6 +25,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/dns/keenetic/dns", s.keeneticDNSGet)
 	mux.HandleFunc("PUT /api/v1/dns/keenetic/dns", s.keeneticDNSSet)
 	mux.HandleFunc("GET /api/v1/dns/state", s.dnsState)
+	mux.HandleFunc("GET /api/v1/dns/managed", s.dnsManagedGet)
+	mux.HandleFunc("PUT /api/v1/dns/managed", s.dnsManagedSet)
 	mux.HandleFunc("POST /api/v1/dns/dnsmasq", s.dnsDnsmasq)
 	mux.HandleFunc("GET /api/v1/dns/upstreams", s.dnsUpstreams)
 	mux.HandleFunc("PUT /api/v1/dns/upstreams", s.dnsUpstreamsSet)

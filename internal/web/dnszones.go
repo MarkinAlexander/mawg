@@ -254,6 +254,9 @@ func (s *Server) putDnsZones(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, fmt.Errorf("кривой запрос"))
 		return
 	}
+	if !s.dnsManagedGate(w) {
+		return
+	}
 	zones, err := s.validateDnsZones(req.Zones)
 	if err != nil {
 		writeErr(w, err)

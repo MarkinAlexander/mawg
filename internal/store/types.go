@@ -500,6 +500,15 @@ type Settings struct {
 	// всегда); false - правки копятся в черновике base/mt-draft.json и
 	// пишутся одним PUT по команде панели.
 	AutoSaveMT *bool `json:"autoSaveMT,omitempty"`
+	// DnsManaged - главный переключатель DNS-раздела (115-док, слово
+	// владельца 09.11 «позволить пользователю вообще отключать DNS через
+	// mawg и MagiTrickle, максимум - канарейки»): nil = управляется как
+	// всегда; false = режим «mawg и MT не лезут» - перехват MT снят
+	// (disableRemap53 в yaml MT + рестарт MT), на OpenWrt dnsmasq
+	// возвращён на прямые серверы, PUT-ы DNS гейтятся 409, ndm не пишется
+	// вовсе; канарейки (пробы) живут. true = явное «управляется», нужно
+	// только для возврата из false одним PUT (включает перехват обратно).
+	DnsManaged *bool `json:"dnsManaged,omitempty"`
 }
 
 // KeeneticDNS - режим «DNS самого роутера» (Settings.KeeneticDNS).

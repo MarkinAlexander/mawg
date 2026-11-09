@@ -388,6 +388,19 @@ export interface KeeneticDNSState {
   intercept: boolean
 }
 
+// GET/PUT /dns/managed: главный переключатель DNS-раздела (115-док,
+// слово владельца 09.11). managed: null = «управляется» (дефолт,
+// живые установки не меняют поведение); false = режим «mawg и MT не
+// лезут»: перехват :53 снят (disableRemap53 в yaml MT + рестарт MT),
+// на OpenWrt dnsmasq на прямых серверах, PUT-ы DNS гейтятся 409;
+// канарейки (пробы) живут - идут с роутера напрямую, DNAT не нужен.
+export interface DnsManagedState {
+  managed: boolean | null
+  mtFlavor?: string
+  remap53: boolean
+  platform: 'openwrt' | 'keenetic'
+}
+
 // GET /dns/state: состояние DNS-стека роутера (46-док §3).
 // platform: "openwrt" - полный разрез (dnsmasq/кэш/перенаправление);
 // "keenetic" - только перехват MT_DNSOR + апстримы MT (71-док: свои

@@ -111,6 +111,9 @@ func (s *Server) dnsDnsmasq(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, fmt.Errorf("кривой запрос"))
 		return
 	}
+	if !s.dnsManagedGate(w) {
+		return
+	}
 	if req.Mode != "mt" && req.Mode != "direct" {
 		writeErr(w, fmt.Errorf("mode: mt|direct"))
 		return
@@ -203,6 +206,9 @@ func validateDnsHealthPatch(h *magitrickle.DnsHealthPatch) error {
 // (upstreams отсутствует, rev14+) список не трогает - потому петлезащита
 // к ней не применяется.
 func (s *Server) dnsUpstreamsSet(w http.ResponseWriter, r *http.Request) {
+	if !s.dnsManagedGate(w) {
+		return
+	}
 	if !s.mtDnsUpstreamsCapable(r.Context()) {
 		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "правка апстримов требует MagiTrickle 0.8.2-rev8+ (обновите MT)"})
 		return

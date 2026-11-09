@@ -19,6 +19,9 @@ const props = defineProps<{
   state: DnsState | null;
   cascade: DnsUpstreamsRes | null;
   busy: boolean;
+  // режим «mawg не лезет» (115-док): редакторы гасятся, живой статус
+  // и пробы остаются - канарейки работают без перехвата
+  managedOff?: boolean;
   reload: () => Promise<void>;
   reloadAll: () => Promise<void>;
 }>();
@@ -154,9 +157,13 @@ async function saveEdit(): Promise<void> {
   <!-- резервные серверы MT: живой статус (форк rev8+) -->
   <template v-if="capable">
     <div class="subhead">
-      <b>Резервные серверы<UiHelp text="Внешние DNS-серверы в порядке приоритета: запросы идут в первый доступный, при его сбое - в следующий по списку. Доступность проверяется контрольным запросом к deb.torproject.org: честный сервер возвращает известный набор адресов, подменённый виден сразу и помечается «не работает»." /></b>
+      <b>Резервные серверы<UiHelp text="DNS-серверы, через которые резолвят домашние устройства при перехвате MagiTrickle (dns-прокси MT), в порядке приоритета: запросы идут в первый доступный, при его сбое - в следующий по списку. Доступность проверяется контрольным запросом к deb.torproject.org: честный сервер возвращает известный набор адресов, подменённый виден сразу и помечается «не работает». Локальные записи роутера (ip host) через эти серверы не резолвятся - их знает только DNS Keenetic." /></b>
       <span class="muted">{{ healthText }}</span>
     </div>
+    <UiHint
+      v-if="managedOff"
+      text="Режим «mawg не лезет»: правка списка и автопроверки отключена - включите «DNS управляется mawg» вверху вкладки. Живой статус остаётся виден."
+    />
     <div class="kv">
       <template
         v-for="(u, i) in ups"
@@ -187,8 +194,8 @@ async function saveEdit(): Promise<void> {
     <UiHint text="Автопроверка: контрольный запрос к deb.torproject.org; честный сервер возвращает известный набор адресов, подменённый - виден сразу и помечается «не работает»." />
 
     <!-- политика автопроверки (форк rev14+, 82-док): каждое поле -
-         с минусами в обе стороны -->
-    <template v-if="healthCapable">
+         с минусами в обе стороны; в режиме «не лезть» гасится (115-док) -->
+    <template v-if="healthCapable && !managedOff">
       <div class="cycles">
         <UiSwitch
           v-model="hEnabled"
@@ -266,7 +273,7 @@ async function saveEdit(): Promise<void> {
     </template>
 
     <div
-      v-if="edit === null"
+      v-if="edit === null && !managedOff"
       class="dnsactions"
     >
       <UiButton
@@ -276,7 +283,7 @@ async function saveEdit(): Promise<void> {
         Редактировать список
       </UiButton>
     </div>
-    <template v-else>
+    <template v-else-if="!managedOff">
       <div class="editrows">
         <div
           v-for="(a, i) in editList"

@@ -485,3 +485,19 @@ func (s *Store) SetKeeneticDNS(v KeeneticDNS) error {
 	s.root.Settings.KeeneticDNS = v
 	return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
 }
+
+// DnsManaged - главный переключатель DNS-раздела (Settings.DnsManaged,
+// 115-док): nil = «управляется» (дефолт, живые установки не ломаются).
+func (s *Store) DnsManaged() *bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v := s.root.Settings.DnsManaged
+	return v
+}
+
+func (s *Store) SetDnsManaged(v *bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.root.Settings.DnsManaged = v
+	return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
+}

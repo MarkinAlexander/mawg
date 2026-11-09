@@ -53,12 +53,16 @@ func (s *Server) keeneticDNSGet(w http.ResponseWriter, r *http.Request) {
 	if !s.keeneticDNSReady(w) {
 		return
 	}
-	if prev := s.store.KeeneticDNS(); prev.Applied != "" || prev.Mode != "" && prev.Mode != "off" {
-		if _, err := dnsmgr.ApplyKeeneticDNS(s.dnsRunnerFn(), "off", "", "", prev.Applied); err != nil {
-			s.store.LogEvent("dns", "keenetic-dns", "легаси-запись ip name-server "+prev.Applied+" не снялась автоматически ("+err.Error()+") - повтор при следующем открытии карточки")
-		} else {
-			s.store.SetKeeneticDNS(store.KeeneticDNS{})
-			s.store.LogEvent("dns", "keenetic-dns", "легаси-запись ip name-server "+prev.Applied+" снята автоматически (режимы записи в ndm выведены из панели)")
+	// режим «mawg не лезет» (115-док): ndm не пишется вовсе - легаси-
+	// автоснятие откладывается до возврата «DNS управляется mawg»
+	if v := s.store.DnsManaged(); v == nil || *v {
+		if prev := s.store.KeeneticDNS(); prev.Applied != "" || prev.Mode != "" && prev.Mode != "off" {
+			if _, err := dnsmgr.ApplyKeeneticDNS(s.dnsRunnerFn(), "off", "", "", prev.Applied); err != nil {
+				s.store.LogEvent("dns", "keenetic-dns", "легаси-запись ip name-server "+prev.Applied+" не снялась автоматически ("+err.Error()+") - повтор при следующем открытии карточки")
+			} else {
+				s.store.SetKeeneticDNS(store.KeeneticDNS{})
+				s.store.LogEvent("dns", "keenetic-dns", "легаси-запись ip name-server "+prev.Applied+" снята автоматически (режимы записи в ndm выведены из панели)")
+			}
 		}
 	}
 	writeJSON(w, http.StatusOK, s.keeneticDNSState())
@@ -92,6 +96,9 @@ func (s *Server) keeneticDNSSet(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
 		writeErr(w, fmt.Errorf("кривой запрос"))
+		return
+	}
+	if !s.dnsManagedGate(w) {
 		return
 	}
 	prev := s.store.KeeneticDNS()

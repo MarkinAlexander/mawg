@@ -14,7 +14,11 @@ import { useSecrets } from '../secrets';
 // зонный DNS (форк rev13): зона -> свои серверы, путь через пул. Каскад и
 // автопроверка серверов зоны живут в MT; полный отвал - SERVFAIL
 // (fail-closed), переключатель fallback - сознательное исключение
-const props = defineProps<{ state: DnsState | null }>();
+const props = defineProps<{
+  state: DnsState | null;
+  // режим «mawg не лезет» (115-док): правка зон гасится, пробы живут
+  managedOff?: boolean;
+}>();
 
 const { push } = useToast();
 const { confirm } = useConfirm();
@@ -184,6 +188,10 @@ function upTooltip(u: DnsUpstream, z: DnsZone): string {
       text="Для зонных DNS нужен MagiTrickle 0.8.2-rev13+ - обновите MT в разделе «Система», и карточка заработает."
     />
     <template v-else>
+      <UiHint
+        v-if="managedOff"
+        text="Режим «mawg не лезет»: правка зон отключена - включите «DNS управляется mawg» вверху вкладки. Проверка зон ниже работает."
+      />
       <UiHint text="Зона (например corp.example.com) покрывает себя и все поддомены: запросы этих имён уходят к назначенным серверам зоны - по порядку, как в общих правилах. Если серверы зоны доступны только через туннель, при его отвале зона честно замолчит - имена не утекут в общий DNS." />
 
       <div
@@ -245,7 +253,7 @@ function upTooltip(u: DnsUpstream, z: DnsZone): string {
             </UiButton>
             <UiButton
               variant="icon"
-              :disabled="zonesBusy"
+              :disabled="zonesBusy || managedOff"
               tooltip="изменить зону"
               @click="openZoneEdit(i)"
             >
@@ -254,7 +262,7 @@ function upTooltip(u: DnsUpstream, z: DnsZone): string {
             <UiButton
               variant="icon"
               danger-icon
-              :disabled="zonesBusy"
+              :disabled="zonesBusy || managedOff"
               tooltip="удалить зону"
               @click="removeZone(i)"
             >
@@ -315,6 +323,7 @@ function upTooltip(u: DnsUpstream, z: DnsZone): string {
       <div class="dnsactions">
         <UiButton
           :busy="zonesBusy"
+          :disabled="managedOff"
           @click="openZoneNew"
         >
           + зона

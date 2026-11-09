@@ -56,6 +56,13 @@ function apiStub(state: DnsState = statePayload, cascade: DnsUpstreamsRes | null
     if (url.endsWith('/dns/state')) {
       return new Response(JSON.stringify(state), { status: 200 })
     }
+    if (url.endsWith('/dns/managed')) {
+      if ((opts?.method ?? 'GET') === 'PUT') {
+        if (capture) capture.put = JSON.parse(String(opts?.body))
+        return new Response(JSON.stringify({ ok: true }), { status: 200 })
+      }
+      return new Response(JSON.stringify({ managed: null, remap53: state.mt.remap53, platform: state.platform }), { status: 200 })
+    }
     if (url.endsWith('/dns/dnsmasq')) {
       return new Response(JSON.stringify({ ok: true, state }), { status: 200 })
     }
@@ -93,7 +100,7 @@ describe('DnsView - состояние DNS (OpenWrt)', () => {
     expect(text).toContain('через MT (127.0.0.1#3553)')
     expect(text).toContain('весь :53 → MT')
     expect(text).toContain('8.8.8.8:53 → 77.88.8.8:53 (первый - главный)')
-    expect(w.find('#card-dns .uibtn').text()).toContain('Вернуть на прямые DNS')
+    expect(w.find('#card-dns .dnsactions .uibtn').text()).toContain('Вернуть на прямые DNS')
     // UiHelp разрешён компонентом, не <uihelp>-тегом (грабля забытого импорта)
     expect(w.find('#card-dns .uihelp').exists()).toBe(true)
     expect(w.find('#card-dns').html()).not.toContain('<uihelp')
@@ -106,13 +113,54 @@ describe('DnsView - состояние DNS (OpenWrt)', () => {
     const w = mount(DnsView)
     await waitState(w)
 
-    await w.findAll('#card-dns .uibtn')[0].trigger('click')
+    await w.find('#card-dns .dnsactions .uibtn').trigger('click')
     await vi.waitFor(() => {
       const postCalls = stub.mock.calls.filter((c) => (c[0] as string).endsWith('/dns/dnsmasq'))
       const stateCalls = stub.mock.calls.filter((c) => (c[0] as string).endsWith('/dns/state'))
       expect(postCalls.length).toBe(1)
       expect(stateCalls.length).toBeGreaterThanOrEqual(2)
     })
+    w.unmount()
+  })
+
+  it('переключатель DNS-управления: PUT /dns/managed с confirm, перечитка state+managed (115-док)', async () => {
+    const capture: { put?: unknown } = {}
+    const stub = apiStub(statePayload, { capable: false }, capture)
+    vi.stubGlobal('fetch', stub)
+    const w = mount(DnsView)
+    await waitState(w)
+
+    // кнопка переключателя - первая в карточке (kv-строка над статусом)
+    await w.find('#card-dns .uibtn').trigger('click')
+    await vi.waitFor(() => {
+      expect(capture.put).toEqual({ managed: false, confirm: true })
+      const managedCalls = stub.mock.calls.filter((c) => (c[0] as string).endsWith('/dns/managed'))
+      expect(managedCalls.length).toBeGreaterThanOrEqual(2) // GET при маунте + GET после PUT
+    })
+    w.unmount()
+  })
+
+  it('режим «mawg не лезет»: баннер, гашение кнопки dnsmasq, редакторы каскада скрыты', async () => {
+    const stub = apiStub(statePayload, cascadePayload)
+    const rawFetch = stub.getMockImplementation()!
+    stub.mockImplementation(async (url: string, opts?: RequestInit) => {
+      if (url.endsWith('/dns/managed')) {
+        return new Response(JSON.stringify({ managed: false, remap53: false, platform: 'openwrt' }), { status: 200 })
+      }
+      return rawFetch(url, opts)
+    })
+    vi.stubGlobal('fetch', stub)
+    const w = mount(DnsView)
+    await waitState(w)
+
+    const text = w.find('#card-dns').text()
+    expect(text).toContain('выключено')
+    expect(text).toContain('DNS никем не управляется')
+    // кнопка направления dnsmasq скрыта в режиме «не лезть»
+    expect(w.find('#card-dns .dnsactions').text()).not.toContain('Направить DNS через MT')
+    expect(w.find('#card-dns .dnsactions').text()).not.toContain('Вернуть на прямые DNS')
+    // редактор «Резервных серверов» скрыт (кнопки редактирования нет)
+    expect(w.find('#card-dns').text()).not.toContain('Редактировать список')
     w.unmount()
   })
 
@@ -129,7 +177,7 @@ describe('DnsView - состояние DNS (OpenWrt)', () => {
     const text = w.find('#card-dns').text()
     expect(text).toContain('строгий режим (SPOF)')
     expect(text).toContain('напрямую (серверы провайдера)')
-    expect(w.find('#card-dns .uibtn').text()).toContain('Направить DNS через MT')
+    expect(w.find('#card-dns .dnsactions .uibtn').text()).toContain('Направить DNS через MT')
     w.unmount()
   })
 
@@ -1070,7 +1118,7 @@ describe('DnsView - keenetic: перехват ndm (98-док, находка п
     const capture: { put?: unknown } = {};
     stubIntercept({ mode: '', intercept: false }, capture);
     const w = mount(DnsView);
-    await vi.waitFor(() => expect(w.find('#card-dns-router').text()).toContain('Перехват DNS Keenetic'));
+    await vi.waitFor(() => expect(w.find('#card-dns-router').text()).toContain('Перехват DNS прошивки Keenetic'));
     const card = w.find('#card-dns-router');
     expect(card.text()).toContain('выключен');
 

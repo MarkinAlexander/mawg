@@ -396,6 +396,59 @@ func cutKey(body, key string) (string, bool) {
 	return v, true
 }
 
+// SetMTRemap53 правит dnsProxy.disableRemap53 в дисковом конфиге MT
+// (115-док задача B): true - при старте MT перехват :53 (цепочка MT_DNSOR)
+// не создаётся вовсе (start.go форка). SIGHUP флаг перечитывает, но
+// dnsOverrider создаётся только в Start() - применяется именно рестарт MT,
+// поэтому правка и рестарт идут парой; PUT-ы DNS в режиме «не лезть»
+// гейтятся, так что гонка с SaveConfig MT сужается до секунд. Запись
+// атомарная (tmp+rename).
+func SetMTRemap53(path string, disable bool) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("конфиг MT %s: %w", path, err)
+	}
+	want := "false"
+	if disable {
+		want = "true"
+	}
+	lines := strings.Split(string(data), "\n")
+	proxyIndent, proxyLine, inBlock, done := -1, -1, false, false
+	for i, line := range lines {
+		line = strings.TrimRight(line, "\r")
+		indent := len(line) - len(strings.TrimLeft(line, " \t"))
+		trimmed := strings.TrimSpace(line)
+		if inBlock && trimmed != "" && indent <= proxyIndent {
+			inBlock = false // блок dnsProxy кончился
+		}
+		if !inBlock && trimmed == "dnsProxy:" {
+			proxyIndent, proxyLine, inBlock = indent, i, true
+			continue
+		}
+		if inBlock && strings.HasPrefix(trimmed, "disableRemap53:") {
+			lines[i] = line[:indent] + "disableRemap53: " + want
+			done = true
+		}
+	}
+	if !done {
+		if proxyLine < 0 {
+			return fmt.Errorf("конфиг MT %s: секция dnsProxy не найдена", path)
+		}
+		// вставить первым ключом блока (сибил host:/upstream: - отступ +2)
+		rest := append([]string{strings.Repeat(" ", proxyIndent+2) + "disableRemap53: " + want}, lines[proxyLine+1:]...)
+		lines = append(lines[:proxyLine+1:proxyLine+1], rest...)
+	}
+	tmp := path + ".mawg-tmp"
+	if err := os.WriteFile(tmp, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		return fmt.Errorf("конфиг MT %s: %w", path, err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("конфиг MT %s: %w", path, err)
+	}
+	return nil
+}
+
 // SetDnsmasqTarget переключает dnsmasq: "mt" - сервер = MT:3553 (прядевой
 // список прячется в uciBakKey), "direct" - рестор из uciBakKey (или чистый
 // resolvfile-режим, если бэкапа нет). После смены - рестарт dnsmasq.
