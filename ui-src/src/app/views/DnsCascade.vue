@@ -19,9 +19,9 @@ const props = defineProps<{
   state: DnsState | null;
   cascade: DnsUpstreamsRes | null;
   busy: boolean;
-  // режим «mawg не лезет» (115-док): редакторы гасятся, живой статус
+  // маршрутизация DNS выключена (115-док): редакторы гасятся, живой статус
   // и пробы остаются - канарейки работают без перехвата
-  managedOff?: boolean;
+  routingOff?: boolean;
   reload: () => Promise<void>;
   reloadAll: () => Promise<void>;
 }>();
@@ -161,8 +161,8 @@ async function saveEdit(): Promise<void> {
       <span class="muted">{{ healthText }}</span>
     </div>
     <UiHint
-      v-if="managedOff"
-      text="Режим «mawg не лезет»: правка списка и автопроверки отключена - включите «DNS управляется mawg» вверху вкладки. Живой статус остаётся виден."
+      v-if="routingOff"
+      text="Маршрутизация DNS выключена: на запросы отвечает резолвер роутера, список приостановлен и вернется при включении вверху вкладки. Живой статус остаётся виден."
     />
     <div class="kv">
       <template
@@ -195,7 +195,7 @@ async function saveEdit(): Promise<void> {
 
     <!-- политика автопроверки (форк rev14+, 82-док): каждое поле -
          с минусами в обе стороны; в режиме «не лезть» гасится (115-док) -->
-    <template v-if="healthCapable && !managedOff">
+    <template v-if="healthCapable && !routingOff">
       <div class="cycles">
         <UiSwitch
           v-model="hEnabled"
@@ -273,7 +273,7 @@ async function saveEdit(): Promise<void> {
     </template>
 
     <div
-      v-if="edit === null && !managedOff"
+      v-if="edit === null && !routingOff"
       class="dnsactions"
     >
       <UiButton
@@ -283,7 +283,7 @@ async function saveEdit(): Promise<void> {
         Редактировать список
       </UiButton>
     </div>
-    <template v-else-if="!managedOff">
+    <template v-else-if="!routingOff">
       <div class="editrows">
         <div
           v-for="(a, i) in editList"

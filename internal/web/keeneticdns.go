@@ -55,7 +55,7 @@ func (s *Server) keeneticDNSGet(w http.ResponseWriter, r *http.Request) {
 	}
 	// режим «mawg не лезет» (115-док): ndm не пишется вовсе - легаси-
 	// автоснятие откладывается до возврата «DNS управляется mawg»
-	if v := s.store.DnsManaged(); v == nil || *v {
+	if v := s.store.DnsRouting(); v == nil || *v {
 		if prev := s.store.KeeneticDNS(); prev.Applied != "" || prev.Mode != "" && prev.Mode != "off" {
 			if _, err := dnsmgr.ApplyKeeneticDNS(s.dnsRunnerFn(), "off", "", "", prev.Applied); err != nil {
 				s.store.LogEvent("dns", "keenetic-dns", "легаси-запись ip name-server "+prev.Applied+" не снялась автоматически ("+err.Error()+") - повтор при следующем открытии карточки")

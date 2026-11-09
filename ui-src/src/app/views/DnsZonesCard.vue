@@ -16,8 +16,8 @@ import { useSecrets } from '../secrets';
 // (fail-closed), переключатель fallback - сознательное исключение
 const props = defineProps<{
   state: DnsState | null;
-  // режим «mawg не лезет» (115-док): правка зон гасится, пробы живут
-  managedOff?: boolean;
+  // маршрутизация DNS выключена (115-док): зоны приостановлены, пробы живут
+  routingOff?: boolean;
 }>();
 
 const { push } = useToast();
@@ -189,8 +189,8 @@ function upTooltip(u: DnsUpstream, z: DnsZone): string {
     />
     <template v-else>
       <UiHint
-        v-if="managedOff"
-        text="Режим «mawg не лезет»: правка зон отключена - включите «DNS управляется mawg» вверху вкладки. Проверка зон ниже работает."
+        v-if="routingOff"
+        text="Маршрутизация DNS выключена: зоны приостановлены и вернутся при включении вверху вкладки. Проверка зон ниже работает."
       />
       <UiHint text="Зона (например corp.example.com) покрывает себя и все поддомены: запросы этих имён уходят к назначенным серверам зоны - по порядку, как в общих правилах. Если серверы зоны доступны только через туннель, при его отвале зона честно замолчит - имена не утекут в общий DNS." />
 
@@ -253,7 +253,7 @@ function upTooltip(u: DnsUpstream, z: DnsZone): string {
             </UiButton>
             <UiButton
               variant="icon"
-              :disabled="zonesBusy || managedOff"
+              :disabled="zonesBusy || routingOff"
               tooltip="изменить зону"
               @click="openZoneEdit(i)"
             >
@@ -262,7 +262,7 @@ function upTooltip(u: DnsUpstream, z: DnsZone): string {
             <UiButton
               variant="icon"
               danger-icon
-              :disabled="zonesBusy || managedOff"
+              :disabled="zonesBusy || routingOff"
               tooltip="удалить зону"
               @click="removeZone(i)"
             >
@@ -323,7 +323,7 @@ function upTooltip(u: DnsUpstream, z: DnsZone): string {
       <div class="dnsactions">
         <UiButton
           :busy="zonesBusy"
-          :disabled="managedOff"
+          :disabled="routingOff"
           @click="openZoneNew"
         >
           + зона

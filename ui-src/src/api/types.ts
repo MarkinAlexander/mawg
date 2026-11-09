@@ -388,14 +388,15 @@ export interface KeeneticDNSState {
   intercept: boolean
 }
 
-// GET/PUT /dns/managed: главный переключатель DNS-раздела (115-док,
-// слово владельца 09.11). managed: null = «управляется» (дефолт,
-// живые установки не меняют поведение); false = режим «mawg и MT не
-// лезут»: перехват :53 снят (disableRemap53 в yaml MT + рестарт MT),
-// на OpenWrt dnsmasq на прямых серверах, PUT-ы DNS гейтятся 409;
-// канарейки (пробы) живут - идут с роутера напрямую, DNAT не нужен.
-export interface DnsManagedState {
-  managed: boolean | null
+// GET/PUT /dns/managed: «маршрутизация DNS» (115-док, слово владельца
+// 09.11 второе). Суть MagiTrickle - ловить запросы и вести по ним трафик -
+// не отключается никогда (MT_DNSOR живёт в обоих положениях). routing:
+// null/true = MT сам отвечает на запросы (каскад «Резервных серверов»,
+// зоны); false = отвечает резолвер роутера: апстримы форка подменены на
+// 127.0.0.1:53, зоны форка приостановлены, доменные группы продолжают
+// наполняться, наблюдение (пробы/статусы) живёт.
+export interface DnsRoutingState {
+  routing: boolean | null
   mtFlavor?: string
   remap53: boolean
   platform: 'openwrt' | 'keenetic'

@@ -14,8 +14,8 @@ import { useConfirm } from '../../stores/confirm';
 // применение одним запросом; переключает уровни сам MT
 const props = defineProps<{
   state: DnsState | null;
-  // режим «mawg не лезет» (115-док): правка политики гасится, пробы живут
-  managedOff?: boolean;
+  // маршрутизация DNS выключена (115-док): политика приостановлена, пробы живут
+  routingOff?: boolean;
   reloadAll: () => Promise<void>;
 }>();
 
@@ -138,13 +138,13 @@ async function probePolicy(): Promise<void> {
     />
     <template v-else>
       <UiHint
-        v-if="managedOff"
-        text="Режим «mawg не лезет»: правка политики отключена - включите «DNS управляется mawg» вверху вкладки. Проверка уровней ниже работает."
+        v-if="routingOff"
+        text="Маршрутизация DNS выключена: политика приостановлена и вернется при включении вверху вкладки. Проверка уровней ниже работает."
       />
       <div class="hrow">
         <UiSwitch
           v-model="polEnabled"
-          :disabled="managedOff"
+          :disabled="routingOff"
           label="Автопереключение включено"
           tooltip="выключенная политика только сохраняется - текущие серверы не трогаются"
         />
@@ -252,7 +252,7 @@ async function probePolicy(): Promise<void> {
       <div class="dnsactions">
         <UiButton
           :busy="polBusy"
-          :disabled="!polDirty || managedOff"
+          :disabled="!polDirty || routingOff"
           tooltip="становится доступной после правки любого уровня"
           @click="applyPolicy"
         >

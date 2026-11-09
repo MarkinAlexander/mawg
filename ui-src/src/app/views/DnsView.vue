@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { UiBadge, UiBanner, UiButton, UiCard, UiHelp, UiHint } from '../../components/ui';
 import { api } from '../../api/client';
-import type { DnsManagedState, DnsState, DnsUpstreamsRes } from '../../api/types';
+import type { DnsRoutingState, DnsState, DnsUpstreamsRes } from '../../api/types';
 import { dnsmasqServersHelpOf, dnsmasqTextOf, upstreamsTextOf } from './dnsServers';
 import DnsKeenetic from './DnsKeenetic.vue';
 import DnsCascade from './DnsCascade.vue';
@@ -11,12 +11,14 @@ import DnsZonesCard from './DnsZonesCard.vue';
 import { useToast } from '../../stores/toast';
 import { useConfirm } from '../../stores/confirm';
 
-// DNS-раздел: главный переключатель «DNS управляется mawg» (115-док,
-// слово владельца 09.11: полное «не лезть» с живыми канарейками),
-// состояние службы DNS, резервные серверы MT (каскад) и правила
-// автопереключения L1-L5. Формулировки - «язык задач» (слово владельца
-// 2026-10-16: без жаргона; подробности - по знакам вопроса UiHelp,
-// самодокументация вместо ссылок на журналы сессий).
+// DNS-раздел: переключатель «Маршрутизация DNS» (115-док, слово владельца
+// 09.11 второе: ловить запросы и вести трафик - суть MagiTrickle, не
+// отключается; переключатель снимает только роль резолвера - «MT сам
+// отправляет куда настроено»), состояние службы DNS, резервные серверы
+// MT (каскад) и правила автопереключения L1-L5. Формулировки - «язык
+// задач» (слово владельца 2026-10-16: без жаргона; подробности - по
+// знакам вопроса UiHelp, самодокументация вместо ссылок на журналы
+// сессий).
 // Домены вынесены в соседние модули: dnsServers/dnsPolicy/dnsZones/
 // dnsKeenetic (чистые функции) и DnsCascade/DnsPolicyCard/DnsZonesCard/
 // DnsKeenetic (секции карточки).
@@ -25,7 +27,7 @@ const { confirm } = useConfirm();
 
 const state = ref<DnsState | null>(null);
 const cascade = ref<DnsUpstreamsRes | null>(null);
-const managed = ref<DnsManagedState | null>(null);
+const routing = ref<DnsRoutingState | null>(null);
 const loadErr = ref('');
 const busy = ref(false);
 
@@ -39,11 +41,11 @@ async function load(): Promise<void> {
   }
 }
 
-async function loadManaged(): Promise<void> {
+async function loadRouting(): Promise<void> {
   try {
-    managed.value = await api<DnsManagedState>('GET', '/dns/managed');
+    routing.value = await api<DnsRoutingState>('GET', '/dns/managed');
   } catch {
-    managed.value = null; // старый бинарь без /dns/managed - дефолт-поведение
+    routing.value = null; // старый бинарь без /dns/managed - дефолт-поведение
   }
 }
 
@@ -58,14 +60,14 @@ async function loadCascade(): Promise<void> {
 
 // перезагрузка после сохранения серверов/политики: и состояние, и каскад
 async function reloadAll(): Promise<void> {
-  await Promise.all([load(), loadCascade(), loadManaged()]);
+  await Promise.all([load(), loadCascade(), loadRouting()]);
 }
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 onMounted(() => {
   load();
   loadCascade();
-  loadManaged();
+  loadRouting();
   pollTimer = setInterval(loadCascade, 10000);
 });
 onBeforeUnmount(() => {
@@ -77,8 +79,9 @@ const notSupported = computed(() => loadErr.value.includes('платформа')
 // только перехват MT_DNSOR и управляемую MT-часть
 const isKeen = computed(() => state.value?.platform === 'keenetic');
 
-// режим «mawg и MT не лезут» (115-док): редакторы гасим, канарейки живут
-const managedOff = computed(() => managed.value?.managed === false);
+// маршрутизация DNS выключена (115-док, слово владельца второе):
+// редакторы гасим (списки не используются), канарейки и ловля живут
+const routingOff = computed(() => routing.value?.routing === false);
 
 const capable = computed(() => cascade.value?.capable === true && !!cascade.value.state);
 
@@ -108,27 +111,28 @@ async function toggle(): Promise<void> {
   busy.value = false;
 }
 
-// главный переключатель раздела (115-док задача B): off = правка настроек
-// MagiTrickle (disableRemap53) + его перезапуск; формулировки - по словарю
-// §0 дока и платформе (ip host - записи Keenetic, hosts - OpenWrt)
+// переключатель «Маршрутизация DNS» (115-док, слово владельца второе):
+// off = апстримы форка подменяются на резолвер роутера (без рестарта MT);
+// формулировки - по словарю §0 и платформе (ip host - Keenetic, hosts -
+// OpenWrt); ловля запросов для маршрутизации трафика не трогается
 const routerDNS = computed(() => (isKeen.value ? 'DNS Keenetic' : 'DNS роутера'));
 const localRecords = computed(() => (isKeen.value ? 'локальные записи (ip host)' : 'локальные записи роутера (hosts)'));
 
-async function toggleManaged(): Promise<void> {
-  if (busy.value || !managed.value) return;
-  const toOn = managedOff.value;
+async function toggleRouting(): Promise<void> {
+  if (busy.value || !routing.value) return;
+  const toOn = routingOff.value;
   const ok = await confirm({
-    title: toOn ? 'Вернуть DNS-управление?' : 'Отключить DNS-управление?',
+    title: toOn ? 'Вернуть маршрутизацию DNS?' : 'Выключить маршрутизацию DNS?',
     text: toOn
-      ? 'mawg вернёт перехват DNS MagiTrickle: правка настроек MagiTrickle и его перезапуск - краткий перерыв. Доменные группы MagiTrickle снова заработают. Проверки DNS (канарейки) продолжат работать.'
-      : `mawg и MagiTrickle перестанут вмешиваться в DNS: перехват порта 53 снимается (правка настроек MagiTrickle + его перезапуск), доменные группы MagiTrickle перестанут работать - пулы по устройствам продолжат. Устройства будут резолвить через ${routerDNS.value} - ${localRecords.value} заработают. Проверки DNS (канарейки) останутся.`,
-    okLabel: toOn ? 'Включить' : 'Отключить',
+      ? 'MagiTrickle снова станет отвечать на DNS-запросы устройств через свой каскад («Резервные серверы») и зоны - сохранённый список вернётся автоматически. Ловля запросов для маршрутизации трафика не прерывается.'
+      : `MagiTrickle продолжит ловить DNS-запросы и вести трафик по группам - это не отключается. Снимается только его роль резолвера: отвечать будет ${routerDNS.value} (${localRecords.value} заработают), каскад «Резервных серверов» и зоны приостановятся и вернутся при включении. Пробы и статусы останутся.`,
+    okLabel: toOn ? 'Включить' : 'Выключить',
   });
   if (!ok) return;
   busy.value = true;
   try {
-    await api('PUT', '/dns/managed', { managed: toOn, confirm: true });
-    push(toOn ? 'DNS-управление включено' : `DNS-управление отключено: устройства резолвят через ${routerDNS.value}`);
+    await api('PUT', '/dns/managed', { routing: toOn, confirm: true });
+    push(toOn ? 'Маршрутизация DNS включена: отвечает каскад MagiTrickle' : `Маршрутизация DNS выключена: отвечает ${routerDNS.value}, трафик по группам ведётся как раньше`);
     await reloadAll();
   } catch (e) {
     push(e instanceof Error ? e.message : String(e), true);
@@ -164,23 +168,23 @@ async function toggleManaged(): Promise<void> {
         v-if="state"
         class="kv"
       >
-        <b>DNS управляется mawg<UiHelp :text="'Главный переключатель раздела. Включено - mawg и MagiTrickle ведут DNS домашних устройств (перехват порта 53 в dns-прокси MagiTrickle). Выключено («mawg не лезет») - перехват снимается (правка настроек MagiTrickle + его перезапуск), устройства резолвят через ' + routerDNS + ': работают ' + localRecords + (isKeen ? ' и Интернет-фильтр' : '') + '. Проверки DNS (канарейки) работают в обоих режимах - они идут с роутера напрямую.'" /></b>
+        <b>Маршрутизация DNS<UiHelp :text="'Вторая роль MagiTrickle: помимо ловли запросов для маршрутизации трафика (это работает всегда - индикатор «Перехват DNS MagiTrickle» ниже не трогается), он сам отвечает на запросы устройств через свой каскад («Резервные серверы»). Выключить - отвечать будет ' + routerDNS + ': ' + localRecords + ' заработают, ответы пойдут нативным путём роутера; каскад и зоны приостановятся и вернутся при включении. Наблюдение не отключается: пробы, статусы и журнал показывают, куда что пошло.'" /></b>
         <span>
           <UiBadge
-            v-if="managed"
-            :text="managedOff ? 'выключено' : 'работает'"
-            :variant="managedOff ? 'warn' : 'ok'"
+            v-if="routing"
+            :text="routingOff ? 'отвечает ' + routerDNS : 'через MT'"
+            :variant="routingOff ? 'warn' : 'ok'"
           />
           <UiButton
-            v-if="managed"
+            v-if="routing"
             :busy="busy"
-            @click="toggleManaged"
+            @click="toggleRouting"
           >
-            {{ managedOff ? 'Включить' : 'Отключить' }}
+            {{ routingOff ? 'Включить' : 'Выключить' }}
           </UiButton>
         </span>
         <template v-if="isKeen">
-          <b>Перехват DNS MagiTrickle<UiHelp text="DNS-запросы домашних устройств на адрес роутера (порт 53) перехватываются dns-прокси MagiTrickle (порт 3553) - дальше их ведут «Резервные серверы» ниже. Собственный запрос роутера к его IP тоже уходит в MagiTrickle, но локальные записи роутера (ip host) этим путём не резолвятся: их знает только DNS Keenetic. Техника с чужим DNS напрямую (8.8.8.8 на устройстве) не перехватывается вовсе - публичные резолверы уводит в туннель группа dns-tunnel, если она настроена." /></b>
+          <b>Перехват DNS MagiTrickle<UiHelp text="Ловля DNS-запросов для маршрутизации трафика - суть MagiTrickle, работает всегда (в оба положения «Маршрутизации DNS»): запросы домашних устройств на адрес роутера (порт 53) перехватываются dns-прокси MagiTrickle (порт 3553) и наполняют доменные группы. Собственный запрос роутера к его IP тоже уходит в MagiTrickle. Техника с чужим DNS напрямую (8.8.8.8 на устройстве) не перехватывается вовсе - публичные резолверы уводит в туннель группа dns-tunnel, если она настроена." /></b>
           <span>
             <UiBadge
               :text="state.mt.remap53 ? 'работает' : 'выключен'"
@@ -208,7 +212,7 @@ async function toggleManaged(): Promise<void> {
           </span>
           <b>Кэш адресов<UiHelp text="Память недавних ответов DNS: повторные сайты открываются быстрее, короткие сбои сервера не замечаются." /></b>
           <span class="muted">{{ state.dnsmasq.cacheSize != null ? `${state.dnsmasq.cacheSize} записей` : 'не задан' }}</span>
-          <b>Перенаправление<UiHelp text="DNS-запросы домашних устройств на адрес роутера (порт 53) принудительно идут через модуль MT. Техника с чужим DNS напрямую (8.8.8.8 на устройстве) не перехватывается - публичные резолверы уводит в туннель группа dns-tunnel, если она настроена." /></b>
+          <b>Перенаправление<UiHelp text="Ловля DNS-запросов для маршрутизации трафика: запросы домашних устройств на адрес роутера (порт 53) принудительно идут через модуль MT и наполняют доменные группы - работает всегда, независимо от «Маршрутизации DNS» выше. Техника с чужим DNS напрямую (8.8.8.8 на устройстве) не перехватывается - публичные резолверы уводит в туннель группа dns-tunnel, если она настроена." /></b>
           <span>
             <UiBadge
               :text="state.mt.remap53 ? 'весь :53 → MT' : 'не найдено'"
@@ -223,9 +227,9 @@ async function toggleManaged(): Promise<void> {
       </div>
 
       <UiBanner
-        v-if="managedOff"
+        v-if="routingOff"
         kind="info"
-        :text="'DNS никем не управляется: перехват MagiTrickle снят, устройства резолвят через ' + routerDNS + ' - ' + localRecords + (isKeen ? ' и Интернет-фильтр' : '') + ' работают. Проверки ниже (канарейки) полностью доступны; редакторы серверов, зон и политики отключены.'"
+        :text="'На DNS-запросы устройств отвечает ' + routerDNS + ': ' + localRecords + (isKeen ? ' и Интернет-фильтр' : '') + ' видны. MagiTrickle продолжает ловить запросы и вести трафик по группам (перехват жив, доменные группы работают); каскад и зоны приостановлены. Проверки ниже (канарейки) полностью доступны; редакторы серверов, зон и политики отключены - их списки не используются.'"
       />
 
       <DnsKeenetic :state="state" />
@@ -234,7 +238,7 @@ async function toggleManaged(): Promise<void> {
         :state="state"
         :cascade="cascade"
         :busy="busy"
-        :managed-off="managedOff"
+        :routing-off="routingOff"
         :reload="loadCascade"
         :reload-all="reloadAll"
         @busy="busy = $event"
@@ -242,7 +246,7 @@ async function toggleManaged(): Promise<void> {
 
       <div class="dnsactions">
         <UiButton
-          v-if="!isKeen && !managedOff"
+          v-if="!isKeen && !routingOff"
           :busy="busy"
           :disabled="!state"
           @click="toggle"
@@ -269,13 +273,13 @@ async function toggleManaged(): Promise<void> {
 
   <DnsPolicyCard
     :state="state"
-    :managed-off="managedOff"
+    :routing-off="routingOff"
     :reload-all="reloadAll"
   />
 
   <DnsZonesCard
     :state="state"
-    :managed-off="managedOff"
+    :routing-off="routingOff"
   />
 </template>
 

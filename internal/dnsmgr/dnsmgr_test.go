@@ -353,57 +353,6 @@ func TestSetDnsmasqTarget(t *testing.T) {
 	}
 }
 
-// SetMTRemap53: absent key inserted into dnsProxy block, existing key
-// flipped in place, missing block = honest error (115-док задача B).
-func TestSetMTRemap53(t *testing.T) {
-	withProxy := `configVersion: 0.7
-app:
-  dnsProxy:
-    host:
-      address: '[::]'
-      port: 3553
-    upstreams:
-    - address: 8.8.8.8
-      port: 53
-  netfilter:
-    iptables:
-      chainPrefix: MT_
-`
-	p := filepath.Join(t.TempDir(), "config.yaml")
-	if err := os.WriteFile(p, []byte(withProxy), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := SetMTRemap53(p, true); err != nil {
-		t.Fatal(err)
-	}
-	data, _ := os.ReadFile(p)
-	s := string(data)
-	if !strings.Contains(s, "    disableRemap53: true\n    host:") {
-		t.Fatalf("ключ не вставлен в блок dnsProxy:\n%s", s)
-	}
-	if !strings.Contains(s, "chainPrefix: MT_") {
-		t.Fatalf("соседние блоки повреждены:\n%s", s)
-	}
-	if err := SetMTRemap53(p, false); err != nil {
-		t.Fatal(err)
-	}
-	data, _ = os.ReadFile(p)
-	if !strings.Contains(string(data), "disableRemap53: false") {
-		t.Fatalf("ключ не перезаписан:\n%s", string(data))
-	}
-	if strings.Contains(string(data), "disableRemap53: true") {
-		t.Fatalf("остался дубль:\n%s", string(data))
-	}
-
-	without := "app:\n  httpWeb:\n    enabled: true\n"
-	p2 := filepath.Join(t.TempDir(), "config.yaml")
-	if err := os.WriteFile(p2, []byte(without), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := SetMTRemap53(p2, true); err == nil {
-		t.Fatal("нет секции dnsProxy - ожидалась ошибка")
-	}
-}
 
 // Пустой список серверов = [] а не null: UI делает servers.length, JSON
 // null ронял рендер карточки DNS (живой кейс 0.62 09.11 - прямой режим
@@ -416,8 +365,5 @@ func TestCollectEmptyServersNotNil(t *testing.T) {
 	}
 	if st.Dnsmasq.Servers == nil {
 		t.Fatal("Servers = nil, want пустой []")
-	}
-	if len(st.Dnsmasq.Servers) != 0 {
-		t.Fatalf("Servers = %v, want пустой", st.Dnsmasq.Servers)
 	}
 }

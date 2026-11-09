@@ -486,18 +486,35 @@ func (s *Store) SetKeeneticDNS(v KeeneticDNS) error {
 	return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
 }
 
-// DnsManaged - главный переключатель DNS-раздела (Settings.DnsManaged,
-// 115-док): nil = «управляется» (дефолт, живые установки не ломаются).
-func (s *Store) DnsManaged() *bool {
+// DnsRouting - «маршрутизация DNS» (Settings.DnsRouting, 115-док):
+// nil/true = MT отвечает (дефолт, живые установки не ломаются).
+func (s *Store) DnsRouting() *bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	v := s.root.Settings.DnsManaged
-	return v
+	return s.root.Settings.DnsRouting
 }
 
-func (s *Store) SetDnsManaged(v *bool) error {
+func (s *Store) SetDnsRouting(v *bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.root.Settings.DnsManaged = v
+	s.root.Settings.DnsRouting = v
+	return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
+}
+
+// DnsSavedUpstreams - список «Резервных серверов», снятый при
+// выключении маршрутизации DNS (Settings.DnsSavedUpstreams).
+func (s *Store) DnsSavedUpstreams() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.root.Settings.DnsSavedUpstreams...)
+}
+
+func (s *Store) SetDnsSavedUpstreams(list []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if list == nil {
+		list = []string{}
+	}
+	s.root.Settings.DnsSavedUpstreams = list
 	return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
 }

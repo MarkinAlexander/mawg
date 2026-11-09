@@ -123,7 +123,7 @@ describe('DnsView - состояние DNS (OpenWrt)', () => {
     w.unmount()
   })
 
-  it('переключатель DNS-управления: PUT /dns/managed с confirm, перечитка state+managed (115-док)', async () => {
+  it('переключатель «Маршрутизация DNS»: PUT /dns/managed с confirm, перечитка state+routing (115-док)', async () => {
     const capture: { put?: unknown } = {}
     const stub = apiStub(statePayload, { capable: false }, capture)
     vi.stubGlobal('fetch', stub)
@@ -133,19 +133,19 @@ describe('DnsView - состояние DNS (OpenWrt)', () => {
     // кнопка переключателя - первая в карточке (kv-строка над статусом)
     await w.find('#card-dns .uibtn').trigger('click')
     await vi.waitFor(() => {
-      expect(capture.put).toEqual({ managed: false, confirm: true })
+      expect(capture.put).toEqual({ routing: false, confirm: true })
       const managedCalls = stub.mock.calls.filter((c) => (c[0] as string).endsWith('/dns/managed'))
       expect(managedCalls.length).toBeGreaterThanOrEqual(2) // GET при маунте + GET после PUT
     })
     w.unmount()
   })
 
-  it('режим «mawg не лезет»: баннер, гашение кнопки dnsmasq, редакторы каскада скрыты', async () => {
+  it('маршрутизация DNS выключена: баннер, гашение кнопки dnsmasq, редакторы каскада скрыты', async () => {
     const stub = apiStub(statePayload, cascadePayload)
     const rawFetch = stub.getMockImplementation()!
     stub.mockImplementation(async (url: string, opts?: RequestInit) => {
       if (url.endsWith('/dns/managed')) {
-        return new Response(JSON.stringify({ managed: false, remap53: false, platform: 'openwrt' }), { status: 200 })
+        return new Response(JSON.stringify({ routing: false, remap53: true, platform: 'openwrt' }), { status: 200 })
       }
       return rawFetch(url, opts)
     })
@@ -154,8 +154,8 @@ describe('DnsView - состояние DNS (OpenWrt)', () => {
     await waitState(w)
 
     const text = w.find('#card-dns').text()
-    expect(text).toContain('выключено')
-    expect(text).toContain('DNS никем не управляется')
+    expect(text).toContain('отвечает DNS роутера')
+    expect(text).toContain('На DNS-запросы устройств отвечает')
     // кнопка направления dnsmasq скрыта в режиме «не лезть»
     expect(w.find('#card-dns .dnsactions').text()).not.toContain('Направить DNS через MT')
     expect(w.find('#card-dns .dnsactions').text()).not.toContain('Вернуть на прямые DNS')
