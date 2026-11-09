@@ -33,6 +33,9 @@ const { confirm } = useConfirm();
 const capable = computed(() => props.cascade?.capable === true && !!props.cascade.state);
 const ups = computed(() => props.cascade?.state?.upstreams ?? []);
 const health = computed(() => props.cascade?.state?.health);
+// зонд списка у форка живёт при health.Enabled && >=2 апстримов
+// (dnsMITMProxy/upstream.go start()) - иначе alive замораживается
+const probesFrozen = computed(() => ups.value.length < 2 || health.value?.enabled === false);
 
 const healthText = computed(() => healthTextOf(health.value));
 
@@ -173,7 +176,7 @@ async function saveEdit(): Promise<void> {
         <span>
           <UiBadge
             :text="u.address"
-            :variant="u.alive ? 'ok' : 'err'"
+            :variant="u.alive ? 'ok' : (probesFrozen ? 'warn' : 'err')"
             :tooltip="upTooltip(u)"
           />
           <UiBadge
@@ -183,7 +186,16 @@ async function saveEdit(): Promise<void> {
             tooltip="первый доступный - запросы идут в него в первую очередь"
           />
           <UiBadge
-            v-if="!u.alive"
+            v-if="!u.alive && probesFrozen"
+            variant="warn"
+            text="статус заморожен"
+          />
+          <UiHelp
+            v-if="!u.alive && probesFrozen"
+            text="Зонд списка у MagiTrickle живёт только при двух и более серверах (и включённой автопроверке): с одним апстримом статус не перепроверяется и остаётся «не работает» от разового сбоя (например, рестарта службы DNS), хотя ответы идут - это видно по пробам записей и карточки проверки DNS. Поставьте второй сервер или просто знайте: при одном апстриме этот бейдж не про реальность."
+          />
+          <UiBadge
+            v-if="!u.alive && !probesFrozen"
             variant="err"
             text="не работает"
             :tooltip="upTooltip(u)"
@@ -301,7 +313,10 @@ async function saveEdit(): Promise<void> {
             v-if="loopRisk(a)"
             variant="warn"
             text="риск петли"
-            tooltip="Это адрес резолвера самого роутера (dnsmasq/ndm). Сейчас служба DNS роутера направлена в MT - такой адрес зациклит её (dnsmasq → MT → dnsmasq) и уронит DNS устройств. Ставить только если понимаете зачем: сейчас этот адрес уже отвечает через MT, список обычно нужен с внешними серверами."
+          />
+          <UiHelp
+            v-if="loopRisk(a)"
+            text="Это адрес резолвера самого роутера (dnsmasq/ndm). Сейчас служба DNS роутера направлена в MT - такой адрес зациклит её (dnsmasq → MT → dnsmasq) и уронит DNS устройств. Ставить только если понимаете зачем: сейчас этот адрес уже отвечает через MT, список обычно нужен с внешними серверами."
           />
           <span class="rowbtns">
             <UiButton
