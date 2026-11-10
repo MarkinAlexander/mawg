@@ -74,6 +74,9 @@ type InstallResult struct {
 // diskFree - свободное место (байты); подменяется в тестах.
 var diskFree = platform.DiskFreeBytes
 
+// tmpDiskFree - место в /tmp до скачивания; отдельная подмена (как в lx)
+var tmpDiskFree = platform.DiskFreeBytes
+
 // InstallCore ставит mihomo из релиза MetaCubeX: скачать gz, сверить
 // digest sha256, распаковать, ТЕСТ-ЗАПУСК в /tmp, только потом подмена
 // рабочего бинаря. Чужой бинарь (без маркера) не трогается без
@@ -149,11 +152,20 @@ func InstallCore(ctx context.Context, opts InstallOptions) (InstallResult, error
 	}
 
 	gzPath := filepath.Join(tmp, pick.Asset)
+	// /tmp на роутерах - tmpfs в оперативке: проверка до скачивания
+	// (free=0 - не смогли выяснить, не блокируем)
+	if free := tmpDiskFree(tmp); free > 0 {
+		step("в %s свободно %s (tmpfs = оперативная память)", tmp, mb(free))
+		if free < pick.Size {
+			res.Log = log.String()
+			return res, fmt.Errorf("в %s свободно %s, а архив mihomo ~%s - и это ещё без распаковки. /tmp - оперативная память: перезагрузка роутера её освободит", tmp, mb(free), mb(pick.Size))
+		}
+	}
 	size, err := fetch(ctx, pick.URL(), gzPath)
 	if err != nil {
 		if isNoSpace(err) {
 			res.Log = log.String()
-			return res, fmt.Errorf("не хватает места в %s для скачивания (~%s): это оперативная память, она освободится после перезагрузки роутера: %v", tmp, mb(pick.Size), err)
+			return res, fmt.Errorf("не хватает места в %s для скачивания (~%s): это оперативная память, она освободится после перезагрузки роутера. %s: %v", tmp, mb(pick.Size), platform.SpaceDiag(tmp), err)
 		}
 		return res, fmt.Errorf("скачать %s не удалось: %v", pick.Asset, err)
 	}
@@ -185,7 +197,7 @@ func InstallCore(ctx context.Context, opts InstallOptions) (InstallResult, error
 		os.Remove(gzPath)
 		if isNoSpace(err) {
 			res.Log = log.String()
-			return res, fmt.Errorf("не хватает места в %s для распаковки бинаря: %v", tmp, err)
+			return res, fmt.Errorf("не хватает места в %s для распаковки бинаря (приходится держать архив и бинарь одновременно). %s: %v", tmp, platform.SpaceDiag(tmp), err)
 		}
 		return res, fmt.Errorf("распаковка не удалась: %v", err)
 	}

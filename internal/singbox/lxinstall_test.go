@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -585,6 +586,7 @@ func TestInstallLXCoreTightSpaceFriendlyError(t *testing.T) {
 		t.Fatal("лог шагов должен попасть в диалог вместе с ошибкой")
 	}
 }
+
 // смена профиля при той же версии - полноценная переустановка, а не «актуально»
 func TestInstallLXCoreFlavorSwitch(t *testing.T) {
 	f := newFakeLXCore(t, "1.14.2-lx.7")
@@ -720,5 +722,69 @@ func TestInstallExtendedCoreDigest(t *testing.T) {
 	marker, err := os.ReadFile(filepath.Join(f.markerDir, LXMarkerName))
 	if err != nil || !strings.Contains(string(marker), "source="+ext.String()) || !strings.Contains(string(marker), "version=1.14.3-extended-2.7.3") {
 		t.Fatalf("маркер: %s err=%v", marker, err)
+	}
+}
+
+// жалоба 11.2026: «распаковка не удалась: exit status 2» без причины -
+// stderr tar выбрасывался, а в нём живёт и «No space left» (tmpfs), и
+// «short read» битой докачки. Теперь вывод tar и цифры места - в ошибке.
+func TestInstallLXCoreTarStderrSurfaces(t *testing.T) {
+	f := newFakeLXCore(t, "1.14.2-lx.7")
+	base := f.opts(false)
+	base.Run = func(argv0 string, args ...string) ([]byte, error) {
+		if argv0 == "tar" {
+			return nil, &exec.ExitError{Stderr: []byte("tar: can't create 'sing-box-…/sing-box': No space left on device")}
+		}
+		return f.run(argv0, args...)
+	}
+	_, err := InstallLXCore(context.Background(), base)
+	if err == nil {
+		t.Fatal("ожидалась ошибка распаковки")
+	}
+	for _, want := range []string{"не хватает места", "No space left", "ерезагрузка роутера", "upx"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("ошибка без %q: %v", want, err)
+		}
+	}
+
+	// прочая ошибка tar (битая докачка миновала checksum) - вывод tar тоже виден
+	base.Run = func(argv0 string, args ...string) ([]byte, error) {
+		if argv0 == "tar" {
+			return []byte(""), &exec.ExitError{Stderr: []byte("tar: short read")}
+		}
+		return f.run(argv0, args...)
+	}
+	_, err = InstallLXCore(context.Background(), base)
+	if err == nil || !strings.Contains(err.Error(), "short read") {
+		t.Fatalf("вывод tar потерялся: %v", err)
+	}
+}
+
+// пред-проверка /tmp до скачивания: архив не влезает - честный отказ
+// с цифрами до того, как качать десятки мегабайт
+func TestInstallLXCoreTmpFullPreflight(t *testing.T) {
+	f := newFakeLXCore(t, "1.14.2-lx.7")
+	opts := f.opts(false)
+	// архив релиза - реальный размер (~30 МБ plain), а не байтовая фикстура
+	opts.Discover = func(ctx context.Context) []SourceReport {
+		rep := f.reports()
+		rep[0].Releases[0].Names["mipsle-softfloat"] = FlavorAssets{
+			Plain: f.asset, PlainSz: 32 << 20,
+			UPX: f.asset + ".upx.tar.gz", UPXSz: 12 << 20,
+		}
+		return rep
+	}
+	old := tmpDiskFree
+	tmpDiskFree = func(p string) int64 { return 4 << 20 } // 4 МБ < архива
+	t.Cleanup(func() { tmpDiskFree = old })
+	res, err := InstallLXCore(context.Background(), opts)
+	if err == nil || !strings.Contains(err.Error(), "свободно 4 МБ") {
+		t.Fatalf("ожидался ранний отказ про /tmp: %v", err)
+	}
+	if !strings.Contains(err.Error(), "перезагрузка роутера") {
+		t.Fatalf("нет подсказки: %v", err)
+	}
+	if res.Log == "" || !strings.Contains(res.Log, "tmpfs") {
+		t.Fatalf("лог без строки места: %s", res.Log)
 	}
 }

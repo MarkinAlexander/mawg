@@ -482,11 +482,21 @@ func InstallLXCore(ctx context.Context, opts LXInstallOptions) (LXInstallResult,
 	}
 
 	tarball := filepath.Join(tmp, pick.Asset)
+	// /tmp на роутерах - tmpfs в оперативке: проверка до скачивания, чтобы
+	// не качать десятки мегабайт в заведомо переполненную память (free=0 -
+	// не смогли выяснить, не блокируем)
+	if free := tmpDiskFree(tmp); free > 0 {
+		step("в %s свободно %s (tmpfs = оперативная память)", tmp, mb(free))
+		if free < pick.Size {
+			res.Log = log.String()
+			return res, fmt.Errorf("в %s свободно %s, а один архив ядра ~%s - и это ещё без распаковки (придётся держать архив и бинарь одновременно). /tmp - оперативная память: перезагрузка роутера её освободит; также меньше весит профиль upx", tmp, mb(free), mb(pick.Size))
+		}
+	}
 	size, err := fetch(ctx, pick.URL(), tarball)
 	if err != nil {
 		if isNoSpace(err) {
 			res.Log = log.String()
-			return res, fmt.Errorf("не хватает места в %s для скачивания архива (~%s): это оперативная память, она освободится после перезагрузки роутера; также помогает профиль upx (архив в ~1.5 раза меньше): %v", tmp, mb(pick.Size), err)
+			return res, fmt.Errorf("не хватает места в %s для скачивания архива (~%s): это оперативная память, она освободится после перезагрузки роутера; также помогает профиль upx (архив в ~1.5 раза меньше). %s: %v", tmp, mb(pick.Size), platform.SpaceDiag(tmp), err)
 		}
 		return res, fmt.Errorf("скачать %s не удалось: %v", pick.Asset, err)
 	}
@@ -536,13 +546,25 @@ func InstallLXCore(ctx context.Context, opts LXInstallOptions) (LXInstallResult,
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return res, err
 	}
-	if _, err := run("tar", "-xzf", tarball, "-C", dir); err != nil {
+	// вывод tar обязателен в ошибке: exec даёт только «exit status 2», а
+	// причина (No space left / short read у битой докачки) живёт в stderr
+	out, err := run("tar", "-xzf", tarball, "-C", dir)
+	if err != nil {
 		os.RemoveAll(dir)
-		if isNoSpace(err) {
+		detail := cmdDetail(out, err)
+		diag := platform.SpaceDiag(tmp)
+		if isNoSpaceText(err.Error() + " " + detail) {
 			res.Log = log.String()
-			return res, fmt.Errorf("не хватает места в %s для распаковки ядра (архив + распакованный бинарь; это оперативная память): помогает профиль upx (бинарь в ~3.5 раза меньше): %v", tmp, err)
+			tarWhy := err.Error()
+			if detail != "" {
+				tarWhy = detail
+			}
+			return res, fmt.Errorf("не хватает места в %s для распаковки ядра (приходится держать архив и распакованный бинарь одновременно; это оперативная память). %s. Перезагрузка роутера освобождает /tmp, профиль upx меньше в ~3.5 раза. Вывод tar: %s", tmp, diag, tarWhy)
 		}
-		return res, fmt.Errorf("распаковка не удалась: %v", err)
+		if detail != "" {
+			return res, fmt.Errorf("распаковка не удалась: %v (tar: %s). %s", err, detail, diag)
+		}
+		return res, fmt.Errorf("распаковка не удалась: %v. %s", err, diag)
 	}
 	bin, err := findSingBox(dir)
 	if err != nil {
@@ -709,8 +731,36 @@ func markerField(dir, key string) string {
 // diskFree - свободное место (байты); подменяется в тестах.
 var diskFree = platform.DiskFreeBytes
 
+// tmpDiskFree - место в /tmp до скачивания; отдельная от diskFree подмена,
+// чтобы тесты ПЗУ-фазы не путались с tmp-фазой
+var tmpDiskFree = platform.DiskFreeBytes
+
 func isNoSpace(err error) bool {
-	return err != nil && (errors.Is(err, syscall.ENOSPC) || strings.Contains(err.Error(), "no space left"))
+	return err != nil && isNoSpaceText(err.Error())
+}
+
+// isNoSpaceText - поиск «место кончилось» и по выводу команды: busybox
+// tar пишет «No space left» с заглавной, ядро в Go-ошибках - строчными
+func isNoSpaceText(s string) bool {
+	l := strings.ToLower(s)
+	return strings.Contains(l, "no space left") || strings.Contains(l, syscall.ENOSPC.Error())
+}
+
+// cmdDetail - полезный вывод упавшей команды: stdout + stderr из
+// *exec.ExitError (реальный раннер собирает через cmd.Output(), который
+// кладёт stderr в поле ошибки, а не в общий вывод)
+func cmdDetail(out []byte, err error) string {
+	var parts []string
+	if s := strings.TrimSpace(string(out)); s != "" {
+		parts = append(parts, s)
+	}
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		if s := strings.TrimSpace(string(ee.Stderr)); s != "" {
+			parts = append(parts, s)
+		}
+	}
+	return strings.Join(parts, "; ")
 }
 
 func mb(n int64) string {
