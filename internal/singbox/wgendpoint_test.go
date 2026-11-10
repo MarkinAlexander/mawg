@@ -156,3 +156,53 @@ func TestWgEndpointNestedAmnezia(t *testing.T) {
 		t.Fatal("lx-профиль не должен вкладывать amnezia")
 	}
 }
+
+// AWG 3.1-флаги RandomTrailers/DisableCookies: оба профиля форков ждут
+// bool (lx - в корне эндпоинта, extended - в объекте amnezia); раньше
+// поля терялись и сервер 3.1 без трейлеров молчал (кейс amnezia_for_awg).
+func TestWGEndpointAWG31Flags(t *testing.T) {
+	str := func(s string) *string { return &s }
+	cfg := wgconf.Config{
+		PrivateKey: "k", Addresses: []string{"10.9.9.9/32"},
+		Peer:       wgconf.Peer{PublicKey: "p", EndpointHost: "203.0.113.41", EndpointPort: 3045},
+		AWG: wgconf.AWGParams{
+			Jc: str("6"), S1: str("12"),
+			HeaderProtectionKey: str("HPKEYfake=="),
+			RekeyAfterTime:      str("100-120"),
+			RandomTrailers:      str("on"),
+			DisableCookies:      str("on"),
+		},
+	}
+	for _, tc := range []struct {
+		profile string
+		nested  bool
+	}{{"", false}, {SourceExtID, true}} {
+		ep, err := wgEndpoint(cfg, "awg", "", tc.profile)
+		if err != nil {
+			t.Fatalf("profile %q: %v", tc.profile, err)
+		}
+		var m map[string]any
+		if tc.nested {
+			m, _ = ep["amnezia"].(map[string]any)
+			if m == nil {
+				t.Fatalf("profile %q: нет объекта amnezia", tc.profile)
+			}
+		} else {
+			m = ep
+		}
+		if m["random_trailers"] != true || m["disable_cookies"] != true {
+			t.Fatalf("profile %q: 3.1-флаги не отрендерены: %v", tc.profile, m)
+		}
+		if m["header_protection_key"] != "HPKEYfake==" || m["rekey_after_time"] != "100-120" {
+			t.Fatalf("profile %q: 3.x-поля: %v", tc.profile, m)
+		}
+	}
+	cfg.AWG.RandomTrailers, cfg.AWG.DisableCookies = str("off"), str("off")
+	ep, err := wgEndpoint(cfg, "awg", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := ep["random_trailers"]; ok {
+		t.Fatal("off-флаг не должен попадать в конфиг")
+	}
+}

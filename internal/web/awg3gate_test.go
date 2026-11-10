@@ -176,3 +176,49 @@ func TestAwg3CorePick(t *testing.T) {
 		t.Fatal("явный mihomo без движка должен отказывать")
 	}
 }
+
+// AWG-конфиг в нативном пуле OpenWrt переводит пул на proto amneziawg:
+// иначе netifd поднимет чистый WireGuard и хендшейк с AWG-сервером не
+// состоится (кейс amnezia_for_awg), а статус станет читаться через awg.
+func TestUploadConfigsSwitchesProtoToAWG(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fb := fake.New()
+	fb.NameOverride = "openwrt"
+	e := rotator.New(st, fb, magitrickle.New("http://127.0.0.1:1"))
+	srv := New(st, e, fb, nil, "test", nil)
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	if code, out := postJSONBody(t, ts, "/api/v1/pools", `{"name":"natproto","fallback":"direct"}`); code != http.StatusOK {
+		t.Fatalf("создание пула: код %d: %v", code, out)
+	}
+	// AWG 2.0-конфиг нативно жизнеспособен и без awg-3.x поддержки
+	code, out := uploadConfigsPost(t, ts, "natproto", "awg2.conf", awg2ConfBody(t))
+	if code != http.StatusOK {
+		t.Fatalf("загрузка: код %d: %v", code, out)
+	}
+	resp, err := http.Get(ts.URL + "/api/v1/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var stat struct {
+		Pools []struct {
+			Name     string `json:"name"`
+			Settings struct {
+				OpenwrtProto string `json:"openwrtProto"`
+			} `json:"settings"`
+		} `json:"pools"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&stat); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range stat.Pools {
+		if p.Name == "natproto" && p.Settings.OpenwrtProto != "amneziawg" {
+			t.Fatalf("proto пула после загрузки AWG: %q", p.Settings.OpenwrtProto)
+		}
+	}
+}

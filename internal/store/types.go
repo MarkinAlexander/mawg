@@ -440,6 +440,15 @@ type Settings struct {
 	GroupPolicies map[string]GroupPolicy `json:"groupPolicies,omitempty"`
 	Cascades      []CascadeEntry         `json:"cascades,omitempty"`
 	SingboxMode   string                 `json:"singboxMode,omitempty"`
+	// SubHwid - идентификатор устройства для подписок с лимитом
+	// (Remnawave x-hwid, [a-zA-Z0-9=-]{10,64}), заданный владельцем из
+	// панели: подставьте hwid уже зарегистрированного приложения
+	// (Happ/v2rayTUN), чтобы mawg делил его слот, а не занимал новый.
+	SubHwid string `json:"subHwid,omitempty"`
+	// SubHwidAuto - сгенерированный hwid установки: пишется один раз,
+	// отдельно от ручного, чтобы очистка поля в панели не ротировала
+	// его (смена = новый слот у провайдера).
+	SubHwidAuto string `json:"subHwidAuto,omitempty"`
 	// EngineDisabled - движок sing-box выключен совсем (Система → Ядра
 	// VPN): не стартует ни своим процессом, ни фрагментом в чужом ядре.
 	EngineDisabled bool `json:"engineDisabled,omitempty"`

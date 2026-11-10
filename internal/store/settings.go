@@ -1,10 +1,14 @@
 package store
 
 import (
+	crand "crypto/rand"
+	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 func (s *Store) Settings() Settings {
@@ -32,6 +36,60 @@ func (s *Store) SetSingboxMode(mode string) error {
 	}
 	s.root.Settings.SingboxMode = mode
 	return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
+}
+
+// ValidHwid - формат идентификатора устройства Remnawave: панель молча
+// игнорирует x-hwid, не прошедший валидатор.
+func ValidHwid(id string) bool {
+	if len(id) < 10 || len(id) > 64 {
+		return false
+	}
+	for _, r := range id {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '=' || r == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+// SetSubHwid - ручной hwid из панели (переиспользование слота уже
+// зарегистрированного приложения); пустая строка возвращает к своему
+// сгенерированному (SubHwidAuto не трогаем - он стабилен).
+func (s *Store) SetSubHwid(id string) error {
+	if id != "" && !ValidHwid(id) {
+		return fmt.Errorf("hwid: 10-64 символа (латиница, цифры, «=», «-»)")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.root.Settings.SubHwid == id {
+		return nil
+	}
+	s.root.Settings.SubHwid = id
+	return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
+}
+
+// SubDeviceID - hwid установки для подписок с лимитом устройств
+// (Remnawave x-hwid): ручной приоритетнее, иначе свой сгенерированный -
+// он пишется один раз, ротация съедала бы слоты у провайдера. Формат
+// «mawg-»+hex вписан в валидатор панели.
+func (s *Store) SubDeviceID() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if id := s.root.Settings.SubHwid; id != "" {
+		return id
+	}
+	if id := s.root.Settings.SubHwidAuto; id != "" {
+		return id
+	}
+	buf := make([]byte, 12)
+	if _, err := crand.Read(buf); err != nil {
+		var t [8]byte
+		binary.BigEndian.PutUint64(t[:], uint64(time.Now().UnixNano()))
+		buf = t[:]
+	}
+	s.root.Settings.SubHwidAuto = "mawg-" + hex.EncodeToString(buf)
+	_ = s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
+	return s.root.Settings.SubHwidAuto
 }
 
 // EngineDisabled - мастер-выключатель движка sing-box («Система → Ядра

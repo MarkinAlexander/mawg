@@ -35,7 +35,7 @@ func (s *Server) postSubs(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, fmt.Errorf("пустой источник: дайте URL подписки или ссылку"))
 		return
 	}
-	sub, err := resolveSource(r.Context(), req.Source)
+	sub, err := s.resolveSource(r.Context(), req.Source)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -58,7 +58,7 @@ func (s *Server) refreshSub(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, fmt.Errorf("подписка %q не найдена", name))
 		return
 	}
-	sub, err := resolveSource(r.Context(), old.Source)
+	sub, err := s.resolveSource(r.Context(), old.Source)
 	if err != nil {
 		old.Error = err.Error()
 		old.RefreshedAt = time.Now()
@@ -94,17 +94,28 @@ func (s *Server) deleteSub(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": true})
 }
 
-func resolveSource(ctx context.Context, source string) (store.Sub, error) {
+// subDevice - представление установки для подписок с лимитом устройств
+// (Remnawave hwid): стабильный x-hwid (ручной или свой сгенерированный)
+// плюс ось/модель для карточки устройств у провайдера.
+func (s *Server) subDevice() links.DeviceHeaders {
+	return links.DeviceHeaders{Hwid: s.store.SubDeviceID(), OS: "mawg", Model: s.backend.Name()}
+}
+
+func (s *Server) resolveSource(ctx context.Context, source string) (store.Sub, error) {
 	now := time.Now()
 	sub := store.Sub{Source: source, RefreshedAt: now}
 	if strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://") {
-		f, err := links.Fetch(ctx, source)
+		f, err := links.Fetch(ctx, source, s.subDevice())
 		if err != nil {
 			return sub, err
 		}
 		sub.Info = f.Sub
 		sub.Nodes = f.Result.Nodes
 		sub.Warnings = f.Result.Warnings
+		if f.HwidLimit {
+			sub.Warnings = append(sub.Warnings,
+				"панель сообщила: лимит устройств подписки достигнут (x-hwid) - удалите лишнее устройство у провайдера или впишите hwid уже зарегистрированного приложения в настройках mawg")
+		}
 		return sub, nil
 	}
 	res := links.ParseSubscription("manual", source)

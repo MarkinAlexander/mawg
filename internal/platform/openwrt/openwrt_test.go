@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"mawg/internal/store"
+	"mawg/internal/wgconf"
 )
 
 // canned: пакетный сбор состояния (PR) - по одному вызову на link/addr
@@ -154,5 +157,31 @@ func TestSysTunnelsBatchedAddresses(t *testing.T) {
 	}
 	if byName["wg9"].addr != "" {
 		t.Fatalf("wg9 без адреса должен остаться пустым: %+v", byName["wg9"])
+	}
+}
+
+// protoFor: AWG-конфиг (хоть 2.0, хоть 3.x) требует proto amneziawg -
+// иначе netifd поднимет чистый WireGuard и хендшейк не состоится
+// (кейс amnezia_for_awg); чистый WG в «awg-пуле» безопасен.
+func TestProtoForAWGConfig(t *testing.T) {
+	str := func(s string) *string { return &s }
+	plain := wgconf.Config{Peer: wgconf.Peer{EndpointHost: "203.0.113.41"}}
+	awg2 := plain
+	awg2.AWG.Jc = str("6")
+	awg31 := plain
+	awg31.AWG.RandomTrailers = str("on")
+	pool := store.Pool{Settings: store.PoolSettings{OpenwrtProto: "wireguard"}}
+	if p := protoFor(pool, plain); p != "wireguard" {
+		t.Fatalf("чистый WG: %s", p)
+	}
+	if p := protoFor(pool, awg2); p != "amneziawg" {
+		t.Fatalf("AWG 2.0: %s", p)
+	}
+	if p := protoFor(pool, awg31); p != "amneziawg" {
+		t.Fatalf("AWG 3.1-флаг: %s", p)
+	}
+	awgPool := store.Pool{Settings: store.PoolSettings{OpenwrtProto: "amneziawg"}}
+	if p := protoFor(awgPool, plain); p != "amneziawg" {
+		t.Fatalf("WG в awg-пуле: %s", p)
 	}
 }

@@ -134,6 +134,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/settings/server", s.getServerSettings)
 	mux.HandleFunc("GET /api/v1/lan/clients", s.lanClients)
 	mux.HandleFunc("PUT /api/v1/settings/server", s.putServerSettings)
+	mux.HandleFunc("GET /api/v1/settings/sub-hwid", s.getSubHwid)
+	mux.HandleFunc("PUT /api/v1/settings/sub-hwid", s.putSubHwid)
 	mux.HandleFunc("GET /api/v1/system/update/check", s.updateCheck)
 	mux.HandleFunc("POST /api/v1/system/update/run", s.updateRun)
 	mux.HandleFunc("POST /api/v1/system/restart", s.postSystemRestart)

@@ -45,7 +45,7 @@ func (s *Server) inspectSource(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, out)
 		return
 	}
-	res, err := resolveSource(r.Context(), req.Source)
+	res, err := s.resolveSource(r.Context(), req.Source)
 	out.Warnings = res.Warnings
 	if err != nil {
 		out.Error = err.Error()

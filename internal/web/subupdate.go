@@ -381,11 +381,11 @@ func (s *Server) resolvePoolSource(ctx context.Context, p store.Pool, src, count
 		return out, nil
 	}
 	if !strings.HasPrefix(src, "http://") && !strings.HasPrefix(src, "https://") {
-		res, err := resolveSource(ctx, src)
+		res, err := s.resolveSource(ctx, src)
 		out.sub = res
 		return out, err
 	}
-	f, err := links.Fetch(ctx, src)
+	f, err := links.Fetch(ctx, src, s.subDevice())
 	if err != nil {
 		out.sub = store.Sub{Source: src, RefreshedAt: time.Now()}
 		return out, err

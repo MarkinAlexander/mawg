@@ -172,6 +172,37 @@ func (s *Server) getRCIToken(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"configured": s.store.RCIToken() != ""})
 }
 
+// getSubHwid - идентификация установки для подписок с лимитом устройств
+// (Remnawave x-hwid): ручной (если задан) и текущий эффективный - его
+// видно у провайдера в карточке устройств.
+func (s *Server) getSubHwid(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"manual":    s.store.Settings().SubHwid,
+		"effective": s.store.SubDeviceID(),
+	})
+}
+
+func (s *Server) putSubHwid(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Hwid string `json:"hwid"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, err)
+		return
+	}
+	req.Hwid = strings.TrimSpace(req.Hwid)
+	if err := s.store.SetSubHwid(req.Hwid); err != nil {
+		writeErr(w, err)
+		return
+	}
+	if req.Hwid != "" {
+		s.store.LogEvent("settings", "subhwid", "ручной hwid подписок задан: mawg делит слот устройства с приложением провайдера")
+	} else {
+		s.store.LogEvent("settings", "subhwid", "ручной hwid снят - подписки снова идут от устройства mawg")
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"ok": "saved"})
+}
+
 func (s *Server) putRCIToken(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Token string `json:"token"`

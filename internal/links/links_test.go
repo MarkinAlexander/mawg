@@ -503,7 +503,7 @@ func TestFetchSubscription(t *testing.T) {
 		fmt.Fprint(w, body)
 	}))
 	defer srv.Close()
-	f, err := Fetch(context.Background(), srv.URL+"/sub")
+	f, err := Fetch(context.Background(), srv.URL+"/sub", DeviceHeaders{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -515,6 +515,36 @@ func TestFetchSubscription(t *testing.T) {
 	}
 	if f.Result.Nodes[0].Tag == "" || !strings.HasPrefix(f.Result.Nodes[0].Tag, "127.0.0.1|") {
 		t.Fatalf("источник-префикс: %q", f.Result.Nodes[0].Tag)
+	}
+}
+
+// Подписки с лимитом устройств (Remnawave): клиент представляет себя
+// заголовками x-hwid/x-device-os/x-device-model, ответ панели о лимите
+// превращается в HwidLimit.
+func TestFetchSubscriptionHwid(t *testing.T) {
+	var gotHwid, gotOS string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHwid, gotOS = r.Header.Get("x-hwid"), r.Header.Get("x-device-os")
+		w.Header().Set("x-hwid-max-devices-reached", "true")
+		fmt.Fprint(w, padlessB64(strings.Join(subLinks(), "\n")))
+	}))
+	defer srv.Close()
+	f, err := Fetch(context.Background(), srv.URL, DeviceHeaders{Hwid: "mawg-0123456789abcdef", OS: "mawg", Model: "openwrt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotHwid != "mawg-0123456789abcdef" || gotOS != "mawg" {
+		t.Fatalf("заголовки запроса: hwid=%q os=%q", gotHwid, gotOS)
+	}
+	if !f.HwidLimit {
+		t.Fatal("x-hwid-max-devices-reached не распознан")
+	}
+	// без устройства заголовки не шлём (диагностический путь)
+	if _, err := Fetch(context.Background(), srv.URL, DeviceHeaders{}); err != nil {
+		t.Fatal(err)
+	}
+	if gotHwid != "" || gotOS != "" {
+		t.Fatalf("без DeviceHeaders заголовки не нужны: %q %q", gotHwid, gotOS)
 	}
 }
 

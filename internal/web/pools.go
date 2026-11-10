@@ -453,6 +453,20 @@ func (s *Server) uploadConfigs(w http.ResponseWriter, r *http.Request) {
 		if len(keep) < len(unique) {
 			unique = keep
 		}
+		// AWG-конфиг в нативном пуле OpenWrt живёт на proto amneziawg
+		// (Apply выбирает его по конфигу сам); чиним и настройку пула,
+		// чтобы статус пула читался инструментом awg, а не wg
+		if s.backend.Name() == store.PlatformOpenwrt && pool.Settings.OpenwrtProto != "amneziawg" {
+			for _, nc := range unique {
+				if nc.Config.AWG.Present() || nc.Config.AWG.AWG3() {
+					pool.Settings.OpenwrtProto = "amneziawg"
+					if err := s.store.UpdatePool(name, pool.Settings); err == nil {
+						s.store.LogEvent(name, "applied", "пул переведён на proto amneziawg: загружен AWG-конфиг")
+					}
+					break
+				}
+			}
+		}
 	}
 	var added int
 	if len(unique) > 0 {

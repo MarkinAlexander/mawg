@@ -154,7 +154,7 @@ func (s *Server) createPoolFromSource(w http.ResponseWriter, r *http.Request) {
 		s.createPoolFromNodes(w, r, req, res, meta)
 		return
 	}
-	res, err := resolveSource(r.Context(), req.Source)
+	res, err := s.resolveSource(r.Context(), req.Source)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -316,6 +316,17 @@ func (s *Server) createPoolFromNodes(w http.ResponseWriter, r *http.Request, req
 		if err != nil {
 			writeErr(w, err)
 			return
+		}
+		// AWG-конфиги требуют proto amneziawg (дефолт wireguard поднял бы
+		// чистый WG без obfuscation-полей); Apply выбирает proto по конфигу
+		// сам - настройка следом, чтобы статус читался через awg
+		if settings.Platform == store.PlatformOpenwrt {
+			for _, nc := range ncs {
+				if nc.Config.AWG.Present() || nc.Config.AWG.AWG3() {
+					settings.OpenwrtProto = "amneziawg"
+					break
+				}
+			}
 		}
 		settings.Amnezia = storeAmnezia(amnezia)
 		if err := s.validFallback(req.Name, settings.Fallback); err != nil {

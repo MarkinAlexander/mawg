@@ -1,6 +1,7 @@
 package links
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -16,16 +17,19 @@ const (
 
 func ParseSubscription(source, body string) Result {
 	res := Result{Source: source}
-	trimmed := strings.TrimSpace(body)
-	if strings.HasPrefix(trimmed, "{") {
-		if err := addJSONConfig(&res, []byte(trimmed)); err != nil {
+	text := strings.TrimSpace(body)
+	// base64-обёртка может скрывать и JSON-конфиг, не только список ссылок
+	if !jsonHead(text) {
+		if decoded, ok := decodeBody(text); ok {
+			text = strings.TrimSpace(decoded)
+		}
+	}
+	if jsonHead(text) {
+		if err := addJSONConfig(&res, []byte(text)); err != nil {
 			res.warn(err.Error())
 		}
+		dropStubNodes(&res)
 		return res
-	}
-	text := body
-	if decoded, ok := decodeBody(trimmed); ok {
-		text = decoded
 	}
 	for _, line := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
 		line = strings.TrimSpace(line)
@@ -39,7 +43,30 @@ func ParseSubscription(source, body string) Result {
 		}
 		res.Nodes = append(res.Nodes, node)
 	}
+	dropStubNodes(&res)
 	return res
+}
+
+// dropStubNodes - выкинуть узлы-заглушки (сервер 0.0.0.0/пустой, порт<=0):
+// панели с привязкой подписки к приложению/устройству (панель 11.2026: экспорт с 0.0.0.0:1, реальные адреса видит только приложение)
+// так отвечают «чужим» клиентам; пул из заглушек - мёртвые пробы без
+// понятной причины.
+func dropStubNodes(res *Result) {
+	kept := res.Nodes[:0]
+	for _, n := range res.Nodes {
+		if n.Host == "" || n.Host == "0.0.0.0" || n.Port <= 0 {
+			name := n.Tag
+			if i := strings.LastIndex(name, "|"); i >= 0 {
+				name = name[i+1:]
+			}
+			res.warn(fmt.Sprintf(
+				"пропущен узел %q: сервер %s:%d - заглушка панели; если подписка работает только в приложении (Happ и т.п.), добавьте vless-ссылку из него",
+				name, n.Host, n.Port))
+			continue
+		}
+		kept = append(kept, n)
+	}
+	res.Nodes = kept
 }
 
 func cut(s string, n int) string {
@@ -47,6 +74,12 @@ func cut(s string, n int) string {
 		return s[:n] + "…"
 	}
 	return s
+}
+
+// jsonHead - тело (в т.ч. раскрытое из base64) - JSON-документ: объект
+// или массив (v2rayN-экспорт конфигов, по узлу на элемент)
+func jsonHead(s string) bool {
+	return strings.HasPrefix(s, "{") || strings.HasPrefix(s, "[")
 }
 
 func decodeBody(s string) (string, bool) {
@@ -71,6 +104,11 @@ func looksLikeLinkList(b []byte) bool {
 		return false
 	}
 	t := string(b)
+	// полный конфиг (Xray/sing-box) без единой proxy-схемы внутри - тоже
+	// валидное содержимое base64-подписки (кейс панели 11.2026: dns по IP)
+	if jsonHead(t) && strings.Contains(t, `"outbounds"`) {
+		return true
+	}
 	// hysteria2 - отдельный протокол; hysteria (1.x) сюда сознательно не
 	// входит: ни парсер, ни движки его не умеют
 	for _, scheme := range []string{"vless://", "vmess://", "trojan://", "wireguard://", "amneziawg://", "vpn://", "ss://", "hysteria2://", "tuic://", "socks://", "http://", "https://"} {
@@ -188,7 +226,61 @@ var sbUtilityTypes = map[string]bool{
 	"selector": true, "urltest": true, "direct": true, "block": true, "dns": true,
 }
 
+// addJSONConfig - JSON-подписка: массив полных конфигов (v2rayN-экспорт;
+// битый элемент пропускается с warning) или один конфиг целиком.
+// Экспорт повторяет узлы: «выбранный» outbound одного конфига живёт
+// альтернативой (auto-*-choice) в других - схлопываем по сервер+учётка.
 func addJSONConfig(res *Result, body []byte) error {
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) == 0 {
+		return fmt.Errorf("json подписки: пусто")
+	}
+	if trimmed[0] == '[' {
+		var arr []json.RawMessage
+		if err := json.Unmarshal(trimmed, &arr); err != nil {
+			return fmt.Errorf("json подписки: %w", err)
+		}
+		for i, el := range arr {
+			if err := addConfigDoc(res, el); err != nil {
+				res.warn(fmt.Sprintf("конфиг #%d: %v", i+1, err))
+			}
+		}
+		seen := map[string]bool{}
+		kept := res.Nodes[:0]
+		for _, n := range res.Nodes {
+			k := n.Type + "|" + n.Host + "|" + strconv.Itoa(n.Port) + "|" + n.UUID + "|" + n.Password
+			if seen[k] {
+				continue
+			}
+			seen[k] = true
+			kept = append(kept, n)
+		}
+		res.Nodes = kept
+		return nil
+	}
+	return addConfigDoc(res, trimmed)
+}
+
+// addConfigDoc - один полный конфиг: Xray/v2rayN узнаётся по «protocol»
+// в outbound (у sing-box поле называется «type»)
+func addConfigDoc(res *Result, body []byte) error {
+	var probe struct {
+		Outbounds []struct {
+			Protocol string `json:"protocol"`
+		} `json:"outbounds"`
+	}
+	if err := json.Unmarshal(body, &probe); err != nil {
+		return fmt.Errorf("json подписки: %w", err)
+	}
+	for _, o := range probe.Outbounds {
+		if o.Protocol != "" {
+			return addXrayConfig(res, body)
+		}
+	}
+	return addSbConfig(res, body)
+}
+
+func addSbConfig(res *Result, body []byte) error {
 	var cfg sbConfig
 	if err := json.Unmarshal(body, &cfg); err != nil {
 		return fmt.Errorf("json подписки: %w", err)

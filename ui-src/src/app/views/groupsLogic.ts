@@ -188,9 +188,16 @@ export function srcBadge(g: GroupView): { text: string; tooltip: string } | null
   }
   if (pol.sourcesMode === 'list') {
     const rn = pol.sourcesRouter ? ' + роутер' : '';
+    // тултип - заданный юзером список: фактические g.sources несут ещё и
+    // все адреса роутера (EffectiveSources: LAN, WAN, туннели, IPv6) -
+    // их перечисление выглядело кучей чужих адресов
+    const user = (pol.sources || []).join(', ');
+    const router = pol.sourcesRouter ? ' + адреса самого роутера (все его интерфейсы)' : '';
     return {
       text: `источники: IP-список (${(pol.sources || []).length})${rn}`,
-      tooltip: 'в группу ходит трафик только с этих адресов: ' + (g.sources || []).join(', '),
+      tooltip: user
+        ? 'в группу ходит трафик только с этих адресов: ' + user + router
+        : 'в группу ходит только трафик самого роутера (все его адреса)',
     };
   }
   if (!pol.sourcesMode && (g.sources || []).length) {

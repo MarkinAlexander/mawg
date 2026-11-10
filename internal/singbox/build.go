@@ -135,6 +135,25 @@ func wgEndpoint(cfg wgconf.Config, tag, detour, profile string) (map[string]any,
 			amnezia[f.key] = strings.TrimSpace(*f.src)
 		}
 	}
+	// AWG 3.1-флаги (кейс amnezia_for_awg 11.2026): оба форка ждут bool -
+	// lx в корне эндпоинта, extended в объекте amnezia. Без них сервер
+	// 3.1 с обязательными трейлерами/без-cookie не отвечает
+	on := func(v *string) bool {
+		if v == nil {
+			return false
+		}
+		switch strings.ToLower(strings.TrimSpace(*v)) {
+		case "on", "1", "true":
+			return true
+		}
+		return false
+	}
+	if on(awg.RandomTrailers) {
+		amnezia["random_trailers"] = true
+	}
+	if on(awg.DisableCookies) {
+		amnezia["disable_cookies"] = true
+	}
 	if len(amnezia) == 0 {
 		return ep, nil
 	}

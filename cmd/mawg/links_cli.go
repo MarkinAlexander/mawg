@@ -154,7 +154,7 @@ func parseFile(path string) int {
 func fetchSubscription(rawURL string, withHeaders bool) int {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	f, err := links.Fetch(ctx, rawURL)
+	f, err := links.Fetch(ctx, rawURL, links.DeviceHeaders{})
 	if err != nil {
 		fmt.Println("ошибка:", err)
 		return 1

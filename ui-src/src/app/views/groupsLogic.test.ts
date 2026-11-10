@@ -73,6 +73,20 @@ describe('srcBadge', () => {
     expect(srcBadge(g({ sources: ['1.1.1.1', '2.2.2.2'] }))!.text).toBe('источники: IP-список (2)');
     expect(srcBadge(g({ policy: { sourcesMode: 'all' } }))).toBeNull();
   });
+  it('тултип списка - заданные юзером IP, без фактических адресов роутера', () => {
+    // фактические sources раздуты EffectiveSources (адреса всех интерфейсов)
+    const b = srcBadge(g({
+      policy: { sourcesMode: 'list', sources: ['192.168.0.2'], sourcesRouter: true },
+      sources: ['192.168.0.2', '192.168.0.1', '203.0.113.10', '10.2.0.2'],
+    }))!;
+    expect(b.tooltip).toBe('в группу ходит трафик только с этих адресов: 192.168.0.2 + адреса самого роутера (все его интерфейсы)');
+    expect(b.tooltip).not.toContain('203.0.113.10');
+    expect(srcBadge(g({ policy: { sourcesMode: 'list', sources: ['192.168.0.2'] }, sources: ['192.168.0.2'] }))!.tooltip)
+      .toBe('в группу ходит трафик только с этих адресов: 192.168.0.2');
+    // только роутер, без IP-списка
+    expect(srcBadge(g({ policy: { sourcesMode: 'list', sources: [], sourcesRouter: true }, sources: ['192.168.0.1'] }))!.tooltip)
+      .toBe('в группу ходит только трафик самого роутера (все его адреса)');
+  });
 });
 
 describe('degradedText', () => {

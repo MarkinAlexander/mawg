@@ -130,6 +130,10 @@ const cfgEngine = ref(''); // '' = нативный Wireguard, singbox|mihomo
 const anyEngine = computed(() => singboxAvailable.value || mihomoAvailable.value);
 const awg3Sniffed = ref(false);
 const awg3Files = ref(0);
+// роутер поднимает AWG 3.x нативно (Кинетик 5.2+/OpenWrt awg 3.x): снифф
+// 3.x-полей не повод уводить пул в движок - нативный слот тоже честный
+// выбор (кейс amnezia_for_awg 11.2026: диалог «упорно» прятал натив)
+const nativeAWG3 = computed(() => !!status.data?.nativeAWG3);
 // AWG 3.x в дикой природе: HPKey/Paddng/Dr/Dt и хвост диапазонов;
 // 2.0-поля (jc/jmin/h1) сюда не попадают - натив их поднимает сам
 const AWG3_SNIFF_RE = /hpkey|paddng|rekeyafter|rekeytimeout|rejectafter|keepalivetimeout|maxhandshakeattempts|randomtrailers|disablecookies/i;
@@ -156,7 +160,7 @@ async function sniffFiles(list: File[]): Promise<void> {
   }
   awg3Files.value = hits;
   awg3Sniffed.value = hits > 0;
-  if (awg3Sniffed.value && anyEngine.value && !cfgEngine.value) {
+  if (awg3Sniffed.value && anyEngine.value && !nativeAWG3.value && !cfgEngine.value) {
     cfgEngine.value = singboxAvailable.value ? 'singbox' : 'mihomo';
   }
 }
@@ -555,7 +559,9 @@ const fallbackOptions: UiSelectOption[] = [
           :options="cfgCoreOptions"
           label="Ядро пула"
           :hint="awg3Sniffed
-            ? 'Обнаружены конфиги AmneziaWG 3.x (' + awg3Files + '): нативный слот их не поднимет - выбранное ядро обязательно'
+            ? nativeAWG3
+              ? 'Обнаружены конфиги AmneziaWG 3.x (' + awg3Files + '): эта прошивка поднимает их и нативным слотом - движок выбирайте только если он нужен сам по себе'
+              : 'Обнаружены конфиги AmneziaWG 3.x (' + awg3Files + '): нативный слот их не поднимет - выбранное ядро обязательно'
             : 'пустой пул на движке: конфиги (включая AWG 3.x) можно загружать после создания'"
         />
       </template>

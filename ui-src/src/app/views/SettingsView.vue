@@ -68,6 +68,12 @@ onMounted(async () => {
       clients.value = r.clients || [];
     })
     .catch(() => {});
+  api<{ manual?: string; effective?: string }>('GET', '/settings/sub-hwid')
+    .then((r) => {
+      subHwidManual.value = r.manual || '';
+      subHwidEffective.value = r.effective || '';
+    })
+    .catch(() => {});
 });
 
 const dirty = computed(() => {
@@ -349,6 +355,35 @@ async function rciSave(): Promise<void> {
     push(e instanceof Error ? e.message : String(e), true);
   }
 }
+
+// Идентификатор устройства для подписок с лимитом (Remnawave hwid): mawg
+// держит свой стабильный; ручной позволяет делить слот уже
+// зарегистрированного приложения (Happ/v2rayTUN), не занимая новый
+const subHwidManual = ref('');
+const subHwidEffective = ref('');
+const subHwidInput = ref('');
+const subHwidPlaceholder = computed(() =>
+  subHwidManual.value
+    ? `задан ${subHwidManual.value} - введите новый для замены`
+    : `работает от своего: ${subHwidEffective.value}`,
+);
+async function subHwidSave(): Promise<void> {
+  try {
+    await api('PUT', '/settings/sub-hwid', { hwid: subHwidInput.value.trim() });
+    const r = await api<{ manual?: string; effective?: string }>('GET', '/settings/sub-hwid');
+    subHwidManual.value = r.manual || '';
+    subHwidEffective.value = r.effective || '';
+    subHwidInput.value = '';
+    push(r.manual ? 'подписки пойдут от указанного hwid' : 'подписки снова от устройства mawg');
+  } catch (e) {
+    push(e instanceof Error ? e.message : String(e), true);
+  }
+}
+async function subHwidClear(): Promise<void> {
+  subHwidInput.value = '';
+  if (!subHwidManual.value) return;
+  await subHwidSave();
+}
 </script>
 
 <template>
@@ -510,6 +545,34 @@ async function rciSave(): Promise<void> {
         </template>
       </UiInput>
     </template>
+
+    <div class="sect">
+      Подписки с лимитом устройств
+    </div>
+    <UiHint text="Провайдеры с привязкой по устройствам (Remnawave, заголовок x-hwid) узнают mawg по идентификатору. По умолчанию mawg использует свой - он занимает один слот, как отдельное приложение. Впишите hwid уже подключённого приложения (Happ/v2rayTUN), чтобы mawg делил его слот и не расходовал лимит." />
+    <UiInput
+      v-model="subHwidInput"
+      label="hwid устройства"
+      :placeholder="subHwidPlaceholder"
+      mono
+      class="secret"
+    >
+      <template #action>
+        <UiButton
+          :disabled="!subHwidInput.trim()"
+          @click="subHwidSave"
+        >
+          сохранить
+        </UiButton>
+        <UiButton
+          v-if="subHwidManual"
+          tooltip="убрать ручной hwid - подписки снова от устройства mawg"
+          @click="subHwidClear"
+        >
+          свой
+        </UiButton>
+      </template>
+    </UiInput>
 
     <div class="row sep">
       <!-- паритет легаси showNoAuthBadge: при выключенной авторизации

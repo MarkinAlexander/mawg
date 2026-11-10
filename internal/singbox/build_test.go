@@ -512,3 +512,4 @@ func TestBuildConfigDeterministic(t *testing.T) {
 		}
 	}
 }
+

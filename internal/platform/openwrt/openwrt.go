@@ -172,12 +172,25 @@ func interfaceAddresses(command func(string, ...string) (string, error)) map[str
 	return byName
 }
 
-func (b *Backend) Apply(pool store.Pool, cfg wgconf.Config) error {
-	name := pool.DeviceName()
+// protoFor - proto netifd-секции под конфиг: AWG-поля требуют amneziawg,
+// без него obfuscation-поля не применяются и хендшейк с AWG-сервером не
+// состоится - интерфейс «жив», а интернета нет (кейс amnezia_for_awg:
+// диалог дефолтит proto в wireguard). Решаем по самому конфигу; kmod без
+// awg-полей работает как обычный WG, так что смешанный пул безопасен.
+func protoFor(pool store.Pool, cfg wgconf.Config) string {
 	proto := pool.Settings.OpenwrtProto
 	if proto == "" {
 		proto = "wireguard"
 	}
+	if cfg.AWG.Present() || cfg.AWG.AWG3() {
+		proto = "amneziawg"
+	}
+	return proto
+}
+
+func (b *Backend) Apply(pool store.Pool, cfg wgconf.Config) error {
+	name := pool.DeviceName()
+	proto := protoFor(pool, cfg)
 	if out, err := runShell(dropSectionsScript(name)); err != nil {
 		return fmt.Errorf("uci drop: %v: %s", err, out)
 	}
@@ -326,7 +339,29 @@ func awgUci(ifRef string, p wgconf.AWGParams) []string {
 	setStr("reject_after_time", p.RejectAfterTime)
 	setStr("keepalive_timeout", p.KeepaliveTimeout)
 	setStr("max_handshake_attempts", p.MaxHandshakeAttempts)
+	// AWG 3.1-флаги (кейс amnezia_for_awg 11.2026): uci-ключи
+	// awg_random_trailers/awg_disable_cookies инсталляторы awg 3.1
+	// пишут значениями «on»/«off» из конфига; без них пакеты уходят
+	// фиксированной формы и сервер 3.1 не отвечает
+	if awgFlag(p.RandomTrailers) {
+		out = append(out, "set "+ifRef+"awg_random_trailers='on'")
+	}
+	if awgFlag(p.DisableCookies) {
+		out = append(out, "set "+ifRef+"awg_disable_cookies='on'")
+	}
 	return out
+}
+
+// awgFlag - on/1/true в конфиге означает включённый флаг AWG 3.1.
+func awgFlag(v *string) bool {
+	if v == nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(*v)) {
+	case "on", "1", "true":
+		return true
+	}
+	return false
 }
 
 func (b *Backend) ensureZone(iface string) error {

@@ -369,4 +369,31 @@ describe('PoolCreateDialog', () => {
     expect(useToast().toasts.list.some((t) => t.text.includes('требуют движок'))).toBe(true);
     dlg.unmount();
   });
+
+  // nativeAWG3 (Кинетик 5.2+/OpenWrt awg 3.x): 3.x-конфиг жив и в нативном
+  // слоте - снифф не должен сам уводить пул в движок (кейс amnezia_for_awg)
+  it('cfg+AWG3 при nativeAWG3: ядро не выбирается само, нативный путь остаётся', async () => {
+    const { dlg, f } = await makeDialog({
+      '/configs': { added: 1 },
+    }, {
+      platform: 'openwrt', backendName: 'openwrt', nativeAWG3: true,
+      engines: { singbox: { available: true }, mihomo: { available: true } },
+    } as Partial<Status>);
+    const input = dlg.find('input[type=file]').element as HTMLInputElement;
+    const file = new File([awg3conf], 'awg3.conf');
+    Object.defineProperty(input, 'files', { value: [file] });
+    await input.dispatchEvent(new Event('change'));
+    await vi.waitFor(() => expect(dlg.text()).toContain('AmneziaWG 3.x (1)'));
+    expect(dlg.text()).toContain('поднимает их и нативным слотом');
+    await dlg.find('input:not([type=file])').setValue('nativepool');
+    await btn(dlg, 'Создать')[0].trigger('click');
+    await vi.waitFor(() => {
+      const post = f.mock.calls.find((c) => (c[0] as string).endsWith('/pools') && c[1]?.method === 'POST');
+      expect(post).toBeTruthy();
+      const body = JSON.parse(post![1]!.body as string);
+      expect(body.engineMode).toBeUndefined();
+      expect(body.name).toBe('nativepool');
+    });
+    dlg.unmount();
+  });
 });

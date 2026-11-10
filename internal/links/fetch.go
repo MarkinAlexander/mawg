@@ -21,9 +21,21 @@ type Fetched struct {
 	BodySHA     string // sha256 тела: гейт «ничего нового» автообновления
 	Sub         SubInfo
 	Result      Result
+	// HwidLimit - панель (Remnawave x-hwid) сообщила, что лимит устройств
+	// подписки достигнут: узлы будут заглушками, причина - в warnings
+	HwidLimit bool
 }
 
-func Fetch(ctx context.Context, rawURL string) (*Fetched, error) {
+// DeviceHeaders - представление установки для подписок с лимитом
+// устройств (Remnawave hwid): x-hwid обязателен, ось/модель помогают
+// провайдеру опознать устройство в карточке пользователя.
+type DeviceHeaders struct {
+	Hwid  string
+	OS    string
+	Model string
+}
+
+func Fetch(ctx context.Context, rawURL string, dev DeviceHeaders) (*Fetched, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, err
@@ -37,6 +49,15 @@ func Fetch(ctx context.Context, rawURL string) (*Fetched, error) {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", "mawg/1.0")
+	if dev.Hwid != "" {
+		req.Header.Set("x-hwid", dev.Hwid)
+		if dev.OS != "" {
+			req.Header.Set("x-device-os", dev.OS)
+		}
+		if dev.Model != "" {
+			req.Header.Set("x-device-model", dev.Model)
+		}
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -53,6 +74,7 @@ func Fetch(ctx context.Context, rawURL string) (*Fetched, error) {
 		URL:         rawURL,
 		ContentType: resp.Header.Get("Content-Type"),
 		BodySHA:     fmt.Sprintf("%x", sha256.Sum256(body)),
+		HwidLimit:   resp.Header.Get("x-hwid-max-devices-reached") == "true" || resp.Header.Get("x-hwid-limit") == "true",
 	}
 	if ui := resp.Header.Get(subscriptionUserinfo); ui != "" {
 		f.Sub = ParseUserinfo(ui)

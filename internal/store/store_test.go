@@ -279,3 +279,43 @@ func TestProbeConfigs(t *testing.T) {
 		t.Fatal("wan probe not disabled")
 	}
 }
+
+// hwid установки для подписок с лимитом устройств (Remnawave): свой
+// стабильный, ручной приоритетнее, очистка ручного не ротирует свой.
+func TestSubDeviceID(t *testing.T) {
+	dir := t.TempDir()
+	st, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id1 := st.SubDeviceID()
+	if !ValidHwid(id1) {
+		t.Fatalf("авто-hwid не проходит валидатор панели: %q", id1)
+	}
+	if st.SubDeviceID() != id1 {
+		t.Fatal("авто-hwid ротируется между вызовами")
+	}
+	if err := st.SetSubHwid("myhappdevice123"); err != nil {
+		t.Fatal(err)
+	}
+	if st.SubDeviceID() != "myhappdevice123" {
+		t.Fatalf("ручной hwid не приоритетнее: %q", st.SubDeviceID())
+	}
+	if err := st.SetSubHwid(""); err != nil {
+		t.Fatal(err)
+	}
+	if st.SubDeviceID() != id1 {
+		t.Fatalf("очистка ручного сменила авто: %q", st.SubDeviceID())
+	}
+	if err := st.SetSubHwid("короткий"); err == nil {
+		t.Fatal("мусорный hwid должен отвергаться")
+	}
+	// стабильность через переоткрытие стора
+	st2, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st2.SubDeviceID() != id1 {
+		t.Fatalf("авто-hwid не пережил переоткрытие: %q", st2.SubDeviceID())
+	}
+}
