@@ -59,9 +59,17 @@ func (s *Server) postSystemInstall(w http.ResponseWriter, r *http.Request) {
 		Source  string `json:"source"` // источник sing-box: extended|lx|upstream
 		Backup  *bool  `json:"backup"`
 		Replace bool   `json:"replace"`
+		// Workdir - куда качать и распаковывать ядро: "" (авто: /tmp, если
+		// влезает в tmpfs и RAM, иначе ПЗУ/флешка) | "disk" (всегда ПЗУ -
+		// не занимать оперативную память; слово владельца 11.2026)
+		Workdir string `json:"workdir"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ID == "" {
 		writeErr(w, fmt.Errorf("не указан id компонента"))
+		return
+	}
+	if req.Workdir != "" && req.Workdir != "disk" {
+		writeErr(w, fmt.Errorf("workdir: пусто (авто) или disk"))
 		return
 	}
 	if req.ID == "singbox-lx" {
@@ -69,7 +77,7 @@ func (s *Server) postSystemInstall(w http.ResponseWriter, r *http.Request) {
 		if req.Backup != nil {
 			backup = *req.Backup
 		}
-		s.installLXCore(w, r, req.Flavor, backup, req.Source)
+		s.installLXCore(w, r, req.Flavor, backup, req.Source, req.Workdir)
 		return
 	}
 	if req.ID == "mihomo" {
@@ -77,7 +85,7 @@ func (s *Server) postSystemInstall(w http.ResponseWriter, r *http.Request) {
 		if req.Backup != nil {
 			backup = *req.Backup
 		}
-		s.installMihomoCore(w, r, req.Replace, backup)
+		s.installMihomoCore(w, r, req.Replace, backup, req.Workdir)
 		return
 	}
 	// MagiTrickle ставим кодом из релиза mawg-форка (детект таргета, пакет

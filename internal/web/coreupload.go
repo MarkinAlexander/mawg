@@ -26,8 +26,43 @@ import (
 // ~100 МБ, lx/mihomo меньше; лишний лимит - защита от переполнения tmpfs.
 const maxCoreUpload = 150 << 20
 
-// uploadTmpDir - куда льём: tmpfs (ОЗУ), не трогаем забитую флешку.
+// uploadTmpDir - куда льём, если RAM не впритык: tmpfs (ОЗУ), не трогаем
+// забитую флешку. При тесной RAM приём уходит на ПЗУ/флешку (DiskPath) -
+// иначе заливка бинаря ~95 МБ убивала демона OOM'ом и браузер видел
+// «Failed to fetch» без единого слова (живой кейс Вячеслава 11.2026:
+// 96 МБ в tmpfs при 75 МБ доступной RAM).
 var uploadTmpDir = "/tmp"
+
+// upDiskFree/upMemAvail - подмены для тестов выбора каталога приёма
+var (
+	upDiskFree = platform.DiskFreeBytes
+	upMemAvail = platform.MemAvailableBytes
+)
+
+// uploadStagedDir - каталог приёма бинаря: tmpfs, если файл с запасом
+// влезает И в tmpfs, И в доступную RAM; иначе ПЗУ/флешка, если туда
+// влезает. Отказ - с цифрами всех мест.
+func (s *Server) uploadStagedDir(size int64) (string, error) {
+	const slack = 8 << 20
+	freeTmp := upDiskFree(uploadTmpDir)
+	ram := upMemAvail()
+	if freeTmp == 0 && ram == 0 {
+		return uploadTmpDir, nil
+	}
+	if (freeTmp == 0 || size+slack <= freeTmp) && (ram == 0 || size+slack <= ram) {
+		return uploadTmpDir, nil
+	}
+	diskPath := singbox.LXTargetForPlatform(s.backend.Name()).DiskPath
+	if diskPath == "" || upDiskFree(diskPath) < size+slack {
+		nowhere := fmt.Sprintf("приём файла %s не влезает: в %s свободно %s, доступно RAM %s",
+			mbSize(size), uploadTmpDir, mbSize(freeTmp), mbSize(ram))
+		if diskPath != "" {
+			nowhere += fmt.Sprintf(", на ПЗУ %s свободно %s", diskPath, mbSize(upDiskFree(diskPath)))
+		}
+		return "", fmt.Errorf("%s. Перезагрузка роутера освобождает /tmp; на Кинетике с флешкой освободите на ней место", nowhere)
+	}
+	return filepath.Join(diskPath, ".mawg-upload"), nil
+}
 
 // uploadDraft - загруженный и распознанный файл между фазами analyze/apply:
 // пользователь подтверждает, ЧТО панель собирается менять (слово владельца
@@ -81,10 +116,21 @@ func kindLabel(kind, version, name string) string {
 // (поле file), streaming в tmpfs + детект. Ничего не меняется - пользователь
 // подтверждает распознанное, apply - отдельным запросом.
 func (s *Server) postCoreBinaryUpload(w http.ResponseWriter, r *http.Request) {
-	// tmpfs - это ОЗУ: до приёма сверяем объявленный размер со свободным
-	if free := platform.DiskFreeBytes(uploadTmpDir); free > 0 {
-		if want := r.ContentLength; want > 0 && want+16<<20 > free {
-			writeErr(w, fmt.Errorf("в %s (это оперативная память) свободно %s - столько не вместить; перезагрузка роутера освобождает tmpfs", uploadTmpDir, mbSize(free)))
+	// Куда принимать: tmpfs - это ОЗУ, сверяем не только с местом в ней,
+	// но и с доступной RAM (место в tmpfs есть, а памяти нет - заливку
+	// убьёт OOM с «Failed to fetch» в браузере); тесно - ПЗУ/флешка
+	want := r.ContentLength
+	if want <= 0 {
+		want = maxCoreUpload
+	}
+	stagedDir, derr := s.uploadStagedDir(want)
+	if derr != nil {
+		writeErr(w, derr)
+		return
+	}
+	if stagedDir != uploadTmpDir {
+		if err := os.MkdirAll(stagedDir, 0o755); err != nil {
+			writeErr(w, err)
 			return
 		}
 	}
@@ -93,7 +139,10 @@ func (s *Server) postCoreBinaryUpload(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, fmt.Errorf("ожидался multipart: %v", err))
 		return
 	}
-	staged := filepath.Join(uploadTmpDir, "mawg-core-upload.bin")
+	staged := filepath.Join(stagedDir, "mawg-core-upload.bin")
+	if stagedDir != uploadTmpDir {
+		defer os.RemoveAll(stagedDir)
+	}
 	origName := ""
 	for {
 		part, perr := mr.NextPart()

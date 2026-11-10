@@ -376,6 +376,12 @@ type LXInstallOptions struct {
 	ReplaceForeign    bool
 	DropForeignBackup bool
 
+	// Workdir - куда качать и распаковывать: "" (авто: /tmp, если влезает
+	// и RAM не впритык, иначе ПЗУ/флешка) | "disk" (всегда ПЗУ - не занимать
+	// оперативную память; слово владельца 11.2026: с просторной флешкой
+	// RAM можно не насиловать вовсе)
+	Workdir string
+
 	// Arch, Discover, Fetch, Run, TmpDir, MinTarball - подмены для тестов.
 	Arch       string
 	Discover   func(ctx context.Context) []SourceReport
@@ -481,22 +487,26 @@ func InstallLXCore(ctx context.Context, opts LXInstallOptions) (LXInstallResult,
 		return res, nil
 	}
 
-	tarball := filepath.Join(tmp, pick.Asset)
-	// /tmp на роутерах - tmpfs в оперативке: проверка до скачивания, чтобы
-	// не качать десятки мегабайт в заведомо переполненную память (free=0 -
-	// не смогли выяснить, не блокируем)
-	if free := tmpDiskFree(tmp); free > 0 {
-		step("в %s свободно %s (tmpfs = оперативная память)", tmp, mb(free))
-		if free < pick.Size {
-			res.Log = log.String()
-			return res, fmt.Errorf("в %s свободно %s, а один архив ядра ~%s - и это ещё без распаковки (придётся держать архив и бинарь одновременно). /tmp - оперативная память: перезагрузка роутера её освободит; также меньше весит профиль upx", tmp, mb(free), mb(pick.Size))
-		}
+	// Рабочий каталог скачивания/распаковки: /tmp (tmpfs = RAM), если туда
+	// влезает архив с распаковкой И доступная RAM не впритык - OOM-killer
+	// убивает tar сигналом ещё до ENOSPC (кейс Вячеслава 11.2026: в /tmp
+	// свободно 96 МБ при 75 МБ доступной RAM -> «signal: killed»). Иначе -
+	// ПЗУ/флешка (DiskPath), временные файлы удаляются после установки.
+	work, err := pickWorkDir(step, tmp, opts.Target.DiskPath, pick.Size, opts.Flavor, opts.Workdir == "disk")
+	if err != nil {
+		res.Log = log.String()
+		return res, err
 	}
+	if work != tmp {
+		// рабочий каталог на ПЗУ убираем при любом выходе (в т.ч. ошибка)
+		defer os.RemoveAll(work)
+	}
+	tarball := filepath.Join(work, pick.Asset)
 	size, err := fetch(ctx, pick.URL(), tarball)
 	if err != nil {
 		if isNoSpace(err) {
 			res.Log = log.String()
-			return res, fmt.Errorf("не хватает места в %s для скачивания архива (~%s): это оперативная память, она освободится после перезагрузки роутера; также помогает профиль upx (архив в ~1.5 раза меньше). %s: %v", tmp, mb(pick.Size), platform.SpaceDiag(tmp), err)
+			return res, fmt.Errorf("не хватает места в %s для скачивания архива (~%s). %s: %v", work, mb(pick.Size), platform.SpaceDiag(work), err)
 		}
 		return res, fmt.Errorf("скачать %s не удалось: %v", pick.Asset, err)
 	}
@@ -516,7 +526,7 @@ func InstallLXCore(ctx context.Context, opts LXInstallOptions) (LXInstallResult,
 	// контрольные суммы: у lx в релизе файл SHA256SUMS, у extended/апстрима -
 	// digest-поля ассетов GitHub API; отсутствие суммы - мягкий skip
 	if pick.Source.SumsFile {
-		sumsPath := filepath.Join(tmp, "SHA256SUMS-"+pick.Tag)
+		sumsPath := filepath.Join(work, "SHA256SUMS-"+pick.Tag)
 		if _, err := fetch(ctx, pick.SumsURL(), sumsPath); err != nil {
 			step("SHA256SUMS недоступен, проверка суммы пропущена")
 		} else if want, ok := sumsLineFor(sumsPath, pick.Asset); !ok {
@@ -541,7 +551,7 @@ func InstallLXCore(ctx context.Context, opts LXInstallOptions) (LXInstallResult,
 		step("сумма ассета недоступна (нет SHA256SUMS и digest), проверка пропущена")
 	}
 
-	dir := filepath.Join(tmp, "sing-box-lx-"+pick.Tag)
+	dir := filepath.Join(work, "sing-box-lx-"+pick.Tag)
 	_ = os.RemoveAll(dir)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return res, err
@@ -552,26 +562,30 @@ func InstallLXCore(ctx context.Context, opts LXInstallOptions) (LXInstallResult,
 	if err != nil {
 		os.RemoveAll(dir)
 		detail := cmdDetail(out, err)
-		diag := platform.SpaceDiag(tmp)
+		diag := platform.SpaceDiag(work)
 		if isNoSpaceText(err.Error() + " " + detail) {
 			res.Log = log.String()
 			tarWhy := err.Error()
 			if detail != "" {
 				tarWhy = detail
 			}
-			return res, fmt.Errorf("не хватает места в %s для распаковки ядра (приходится держать архив и распакованный бинарь одновременно; это оперативная память). %s. Перезагрузка роутера освобождает /tmp, профиль upx меньше в ~3.5 раза. Вывод tar: %s", tmp, diag, tarWhy)
+			reboot := ""
+			if work == tmp {
+				reboot = " Перезагрузка роутера освобождает /tmp."
+			}
+			return res, fmt.Errorf("не хватает места в %s для распаковки ядра (приходится держать архив и распакованный бинарь одновременно). %s.%s Профиль upx меньше в ~3.5 раза. Вывод tar: %s", work, diag, reboot, tarWhy)
 		}
 		if detail != "" {
-			return res, fmt.Errorf("распаковка не удалась: %v (tar: %s). %s", err, detail, diag)
+			return res, fmt.Errorf("распаковка не удалась: %v (tar: %s). %s%s", err, detail, diag, oomHint(err.Error()+" "+detail))
 		}
-		return res, fmt.Errorf("распаковка не удалась: %v. %s", err, diag)
+		return res, fmt.Errorf("распаковка не удалась: %v. %s%s", err, diag, oomHint(err.Error()))
 	}
 	bin, err := findSingBox(dir)
 	if err != nil {
 		return res, err
 	}
 	_ = os.Remove(tarball)
-	_ = os.Remove(filepath.Join(tmp, "SHA256SUMS-"+pick.Tag))
+	_ = os.Remove(filepath.Join(work, "SHA256SUMS-"+pick.Tag))
 
 	ver, err := SingBoxVersion(bin, run)
 	if err != nil {
@@ -583,7 +597,7 @@ func InstallLXCore(ctx context.Context, opts LXInstallOptions) (LXInstallResult,
 		return res, fmt.Errorf("скачанный бинарь не сборка %s (version: %s)", pick.Source.Title, ver)
 	}
 	res.Version = ver
-	step("тест-запуск в /tmp ok: %s", ver)
+	step("тест-запуск в %s ok: %s", work, ver)
 
 	if err := os.MkdirAll(filepath.Dir(opts.Target.Bin), 0o755); err != nil {
 		_ = os.RemoveAll(dir)
@@ -735,8 +749,81 @@ var diskFree = platform.DiskFreeBytes
 // чтобы тесты ПЗУ-фазы не путались с tmp-фазой
 var tmpDiskFree = platform.DiskFreeBytes
 
+// memAvail - доступная RAM (решение «RAM ли tmp»); подменяется в тестах
+var memAvail = platform.MemAvailableBytes
+
+// pickWorkDir - где качать и распаковывать ядро: /tmp (tmpfs = RAM), если
+// туда влезает архив вместе с распаковкой и доступная RAM не впритык;
+// иначе - ПЗУ/флешка (DiskPath), с очисткой каталога после установки.
+// Оценка распаковки: plain жмут ~x3 (34 -> 95 МБ extended), upx ~x1.2
+// (24 -> 28) - берём с запасом, лучше зря уйти на флешку, чем OOM.
+// Цифры и решение - в лог установки (кейс Вячеслава 11.2026: 96 МБ в /tmp
+// при 75 МБ RAM -> tar убит «signal: killed» ещё до «no space»).
+func pickWorkDir(step func(string, ...any), tmp, diskPath string, archive int64, flavor string, preferDisk bool) (string, error) {
+	need := archive * 9 / 2
+	if flavor == LXFlavorUPX {
+		need = archive * 5 / 2
+	}
+	freeTmp := tmpDiskFree(tmp)
+	ram := memAvail()
+	if freeTmp > 0 {
+		step("в %s свободно %s (tmpfs = оперативная память)", tmp, mb(freeTmp))
+	}
+	if ram > 0 {
+		step("доступно RAM %s", mb(ram))
+	}
+	nowhere := fmt.Sprintf("для установки нужно ~%s одновременно (архив + распакованный бинарь): в %s свободно %s, доступно RAM %s",
+		mb(need), tmp, mb(freeTmp), mb(ram))
+	if preferDisk {
+		// явный выбор пользователя: RAM не трогаем вовсе, ПЗУ обязательна
+		if diskPath == "" || diskFree(diskPath) < need {
+			why := "на ПЗУ не хватает места"
+			if diskPath != "" {
+				why += fmt.Sprintf(" (свободно %s, а нужно ~%s)", mb(diskFree(diskPath)), mb(need))
+			}
+			return "", fmt.Errorf("выбрана установка без оперативной памяти, но %s; освободите флешку или верните «автоматически»", why)
+		}
+		work := filepath.Join(diskPath, ".mawg-install-sb")
+		if err := os.MkdirAll(work, 0o755); err != nil {
+			return "", err
+		}
+		step("по выбору пользователя качаю и распаковываю на ПЗУ %s - оперативную память не трогаем; временные файлы удалю после установки", work)
+		return work, nil
+	}
+	tmpFits := freeTmp == 0 || freeTmp >= need
+	if ram > 0 && ram < need {
+		tmpFits = false
+	}
+	if tmpFits {
+		return tmp, nil
+	}
+	diskFreeNow := diskFree(diskPath)
+	if diskPath == "" || diskFreeNow < need {
+		if diskPath != "" {
+			nowhere += fmt.Sprintf(", на ПЗУ %s свободно %s", diskPath, mb(diskFreeNow))
+		}
+		return "", fmt.Errorf("%s - не хватает нигде. Профиль upx меньше в ~3.5 раза; перезагрузка роутера освобождает /tmp; на Кинетике с флешкой освободите на ней место", nowhere)
+	}
+	work := filepath.Join(diskPath, ".mawg-install-sb")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		return "", err
+	}
+	step("%s не вмещает установку (~%s): качаю и распаковываю на ПЗУ %s, временные файлы удалю после установки", tmp, mb(need), work)
+	return work, nil
+}
+
 func isNoSpace(err error) bool {
 	return err != nil && isNoSpaceText(err.Error())
+}
+
+// oomHint - «signal: killed» у tar: место могло и хватить, процесс убил
+// OOM-killer по оперативной памяти (живой кейс Вячеслава: 96 МБ tmpfs,
+// 75 МБ RAM). Подсказка, потому что «убит» без причины не понимают.
+func oomHint(s string) string {
+	if strings.Contains(s, "signal: killed") || strings.Contains(s, "killed") {
+		return " процесс убит сигналом - обычно это OOM-killer: не хватило оперативной памяти (не места); перезагрузите роутер и повторите"
+	}
+	return ""
 }
 
 // isNoSpaceText - поиск «место кончилось» и по выводу команды: busybox

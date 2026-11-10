@@ -320,7 +320,7 @@ describe('SystemView - карточка «Система»', () => {
     await btn(w, 'Заменить на lx').at(-1)!.trigger('click'); // «Установить» в диалоге
     await vi.waitFor(() => {
       const post = f.mock.calls.find((c) => (c[0] as string).endsWith('/system/install'));
-      expect(JSON.parse(post![1]!.body as string)).toEqual({ id: 'singbox-lx', source: 'extended', flavor: 'upx', backup: true });
+      expect(JSON.parse(post![1]!.body as string)).toEqual({ id: 'singbox-lx', source: 'extended', flavor: 'upx', backup: true, workdir: 'auto' });
     });
     // форма гаснет, показывается прогресс установки
     await vi.waitFor(() => expect(w.text()).toContain('Идёт установка'));

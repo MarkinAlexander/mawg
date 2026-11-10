@@ -80,7 +80,7 @@ describe('LxInstallDialog (мультиисточник)', () => {
       const post = f.mock.calls.find((c) => (c[0] as string).endsWith('/system/install'))
       expect(post).toBeTruthy()
       expect(JSON.parse(post![1]!.body as string)).toEqual({
-        id: 'singbox-lx', source: 'upstream', flavor: 'plain', backup: false,
+        id: 'singbox-lx', source: 'upstream', flavor: 'plain', backup: false, workdir: 'auto',
       })
     })
     await vi.waitFor(() => expect(dlg.text()).toContain('Установлено'))

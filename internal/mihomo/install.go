@@ -53,6 +53,10 @@ type InstallOptions struct {
 
 	// подмены для тестов
 	Arch     string
+	// Workdir - куда качать и распаковывать: "" (авто) | "disk" (всегда
+	// ПЗУ/флешка, не трогая оперативную память) - как у sing-box
+	Workdir string
+
 	Discover func(ctx context.Context) ([]Release, error)
 	Fetch    func(ctx context.Context, url, dest string) (int64, error)
 	Run      func(argv0 string, args ...string) ([]byte, error)
@@ -76,6 +80,65 @@ var diskFree = platform.DiskFreeBytes
 
 // tmpDiskFree - место в /tmp до скачивания; отдельная подмена (как в lx)
 var tmpDiskFree = platform.DiskFreeBytes
+
+// memAvail - доступная RAM; подменяется в тестах
+var memAvail = platform.MemAvailableBytes
+
+// pickWorkDir - где качать и распаковывать: /tmp (tmpfs = RAM), если
+// влезает архив с распаковкой и RAM не впритык, иначе - ПЗУ/флешка
+// (DiskPath) с очисткой после; preferDisk - явный выбор пользователя
+// не трогать оперативную память вовсе (слово владельца 11.2026). Оценка:
+// gz-архив жмут ~x1.8 (16 -> 28 МБ), берём с запасом.
+func pickWorkDir(step func(string, ...any), tmp, diskPath string, archive int64, preferDisk bool) (string, error) {
+	need := archive * 3
+	freeTmp := tmpDiskFree(tmp)
+	ram := memAvail()
+	if freeTmp > 0 {
+		step("в %s свободно %s (tmpfs = оперативная память)", tmp, mb(freeTmp))
+	}
+	if ram > 0 {
+		step("доступно RAM %s", mb(ram))
+	}
+	diskFreeNow := diskFree(diskPath)
+	pickDisk := func() (string, error) {
+		if diskPath == "" || diskFreeNow < need {
+			why := "на ПЗУ не хватает места"
+			if diskPath != "" {
+				why += fmt.Sprintf(" (свободно %s, а нужно ~%s)", mb(diskFreeNow), mb(need))
+			}
+			return "", fmt.Errorf("%s; освободите флешку или верните «автоматически»", why)
+		}
+		work := filepath.Join(diskPath, ".mawg-install-mh")
+		if err := os.MkdirAll(work, 0o755); err != nil {
+			return "", err
+		}
+		return work, nil
+	}
+	if preferDisk {
+		work, err := pickDisk()
+		if err != nil {
+			return "", fmt.Errorf("выбрана установка без оперативной памяти, но %v", err)
+		}
+		step("по выбору пользователя качаю и распаковываю на ПЗУ %s - оперативную память не трогаем; временные файлы удалю после установки", work)
+		return work, nil
+	}
+	if (freeTmp == 0 || freeTmp >= need) && (ram == 0 || ram >= need) {
+		return tmp, nil
+	}
+	if diskPath == "" || diskFreeNow < need {
+		nowhere := fmt.Sprintf("для установки нужно ~%s одновременно (архив + распаковка): в %s свободно %s, доступно RAM %s", mb(need), tmp, mb(freeTmp), mb(ram))
+		if diskPath != "" {
+			nowhere += fmt.Sprintf(", на ПЗУ %s свободно %s", diskPath, mb(diskFreeNow))
+		}
+		return "", fmt.Errorf("%s - не хватает нигде; перезагрузка роутера освобождает /tmp", nowhere)
+	}
+	work, err := pickDisk()
+	if err != nil {
+		return "", err
+	}
+	step("%s не вмещает установку (~%s): качаю и распаковываю на ПЗУ %s, временные файлы удалю после установки", tmp, mb(need), work)
+	return work, nil
+}
 
 // InstallCore ставит mihomo из релиза MetaCubeX: скачать gz, сверить
 // digest sha256, распаковать, ТЕСТ-ЗАПУСК в /tmp, только потом подмена
@@ -151,21 +214,24 @@ func InstallCore(ctx context.Context, opts InstallOptions) (InstallResult, error
 		return res, nil
 	}
 
-	gzPath := filepath.Join(tmp, pick.Asset)
-	// /tmp на роутерах - tmpfs в оперативке: проверка до скачивания
-	// (free=0 - не смогли выяснить, не блокируем)
-	if free := tmpDiskFree(tmp); free > 0 {
-		step("в %s свободно %s (tmpfs = оперативная память)", tmp, mb(free))
-		if free < pick.Size {
-			res.Log = log.String()
-			return res, fmt.Errorf("в %s свободно %s, а архив mihomo ~%s - и это ещё без распаковки. /tmp - оперативная память: перезагрузка роутера её освободит", tmp, mb(free), mb(pick.Size))
-		}
+	// Рабочий каталог: /tmp (tmpfs = RAM), если влезает архив с распаковкой
+	// и RAM не впритык (OOM-killer убивает gunzip сигналом до ENOSPC -
+	// кейс sing-box 11.2026, класс тот же); иначе - ПЗУ/флешка DiskPath
+	// с удалением временных после установки (как у sing-box)
+	work, err := pickWorkDir(step, tmp, opts.Target.DiskPath, pick.Size, opts.Workdir == "disk")
+	if err != nil {
+		res.Log = log.String()
+		return res, err
 	}
+	if work != tmp {
+		defer os.RemoveAll(work)
+	}
+	gzPath := filepath.Join(work, pick.Asset)
 	size, err := fetch(ctx, pick.URL(), gzPath)
 	if err != nil {
 		if isNoSpace(err) {
 			res.Log = log.String()
-			return res, fmt.Errorf("не хватает места в %s для скачивания (~%s): это оперативная память, она освободится после перезагрузки роутера. %s: %v", tmp, mb(pick.Size), platform.SpaceDiag(tmp), err)
+			return res, fmt.Errorf("не хватает места в %s для скачивания (~%s). %s: %v", work, mb(pick.Size), platform.SpaceDiag(work), err)
 		}
 		return res, fmt.Errorf("скачать %s не удалось: %v", pick.Asset, err)
 	}
@@ -197,7 +263,7 @@ func InstallCore(ctx context.Context, opts InstallOptions) (InstallResult, error
 		os.Remove(gzPath)
 		if isNoSpace(err) {
 			res.Log = log.String()
-			return res, fmt.Errorf("не хватает места в %s для распаковки бинаря (приходится держать архив и бинарь одновременно). %s: %v", tmp, platform.SpaceDiag(tmp), err)
+			return res, fmt.Errorf("не хватает места в %s для распаковки бинаря (приходится держать архив и бинарь одновременно). %s: %v", work, platform.SpaceDiag(work), err)
 		}
 		return res, fmt.Errorf("распаковка не удалась: %v", err)
 	}
@@ -210,7 +276,7 @@ func InstallCore(ctx context.Context, opts InstallOptions) (InstallResult, error
 		return res, fmt.Errorf("тест-запуск скачанного mihomo не удался: %v", err)
 	}
 	res.Version = ver
-	step("тест-запуск в %s ok: %s", tmp, ver)
+	step("тест-запуск в %s ok: %s", work, ver)
 
 	if err := os.MkdirAll(filepath.Dir(opts.Target.Bin), 0o755); err != nil {
 		_ = os.Remove(bin)

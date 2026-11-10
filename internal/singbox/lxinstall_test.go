@@ -788,3 +788,105 @@ func TestInstallLXCoreTmpFullPreflight(t *testing.T) {
 		t.Fatalf("лог без строки места: %s", res.Log)
 	}
 }
+
+// Кейс Вячеслава 11.2026 (mipsle, флешка): в /tmp свободно 96 МБ, доступно
+// RAM 75 МБ - tmpfs место бы дала, но OOM-killer убивает tar («signal:
+// killed»). mawg сам считает потребность и уводит скачивание/распаковку
+// на ПЗУ (флешку), временные файлы удаляя после установки.
+func TestInstallLXCoreFallbackToDisk(t *testing.T) {
+	f := newFakeLXCore(t, "1.14.2-lx.7")
+	opts := f.opts(false)
+	opts.Discover = func(ctx context.Context) []SourceReport {
+		rep := f.reports()
+		rep[0].Releases[0].Names["mipsle-softfloat"] = FlavorAssets{
+			Plain: f.asset, PlainSz: 28 << 20, // need = ~126 МБ > 96 tmp и > 75 RAM
+		}
+		return rep
+	}
+	flash := t.TempDir() // «флешка» ПЗУ Кинетика
+	opts.Target.DiskPath = flash
+	oldFree, oldRAM, oldDisk := tmpDiskFree, memAvail, diskFree
+	tmpDiskFree = func(p string) int64 { return 96 << 20 }
+	memAvail = func() int64 { return 75 << 20 }
+	diskFree = func(p string) int64 { return 1 << 30 } // флешка просторная
+	t.Cleanup(func() { tmpDiskFree, memAvail, diskFree = oldFree, oldRAM, oldDisk })
+
+	fetched := ""
+	baseFetch := opts.Fetch
+	opts.Fetch = func(ctx context.Context, url, dest string) (int64, error) {
+		if fetched == "" {
+			fetched = filepath.Dir(dest)
+		}
+		return baseFetch(ctx, url, dest)
+	}
+	res, err := InstallLXCore(context.Background(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Version != "1.14.2-lx.7" {
+		t.Fatalf("версия: %+v", res)
+	}
+	work := filepath.Join(flash, ".mawg-install-sb")
+	if fetched != work {
+		t.Fatalf("скачивание мимо ПЗУ: %s", fetched)
+	}
+	if !strings.Contains(res.Log, "качаю и распаковываю на ПЗУ") {
+		t.Fatalf("лог без решения: %s", res.Log)
+	}
+	if _, err := os.Stat(work); !os.IsNotExist(err) {
+		t.Fatalf("временный каталог не вычищен: %v", err)
+	}
+	if got, _ := os.ReadFile(f.targetBin); string(got) != f.binContent {
+		t.Fatalf("бинарь не установлен: %q", got)
+	}
+}
+
+// tmp большой, но RAM впритык: распаковку в tmpfs убьёт OOM - тоже диск
+func TestInstallLXCoreLowRAMPrefersDisk(t *testing.T) {
+	f := newFakeLXCore(t, "1.14.2-lx.7")
+	opts := f.opts(false)
+	opts.Discover = func(ctx context.Context) []SourceReport {
+		rep := f.reports()
+		rep[0].Releases[0].Names["mipsle-softfloat"] = FlavorAssets{Plain: f.asset, PlainSz: 28 << 20}
+		return rep
+	}
+	opts.Target.DiskPath = t.TempDir()
+	oldFree, oldRAM, oldDisk := tmpDiskFree, memAvail, diskFree
+	tmpDiskFree = func(p string) int64 { return 500 << 20 }
+	memAvail = func() int64 { return 70 << 20 }
+	diskFree = func(p string) int64 { return 1 << 30 }
+	t.Cleanup(func() { tmpDiskFree, memAvail, diskFree = oldFree, oldRAM, oldDisk })
+	res, err := InstallLXCore(context.Background(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(res.Log, "качаю и распаковываю на ПЗУ") {
+		t.Fatalf("RAM-теснота не уведена на ПЗУ: %s", res.Log)
+	}
+}
+
+// не влезает нигде: цифры tmp/RAM/ПЗУ и подсказки в одной ошибке
+func TestInstallLXCoreNowhereToWork(t *testing.T) {
+	f := newFakeLXCore(t, "1.14.2-lx.7")
+	opts := f.opts(false)
+	opts.Discover = func(ctx context.Context) []SourceReport {
+		rep := f.reports()
+		rep[0].Releases[0].Names["mipsle-softfloat"] = FlavorAssets{Plain: f.asset, PlainSz: 28 << 20}
+		return rep
+	}
+	opts.Target.DiskPath = t.TempDir()
+	oldFree, oldRAM, oldDisk := tmpDiskFree, memAvail, diskFree
+	tmpDiskFree = func(p string) int64 { return 96 << 20 }
+	memAvail = func() int64 { return 75 << 20 }
+	diskFree = func(p string) int64 { return 30 << 20 }
+	t.Cleanup(func() { tmpDiskFree, memAvail, diskFree = oldFree, oldRAM, oldDisk })
+	_, err := InstallLXCore(context.Background(), opts)
+	if err == nil {
+		t.Fatal("ожидался отказ")
+	}
+	for _, want := range []string{"96 МБ", "75 МБ", "30 МБ", "не хватает нигде", "upx"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("ошибка без %q: %v", want, err)
+		}
+	}
+}

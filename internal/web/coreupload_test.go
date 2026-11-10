@@ -237,3 +237,56 @@ func errText(out map[string]any) string {
 	}
 	return ""
 }
+
+// Каталог приёма бинаря (кейс Вячеслава 11.2026): в tmpfs место есть
+// (96 МБ), а доступной RAM 75 МБ - заливка 95 МБ роняла демона OOM'ом,
+// браузер видел «Failed to fetch». Приём обязан уходить на ПЗУ, а при
+// тесноте везде - внятный отказ с цифрами, не обрыв соединения.
+func TestUploadStagedDirLowRAM(t *testing.T) {
+	srv, _ := newUploadServerBare(t)
+	tmp := t.TempDir()
+	oldTmp, oldFree, oldRAM := uploadTmpDir, upDiskFree, upMemAvail
+	uploadTmpDir = tmp
+	t.Cleanup(func() { uploadTmpDir, upDiskFree, upMemAvail = oldTmp, oldFree, oldRAM })
+
+	size := int64(95 << 20)
+	// просторно и в tmpfs, и в RAM - льём в tmpfs как раньше
+	upDiskFree = func(p string) int64 { return 1 << 30 }
+	upMemAvail = func() int64 { return 1 << 30 }
+	if d, err := srv.uploadStagedDir(size); err != nil || d != tmp {
+		t.Fatalf("просторно: %s %v", d, err)
+	}
+
+	// кейс Вячеслава: tmpfs 96 МБ (место есть), RAM 75 МБ - только ПЗУ
+	// (fake-платформа => DiskPath "/", путь /.mawg-upload)
+	upDiskFree = func(p string) int64 {
+		if p == tmp {
+			return 96 << 20
+		}
+		return 2 << 30 // ПЗУ просторное
+	}
+	upMemAvail = func() int64 { return 75 << 20 }
+	if d, err := srv.uploadStagedDir(size); err != nil || d != filepath.Join("/", ".mawg-upload") {
+		t.Fatalf("низкая RAM обязан уводить приём на ПЗУ: %s %v", d, err)
+	}
+
+	// тесно везде - отказ с цифрами, а не обрыв соединения
+	upDiskFree = func(p string) int64 { return 30 << 20 }
+	if _, err := srv.uploadStagedDir(size); err == nil ||
+		!strings.Contains(err.Error(), "75 МБ") || !strings.Contains(err.Error(), "30 МБ") {
+		t.Fatalf("ожидались цифры tmp/RAM/ПЗУ: %v", err)
+	}
+}
+
+// newUploadServerBare - Server без подмен конвейера: для юнитов выбора
+// каталога приёма
+func newUploadServerBare(t *testing.T) (*Server, *uploadEnv) {
+	t.Helper()
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fb := fake.New()
+	e := rotator.New(st, fb, magitrickle.New("http://127.0.0.1:1"))
+	return New(st, e, fb, nil, "test", nil), &uploadEnv{}
+}

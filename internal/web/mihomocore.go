@@ -14,14 +14,14 @@ var mihomoInstallCore = mihomo.InstallCore
 // installMihomoCore - установка ядра mihomo по кнопке в строке ядра
 // («Система → Ядра VPN», 88-док). Чужой бинарь меняется только с явным
 // replace (подтверждение в панели); backup=false - без копии старого.
-func (s *Server) installMihomoCore(w http.ResponseWriter, r *http.Request, replace, backup bool) {
+func (s *Server) installMihomoCore(w http.ResponseWriter, r *http.Request, replace, backup bool, workdir string) {
 	target := mihomo.TargetForPlatform(s.backend.Name())
 	s.store.LogEvent("system", "mihomo", "установка mihomo (цель "+target.Bin+", замена чужого: "+yesNo(replace)+", копия старого: "+yesNo(backup)+")")
 	ctx, cancel := context.WithTimeout(r.Context(), 290*time.Second)
 	defer cancel()
 	res, err := mihomoInstallCore(ctx, mihomo.InstallOptions{
 		Target: target, ReplaceForeign: replace,
-		DropForeignBackup: replace && !backup,
+		DropForeignBackup: replace && !backup, Workdir: workdir,
 	})
 	if err != nil {
 		s.store.LogEvent("system", "mihomo", "установка не удалась: "+err.Error())

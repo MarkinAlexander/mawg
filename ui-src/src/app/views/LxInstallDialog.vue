@@ -29,6 +29,7 @@ const dlg = ref<{
   source: string
   flavor: string
   backup: boolean
+  workdir: string
   ok: boolean
   out: string
   sourceNote: string
@@ -51,6 +52,14 @@ const flavorOptions = computed<UiSelectOption[]>(() => {
   }
   return opts;
 });
+
+// Куда качать и распаковывать (слово владельца 11.2026: с просторной
+// флешкой оперативку можно не насиловать вовсе); авто сам уходит на ПЗУ
+// при тесной tmpfs/RAM (кейс «signal: killed» / «Failed to fetch»)
+const workdirOptions: UiSelectOption[] = [
+  { value: 'auto', label: 'автоматически: /tmp (RAM), при нехватке — флешка', hint: 'mawg сверяет свободное место в /tmp и доступную оперативную память; тесно — сам перекладывает на ПЗУ/флешку' },
+  { value: 'disk', label: 'всегда на флешку (ПЗУ): не занимать оперативную память', hint: 'для роутеров с маленькой RAM и флешкой: скачивание и распаковка целиком на ПЗУ, временные файлы удаляются' },
+];
 
 const sourceOptions = computed<UiSelectOption[]>(() =>
   sources.value.map((s) => {
@@ -111,6 +120,7 @@ watch(open, async (v) => {
     item: fresh, phase: 'form',
     source: fresh.source || 'extended',
     flavor: 'plain',
+    workdir: 'auto',
     backup: fresh.action === 'singbox-lx-replace' && (fresh.backupBytes || 0) > 0 && (fresh.freeBytes || 0) > (fresh.backupBytes || 0) + 64 * 1048576,
     ok: false, out: '', sourceNote: '',
     initSource: fresh.source || 'extended', initFlavor: 'plain',
@@ -136,7 +146,7 @@ watch(() => dlg.value?.source, (id) => {
   }
 });
 
-async function runInstall(payload: { id: string; flavor?: string; source?: string; backup?: boolean }): Promise<void> {
+async function runInstall(payload: { id: string; flavor?: string; source?: string; backup?: boolean; workdir?: string }): Promise<void> {
   if (dlg.value) dlg.value.phase = 'progress';
   try {
     const r = await sys.install(payload);
@@ -152,6 +162,7 @@ function installForm(): void {
     source: dlg.value?.source || '',
     flavor: dlg.value?.flavor || 'plain',
     backup: dlg.value?.backup || false,
+    workdir: dlg.value?.workdir || '',
   });
 }
 
@@ -193,6 +204,13 @@ function showResult(ok: boolean, output: string, errText: string, sourceNote: st
             label="Профиль сборки"
           />
           <UiHelp :text="G.checksum" />
+        </div>
+        <div class="hrow">
+          <UiSelect
+            v-model="dlg.workdir"
+            :options="workdirOptions"
+            label="Куда качать и распаковывать"
+          />
         </div>
         <div
           v-if="!sourcesLoaded"

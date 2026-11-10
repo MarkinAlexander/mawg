@@ -15,7 +15,7 @@ import (
 // (источник на выбор: extended/lx/upstream). Чужое ядро меняется только когда
 // свежая проверка показала пункт замены (владелец подтвердил в диалоге);
 // backup=false - без копии старого.
-func (s *Server) installLXCore(w http.ResponseWriter, r *http.Request, flavor string, backup bool, source string) {
+func (s *Server) installLXCore(w http.ResponseWriter, r *http.Request, flavor string, backup bool, source, workdir string) {
 	if source != "" {
 		if _, ok := singbox.SourceByID(source); !ok {
 			writeErr(w, fmt.Errorf("неизвестный источник ядра %q", source))
@@ -37,7 +37,7 @@ func (s *Server) installLXCore(w http.ResponseWriter, r *http.Request, flavor st
 	defer cancel()
 	res, err := singbox.InstallLXCore(ctx, singbox.LXInstallOptions{
 		Flavor: flavor, Target: target, Source: source, ReplaceForeign: replace,
-		DropForeignBackup: replace && !backup,
+		DropForeignBackup: replace && !backup, Workdir: workdir,
 	})
 	if err != nil {
 		s.store.LogEvent("system", "lxcore", "установка не удалась: "+err.Error())
