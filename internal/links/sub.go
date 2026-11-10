@@ -195,6 +195,26 @@ type sbTr struct {
 	} `json:"headers"`
 }
 
+// sbFlex - JSON-значение-число или строка: h-поля у lx - строки-диапазоны
+// «N-M», i-поля - токен-строки, таймеры 3.x - «N»/«N-M» (91-док), а jc/s
+// у большинства конфигов - числа. Без этого unmarshal строки в json.Number
+// валил разбор endpoint целиком (116-док).
+type sbFlex string
+
+func (f *sbFlex) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err == nil {
+		*f = sbFlex(s)
+		return nil
+	}
+	var n json.Number
+	if err := json.Unmarshal(b, &n); err == nil {
+		*f = sbFlex(n.String())
+		return nil
+	}
+	return fmt.Errorf("ожидалось число или строка")
+}
+
 type sbWire struct {
 	Type       string       `json:"type"`
 	Tag        string       `json:"tag"`
@@ -208,17 +228,36 @@ type sbWire struct {
 	S2         *json.Number `json:"s2"`
 	S3         *json.Number `json:"s3"`
 	S4         *json.Number `json:"s4"`
-	H1         *json.Number `json:"h1"`
-	H2         *json.Number `json:"h2"`
-	H3         *json.Number `json:"h3"`
-	H4         *json.Number `json:"h4"`
-	Peers      []struct {
+	H1         sbFlex       `json:"h1"`
+	H2         sbFlex       `json:"h2"`
+	H3         sbFlex       `json:"h3"`
+	H4         sbFlex       `json:"h4"`
+	I1         sbFlex       `json:"i1"`
+	I2         sbFlex       `json:"i2"`
+	I3         sbFlex       `json:"i3"`
+	I4         sbFlex       `json:"i4"`
+	I5         sbFlex       `json:"i5"`
+	// AWG 3.x: lx кладёт поля в корень эндпоинта, extended - в объект
+	// amnezia (superset, 91-док); флаги у обоих - bool
+	HeaderProtectionKey    sbFlex `json:"header_protection_key"`
+	ContentPaddingAddition sbFlex `json:"content_padding_addition"`
+	RekeyAfterTime         sbFlex `json:"rekey_after_time"`
+	RekeyTimeout           sbFlex `json:"rekey_timeout"`
+	RejectAfterTime        sbFlex `json:"reject_after_time"`
+	KeepaliveTimeout       sbFlex `json:"keepalive_timeout"`
+	MaxHandshakeAttempts   sbFlex `json:"max_handshake_attempts"`
+	RandomTrailers         bool   `json:"random_trailers"`
+	DisableCookies         bool   `json:"disable_cookies"`
+	Amnezia                *sbWire `json:"amnezia"`
+	Peers                  []struct {
 		Address      string   `json:"address"`
 		Port         int      `json:"port"`
 		PublicKey    string   `json:"public_key"`
 		PreSharedKey string   `json:"pre_shared_key"`
 		AllowedIPs   []string `json:"allowed_ips"`
-		Keepalive    int      `json:"persistent_keepalive_interval"`
+		// lx-формат держит диапазон строкой «25-35» - число здесь
+		// валило unmarshal endpoint целиком
+		Keepalive sbFlex `json:"persistent_keepalive_interval"`
 	} `json:"peers"`
 }
 
@@ -367,22 +406,51 @@ func nodeFromSBWire(source string, ep sbWire) Node {
 		Type: "wireguard", Tag: source + "|" + ep.Tag,
 		PrivateKey: ep.PrivateKey, Addresses: ep.Address, MTU: ep.MTU,
 	}
-	if strings.Contains(ep.Type, "awg") || num(ep.H1) != "" || num(ep.Jc) != "" {
+	// AWG-поля: extended несёт их в объекте amnezia (superset), lx - в
+	// корне эндпоинта (91-док). До фикса i-поля, h-диапазоны и весь 3.x
+	// молча терялись - узел деградировал до чистого WG и сервер молчал.
+	sbAWG := func(e *sbWire) *AWG {
+		a := &AWG{
+			Jc: num(e.Jc), Jmin: num(e.Jmin), Jmax: num(e.Jmax),
+			S1: num(e.S1), S2: num(e.S2), S3: num(e.S3), S4: num(e.S4),
+			H1: string(e.H1), H2: string(e.H2), H3: string(e.H3), H4: string(e.H4),
+			I1: string(e.I1), I2: string(e.I2), I3: string(e.I3), I4: string(e.I4), I5: string(e.I5),
+			HeaderProtectionKey:    string(e.HeaderProtectionKey),
+			ContentPaddingAddition: string(e.ContentPaddingAddition),
+			RekeyAfterTime:         string(e.RekeyAfterTime),
+			RekeyTimeout:           string(e.RekeyTimeout),
+			RejectAfterTime:        string(e.RejectAfterTime),
+			KeepaliveTimeout:       string(e.KeepaliveTimeout),
+			MaxHandshakeAttempts:   string(e.MaxHandshakeAttempts),
+		}
+		if e.RandomTrailers {
+			a.RandomTrailers = "on"
+		}
+		if e.DisableCookies {
+			a.DisableCookies = "on"
+		}
+		if a.present() {
+			return a
+		}
+		return nil
+	}
+	awg := sbAWG(&ep)
+	if awg == nil && ep.Amnezia != nil {
+		awg = sbAWG(ep.Amnezia)
+	}
+	if awg != nil || strings.Contains(ep.Type, "awg") {
 		n.Type = "amneziawg"
-		n.AWG = &AWG{
-			Jc: num(ep.Jc), Jmin: num(ep.Jmin), Jmax: num(ep.Jmax),
-			S1: num(ep.S1), S2: num(ep.S2), S3: num(ep.S3), S4: num(ep.S4),
-			H1: num(ep.H1), H2: num(ep.H2), H3: num(ep.H3), H4: num(ep.H4),
-		}
-		if !n.AWG.present() {
-			n.AWG = nil
-		}
+		n.AWG = awg
 	}
 	if len(ep.Peers) > 0 {
 		p := ep.Peers[0]
 		n.Host, n.Port = p.Address, p.Port
 		n.PublicKey, n.PresharedKey = p.PublicKey, p.PreSharedKey
-		n.Keepalive = p.Keepalive
+		if strings.Contains(string(p.Keepalive), "-") {
+			n.KeepaliveRange = string(p.Keepalive)
+		} else if k, err := strconv.Atoi(string(p.Keepalive)); err == nil {
+			n.Keepalive = k
+		}
 	}
 	return n
 }

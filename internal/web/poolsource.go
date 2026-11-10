@@ -111,6 +111,10 @@ func buildNativeConfigs(nodes []links.Node) (ncs []wgconf.NamedConfig, engine []
 			skipped = append(skipped, node.Tag+": "+err.Error())
 			continue
 		}
+		if issue := cfg.AWG.HPIssue(); issue != "" {
+			skipped = append(skipped, node.ConfName()+": "+issue)
+			continue
+		}
 		ncs = append(ncs, wgconf.NamedConfig{OriginalName: node.ConfName(), Raw: []byte(confText), Config: cfg})
 	}
 	return ncs, engine, skipped

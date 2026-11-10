@@ -56,7 +56,9 @@ func (n Node) ConfText() (string, error) {
 	}
 	fmt.Fprintf(&b, "AllowedIPs = 0.0.0.0/0, ::/0\n")
 	fmt.Fprintf(&b, "Endpoint = %s:%d\n", n.Host, n.Port)
-	if n.Keepalive > 0 {
+	if n.KeepaliveRange != "" {
+		fmt.Fprintf(&b, "PersistentKeepalive = %s\n", n.KeepaliveRange)
+	} else if n.Keepalive > 0 {
 		fmt.Fprintf(&b, "PersistentKeepalive = %d\n", n.Keepalive)
 	}
 	return b.String(), nil

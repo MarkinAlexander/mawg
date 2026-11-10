@@ -1,6 +1,7 @@
 package wgconf
 
 import (
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -30,11 +31,15 @@ func (p AWGParams) anyInitPacket() bool {
 	return p.I1 != nil || p.I2 != nil || p.I3 != nil || p.I4 != nil || p.I5 != nil
 }
 
+// Present - в конфиге есть обфускация Amnezia (2.0 и/или 3.x). Конфиг
+// только с 3.x-полями (HP-ключ, флаги 3.1) без 2.0-набора - тоже AWG:
+// proto amneziawg / asc-хвост / amnezia-объект должны применяться и для
+// него (116-док «конфиг-минимум: только 3.1-флаги»).
 func (p AWGParams) Present() bool {
 	return p.Jc != nil || p.Jmin != nil || p.Jmax != nil ||
 		p.S1 != nil || p.S2 != nil || p.S3 != nil || p.S4 != nil ||
 		p.H1 != nil || p.H2 != nil || p.H3 != nil || p.H4 != nil ||
-		p.anyInitPacket()
+		p.anyInitPacket() || p.AWG3()
 }
 
 // AWG3 - признаки формата AmneziaWG 3.x, которые нативные интерфейсы не
@@ -55,6 +60,37 @@ func (p AWGParams) AWG3() bool {
 	// включённые флаги меняют протокол; выключенные (= off/нет) -
 	// конфиг эквивалентен 2.0, нативу хвост не нужен
 	return awgFlagOn(p.RandomTrailers) || awgFlagOn(p.DisableCookies)
+}
+
+// HPIssue - некорректная комбинация «HP-ключ при S1-S4 < 12»: прошивка
+// Keenetic 5.2 и ядро lx отвергают её («S1-S4 must be at least 12 when
+// HeaderProtectionKey is set», 87-док; дока lx - 116-док), а без HP-ключа
+// сервер 3.x рукопожатия не завершит. Непустая строка - что именно не так.
+func (p AWGParams) HPIssue() string {
+	if p.HeaderProtectionKey == nil {
+		return ""
+	}
+	for _, f := range []struct {
+		name string
+		v    *string
+	}{
+		{"S1", p.S1}, {"S2", p.S2}, {"S3", p.S3}, {"S4", p.S4},
+	} {
+		lo := 0 // отсутствующее поле в asc уходит нулём
+		if f.v != nil {
+			if n, err := strconv.Atoi(strings.SplitN(strings.TrimSpace(*f.v), "-", 2)[0]); err == nil {
+				lo = n
+			}
+		}
+		if lo < 12 {
+			val := "не задан"
+			if f.v != nil {
+				val = strings.TrimSpace(*f.v)
+			}
+			return fmt.Sprintf("%s = %s: с HeaderProtectionKey каждый из S1-S4 должен быть >= 12 (требование прошивки 5.2 и ядра lx) - иначе конфиг уедет на сервер и умрёт без ошибки здесь", f.name, val)
+		}
+	}
+	return ""
 }
 
 // HasRandomInit - в I-полях есть маркеры <r N> случайных байтов. Кинетик
@@ -159,7 +195,8 @@ func awgRangePair(v *string) (string, string) {
 	return s, s
 }
 
-// awgFlagOn - RandomTrailers/DisableCookies во включённом виде
+// awgFlagOn - RandomTrailers/DisableCookies во включённом виде.
+// Экспортная обёртка AwgFlagOn - для движков (mihomo рендерит флаги сам).
 func awgFlagOn(v *string) bool {
 	if v == nil {
 		return false
@@ -170,6 +207,8 @@ func awgFlagOn(v *string) bool {
 	}
 	return false
 }
+
+func AwgFlagOn(v *string) bool { return awgFlagOn(v) }
 
 // AscArgs - позиционные аргументы команды «wireguard asc» Keenetic.
 // 2.0-префикс: jc jmin jmax s1 s2 h1 h2 h3 h4 [+ s3 s4 i1-i5].

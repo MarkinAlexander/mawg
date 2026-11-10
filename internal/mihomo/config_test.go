@@ -210,6 +210,48 @@ func TestBuildConfigWGAmnezia(t *testing.T) {
 	}
 }
 
+// флаги 3.1 в конфиге бывают on/off, но встречаются и 1/0/true - все
+// включённые формы обязаны доехать до amnezia-wg-option, иначе сервер
+// 3.1 с обязательными трейлерами молчит (116-док)
+func TestWgProxyAWG31FlagForms(t *testing.T) {
+	for _, form := range []string{"on", "1", "true", "TRUE"} {
+		rt, dc := form, form
+		cfg := wgconf.Config{
+			PrivateKey: "PRIV=", Addresses: []string{"172.16.0.2/32"},
+			AWG:        wgconf.AWGParams{RandomTrailers: &rt, DisableCookies: &dc},
+			Peer: wgconf.Peer{
+				PublicKey: "PUB=", EndpointHost: "198.51.100.9", EndpointPort: 51820,
+				AllowedIPs: []string{"0.0.0.0/0"},
+			},
+		}
+		p, err := wgProxy(cfg, "t")
+		if err != nil {
+			t.Fatal(err)
+		}
+		am := p.Amnezia
+		if am == nil || !am.RandomTrailers || !am.DisableCookies {
+			t.Fatalf("форма %q: флаги потерялись: %+v", form, am)
+		}
+		if !cfg.AWG.AWG3() {
+			t.Fatalf("форма %q: конфиг обязан считаться AWG 3.x", form)
+		}
+	}
+	// off - флаг выключен: конфиг эквивалентен 2.0, amnezia-опции не нужны
+	off := "off"
+	cfg := wgconf.Config{
+		PrivateKey: "PRIV=", Addresses: []string{"172.16.0.2/32"},
+		AWG:        wgconf.AWGParams{RandomTrailers: &off},
+		Peer:       wgconf.Peer{PublicKey: "PUB=", EndpointHost: "198.51.100.9", EndpointPort: 51820},
+	}
+	p, err := wgProxy(cfg, "t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Amnezia != nil && p.Amnezia.RandomTrailers {
+		t.Fatalf("off не должен включать флаг: %+v", p.Amnezia)
+	}
+}
+
 func TestBuildConfigEscaping(t *testing.T) {
 	n := vlessNode("слэш: узел #1 'х'")
 	n.Type = "trojan"

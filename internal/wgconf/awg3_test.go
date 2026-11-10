@@ -53,6 +53,49 @@ func TestAscArgsNoRandom(t *testing.T) {
 	}
 }
 
+// HP-ключ при S1-S4 < 12 - комбинация, которую отвергают прошивка 5.2 и
+// ядро lx (87-док): валидатор ловит её на входе, а не мёртвым хендшейком
+func TestHPIssue(t *testing.T) {
+	cfg := loadConf(t, "awg3-premium.conf") // S1=951 S2=924 S3=1274 S4=12 + HP
+	if got := cfg.AWG.HPIssue(); got != "" {
+		t.Fatalf("корректный премиум не должен иметь жалоб: %s", got)
+	}
+
+	mk := func(s1 string) Config {
+		conf := "[Interface]\nPrivateKey=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaAAA=\nAddress=10.1.0.2/32\n" +
+			"Jc=4\nS1=" + s1 + "\nS2=30\nS3=30\nS4=30\nHeaderProtectionKey=YMG9kWQIDtUsXbYMG9kWQ=\n" +
+			"[Peer]\nPublicKey=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbBBB=\nEndpoint=198.51.100.7:51820\nAllowedIPs=0.0.0.0/0\n"
+		cfg, err := Parse([]byte(conf))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cfg
+	}
+	if got := mk("5").AWG.HPIssue(); !strings.Contains(got, "S1 = 5") {
+		t.Fatalf("S1=5 должен ловиться: %q", got)
+	}
+	if got := mk("11-20").AWG.HPIssue(); !strings.Contains(got, "S1 = 11-20") {
+		t.Fatalf("нижняя граница диапазона 11 тоже нарушение: %q", got)
+	}
+	if got := mk("12").AWG.HPIssue(); got != "" {
+		t.Fatalf("S1=12 - граница допустима: %q", got)
+	}
+	if got := mk("").AWG.HPIssue(); !strings.Contains(got, "S1 = не задан") {
+		t.Fatalf("отсутствующий S1 при HP-ключе - нарушение: %q", got)
+	}
+	// без HP-ключа маленькие S не жалоба (это обычный AWG 2.0)
+	noHP := "[Interface]\nPrivateKey=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaAAA=\nAddress=10.1.0.2/32\n" +
+		"Jc=4\nS1=15\nS2=16\n[Peer]\nPublicKey=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbBBB=\n" +
+		"Endpoint=198.51.100.7:51820\nAllowedIPs=0.0.0.0/0\n"
+	cfgNoHP, err := Parse([]byte(noHP))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfgNoHP.AWG.HPIssue(); got != "" {
+		t.Fatalf("без HP-ключа жалоб быть не должно: %q", got)
+	}
+}
+
 // выключенные флаги 3.x не делают конфиг «трёхъядерным»: протокол
 // эквивалентен 2.0, нативу хвост не нужен
 func TestAWG3FlagsOff(t *testing.T) {

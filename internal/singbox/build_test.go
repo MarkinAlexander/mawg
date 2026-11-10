@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"mawg/internal/links"
+	"mawg/internal/wgconf"
 )
 
 const fakeVless = "vless://00000000-0000-4000-8000-000000000001@203.0.113.10:23747" +
@@ -513,3 +514,37 @@ func TestBuildConfigDeterministic(t *testing.T) {
 	}
 }
 
+
+// EligibleWG: апстрим AWG не умеет - один AWG-конфиг не должен валить
+// всю сборку движка (класс «распарсилось, но применилось не всё»,
+// 116-док); lx/extended поднимают и конфиг-минимум из одних 3.1-флагов
+func TestEligibleWGUpstream(t *testing.T) {
+	base := func(awg wgconf.AWGParams) wgconf.Config {
+		return wgconf.Config{
+			PrivateKey: "PRIV=", Addresses: []string{"172.16.0.2/32"},
+			AWG:        awg,
+			Peer:       wgconf.Peer{PublicKey: "PUB=", EndpointHost: "198.51.100.11", EndpointPort: 51820},
+		}
+	}
+	plain := base(wgconf.AWGParams{})
+	jc, rt := "4", "on"
+	awg20 := base(wgconf.AWGParams{Jc: &jc})
+	awg31Only := base(wgconf.AWGParams{RandomTrailers: &rt}) // минимум: только флаг 3.1
+
+	// апстрим: AWG (2.0 и 3.x) выфильтровывается, чистый WG живёт
+	kept, reasons := EligibleWG([]wgconf.Config{plain, awg20, awg31Only}, capsOf(SourceUpID, "1.14.4"))
+	if len(kept) != 1 || len(reasons) != 2 {
+		t.Fatalf("апстрим: kept=%d reasons=%d (%v)", len(kept), len(reasons), reasons)
+	}
+	if !strings.Contains(reasons[0], "lx или extended") {
+		t.Fatalf("reason без подсказки ядра: %v", reasons)
+	}
+
+	// lx/extended: всё живо
+	for _, src := range []string{SourceLXID, SourceExtID} {
+		kept, reasons = EligibleWG([]wgconf.Config{plain, awg20, awg31Only}, capsOf(src, "1.14.4-lx.30"))
+		if len(kept) != 3 || len(reasons) != 0 {
+			t.Fatalf("%s: kept=%d reasons=%v", src, len(kept), reasons)
+		}
+	}
+}

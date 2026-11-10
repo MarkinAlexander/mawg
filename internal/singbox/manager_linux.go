@@ -644,13 +644,13 @@ func (m *Manager) Apply(pools []PoolSpec) ([]string, error) {
 		// расширенные ядра (lx/extended) - на upstream такие конфиги ждут.
 		wgOK := len(spec.WG) > 0
 		if wgOK && !m.eng.Caps().AWG {
-			for _, c := range spec.WG {
-				if c.AWG.Present() {
-					wgOK = false
-					reasons = append(reasons, "конфиги AmneziaWG требуют ядро lx или extended")
-					break
-				}
-			}
+			// апстрим не знает amnezia-полей: один AWG-конфиг в сборке -
+			// и ядро отвергает ВЕСЬ конфиг, вместе с рабочими пулами.
+			// Выфильтровываем конфиги, пул живёт на остальных узлах.
+			var wgReasons []string
+			spec.WG, wgReasons = EligibleWG(spec.WG, m.eng.Caps())
+			reasons = append(reasons, wgReasons...)
+			wgOK = len(spec.WG) > 0
 		}
 		if len(eligible) == 0 && !wgOK {
 			m.setStatus(spec.Name, &PoolStatus{Reason: "waits-lx", Detail: strings.Join(reasons, "; ")})

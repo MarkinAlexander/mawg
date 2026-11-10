@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -163,6 +164,131 @@ func TestParseAmneziaWGLink(t *testing.T) {
 	}
 	if n.MTU != 1296 {
 		t.Fatalf("mtu: %d", n.MTU)
+	}
+}
+
+// amneziawg:// с 3.x-полями в query (camel и snake-варианты): до фикса
+// они молча терялись и узел 3.x деградировал до 2.0 - сервер молчал
+// (116-док). Round-trip через ConfText обязан всё сохранить.
+func TestParseAmneziaWG31Link(t *testing.T) {
+	link := "amneziawg://" + fakeKey('c') + "@203.0.113.31:51820" +
+		"?address=10.9.0.2%2F32&jc=4&jmin=40&jmax=70&s1=30&s2=30&s3=30&s4=30" +
+		"&h1=99-120&i3=" + url.QueryEscape("<b 0x41424344>") +
+		"&headerProtectionKey=RTmM0tUsXbRTmM0tUsXbRTmM0tUsXbRTmM0tUsXb" +
+		"&contentPaddingAddition=10-100&rekeyAfterTime=100-120&rekeyTimeout=3-8" +
+		"&reject_after_time=150-180&keepalive_timeout=7-13&maxHandshakeAttempts=15-20" +
+		"&randomTrailers=on&disableCookies=1&publickey=" + fakeKey('f') + "#awg31"
+	n, err := ParseLink("s4", link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := n.AWG
+	if a == nil {
+		t.Fatal("нет awg-полей")
+	}
+	if a.HeaderProtectionKey != "RTmM0tUsXbRTmM0tUsXbRTmM0tUsXbRTmM0tUsXb" {
+		t.Fatalf("hp: %+v", a)
+	}
+	if a.ContentPaddingAddition != "10-100" || a.RekeyAfterTime != "100-120" || a.RekeyTimeout != "3-8" {
+		t.Fatalf("диапазоны 3.0: %+v", a)
+	}
+	if a.RejectAfterTime != "150-180" || a.KeepaliveTimeout != "7-13" || a.MaxHandshakeAttempts != "15-20" {
+		t.Fatalf("snake-варианты 3.0: %+v", a)
+	}
+	if a.RandomTrailers != "on" || a.DisableCookies != "1" {
+		t.Fatalf("флаги 3.1: %+v", a)
+	}
+	if a.I3 != "<b 0x41424344>" {
+		t.Fatalf("i3: %q", a.I3)
+	}
+	if !a.AWG3() {
+		t.Fatal("узел обязан считаться AWG 3.x")
+	}
+	// round-trip: ConfText -> Parse сохраняет 3.x полностью (111-док, задача Д)
+	confText, err := n.ConfText()
+	if err != nil {
+		t.Fatal(err)
+	}
+	n2, err := NodeFromConf("s4", "", []byte(confText))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n2.AWG == nil || !n2.AWG.AWG3() ||
+		n2.AWG.HeaderProtectionKey != a.HeaderProtectionKey ||
+		n2.AWG.ContentPaddingAddition != a.ContentPaddingAddition ||
+		n2.AWG.RandomTrailers != "on" || n2.AWG.DisableCookies != "1" ||
+		n2.AWG.RejectAfterTime != "150-180" || n2.AWG.I3 != a.I3 {
+		t.Fatalf("round-trip потерял 3.x:\n%+v\n---\n%s", n2.AWG, confText)
+	}
+}
+
+// sing-box JSON-подписка с AWG 3.x: lx кладёт поля в корень эндпоинта
+// (h-диапазоны и таймеры - СТРОКИ, до фикса валили unmarshal endpoint),
+// extended - в объект amnezia (91-док). Оба обязаны собраться в полный
+// amneziawg-узел.
+func TestParseSubscriptionSBWireAWG3(t *testing.T) {
+	hp := "RTmM0tUsXbRTmM0tUsXbRTmM0tUsXbRTmM0tUsXb"
+	cfg := `{"endpoints": [
+	  {"type": "wireguard", "tag": "lx-awg3", "address": ["10.7.0.2/32"],
+	   "private_key": "` + fakeKey('c') + `", "mtu": 1280,
+	   "jc": 5, "jmin": 50, "jmax": 1000, "s1": 30, "s2": 30, "s3": 30, "s4": 30,
+	   "h1": "99-120", "h2": "19-33", "h3": "25-41", "h4": "70-135",
+	   "i1": "<b 0x41424344>",
+	   "header_protection_key": "` + hp + `", "content_padding_addition": "10-100",
+	   "rekey_after_time": "100-120", "rekey_timeout": "3-8",
+	   "reject_after_time": "150-180", "keepalive_timeout": "7-13",
+	   "max_handshake_attempts": "15-20",
+	   "random_trailers": true, "disable_cookies": false,
+	   "peers": [{"address": "198.51.100.12", "port": 51820, "public_key": "` + fakeKey('e') + `",
+	              "persistent_keepalive_interval": "25-35"}]},
+	  {"type": "wireguard", "tag": "ext-awg3", "address": ["10.8.0.2/32"],
+	   "private_key": "` + fakeKey('c') + `",
+	   "amnezia": {"jc": 6, "jmin": 40, "jmax": 70, "s1": 30, "s2": 30, "s3": 30, "s4": 30,
+	    "h1": "1", "h2": "2", "h3": "3", "h4": "4",
+	    "header_protection_key": "` + hp + `", "rekey_after_time": "90-120",
+	    "random_trailers": true, "disable_cookies": true},
+	   "peers": [{"address": "198.51.100.13", "port": 51820, "public_key": "` + fakeKey('f') + `"}]}
+	]}`
+	res := ParseSubscription("sb", cfg)
+	if len(res.Nodes) != 2 {
+		t.Fatalf("узлов: %d, warnings: %v", len(res.Nodes), res.Warnings)
+	}
+	lx := res.Nodes[0]
+	if lx.Type != "amneziawg" || lx.Tag != "sb|lx-awg3" {
+		t.Fatalf("lx-узел: %+v", lx)
+	}
+	a := lx.AWG
+	if a == nil {
+		t.Fatal("lx: нет awg-полей")
+	}
+	if a.H1 != "99-120" || a.I1 != "<b 0x41424344>" {
+		t.Fatalf("lx h/i: %+v", a)
+	}
+	if a.HeaderProtectionKey != hp || a.ContentPaddingAddition != "10-100" ||
+		a.RekeyAfterTime != "100-120" || a.MaxHandshakeAttempts != "15-20" {
+		t.Fatalf("lx 3.0: %+v", a)
+	}
+	if a.RandomTrailers != "on" || a.DisableCookies != "" {
+		t.Fatalf("lx 3.1-флаги: %+v", a)
+	}
+	if lx.Host != "198.51.100.12" || lx.PublicKey != fakeKey('e') {
+		t.Fatalf("lx peer: %+v", lx)
+	}
+	if lx.KeepaliveRange != "25-35" || lx.Keepalive != 0 {
+		t.Fatalf("lx keepalive-диапазон: %q / %d", lx.KeepaliveRange, lx.Keepalive)
+	}
+
+	ext := res.Nodes[1]
+	if ext.Type != "amneziawg" {
+		t.Fatalf("ext-узел: %+v", ext)
+	}
+	ea := ext.AWG
+	if ea == nil {
+		t.Fatal("ext: нет amnezia-объекта")
+	}
+	if ea.HeaderProtectionKey != hp || ea.RekeyAfterTime != "90-120" ||
+		ea.RandomTrailers != "on" || ea.DisableCookies != "on" || ea.Jc != "6" {
+		t.Fatalf("ext amnezia: %+v", ea)
 	}
 }
 

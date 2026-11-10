@@ -365,10 +365,12 @@ func wgProxy(cfg wgconf.Config, tag string) (proxy, error) {
 			// конфига идёт сюда
 			am.KeepaliveTimeout = str(awg.KeepaliveTimeout)
 		}
-		if v := str(awg.RandomTrailers); v == "on" {
+		// on/1/true - включённый флаг (конфиги 3.1 пишут и числом);
+		// только "on" терял бы флаг и сервер 3.1 молчал
+		if wgconf.AwgFlagOn(awg.RandomTrailers) {
 			am.RandomTrailers = true
 		}
-		if v := str(awg.DisableCookies); v == "on" {
+		if wgconf.AwgFlagOn(awg.DisableCookies) {
 			am.DisableCookies = true
 		}
 		p.Amnezia = am

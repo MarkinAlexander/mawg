@@ -422,6 +422,20 @@ func (s *Server) uploadConfigs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	unique, dupes := wgconf.Dedupe(all)
+	// Некорректная комбинация 3.x (116-док): HP-ключ при S1-S4 < 12
+	// отвергают и прошивка 5.2, и ядро lx - сохранять нельзя, конфиг
+	// мёрт на любом пути (натив и движок).
+	if len(unique) > 0 {
+		var keep []wgconf.NamedConfig
+		for _, nc := range unique {
+			if issue := nc.Config.AWG.HPIssue(); issue != "" {
+				errors = append(errors, nc.OriginalName+": "+issue)
+				continue
+			}
+			keep = append(keep, nc)
+		}
+		unique = keep
+	}
 	// Гейт нежизнеспособных конфигов (слово владельца 30.10: «не должно
 	// даже пытаться создавать пулы, а то ерунда выходит»): в нативный
 	// пул конфиг, требующий движка (AWG 3.x / <r>-случайность на старом

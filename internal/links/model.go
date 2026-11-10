@@ -115,6 +115,9 @@ type Node struct {
 	Addresses    []string `json:"addresses,omitempty"`
 	MTU          int      `json:"mtu,omitempty"`
 	Keepalive    int      `json:"keepalive,omitempty"`
+	// KeepaliveRange - AWG 3.x форма «min-max» (lx-эндпоинты, подписки);
+	// при ней Keepalive не заполняется
+	KeepaliveRange string `json:"keepaliveRange,omitempty"`
 	AWG          *AWG     `json:"awg,omitempty"`
 	Raw          string   `json:"raw,omitempty"`
 }

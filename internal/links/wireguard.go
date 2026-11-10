@@ -48,6 +48,23 @@ func parseWG(source, raw string, awg bool) (Node, error) {
 		a.S1, a.S2, a.S3, a.S4 = q.Get("s1"), q.Get("s2"), q.Get("s3"), q.Get("s4")
 		a.H1, a.H2, a.H3, a.H4 = q.Get("h1"), q.Get("h2"), q.Get("h3"), q.Get("h4")
 		a.I1, a.I2, a.I3, a.I4, a.I5 = q.Get("i1"), q.Get("i2"), q.Get("i3"), q.Get("i4"), q.Get("i5")
+		// AWG 3.x (116-док): camelCase как в модели ноды, snake_case -
+		// второй вариант; без них узел 3.x тихо деградирует до 2.0
+		pick := func(camel, snake string) string {
+			if v := q.Get(camel); v != "" {
+				return v
+			}
+			return q.Get(snake)
+		}
+		a.HeaderProtectionKey = pick("headerProtectionKey", "header_protection_key")
+		a.ContentPaddingAddition = pick("contentPaddingAddition", "content_padding_addition")
+		a.RekeyAfterTime = pick("rekeyAfterTime", "rekey_after_time")
+		a.RekeyTimeout = pick("rekeyTimeout", "rekey_timeout")
+		a.RejectAfterTime = pick("rejectAfterTime", "reject_after_time")
+		a.KeepaliveTimeout = pick("keepaliveTimeout", "keepalive_timeout")
+		a.MaxHandshakeAttempts = pick("maxHandshakeAttempts", "max_handshake_attempts")
+		a.RandomTrailers = pick("randomTrailers", "random_trailers")
+		a.DisableCookies = pick("disableCookies", "disable_cookies")
 		if a.present() {
 			n.AWG = a
 		}
@@ -128,17 +145,18 @@ func NodeFromConf(source, name string, data []byte) (Node, error) {
 		typ = "amneziawg"
 	}
 	return Node{
-		Type:         typ,
-		Tag:          source + "|" + name,
-		Host:         cfg.Peer.EndpointHost,
-		Port:         cfg.Peer.EndpointPort,
-		PrivateKey:   cfg.PrivateKey,
-		PublicKey:    cfg.Peer.PublicKey,
-		PresharedKey: cfg.Peer.PresharedKey,
-		Addresses:    cfg.Addresses,
-		MTU:          cfg.MTU,
-		Keepalive:    cfg.Peer.PersistentKeepalive,
-		AWG:          awgFromWGConf(cfg.AWG),
+		Type:           typ,
+		Tag:            source + "|" + name,
+		Host:           cfg.Peer.EndpointHost,
+		Port:           cfg.Peer.EndpointPort,
+		PrivateKey:     cfg.PrivateKey,
+		PublicKey:      cfg.Peer.PublicKey,
+		PresharedKey:   cfg.Peer.PresharedKey,
+		Addresses:      cfg.Addresses,
+		MTU:            cfg.MTU,
+		Keepalive:      cfg.Peer.PersistentKeepalive,
+		KeepaliveRange: cfg.Peer.KeepaliveRange,
+		AWG:            awgFromWGConf(cfg.AWG),
 	}, nil
 }
 

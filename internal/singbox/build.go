@@ -214,6 +214,21 @@ func EligibleNodes(nodes []links.Node, caps CoreCaps) (ok []links.Node, reasons 
 	return ok, reasons
 }
 
+// EligibleWG - WG-конфиги пула, которые ядро поднимает. Апстрим не знает
+// amnezia-полей: один AWG-конфиг в сборке - и ядро отвергает ВЕСЬ конфиг,
+// вместе с рабочими пулами; выфильтровываем честно, с reason (в т.ч.
+// конфигы-минимум из одних 3.1-флагов - Present их теперь видит, 116-док).
+func EligibleWG(wg []wgconf.Config, caps CoreCaps) (kept []wgconf.Config, reasons []string) {
+	for _, c := range wg {
+		if !caps.AWG && c.AWG.Present() {
+			reasons = append(reasons, "конфиг AmneziaWG требует ядро lx или extended (апстрим AWG-поля не умеет)")
+			continue
+		}
+		kept = append(kept, c)
+	}
+	return kept, reasons
+}
+
 func nodeOutbound(poolTag string, n links.Node, caps CoreCaps) (map[string]any, bool, string) {
 	skip := func(reason string) (map[string]any, bool, string) { return nil, false, reason }
 	switch n.Type {
