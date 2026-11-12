@@ -16,6 +16,7 @@ const (
 	Repo         = "MarkinAlexander/mawg"
 	InstallURL   = "https://raw.githubusercontent.com/" + Repo + "/main/install.sh"
 	latestAPIURL = "https://api.github.com/repos/" + Repo + "/releases/latest"
+	latestWebURL = "https://github.com/" + Repo + "/releases/latest"
 )
 
 type Release struct {
@@ -26,7 +27,13 @@ type Release struct {
 	} `json:"assets"`
 }
 
-func httpGet(ctx context.Context, url string) (*http.Response, error) {
+// httpGet/httpGetNoRedirect - подменяются в тестах
+var (
+	httpGet           = defaultHTTPGet
+	httpGetNoRedirect = defaultHTTPGetNoRedirect
+)
+
+func defaultHTTPGet(ctx context.Context, url string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -34,25 +41,62 @@ func httpGet(ctx context.Context, url string) (*http.Response, error) {
 	return http.DefaultClient.Do(req)
 }
 
+// defaultHTTPGetNoRedirect - без следования за редиректом: веб-страница
+// /releases/latest отвечает 302, тег живёт в Location
+func defaultHTTPGetNoRedirect(ctx context.Context, url string) (*http.Response, error) {
+	noRedirect := &http.Client{CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	return noRedirect.Do(req)
+}
+
 func Latest(ctx context.Context) (Release, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	resp, err := httpGet(ctx, latestAPIURL)
+	if err == nil {
+		var rel Release
+		derr := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&rel)
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusOK && derr == nil && rel.Tag != "" {
+			return rel, nil
+		}
+		if resp.StatusCode == http.StatusOK && derr != nil {
+			return Release{}, derr
+		}
+		err = fmt.Errorf("github api ответил %d", resp.StatusCode)
+	}
+	// api.github.com бьётся rate-limit'ом по IP роутера (живой кейс
+	// 11.2026: панель молча считала «обновлений нет», пока вышел релиз);
+	// веб-страница релиза лимитов не знает: тег - в Location редиректа
+	if rel, werr := latestViaRedirect(ctx); werr == nil {
+		return rel, nil
+	}
+	return Release{}, fmt.Errorf("github недоступен: %v", err)
+}
+
+func latestViaRedirect(ctx context.Context) (Release, error) {
+	resp, err := httpGetNoRedirect(ctx, latestWebURL)
 	if err != nil {
-		return Release{}, fmt.Errorf("github недоступен: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return Release{}, fmt.Errorf("github ответил %d", resp.StatusCode)
-	}
-	var rel Release
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&rel); err != nil {
 		return Release{}, err
 	}
-	if rel.Tag == "" {
-		return Release{}, fmt.Errorf("в ответе нет релиза")
+	defer resp.Body.Close()
+	loc := resp.Header.Get("Location")
+	if resp.StatusCode/100 != 3 || loc == "" {
+		return Release{}, fmt.Errorf("веб-релиз ответил %d", resp.StatusCode)
 	}
-	return rel, nil
+	tag := strings.TrimSpace(loc)
+	if i := strings.LastIndex(loc, "/tag/"); i >= 0 {
+		tag = strings.TrimSpace(loc[i+len("/tag/"):])
+	}
+	if !strings.HasPrefix(tag, "v") {
+		return Release{}, fmt.Errorf("редирект без тега: %s", loc)
+	}
+	return Release{Tag: tag, URL: "https://github.com/" + Repo + "/releases/tag/" + tag}, nil
 }
 
 // verBase убирает суффикс дев-сборки (v0.6.11-dev39, git-describe

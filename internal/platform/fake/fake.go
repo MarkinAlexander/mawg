@@ -29,6 +29,9 @@ type Fake struct {
 	// NameOverride - имя платформы для тестов платформенных ветвлений
 	// ("keenetic" и пр.); пусто = "fake".
 	NameOverride string
+	// TunnelsOverride - системные туннели для SysTunnels (тесты списка
+	// интерфейсов: туннель чужого софта без слота и пула)
+	TunnelsOverride []platform.SlotInfo
 
 	mtRestarts int
 }
@@ -111,6 +114,11 @@ func (f *Fake) Probe(pool store.Pool, host string) (bool, int, error) {
 func (f *Fake) IfaceHandshake(device string) int { return -1 }
 
 func (f *Fake) SysTunnels() ([]platform.SlotInfo, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.TunnelsOverride != nil {
+		return f.TunnelsOverride, nil
+	}
 	return nil, nil
 }
 

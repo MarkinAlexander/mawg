@@ -422,12 +422,19 @@ func BuildConfig(pools []PoolSpec, p Params) ([]byte, []string, error) {
 		}
 		groupTag := "mawg-" + spec.Name
 		var tags []string
+		usedTags := map[string]bool{}
 		for _, n := range spec.Nodes {
 			if reason := nodeReason(n); reason != "" {
 				skipped = append(skipped, reason)
 				continue
 			}
 			np, _ := nodeProxy(groupTag, n)
+			// одинаковые имена узлов подписки (панель 12.11: два разных
+			// #fr-grpc) - ядро требует уникальные имена прокси
+			for i := 2; usedTags[np.Name]; i++ {
+				np.Name = fmt.Sprintf("%s-%d", groupTag+"|"+n.ConfName(), i)
+			}
+			usedTags[np.Name] = true
 			cfg.Proxies = append(cfg.Proxies, np)
 			tags = append(tags, np.Name)
 		}

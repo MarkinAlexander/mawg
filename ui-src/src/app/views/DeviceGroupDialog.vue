@@ -6,6 +6,7 @@ import { useStatus } from '../../stores/status'
 import { useToast } from '../../stores/toast'
 import { useConfirm } from '../../stores/confirm'
 import { useGroups } from '../../stores/groups'
+import { useIfaces } from '../../stores/ifaces'
 import { ApiError } from '../../api/client'
 import type { DeviceBinding } from '../../api/types'
 
@@ -16,6 +17,8 @@ import type { DeviceBinding } from '../../api/types'
 // она. Доступ к роутеру сохраняется: local-таблица обслуживает его адреса
 // раньше туннеля. Коллизия адреса - 409 с сервера: предупреждение +
 // «Всё равно привязать» (97-док, паттерн петлезащиты DnsView).
+// Цель - и внешние интерфейсы (слово владельца 11.2026): выбрать tun
+// чужого софта и сразу указать, какие устройства через него пускать.
 const open = defineModel<boolean>('open', { default: false })
 const props = defineProps<{ poolName?: string }>()
 
@@ -23,10 +26,11 @@ const { state: status } = useStatus()
 const { push } = useToast()
 const { confirm } = useConfirm()
 const groups = useGroups()
+const ifaces = useIfaces()
 
 const ips = ref('')
 const name = ref('')
-const pool = ref('')
+const target = ref('') // имя пула или 'iface:<device>' для внешнего
 const busy = ref(false)
 
 const poolOptions = computed<UiSelectOption[]>(() =>
@@ -34,11 +38,22 @@ const poolOptions = computed<UiSelectOption[]>(() =>
     .filter((p) => !p.disabled)
     .map((p) => ({ value: p.name, label: p.name + (p.device && p.device !== p.name ? ` (${p.device})` : '') })))
 
+// внешние интерфейсы тем же селектом (tun чужого софта после «Сделать
+// внешним») - префикс iface: отличает от имён пулов
+const extOptions = computed<UiSelectOption[]>(() =>
+  (ifaces.state.list || [])
+    .filter((i) => i.mode === 'external')
+    .map((i) => ({ value: 'iface:' + i.device, label: i.device + ' (внешний)' })))
+const targetOptions = computed<UiSelectOption[]>(() => [...poolOptions.value, ...extOptions.value])
+const targetPool = computed(() => (target.value && !target.value.startsWith('iface:') ? target.value : ''))
+const targetIface = computed(() => (target.value.startsWith('iface:') ? target.value.slice('iface:'.length) : ''))
+const targetLabel = computed(() => targetIface.value || targetPool.value)
+
 // реестр «пул ↔ устройство» (97-док): диалог не только создаёт, но и
 // показывает уже привязанные адреса - к выбранному пулу (можно снять)
 // и к другим (чтобы было видно, куда ушёл адрес, до 409-коллизии)
-const poolBindings = computed(() => groups.state.bindings.filter((b) => b.pool === pool.value));
-const otherBindings = computed(() => groups.state.bindings.filter((b) => b.pool && b.pool !== pool.value));
+const poolBindings = computed(() => groups.state.bindings.filter((b) => b.pool === targetPool.value));
+const otherBindings = computed(() => groups.state.bindings.filter((b) => b.pool && b.pool !== targetPool.value));
 
 async function unbind(b: DeviceBinding): Promise<void> {
   const ok = await confirm({
@@ -61,9 +76,10 @@ watch(open, (v) => {
   name.value = ''
   const preset = props.poolName && poolOptions.value.some((o) => o.value === props.poolName)
     ? props.poolName
-    : poolOptions.value[0]?.value || ''
-  pool.value = preset
+    : targetOptions.value[0]?.value || ''
+  target.value = preset
   void groups.loadBindings() // реестр привязок - свежим к открытию
+  void ifaces.refresh() // внешние интерфейсы - свежими к открытию
 })
 
 const parsed = computed(() =>
@@ -71,16 +87,17 @@ const parsed = computed(() =>
 const ipRe = /^\d{1,3}(\.\d{1,3}){3}(\/\d{1,2})?$/
 const badIps = computed(() => parsed.value.filter((s) => !ipRe.test(s)))
 
-const okEnabled = computed(() => !!pool.value && parsed.value.length > 0 && badIps.value.length === 0)
+const okEnabled = computed(() => !!target.value && parsed.value.length > 0 && badIps.value.length === 0)
 
 async function createAndToast(confirmCollision?: boolean): Promise<void> {
   await groups.createDeviceGroup({
-    pool: pool.value,
+    pool: targetPool.value || undefined,
+    iface: targetIface.value || undefined,
     name: name.value.trim() || undefined,
     ips: parsed.value,
     confirm: confirmCollision,
   })
-  push(`Группа создана: весь трафик ${parsed.value.length === 1 ? 'адреса' : 'адресов'} идёт через пул ${pool.value}. Проверьте на телефоне: внешний IP должен стать IP пула, а панель роутера остаётся доступной.`, false)
+  push(`Группа создана: весь трафик ${parsed.value.length === 1 ? 'адреса' : 'адресов'} идёт через ${targetLabel.value}. Внешний IP устройства должен измениться, а панель роутера остаётся доступной.`, false)
   open.value = false
 }
 
@@ -113,19 +130,19 @@ async function save(): Promise<void> {
 <template>
   <UiDialog
     v-model:open="open"
-    title="Устройство целиком через пул"
+    title="Устройство целиком: пул или внешний интерфейс"
     :busy="busy"
     width="520px"
   >
     <div class="form">
       <UiSelect
-        v-model="pool"
-        :options="poolOptions"
-        label="Пул (путь трафика)"
+        v-model="target"
+        :options="targetOptions"
+        label="Куда пускать (пул или внешний интерфейс)"
       />
       <template v-if="poolBindings.length">
         <div class="sect">
-          Уже привязано к пулу {{ pool }}
+          Уже привязано к пулу {{ targetPool }}
         </div>
         <div class="excllist">
           <span

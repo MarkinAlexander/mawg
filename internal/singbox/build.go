@@ -398,14 +398,23 @@ func BuildConfig(pools []PoolSpec, p Params) ([]byte, []string, error) {
 		})
 		groupTag := "mawg-" + spec.Name
 		var tags []string
+		usedTags := map[string]bool{}
 		for _, n := range spec.Nodes {
 			ob, ok, reason := nodeOutbound(groupTag, n, p.Caps)
 			if !ok {
 				skipped = append(skipped, reason)
 				continue
 			}
+			// подписки дают разным узлам одинаковые имена (панель 12.11:
+			// два разных #fr-grpc) - дубль тега ронял ВЕСЬ конфиг движка
+			tag := ob["tag"].(string)
+			for i := 2; usedTags[tag]; i++ {
+				tag = fmt.Sprintf("%s-%d", ob["tag"].(string), i)
+			}
+			ob["tag"] = tag
+			usedTags[tag] = true
 			outbounds = append(outbounds, ob)
-			tags = append(tags, ob["tag"].(string))
+			tags = append(tags, tag)
 		}
 		for _, c := range spec.WG {
 			tag := groupTag + "|" + strconv.Itoa(len(tags)+1)

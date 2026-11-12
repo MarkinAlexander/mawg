@@ -114,3 +114,35 @@ func TestDeviceGroupEndpointGuards(t *testing.T) {
 		}
 	}
 }
+
+// Цель «внешний интерфейс» (слово владельца 11.2026): для tun чужого
+// софта - сразу указать устройства, правило создаётся без пула. Внешний
+// должен быть помечен «Сделать внешним», иначе отказ с подсказкой.
+// Цель «внешний интерфейс» (слово владельца 11.2026): для tun чужого
+// софта - сразу указать устройства, правило создаётся без пула. Внешний
+// должен быть помечен «Сделать внешним», иначе отказ с подсказкой.
+func TestCreateDeviceGroupOnExternalIface(t *testing.T) {
+	srv, fm, st := zonesServer(t, "0.8.2-rev13-mawg-dev")
+
+	// ещё не внешний - отказ с подсказкой, MT не тронут
+	code, out := postJSON(t, srv.URL+"/api/v1/mt/device-group",
+		`{"iface":"tun9","ips":["192.0.2.50"]}`)
+	if code != http.StatusBadRequest || !strings.Contains(out["error"].(string), "Сделать внешним") {
+		t.Fatalf("не-внешний: %d %v", code, out)
+	}
+	if err := st.SetIfaceMode("tun9", store.IfaceExternal); err != nil {
+		t.Fatal(err)
+	}
+	code, out = postJSON(t, srv.URL+"/api/v1/mt/device-group",
+		`{"iface":"tun9","ips":["192.0.2.50"]}`)
+	if code != http.StatusOK {
+		t.Fatalf("внешний: %d %v", code, out)
+	}
+	// группа в MT на интерфейсе tun9; реестр привязок - только про пулы
+	if len(fm.groups) != 1 || fm.groups[0].Interface != "tun9" || len(fm.groups[0].Sources) != 1 {
+		t.Fatalf("группа на внешнем: %+v", fm.groups)
+	}
+	if len(st.DeviceBindings()) != 0 {
+		t.Fatalf("реестр привязок не для внешних: %+v", st.DeviceBindings())
+	}
+}

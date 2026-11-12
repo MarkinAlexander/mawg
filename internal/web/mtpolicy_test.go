@@ -6,6 +6,7 @@ package web
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"mawg/internal/cascade"
@@ -241,5 +242,40 @@ func TestMTGroupSourcesDrift(t *testing.T) {
 	g = getView(t, ts.URL, created.ID)
 	if len(g.Sources) != 1 || g.Sources[0] != "10.9.9.9" {
 		t.Fatalf("after drift: %v", g.Sources)
+	}
+}
+
+// петлезащита источников группы (живой инцидент 12.11): адрес роутера в
+// списке источников уводит трафик САМОГО роутера в туннель группы -
+// инкапсуляция всех пулов зацикливается и интернет умирает целиком.
+// Редактор группы шёл в MT без проверок - теперь внятный отказ.
+func TestMTPolicySourcesRouterAddrRejected(t *testing.T) {
+	withRouterAddrs(t, []string{"192.168.0.1"})
+	ts, _, _ := newImportTestServer(t)
+
+	code, raw := httpDo(t, ts.URL, "POST", "/api/v1/mt/groups", `{"name":"src","interface":"awg0"}`)
+	if code != 200 {
+		t.Fatalf("create: %d %s", code, raw)
+	}
+	var created magitrickle.Group
+	json.Unmarshal(raw, &created)
+
+	// адрес роутера руками в списке - отказ с подсказкой
+	code, raw = httpDo(t, ts.URL, "PUT", "/api/v1/mt/groups/"+created.ID+"/policy",
+		`{"sourcesMode":"list","sources":["192.168.1.50","192.168.0.1"]}`)
+	if code != 400 || !strings.Contains(string(raw), "адрес самого роутера") {
+		t.Fatalf("роутерный адрес должен отвергаться: %d %s", code, raw)
+	}
+	// вся подсеть роутера - тоже (кейс 0.62: br0 /24 ложно накрыл локалку)
+	code, raw = httpDo(t, ts.URL, "PUT", "/api/v1/mt/groups/"+created.ID+"/policy",
+		`{"sourcesMode":"list","sources":["192.168.0.0/24"]}`)
+	if code != 400 {
+		t.Fatalf("подсеть с адресом роутера: %d %s", code, raw)
+	}
+	// чистый список устройства - проходит
+	code, _ = httpDo(t, ts.URL, "PUT", "/api/v1/mt/groups/"+created.ID+"/policy",
+		`{"sourcesMode":"list","sources":["192.168.1.50"]}`)
+	if code != 200 {
+		t.Fatalf("нормальный список: %d", code)
 	}
 }

@@ -161,6 +161,11 @@ func (s *Server) setIfaceMode(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	// /ifaces кэшируется на 10с: без сброса панель после клика получала
+	// СТАРУЮ строку - «Сделать внешним» выглядело неработающим до второго
+	// нажатия (живой кейс владельца 11.2026, tun9 чужого софта), и тот же
+	// кэш отставал списком интерфейсов в диалоге групп правил
+	s.ifaceCache.reset()
 	s.store.LogEvent("ifaces", "mode", device+" -> "+req.Mode)
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "set"})
 }
@@ -199,6 +204,7 @@ func (s *Server) setIfaceProbe(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	s.ifaceCache.reset() // проба видна в /ifaces - кэш не должен тянуть старую
 	s.store.LogEvent("ifaces", "probe", device+" probe "+map[bool]string{true: "set", false: "cleared"}[probe != nil])
 	if probe != nil {
 		s.engine.InvalidateProbeStatus(device)

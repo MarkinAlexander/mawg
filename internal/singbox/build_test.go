@@ -548,3 +548,38 @@ func TestEligibleWGUpstream(t *testing.T) {
 		}
 	}
 }
+
+// подписки дают разным узлам одинаковые имена (панель 12.11: два разных
+// #fr-grpc, tcp и grpc) - дубль тега ронял ВЕСЬ конфиг ядра; теперь
+// теги уникализируются суффиксом, оба узла живут в группе
+func TestBuildConfigDuplicateNodeNames(t *testing.T) {
+	a := "vless://00000000-0000-4000-8000-000000000001@203.0.113.10:443?encryption=none&security=tls&sni=a.example.org&type=tcp#fr-grpc"
+	b := "vless://00000000-0000-4000-8000-000000000002@203.0.113.11:443?encryption=none&security=tls&sni=b.example.org&type=grpc#fr-grpc"
+	spec := PoolSpec{Name: "dup", Tun: "tun1", TunIP: TuneIP(1), MixedPort: 2282,
+		Nodes: mustNodes(t, a+"\n"+b)}
+	data, _, err := BuildConfig([]PoolSpec{spec}, Params{ClashPort: 2291})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg struct {
+		Outbounds []struct {
+			Tag string `json:"tag"`
+		} `json:"outbounds"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, ob := range cfg.Outbounds {
+		if ob.Tag == "" {
+			continue
+		}
+		if seen[ob.Tag] {
+			t.Fatalf("дубль тега: %s", ob.Tag)
+		}
+		seen[ob.Tag] = true
+	}
+	if !seen["mawg-dup|fr-grpc"] || !seen["mawg-dup|fr-grpc-2"] {
+		t.Fatalf("оба узла обязаны попасть в конфиг: %v", seen)
+	}
+}

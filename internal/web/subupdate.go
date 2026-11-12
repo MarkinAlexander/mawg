@@ -262,17 +262,23 @@ func (s *Server) applySourceToPool(p store.Pool, res store.Sub) (subApplyVerdict
 		return subApplyFail, "в источнике нет узлов"
 	}
 	if p.Settings.EngineMode == engineMode {
+		// mixed-подписка: конфиги - в конфиги пула, прокси-узлы - в
+		// nodes.json (писать всё в nodes, как раньше, оставляло конфиги
+		// устаревшими, а awg-узлы - мусором со skip-причинами)
+		_, engineNodes, _ := buildNativeConfigs(res.Nodes)
+		ncs, _, _ := buildNativeConfigs(res.Nodes)
+		_ = ncs
 		// Пул без единой привязки (группы МТ на его tun, каскады, бандлы)
 		// движок не пересобирает: SIGHUP/рестарт общего ядра рвёт сессии
 		// соседних пулов. Узлы пишем - применит первая же пересборка или
 		// досборка, когда у пула появятся привязки (engineCatchUpStale).
 		if !s.enginePoolRouted(p) {
-			if err := s.writePoolNodes(name, res.Nodes); err != nil {
+			if err := s.writePoolNodes(name, engineNodes); err != nil {
 				return subApplyFail, err.Error()
 			}
-			return subApplyOK, fmt.Sprintf("%d узлов записано; пул не маршрутизируется - движок не тронут, узлы применятся при появлении привязок", len(res.Nodes))
+			return subApplyOK, fmt.Sprintf("%d узлов записано; пул не маршрутизируется - движок не тронут, узлы применятся при появлении привязок", len(engineNodes))
 		}
-		if err := s.writePoolNodes(name, res.Nodes); err != nil {
+		if err := s.writePoolNodes(name, engineNodes); err != nil {
 			return subApplyFail, err.Error()
 		}
 		skipped, err := s.applyEngine()
@@ -319,6 +325,25 @@ func (s *Server) applySourceToPool(p store.Pool, res store.Sub) (subApplyVerdict
 	if _, _, err := s.store.AddConfigs(name, ncs); err != nil {
 		return subApplyFail, err.Error()
 	}
+	// vless/прокси-узлы - в движковый пул-спутник той же подписки
+	// (mixed-подписки, кейс 12.11: автообновление их молча теряло)
+	engineNote := ""
+	if len(engineNodes) > 0 {
+		if eng, ok := s.enginePoolOfSource(p.Settings.Source); ok && eng.Name != name {
+			if err := s.writePoolNodes(eng.Name, engineNodes); err != nil {
+				engineNote = "; узлы движка не записаны: " + err.Error()
+			} else {
+				engineNote = fmt.Sprintf("; %d узлов движка обновлены в пуле %s", len(engineNodes), eng.Name)
+				if skippedEng, engErr := s.applyEngine(); engErr != nil {
+					engineNote += "; движок: " + engErr.Error()
+				} else if len(skippedEng) > 0 {
+					engineNote += "; движок: " + strings.Join(skippedEng, "; ")
+				}
+			}
+		} else {
+			engineNote = fmt.Sprintf("; %d узлов движка не добавлены (движкового пула этого источника нет)", len(engineNodes))
+		}
+	}
 	fresh, _ := s.store.Pool(name)
 	if len(fresh.Configs) > 0 {
 		if err := s.engine.SetActive(name, fresh.Configs[0].File); err != nil {
@@ -334,12 +359,12 @@ func (s *Server) applySourceToPool(p store.Pool, res store.Sub) (subApplyVerdict
 		st := s.store.State(name)
 		if st.LastCheck.After(start) && !strings.Contains(st.LastResult, "settling") {
 			if st.ConsecFails == 0 {
-				return subApplyOK, fmt.Sprintf("%d конфигов, проба ротатора ok", len(ncs))
+				return subApplyOK, fmt.Sprintf("%d конфигов, проба ротатора ok%s", len(ncs), engineNote)
 			}
-			return subApplyFail, "проба ротатора не прошла: " + st.LastResult
+			return subApplyFail, "проба ротатора не прошла: " + st.LastResult + engineNote
 		}
 	}
-	return subApplyUnverified, "ротатор не подтвердил пробу за " + subProbeWait.String()
+	return subApplyUnverified, "ротатор не подтвердил пробу за " + subProbeWait.String() + engineNote
 }
 
 // poolSourceResult - свежие узлы источника пула + данные для гейта и плана.

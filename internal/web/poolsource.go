@@ -95,10 +95,19 @@ func (s *Server) poolSettingsFromReq(req poolSourceReq, autoKeeneticSlot bool) (
 	return settings, nil
 }
 
-func buildNativeConfigs(nodes []links.Node) (ncs []wgconf.NamedConfig, engine []sourceEngineOne, skipped []string) {
+// engineMeta - метки узлов движка для плана создания (карточка «ждёт»)
+func engineMeta(nodes []links.Node) []sourceEngineOne {
+	out := make([]sourceEngineOne, 0, len(nodes))
+	for _, n := range nodes {
+		out = append(out, sourceEngineOne{Tag: n.Tag, Type: n.Type})
+	}
+	return out
+}
+
+func buildNativeConfigs(nodes []links.Node) (ncs []wgconf.NamedConfig, engine []links.Node, skipped []string) {
 	for _, node := range nodes {
 		if node.Type != "wireguard" && node.Type != "amneziawg" {
-			engine = append(engine, sourceEngineOne{Tag: node.Tag, Type: node.Type})
+			engine = append(engine, node)
 			continue
 		}
 		confText, err := node.ConfText()
@@ -247,6 +256,17 @@ func (s *Server) createPoolFromNodes(w http.ResponseWriter, r *http.Request, req
 			writeErr(w, err)
 			return
 		}
+		// vless/прокси-узлы той же подписки - в этот же движковый пул
+		// (до фикса выбрасывались с событием «ждёт движок»: подписки
+		// миксом AWG+vless теряли весь vless - живой кейс 12.11)
+		if len(engineNodes) > 0 {
+			if err := s.writePoolNodes(pool.Name, engineNodes); err != nil {
+				writeErr(w, err)
+				return
+			}
+			plan.Applied = len(engineNodes)
+			plan.Warnings = append(plan.Warnings, fmt.Sprintf("Плюс %d узлов движка из этой же подписки (vless и пр.) - в этом же пуле.", len(engineNodes)))
+		}
 		plan.Pool = pool.Name
 		plan.Tun = pool.Settings.TunName
 		plan.Added = added
@@ -305,7 +325,7 @@ func (s *Server) createPoolFromNodes(w http.ResponseWriter, r *http.Request, req
 			plan.Tun = pool.Settings.TunName
 			plan.Added = added
 			plan.Duplicates = dupes
-			plan.Engine = engineNodes
+			plan.Engine = engineMeta(engineNodes)
 			plan.Warnings = append(plan.Warnings, "Конфиги идут через движок "+coreName+" (нативный путь отключён выбором ядра).")
 			s.store.LogEvent(pool.Name, "applied", fmt.Sprintf("пул на движке %s из источника: %d конфигов", coreName, added))
 			if p, ok := s.store.Pool(pool.Name); ok && len(p.Configs) > 0 {
@@ -350,10 +370,42 @@ func (s *Server) createPoolFromNodes(w http.ResponseWriter, r *http.Request, req
 		plan.Pool = pool.Name
 		plan.Added = added
 		plan.Duplicates = dupes
-		plan.Engine = engineNodes
 		s.store.LogEvent(pool.Name, "applied", fmt.Sprintf("пул из источника: %d конфигов", added))
-		for _, e := range plan.Engine {
-			s.store.LogEvent(pool.Name, "engine", fmt.Sprintf("узел %s (%s) ждёт движок sing-box", e.Tag, e.Type))
+		// узлы движка (vless и пр.) не теряем: отдельный движковый пул той
+		// же подписки - раньше оставались только строчкой «ждёт движок»
+		// в журнале (живой кейс 12.11: подписка AWG+vless, vless пропал)
+		if len(engineNodes) > 0 {
+			core, coreName, cerr := s.awg3CorePick(req.EngineCore)
+			if cerr != nil {
+				plan.Engine = engineMeta(engineNodes)
+				plan.Warnings = append(plan.Warnings, fmt.Sprintf("%d узлов движка (vless и пр.) не добавлены: %v", len(engineNodes), cerr))
+				for _, e := range engineNodes {
+					s.store.LogEvent(pool.Name, "engine", fmt.Sprintf("узел %s (%s) не добавлен: %v", e.Tag, e.Type, cerr))
+				}
+			} else {
+				engSettings := store.PoolSettings{
+					Platform: s.backend.Name(), Source: req.Source, EngineMode: engineMode,
+					ProbeHost: req.ProbeHost, Fallback: req.Fallback,
+				}
+				if core != "" {
+					engSettings.EngineCore = core
+				}
+				if err := s.validFallback(req.Name, engSettings.Fallback); err != nil {
+					engSettings.Fallback = ""
+				}
+				engPool, perr := s.claimTun(engSettings, pool.Name+"-eng")
+				if perr != nil {
+					plan.Warnings = append(plan.Warnings, fmt.Sprintf("узлы движка не добавлены (пул не создан): %v", perr))
+				} else if err := s.writePoolNodes(engPool.Name, engineNodes); err != nil {
+					plan.Warnings = append(plan.Warnings, "узлы движка не записаны: "+err.Error())
+				} else {
+					plan.Engine = nil
+					plan.Warnings = append(plan.Warnings, fmt.Sprintf("VLESS-узлы подписки: создан движковый пул %s (ядро %s, tun %s)", engPool.Name, coreName, engPool.Settings.TunName))
+					s.store.LogEvent(engPool.Name, "applied", fmt.Sprintf("пул узлов движка из источника %s: %d узлов", req.Source, len(engineNodes)))
+					s.applyEngineWarn(&plan)
+					s.cascSyncPool(engPool.Name)
+				}
+			}
 		}
 		if p, ok := s.store.Pool(pool.Name); ok && len(p.Configs) > 0 {
 			if err := s.engine.SetActive(pool.Name, p.Configs[0].File); err != nil {
@@ -384,7 +436,7 @@ func (s *Server) createPoolFromNodes(w http.ResponseWriter, r *http.Request, req
 			}
 			eligible, reasons = mihomo.EligibleNodes(res.Nodes)
 			if len(eligible) == 0 {
-				plan.Engine = engineNodes
+				plan.Engine = engineMeta(engineNodes)
 				plan.Skipped = append(plan.Skipped, reasons...)
 				plan.Warnings = append(plan.Warnings,
 					"Пул не создан: ни один узел не поддерживается ядром mihomo (xhttp и vless-шифрование - только sing-box lx).")
@@ -400,7 +452,7 @@ func (s *Server) createPoolFromNodes(w http.ResponseWriter, r *http.Request, req
 			}
 			eligible, reasons = singbox.EligibleNodes(res.Nodes, caps)
 			if len(eligible) == 0 {
-				plan.Engine = engineNodes
+				plan.Engine = engineMeta(engineNodes)
 				plan.Skipped = append(plan.Skipped, reasons...)
 				plan.Warnings = append(plan.Warnings,
 					"Пул не создан: ни один узел не поддерживается текущим движком sing-box. Нужно расширенное ядро (lx или extended) - после его установки добавьте ссылку заново.")
@@ -433,7 +485,7 @@ func (s *Server) createPoolFromNodes(w http.ResponseWriter, r *http.Request, req
 		}
 		for _, e := range engineNodes {
 			if !eligSet[e.Tag] {
-				plan.Engine = append(plan.Engine, e)
+				plan.Engine = append(plan.Engine, sourceEngineOne{Tag: e.Tag, Type: e.Type})
 			}
 		}
 		s.store.LogEvent(pool.Name, "applied", fmt.Sprintf("пул из источника: %d узлов в tun (%s)", len(eligible), pool.Settings.TunName))

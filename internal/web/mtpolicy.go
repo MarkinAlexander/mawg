@@ -7,8 +7,10 @@ package web
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 
+	"mawg/internal/cascade"
 	"mawg/internal/store"
 )
 
@@ -87,6 +89,19 @@ func (s *Server) mtSetPolicy(w http.ResponseWriter, r *http.Request) {
 	} else {
 		userSources = nil
 	}
+	// петлезащита (живой инцидент 12.11: телефон + скопированный список с
+	// адресом роутера в sources группы на tun - трафик САМОГО роутера ушёл
+	// в туннель, инкапсуляция всех пулов зациклилась, интернет умер
+	// целиком). Диалог устройства это гейтит; редактор группы шёл мимо -
+	// теперь внятный отказ и здесь. Осознанный «роутер через туннель» -
+	// отдельная галка sourcesRouter, не адрес руками в списке
+	routerAddrs := strsToIPs(cascade.RouterAddrs())
+	for _, src := range userSources {
+		if routerAddrConflicts(src, routerAddrs) {
+			writeErr(w, fmt.Errorf("%s - адрес самого роутера: с ним источники-список завернут трафик роутера в туннель группы и уронят весь интернет (инкапсуляция зациклится). Уберите его из списка; роутер через туннель включается галкой, а не адресом", src))
+			return
+		}
+	}
 	pol := store.GroupPolicy{
 		OnDead:        req.OnDead,
 		Iface:         req.Iface,
@@ -148,4 +163,15 @@ func (s *Server) mtSetPolicy(w http.ResponseWriter, r *http.Request) {
 		s.store.LogEvent("policy", "set", "группа "+id+": при отвале - "+pol.OnDead)
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "ok"})
+}
+
+// strsToIPs - адреса роутера каскадной абстракции (строки) в net.IP
+func strsToIPs(addrs []string) []net.IP {
+	out := make([]net.IP, 0, len(addrs))
+	for _, a := range addrs {
+		if ip := net.ParseIP(a); ip != nil {
+			out = append(out, ip)
+		}
+	}
+	return out
 }

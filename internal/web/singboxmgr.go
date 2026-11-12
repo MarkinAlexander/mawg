@@ -433,6 +433,14 @@ func (s *Server) allocTun() string {
 	for _, p := range s.enginePools() {
 		taken[p.Settings.TunName] = true
 	}
+	// чужие туннели системы (wdttc и прочие сторонние клиенты поднимают
+	// свои tun - живой кейс 12.11: выделенный mawg tun9 совпал с чужим,
+	// sing-box упал «TUNSETIFF: device or resource busy» целиком)
+	if tunnels, err := s.backend.SysTunnels(); err == nil {
+		for _, t := range tunnels {
+			taken[t.Device] = true
+		}
+	}
 	for i := 1; ; i++ {
 		name := singbox.TuneName(i)
 		if !taken[name] {
@@ -638,6 +646,18 @@ func (s *Server) readPoolNodes(name string) ([]links.Node, error) {
 	return nodes, nil
 }
 
+// enginePoolOfSource - действующий движковый пул этой же подписки
+// (спутник mixed-импорта: конфиги в нативном пуле, узлы - в движковом)
+func (s *Server) enginePoolOfSource(src string) (store.Pool, bool) {
+	for _, p := range s.store.Pools() {
+		if p.Settings.EngineMode == engineMode && !p.Disabled &&
+			p.Settings.Source != "" && p.Settings.Source == src {
+			return p, true
+		}
+	}
+	return store.Pool{}, false
+}
+
 func (s *Server) writePoolNodes(name string, nodes []links.Node) error {
 	data, err := json.MarshalIndent(nodes, "", "  ")
 	if err != nil {
@@ -788,13 +808,28 @@ func (s *Server) refreshSource(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		plan.Pool, plan.Added, plan.Duplicates = name, added, dupes
-		plan.Engine = engineNodes
 		if p, ok := s.store.Pool(name); ok && len(p.Configs) > 0 {
 			if err := s.activatePoolConfig(name, p.Configs[0].File); err != nil {
 				plan.Warnings = append(plan.Warnings, "не активирован: "+err.Error())
 			}
 		}
 		s.engine.CheckNow(name)
+	}
+	// vless/прокси-узлы той же подписки - в движковый пул этого же
+	// источника (mixed-подписки, кейс 12.11: обновление молча теряло
+	// узлы, хотя пул-спутник существует)
+	if len(engineNodes) > 0 {
+		if eng, ok := s.enginePoolOfSource(pool.Settings.Source); ok && eng.Name != name {
+			if err := s.writePoolNodes(eng.Name, engineNodes); err != nil {
+				plan.Warnings = append(plan.Warnings, "узлы движка не записаны: "+err.Error())
+			} else {
+				plan.Warnings = append(plan.Warnings, fmt.Sprintf("VLESS-узлы обновлены в движковом пуле %s (%d)", eng.Name, len(engineNodes)))
+				s.applyEngineWarn(&plan)
+				s.cascSyncPool(eng.Name)
+			}
+		} else {
+			plan.Warnings = append(plan.Warnings, fmt.Sprintf("%d узлов движка (vless и пр.) не добавлены: движкового пула этого источника нет - создайте его из той же ссылки", len(engineNodes)))
+		}
 	}
 	s.recordSourceRefresh(name, res.bodyHash, res.intervalH)
 	writeJSON(w, http.StatusOK, plan)

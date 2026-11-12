@@ -14,6 +14,13 @@ if [ -z "$UPX" ] && [ -n "$MAWG_UPX" ]; then UPX="$MAWG_UPX"; fi
 # MAWG_VERSION - явная версия (дев-сборки v0.6.11-devN); без неё - git describe
 VERSION="${MAWG_VERSION:-$(git describe --tags 2>/dev/null || echo dev)}"
 
+# upx на ПК иногда молча оставляет СТАРЫЙ бинарь второго таргета (антивирус
+# хватает свежий; дважды за 29.10, GOTCHAS/94-док) - свежесть сверяем с
+# меткой старта: mtime не новее - пересборки не было, релиз собирать нельзя
+STAMP="$(mktemp)"
+trap 'rm -f "$STAMP"' EXIT
+touch "$STAMP"
+
 build() {
   os="$1"; arch="$2"; extra="$3"; out="$4"
   echo "== building $out ($VERSION)"
@@ -29,6 +36,10 @@ build() {
     fi
   else
     echo "warning: upx not found, binary left unpacked"
+  fi
+  if ! find "dist/$out" -newer "$STAMP" -print -quit | grep -q .; then
+    echo "ОШИБКА: dist/$out не пересобрался (mtime старше старта скрипта) - релиз не собирать, пересобрать таргет по одному" >&2
+    exit 1
   fi
   ls -la "dist/$out"
 }

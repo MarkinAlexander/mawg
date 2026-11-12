@@ -41,9 +41,16 @@ func deviceGroupName(first string, n int) string {
 }
 
 func buildDeviceGroup(pool store.Pool, name string, sources []string) magitrickle.Group {
+	return buildDeviceGroupOn(pool.DeviceName(), name, sources)
+}
+
+// buildDeviceGroupOn - группа «устройство целиком» на любом интерфейсе:
+// пуле или внешнем (слово владельца 11.2026: для внешнего - сразу
+// указать, какие устройства пускать, чтобы правило сделалось)
+func buildDeviceGroupOn(device, name string, sources []string) magitrickle.Group {
 	return magitrickle.Group{
 		Name:      name,
-		Interface: pool.DeviceName(),
+		Interface: device,
 		Color:     deviceGroupColor,
 		Enable:    true,
 		Sources:   sources,
@@ -116,21 +123,37 @@ func routerIPv4s() []net.IP {
 func (s *Server) mtCreateDeviceGroup(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Pool    string   `json:"pool"`
+		Iface   string   `json:"iface"`
 		Name    string   `json:"name"`
 		IPs     []string `json:"ips"`
 		Confirm bool     `json:"confirm"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Pool == "" {
-		writeErr(w, fmt.Errorf("нужен pool и хотя бы один IP устройства"))
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || (req.Pool == "" && req.Iface == "") {
+		writeErr(w, fmt.Errorf("нужен pool или iface и хотя бы один IP устройства"))
 		return
 	}
-	pool, ok := s.store.Pool(req.Pool)
-	if !ok {
-		http.NotFound(w, r)
-		return
-	}
-	if pool.Disabled {
-		writeErr(w, fmt.Errorf("пул %s выключен - включите его, иначе устройство останется без интернета (blackhole)", pool.Name))
+	// цель - внешний интерфейс (слово владельца 11.2026): группа MT без
+	// реестра привязок (реестр - про пулы: переезды и удаление пула)
+	device := req.Iface
+	target := req.Iface
+	var pool store.Pool
+	if req.Pool != "" {
+		if req.Iface != "" {
+			writeErr(w, fmt.Errorf("цель одна: pool или iface"))
+			return
+		}
+		p, ok := s.store.Pool(req.Pool)
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		if p.Disabled {
+			writeErr(w, fmt.Errorf("пул %s выключен - включите его, иначе устройство останется без интернета (blackhole)", p.Name))
+			return
+		}
+		pool, device, target = p, p.DeviceName(), p.Name
+	} else if s.store.IfaceModes()[req.Iface] != store.IfaceExternal {
+		writeErr(w, fmt.Errorf("%s ещё не внешний интерфейс: сначала «Сделать внешним» на вкладке «Интерфейсы»", req.Iface))
 		return
 	}
 	sources, err := normalizeSources(req.IPs)
@@ -156,14 +179,14 @@ func (s *Server) mtCreateDeviceGroup(w http.ResponseWriter, r *http.Request) {
 	}
 	// коллизии адресов между пулами и с глобальными исключениями
 	// (97-док): 409 + подтверждение, предупреждаем именами пулов
-	conflicts := findBindingConflicts(s.store.DeviceBindings(), s.store.Excludes(), pool.Name, sources)
+	conflicts := findBindingConflicts(s.store.DeviceBindings(), s.store.Excludes(), target, sources)
 	if len(conflicts) > 0 && !req.Confirm {
 		bindingConflicts409(w, conflicts)
 		return
 	}
 	if len(conflicts) > 0 {
 		s.store.LogEvent("rules", "device-bindings", fmt.Sprintf(
-			"коллизия адресов подтверждена вручную: %s -> пул %s", strings.Join(sources, ", "), pool.Name))
+			"коллизия адресов подтверждена вручную: %s -> %s", strings.Join(sources, ", "), target))
 	}
 	client := s.mtClient()
 	if err := client.EnsureHealthy(r.Context()); err != nil {
@@ -182,7 +205,7 @@ func (s *Server) mtCreateDeviceGroup(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	g := buildDeviceGroup(pool, name, sources)
+	g := buildDeviceGroupOn(device, name, sources)
 	// AddGroup = append в конец списка одним bulk PUT в защитном окне
 	if err := s.engine.RetryMTWrite("panel", func() error {
 		return client.AddGroup(r.Context(), g)
@@ -191,10 +214,12 @@ func (s *Server) mtCreateDeviceGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	client.RefreshShadow(r.Context())
-	// зеркало связки в реестре (97-док): карточка пула и коллизии
-	s.deviceBindingUpsert(pool.Name, name, sources)
+	if req.Pool != "" {
+		// зеркало связки в реестре (97-док): карточка пула и коллизии
+		s.deviceBindingUpsert(pool.Name, name, sources)
+	}
 	s.store.LogEvent("rules", "magitrickle", fmt.Sprintf(
-		"группа устройства %q: весь трафик %d адрес(ов) через пул %s (%s)", name, len(sources), pool.Name, g.Interface))
+		"группа устройства %q: весь трафик %d адрес(ов) через %s (%s)", name, len(sources), target, g.Interface))
 	// созданную группу (с id от MT) возвращаем перечитыванием
 	if groups, err = client.GroupsWithRules(r.Context()); err == nil {
 		for _, ng := range groups {

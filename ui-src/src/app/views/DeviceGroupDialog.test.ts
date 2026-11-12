@@ -54,9 +54,34 @@ beforeEach(() => {
 })
 
 describe('DeviceGroupDialog', () => {
+  it('внешний интерфейс в селекте: правило уходит с iface вместо пула', async () => {
+    const { dlg, f } = await makeDialog({
+      '/mt/groups': { available: true, groups: [] },
+      '/ifaces': { interfaces: [{ device: 'tun9', mode: 'external' }] },
+    }, [], undefined)
+    // туннель чужого софта выбирается целью (слово владельца 11.2026)
+    await dlg.find('.psel-btn').trigger('click')
+    await nextTick()
+    const opt = dlg.findAll('.psel-item').find((b) => b.text().includes('tun9'))
+    expect(opt).toBeTruthy()
+    await opt!.trigger('click')
+    await dlg.find('textarea').setValue('192.168.1.77')
+    const create = dlg.findAll('button').find((b) => b.text() === 'Создать')!
+    await create.trigger('click')
+    await vi.waitFor(() => {
+      const post = f.mock.calls.find((c) => (c[0] as string).endsWith('/mt/device-group'))
+      expect(post).toBeTruthy()
+      expect(JSON.parse(post![1]!.body as string)).toEqual({
+        iface: 'tun9',
+        ips: ['192.168.1.77'],
+      })
+    })
+    dlg.unmount()
+  })
+
   it('пул предвыбран из props, кнопка залочена без адресов', async () => {
     const { dlg } = await makeDialog({ '/mt/groups': { available: true, groups: [] } }, [pool('warp'), pool('proton')], 'proton')
-    expect(dlg.text()).toContain('Устройство целиком через пул')
+    expect(dlg.text()).toContain('Устройство целиком')
     const create = dlg.findAll('button').find((b) => b.text() === 'Создать')!
     expect(create.attributes('disabled')).toBeDefined()
     // предвыбор пула - текущее значение селекта
@@ -86,7 +111,7 @@ describe('DeviceGroupDialog', () => {
       })
     })
     await vi.waitFor(() =>
-      expect(useToast().toasts.list.some((t) => t.text.includes('через пул warp'))).toBe(true))
+      expect(useToast().toasts.list.some((t) => t.text.includes('через warp'))).toBe(true))
     dlg.unmount()
   })
 

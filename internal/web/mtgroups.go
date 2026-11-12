@@ -226,16 +226,23 @@ func (s *Server) mtGroupsView(w http.ResponseWriter, r *http.Request, groups []m
 }
 
 func (s *Server) mtGetInterfaces(w http.ResponseWriter, r *http.Request) {
-	groups, titles, err := s.mtSnapshotCached()
-	if err == nil {
-		for _, g := range groups {
-			// blackhole - служебное имя блокировки, UI добавляет его сам
-			if g.Interface == "blackhole" {
-				continue
-			}
-			if _, ok := titles[g.Interface]; !ok {
-				titles[g.Interface] = ""
-			}
+	_, titles, err := s.mtSnapshotCached()
+	if err != nil {
+		titles = map[string]string{}
+	}
+	// выбираемы ВСЕ интерфейсы системы, не только занятые группами MT
+	// (сильный баг, слово владельца 11.2026): туннель чужого софта -
+	// не пул и не слот Keenetic, раньше попадал в селект групп правил,
+	// только если его уже использовала какая-то группа MT. Новый
+	// пользователь с единственным туннелем получал ПУСТОЙ список -
+	// группу создать не на что. allIfaces покрывает слоты, системные
+	// туннели, пулы и интерфейсы существующих групп MT разом.
+	for _, sl := range s.allIfaces(r.Context()) {
+		if sl.Device == "" || sl.Device == "blackhole" {
+			continue
+		}
+		if _, ok := titles[sl.Device]; !ok {
+			titles[sl.Device] = ""
 		}
 	}
 	type ifaceView struct {

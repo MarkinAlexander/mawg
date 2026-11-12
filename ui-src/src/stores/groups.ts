@@ -316,7 +316,7 @@ export function useGroups() {
   // группа «устройство целиком через пул» (88+: sources + 0.0.0.0/0,
   // ставится последней в списке - побеждает при пересечениях).
   // confirm - подтверждение коллизии адресов (97-док, 409 с сервера)
-  async function createDeviceGroup(body: { pool: string; name?: string; ips: string[]; confirm?: boolean }): Promise<void> {
+  async function createDeviceGroup(body: { pool?: string; iface?: string; name?: string; ips: string[]; confirm?: boolean }): Promise<void> {
     await mutate(() => api('POST', '/mt/device-group', body));
     await loadBindings();
   }

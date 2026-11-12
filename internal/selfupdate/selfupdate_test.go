@@ -1,6 +1,13 @@
 package selfupdate
 
-import "testing"
+import (
+	"context"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"testing"
+)
 
 // дев-сборки (vX.Y.Z-devN) обновляются на релиз СТРОГО новее своей базы:
 // владелец проверяет механизм автообновления именно так (слово 2026-10-18:
@@ -49,5 +56,50 @@ func TestVerBase(t *testing.T) {
 		if got := verBase(c.in); got != c.want {
 			t.Errorf("verBase(%q) = %q, want %q", c.in, got, c.want)
 		}
+	}
+}
+
+// api.github.com бьётся rate-limit'ом по IP роутера (живой кейс 11.2026:
+// релиз вышел, а панель молчала «обновлений нет») - тег добирается
+// веб-редиректом /releases/latest, который лимитов не знает
+func TestLatestFallsBackToWebRedirect(t *testing.T) {
+	resp := func(code int, loc string) *http.Response {
+		h := http.Header{}
+		if loc != "" {
+			h.Set("Location", loc)
+		}
+		return &http.Response{StatusCode: code, Header: h, Body: io.NopCloser(strings.NewReader(""))}
+	}
+	oldGet, oldNoRedir := httpGet, httpGetNoRedirect
+	t.Cleanup(func() { httpGet, httpGetNoRedirect = oldGet, oldNoRedir })
+
+	httpGet = func(ctx context.Context, url string) (*http.Response, error) {
+		return resp(403, ""), nil // rate limit
+	}
+	httpGetNoRedirect = func(ctx context.Context, url string) (*http.Response, error) {
+		return resp(302, "https://github.com/MarkinAlexander/mawg/releases/tag/v0.8.10.3"), nil
+	}
+	rel, err := Latest(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rel.Tag != "v0.8.10.3" {
+		t.Fatalf("тег из редиректа: %+v", rel)
+	}
+
+	// API недоступен и вовсе (сеть), редирект жив - тоже работает
+	httpGet = func(ctx context.Context, url string) (*http.Response, error) {
+		return nil, fmt.Errorf("timeout")
+	}
+	if rel, err = Latest(context.Background()); err != nil || rel.Tag != "v0.8.10.3" {
+		t.Fatalf("фолбэк при недоступном API: %+v %v", rel, err)
+	}
+
+	// оба пути мертвы - ошибка API доносится
+	httpGetNoRedirect = func(ctx context.Context, url string) (*http.Response, error) {
+		return nil, fmt.Errorf("нет сети")
+	}
+	if _, err = Latest(context.Background()); err == nil || !strings.Contains(err.Error(), "github недоступен") {
+		t.Fatalf("ожидалась ошибка недоступности: %v", err)
 	}
 }

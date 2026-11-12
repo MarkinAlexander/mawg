@@ -67,19 +67,35 @@ func TestFromSourceCreatesNativePool(t *testing.T) {
 	}
 }
 
+// mixed-подписка (WG-конфиг + vless): раньше vless выбрасывались одним
+// событием «ждёт движок» (живой кейс 12.11: подписка AWG+vless, весь
+// vless пропадал молча). Теперь: ядро есть - создаётся движковый
+// пул-спутник с узлами; ядра нет - узлы остаются в плане с причиной
 func TestFromSourceMixedShowsEngineNodes(t *testing.T) {
+	ts := newTestServer(t)
 	body, _ := json.Marshal(map[string]string{
 		"name": "mixed", "source": fakeWGLink + "\n" + fakeVlessLink, "keeneticSlot": "Wireguard2",
 	})
-	code, plan := postFromSource(t, string(body))
+	code, plan := postFromSourceTs(t, ts, string(body))
 	if code != 200 {
 		t.Fatalf("код %d", code)
 	}
 	if plan.Pool != "mixed" || plan.Added != 1 {
 		t.Fatalf("нативная часть: %+v", plan)
 	}
-	if len(plan.Engine) != 1 || plan.Engine[0].Type != "vless" {
-		t.Fatalf("движок-узлы: %+v", plan.Engine)
+	// два честных исхода: ядро доступно - создан пул-спутник mixed-eng
+	// (узлы ушли в него, «ждут» пуст); ядра нет - узлы в плане с причиной.
+	// Какой именно - зависит от глобального менеджера в пакетных тестах
+	t.Logf("warnings: %v engine: %+v", plan.Warnings, plan.Engine)
+	if !anyContains(plan.Warnings, "движковый пул mixed-eng") {
+		if len(plan.Engine) != 1 || plan.Engine[0].Type != "vless" {
+			t.Fatalf("движок-узлы: %+v", plan.Engine)
+		}
+		if !anyContains(plan.Warnings, "узлов движка") {
+			t.Fatalf("без ядра должна быть внятная причина: %v", plan.Warnings)
+		}
+	} else if len(plan.Engine) != 0 {
+		t.Fatalf("узлы ушли в пул-спутник, «ждут» не нужны: %+v", plan.Engine)
 	}
 }
 
