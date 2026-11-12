@@ -633,3 +633,33 @@ func TestEmptyPoolStopsTunnel(t *testing.T) {
 		t.Fatal("повторный Down")
 	}
 }
+
+// Чужой туннель (живёт в SysTunnels, не в слотах) как внешний член
+// бандла: здоровье по пробе, а не «не найден в слотах = мёртв» (кейс
+// владельца 12.11: tun9 wdttc основной, proton запасной)
+func TestMemberDeviceHealthForeignTunnel(t *testing.T) {
+	st, fb, cl := setup(t, store.FallbackDirect)
+	if err := st.SetIfaceMode("tun9", store.IfaceExternal); err != nil {
+		t.Fatal(err)
+	}
+	probe := store.ProbeConfig{Target: "8.8.8.8", MaxRTTms: 500}
+	if err := st.SetIfaceProbe("tun9", &probe); err != nil {
+		t.Fatal(err)
+	}
+	e := newEngine(st.Store, fb, cl, "")
+
+	tunnels := []platform.SlotInfo{{Device: "tun9", LinkUp: true}}
+	fb.DeviceProbe["tun9"] = fake.DevProbe{OK: true, RTTms: 100}
+	dev, healthy, external, _ := e.memberDeviceHealth("tun9", tunnels)
+	if dev != "tun9" || !healthy || !external {
+		t.Fatalf("живой чужой туннель: dev=%s healthy=%v external=%v", dev, healthy, external)
+	}
+
+	// TTL кэша проб (30с): без сдвига фейковых часов вернётся закэшированный ок
+	cl.Add(31 * time.Second)
+	fb.DeviceProbe["tun9"] = fake.DevProbe{OK: false}
+	_, healthy, _, _ = e.memberDeviceHealth("tun9", tunnels)
+	if healthy {
+		t.Fatal("упавшая проба чужого туннеля должна быть unhealthy")
+	}
+}

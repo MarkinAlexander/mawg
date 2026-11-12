@@ -89,6 +89,21 @@ func (e *Engine) checkBundles() {
 	e.actMu.Lock()
 	defer e.actMu.Unlock()
 	slots, slotsErr := e.backend.Slots()
+	if tunnels, err := e.backend.SysTunnels(); err == nil {
+		// чужие туннели (tunN постороннего софта) - полноценные внешние
+		// члены бандла; без merge memberDeviceHealth читал бы «не найден
+		// в слотах» = всегда мёртв, и бандл залип на запасном (кейс
+		// владельца 12.11: tun9 wdttc основной, proton запасной)
+		seen := make(map[string]bool, len(slots))
+		for _, sl := range slots {
+			seen[sl.Device] = true
+		}
+		for _, sl := range tunnels {
+			if !seen[sl.Device] {
+				slots = append(slots, sl)
+			}
+		}
+	}
 	for _, b := range bundles {
 		if len(b.Members) == 0 || len(b.Groups) == 0 {
 			continue

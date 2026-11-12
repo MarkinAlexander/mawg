@@ -30,6 +30,20 @@ func (s *Server) bundleMembersResolve(members []string) (map[string]string, erro
 			}
 		}
 		if !known {
+			// чужие туннели живут в SysTunnels, не в слотах: бандл с ними -
+			// легитимный кейс фоллбека (кейс владельца 12.11: tun9 wdttc
+			// основной, proton запасной); UI-пикер берёт /ifaces, где
+			// чужие туннели есть, и молча предлагал неотвалидуемое имя
+			if tunnels, err := s.backend.SysTunnels(); err == nil {
+				for _, sl := range tunnels {
+					if sl.Device == m {
+						known = true
+						break
+					}
+				}
+			}
+		}
+		if !known {
 			return nil, fmt.Errorf("участник %s не найден (нет такого пула или интерфейса)", m)
 		}
 		out[m] = m
