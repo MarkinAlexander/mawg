@@ -234,7 +234,28 @@ func (s *Server) applyDnsZones(ctx context.Context, zones []store.DnsZone) (warn
 func (s *Server) getDnsZones(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	res := map[string]any{"capable": s.mtDnsZonesCapable(ctx)}
-	res["zones"] = s.store.DnsZones()
+	known := s.knownDevices()
+	type zoneView struct {
+		store.DnsZone
+		// PoolDead - пути зоны нет: пул удалён/переименован мимо mawg
+		// или iface-устройство исчезло; применённая таблица форка всё
+		// ещё смотрит в старый путь (аудит мёртвых ссылок, 12.11)
+		PoolDead bool `json:"poolDead,omitempty"`
+	}
+	zones := s.store.DnsZones()
+	views := make([]zoneView, 0, len(zones))
+	for _, z := range zones {
+		zv := zoneView{DnsZone: z}
+		if z.Pool != "" {
+			if strings.HasPrefix(z.Pool, store.FallbackIfacePrefix) {
+				zv.PoolDead = !known[strings.TrimPrefix(z.Pool, store.FallbackIfacePrefix)]
+			} else if _, ok := s.store.Pool(z.Pool); !ok {
+				zv.PoolDead = true
+			}
+		}
+		views = append(views, zv)
+	}
+	res["zones"] = views
 	if res["capable"] == true {
 		if st, err := s.mtClient().DnsZones(ctx); err == nil {
 			res["live"] = st

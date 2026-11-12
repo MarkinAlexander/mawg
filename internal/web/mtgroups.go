@@ -183,6 +183,12 @@ func (s *Server) mtGroupsView(w http.ResponseWriter, r *http.Request, groups []m
 		DnsZone   bool   `json:"dnsZone,omitempty"`
 		DnsTunnel bool   `json:"dnsTunnel,omitempty"`
 		Degraded  string `json:"degraded,omitempty"`
+		// IfaceDead - интерфейса группы нет в системе (пул удалён, чужой
+		// туннель исчез, имя вписано руками мимо селекта): трафик группы
+		// молча уходит в никуда - панель помечает строку (аудит мёртвых
+		// ссылок, кейс владельца 12.11: dns-tunnel смотрел на имя пула,
+		// а не устройства)
+		IfaceDead bool `json:"ifaceDead,omitempty"`
 	}
 	policies := map[string]store.GroupPolicy{}
 	for id, p := range s.store.GroupPoliciesAll() {
@@ -193,6 +199,7 @@ func (s *Server) mtGroupsView(w http.ResponseWriter, r *http.Request, groups []m
 		cascades[c.Group] = c
 	}
 	degraded := s.store.DegradedGroups()
+	known := s.knownDevices()
 	out := make([]groupView, 0, len(groups))
 	seen := map[string]bool{}
 	for _, g := range groups {
@@ -200,6 +207,7 @@ func (s *Server) mtGroupsView(w http.ResponseWriter, r *http.Request, groups []m
 		if t, ok := titles[g.Interface]; ok && t != g.Interface {
 			gv.InterfaceTitle = t
 		}
+		gv.IfaceDead = g.Interface != "" && !known[g.Interface]
 		if p, ok := policies[g.ID]; ok {
 			gv.Policy = &p
 		}

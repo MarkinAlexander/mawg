@@ -94,6 +94,31 @@ func (s *Server) getIfaces(w http.ResponseWriter, r *http.Request) {
 	s.ifaceCache.serve(w, 10*time.Second, func() ([]byte, error) { return s.buildIfaces(r) })
 }
 
+// knownDevices - существующие устройства системы: слоты mawg, чужие
+// туннели (SysTunnels, кейс владельца 12.11: tun9 wdttc), устройства
+// пулов + blackhole (служебное имя, UI сам добавляет его в селекты).
+// Интерфейсов групп MT здесь НЕТ: их как раз проверяем на мёртвость
+// (ifaceDead), иначе каждая группа сама себя оправдывала бы.
+func (s *Server) knownDevices() map[string]bool {
+	out := map[string]bool{"blackhole": true}
+	if slots, err := s.backend.Slots(); err == nil {
+		for _, sl := range slots {
+			out[sl.Device] = true
+		}
+	}
+	if tunnels, err := s.backend.SysTunnels(); err == nil {
+		for _, sl := range tunnels {
+			out[sl.Device] = true
+		}
+	}
+	for _, p := range s.store.Pools() {
+		if d := p.DeviceName(); d != "" {
+			out[d] = true
+		}
+	}
+	return out
+}
+
 func (s *Server) buildIfaces(r *http.Request) ([]byte, error) {
 	slots := s.allIfaces(r.Context())
 	if slots == nil {

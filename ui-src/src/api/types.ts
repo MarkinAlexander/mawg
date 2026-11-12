@@ -49,6 +49,8 @@ export interface GroupView extends Group {
   dnsTunnel?: boolean
   degraded?: string // '' | 'direct' | 'direct-pending' | 'iface' | 'iface:<...>'
   interfaceTitle?: string
+  // интерфейса группы нет в системе: трафик уходит в никуда (аудит 12.11)
+  ifaceDead?: boolean
 }
 
 // запись реестра «пул ↔ устройство через пул» (97-док): зеркало
@@ -314,6 +316,8 @@ export interface PoolView {
   premium: PremiumView
   protos: ProtoBadge[]
   free?: boolean
+  // цель фоллбека «pool:имя»/«iface:устройство» не существует (аудит 12.11)
+  fallbackDead?: boolean
 }
 
 export interface Status {
@@ -491,6 +495,8 @@ export interface DnsZone {
   pool?: string
   fallbackOpen?: boolean
   enable: boolean
+  // пути зоны нет: пул/iface-устройство исчез (аудит 12.11)
+  poolDead?: boolean
 }
 
 export interface DnsZonesRes {

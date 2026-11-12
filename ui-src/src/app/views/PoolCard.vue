@@ -422,6 +422,11 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
         >{{ pool.lastError }}</span>
       </template>
       <b>ротаций<UiHelp :text="G.rotation" /></b><span>{{ pool.rotations }}</span>
+      <!-- мёртвая цель фоллбека (пул удалён/выключен): при отказе группы
+           уйдут direct, а не туда, куда думает владелец (аудит 12.11) -->
+      <template v-if="pool.fallbackDead">
+        <b class="err">фоллбек</b><span class="err">цель не существует: {{ pool.settings.fallback }} - при отказе группы уйдут напрямую</span>
+      </template>
       <template v-if="exclRow">
         <b>исключения<UiHelp text="Эти адреса пул не обрабатывает - трафик на них и с них идёт напрямую, мимо туннеля (свои серверы, вторые роутеры). Свои - в настройках пула (шестерёнка), «общие» - в списке исключений на странице правил: они действуют на все пулы." /></b><span>{{ exclRow }}</span>
       </template>

@@ -5,6 +5,7 @@ package web
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"mawg/internal/store"
@@ -12,6 +13,7 @@ import (
 
 func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 	pools := s.store.Pools()
+	known := s.knownDevices()
 	type poolView struct {
 		Name           string `json:"name"`
 		Platform       string `json:"platform"`
@@ -40,6 +42,11 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 		Premium        store.PremiumView        `json:"premium"`
 		Protos         []protoBadge             `json:"protos,omitempty"`
 		Free           bool                     `json:"free,omitempty"`
+		// FallbackDead - цель фоллбека «pool:имя»/«iface:устройство» не
+		// существует (пул удалён или выключен): при отказе этого пула
+		// группы уйдут direct, а не туда, куда думает владелец (аудит
+		// мёртвых ссылок, 12.11)
+		FallbackDead bool `json:"fallbackDead,omitempty"`
 	}
 	out := struct {
 		Version     string `json:"version"`
@@ -79,6 +86,17 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 			Premium: s.store.PremiumView(p.Name),
 			Protos:  s.poolProtoBadges(p),
 			Free:    p.Free,
+		}
+		switch fb := p.Settings.Fallback; {
+		case strings.HasPrefix(fb, store.FallbackPoolPrefix):
+			if name, ok := store.FallbackPoolName(fb); ok {
+				fbPool, exists := s.store.Pool(name)
+				view.FallbackDead = !exists || fbPool.Disabled
+			}
+		case strings.HasPrefix(fb, store.FallbackIfacePrefix):
+			if dev, ok := store.FallbackIfaceName(fb); ok {
+				view.FallbackDead = !known[dev]
+			}
 		}
 		if p.Settings.EngineMode == engineMode {
 			view.ProbeOk, view.ProbeMs, view.ProbeAt, view.Mode, view.LastResult = s.poolProbeInfo(p)

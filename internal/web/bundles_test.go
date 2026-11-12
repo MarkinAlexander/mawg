@@ -100,3 +100,80 @@ func TestBundleIssuesReported(t *testing.T) {
 		t.Fatalf("живые ссылки не должны помечаться: %q", joined)
 	}
 }
+
+// Флаги мёртвых ссылок в payload'ах (аудит dangling-ссылок, кейс
+// владельца 12.11 - dns-tunnel смотрел на имя пула, не устройства):
+// ifaceDead у групп MT, poolDead у зон, fallbackDead у пулов
+func TestDeadRefFlags(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fb := fake.New()
+	fb.TunnelsOverride = []platform.SlotInfo{{Device: "tun9", LinkUp: true}}
+	f := &fakeMT{version: "0.8.2-rev22", groups: []magitrickle.Group{
+		{ID: "g1", Name: "dead-iface", Interface: "dead0"},
+		{ID: "g2", Name: "alive-iface", Interface: "tun9"},
+	}}
+	mt := httptest.NewServer(f.handler())
+	t.Cleanup(mt.Close)
+	e := rotator.New(st, fb, magitrickle.New("http://127.0.0.1:1"))
+	srv := New(st, e, fb, magitrickle.New(mt.URL), "test", nil)
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	for _, name := range []string{"alive", "pfall", "zpool"} {
+		if _, err := st.CreatePool(name, store.PoolSettings{Platform: store.PlatformOpenwrt}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.UpdatePool("pfall", store.PoolSettings{Platform: store.PlatformOpenwrt, Fallback: "pool:gone"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetDnsZones([]store.DnsZone{{ID: "z1", Zone: "zdead.example", Upstreams: []string{"10.0.0.1:53"}, Pool: "zpool", Enable: true}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeletePool("zpool"); err != nil {
+		t.Fatal(err)
+	}
+
+	groups := httpGetJSON(t, ts.URL+"/api/v1/mt/groups")
+	glist, _ := groups["groups"].([]any)
+	byID := map[string]map[string]any{}
+	for _, g := range glist {
+		m, _ := g.(map[string]any)
+		byID[m["id"].(string)] = m
+	}
+	if byID["g1"]["ifaceDead"] != true {
+		t.Fatalf("мёртвый iface не помечен: %v", byID["g1"])
+	}
+	if v, ok := byID["g2"]["ifaceDead"]; ok && v == true {
+		t.Fatalf("живой iface помечен мёртвым: %v", byID["g2"])
+	}
+
+	zones := httpGetJSON(t, ts.URL+"/api/v1/dns/zones")
+	zlist, _ := zones["zones"].([]any)
+	z1, _ := zlist[0].(map[string]any)
+	if z1["poolDead"] != true {
+		t.Fatalf("мёртвый пул зоны не помечен: %v", z1)
+	}
+
+	status := httpGetJSON(t, ts.URL+"/api/v1/status")
+	plist, _ := status["pools"].([]any)
+	fallDead, aliveDead := false, false
+	for _, p := range plist {
+		m, _ := p.(map[string]any)
+		switch m["name"] {
+		case "pfall":
+			fallDead = m["fallbackDead"] == true
+		case "alive":
+			aliveDead = m["fallbackDead"] == true
+		}
+	}
+	if !fallDead {
+		t.Fatal("мёртвый fallback пула не помечен")
+	}
+	if aliveDead {
+		t.Fatal("живой пул помечен мёртвым fallback'ом")
+	}
+}
