@@ -154,3 +154,17 @@ func ConfigVersion(configYAML []byte) string {
 }
 
 const dnsHostsRevMin = 21 // rev21: статические hosts
+
+const mtLogLevelRevMin = 22 // rev22: GET/PUT /app/loglevel
+
+// MtLogLevelSupported: rev22+ умеют менять уровень лога демона на лету
+// (кноб «Уровень лога MT» в панели; форк применяет уровень глобально и
+// пишет app.logLevel в config.yaml); на старых ревизиях контрол скрыт.
+func MtLogLevelSupported(version string) bool {
+	m := revRe.FindStringSubmatch(version)
+	if m == nil {
+		return false
+	}
+	n, err := strconv.Atoi(m[1])
+	return err == nil && n >= mtLogLevelRevMin
+}

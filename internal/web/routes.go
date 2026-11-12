@@ -40,6 +40,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/v1/dns/hosts", s.dnsHostsSet)
 	mux.HandleFunc("POST /api/v1/dns/hosts/router", s.dnsHostsRouterSet)
 	mux.HandleFunc("GET /api/v1/dns/hosts/probe", s.dnsHostsProbe)
+	mux.HandleFunc("GET /api/v1/mt/loglevel", s.mtLogLevelGet)
+	mux.HandleFunc("PUT /api/v1/mt/loglevel", s.mtLogLevelSet)
 	mux.HandleFunc("PUT /api/v1/wanprobe", s.putWANProbe)
 	mux.HandleFunc("GET /api/v1/excludes", s.getExcludes)
 	mux.HandleFunc("PUT /api/v1/excludes", s.putExcludes)

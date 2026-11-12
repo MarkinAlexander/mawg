@@ -59,12 +59,16 @@ describe('DeviceGroupDialog', () => {
       '/mt/groups': { available: true, groups: [] },
       '/ifaces': { interfaces: [{ device: 'tun9', mode: 'external' }] },
     }, [], undefined)
-    // туннель чужого софта выбирается целью (слово владельца 11.2026)
+    // туннель чужого софта выбирается целью (слово владельца 11.2026);
+    // список ifaces доезжает асинхронно - на медленном раннере пункт
+    // появляется позже nextTick (флейк CI 12.11), ждём vi.waitFor
     await dlg.find('.psel-btn').trigger('click')
-    await nextTick()
-    const opt = dlg.findAll('.psel-item').find((b) => b.text().includes('tun9'))
-    expect(opt).toBeTruthy()
-    await opt!.trigger('click')
+    const opt = await vi.waitFor(() => {
+      const o = dlg.findAll('.psel-item').find((b) => b.text().includes('tun9'))
+      expect(o).toBeTruthy()
+      return o!
+    })
+    await opt.trigger('click')
     await dlg.find('textarea').setValue('192.168.1.77')
     const create = dlg.findAll('button').find((b) => b.text() === 'Создать')!
     await create.trigger('click')

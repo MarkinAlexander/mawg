@@ -84,3 +84,23 @@ func TestConfigVersion(t *testing.T) {
 		t.Fatal("sources capability lost via configVersion")
 	}
 }
+
+func TestMtLogLevelSupported(t *testing.T) {
+	cases := []struct {
+		version string
+		want    bool
+	}{
+		{"0.8.2-rev21", false}, // hosts есть, loglevel ещё нет
+		{"0.8.2-rev22", true},
+		{"0.8.2-rev22-mawgfix1", true},
+		{"0.8.2-rev19-mawgfix1", false},
+		{"0.8.2", false},
+		{"unattached", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		if got := MtLogLevelSupported(c.version); got != c.want {
+			t.Errorf("MtLogLevelSupported(%q) = %v, want %v", c.version, got, c.want)
+		}
+	}
+}

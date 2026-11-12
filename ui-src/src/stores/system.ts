@@ -84,6 +84,14 @@ export function useSystem() {
   async function mtRecheck(): Promise<void> {
     await api('POST', '/system/mt-recheck', {});
   }
+  // Уровень лога MT (rev22 форка): кноб на «Системе» - поднять для
+  // диагностики, вернуть назад; форк применяет сразу и пишет в свой конфиг
+  async function mtLogLevel(): Promise<{ level: string; mtCapable: boolean }> {
+    return api<{ level: string; mtCapable: boolean }>('GET', '/mt/loglevel');
+  }
+  async function setMtLogLevel(level: string): Promise<void> {
+    await api('PUT', '/mt/loglevel', { level });
+  }
   // lifecycle ядра: start|stop|restart|enable|disable|uninstall
   async function corePower(id: string, action: string): Promise<CoreInfo> {
     const r = await api<{ core: CoreInfo }>('POST', `/cores/${id}/power`, { action });
@@ -132,5 +140,5 @@ export function useSystem() {
       return null;
     }
   }
-  return { state, cores, upd, refresh, refreshCores, start, stop, checkUpdate, coreSources, install, setSingboxMode, setSingboxCache, corePower, mtRestart, mtRecheck, analyzeCoreBinary, applyCoreBinary, coreDownloads, enginesDiag };
+  return { state, cores, upd, refresh, refreshCores, start, stop, checkUpdate, coreSources, install, setSingboxMode, setSingboxCache, corePower, mtRestart, mtRecheck, mtLogLevel, setMtLogLevel, analyzeCoreBinary, applyCoreBinary, coreDownloads, enginesDiag };
 }

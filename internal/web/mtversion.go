@@ -108,6 +108,15 @@ func (s *Server) mtDnsHostsCapable(ctx context.Context) bool {
 	return false
 }
 
+// mtLogLevelCapable - форк умеет смену уровня лога на лету (rev22+):
+// GET/PUT /api/v1/app/loglevel, кноб «Уровень лога MT» в панели.
+func (s *Server) mtLogLevelCapable(ctx context.Context) bool {
+	if v, err := s.mtClient().GetVersion(ctx); err == nil && v != "" {
+		return magitrickle.MtLogLevelSupported(v)
+	}
+	return false
+}
+
 func (s *Server) mtDnsZonesCapable(ctx context.Context) bool {
 	if v, err := s.mtClient().GetVersion(ctx); err == nil && v != "" {
 		return magitrickle.DnsZonesSupported(v)

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { UiBadge, UiButton, UiCard, UiDialog, UiHint, UiIcon, UiTable } from '../../components/ui'
+import { UiBadge, UiButton, UiCard, UiDialog, UiHint, UiIcon, UiSelect, UiTable } from '../../components/ui'
 import { useStatus } from '../../stores/status'
 import { useGroups } from '../../stores/groups'
 import { useSystem } from '../../stores/system'
@@ -23,6 +23,7 @@ const sys = useSystem();
 // (легаси refreshSystem)
 onMounted(() => {
   void sys.start(60000);
+  void loadMtLogLevel();
 });
 onBeforeUnmount(() => {
   sys.stop();
@@ -82,6 +83,41 @@ async function mtRecheck(): Promise<void> {
     push(e instanceof Error ? e.message : String(e), true);
   } finally {
     mtRecheckBusy.value = false;
+  }
+}
+
+// Уровень лога MT (rev22 форка): шум WRN dns-proxy забивал syslog OpenWrt
+// (кейс Вячеслава 12.11); из панели - поднять для диагностики и вернуть
+// назад. Уровень переживает рестарт MT, контрол только у rev22+.
+const mtLog = ref<{ level: string; mtCapable: boolean }>({ level: '', mtCapable: false });
+const mtLogBusy = ref(false);
+const MT_LOG_LEVELS = [
+  { value: 'trace', label: 'trace - всё' },
+  { value: 'debug', label: 'debug - подробный' },
+  { value: 'info', label: 'info - обычный' },
+  { value: 'warn', label: 'warn - только проблемы' },
+  { value: 'error', label: 'error - почти тишина' },
+];
+async function loadMtLogLevel(): Promise<void> {
+  try {
+    mtLog.value = await sys.mtLogLevel();
+  } catch {
+    mtLog.value = { level: '', mtCapable: false }; // MT недоступен - контрол скрыт
+  }
+}
+async function setMtLogLevel(level: string): Promise<void> {
+  if (mtLogBusy.value) return;
+  const prev = mtLog.value.level;
+  mtLog.value.level = level; // оптимистично - селект не мигает
+  mtLogBusy.value = true;
+  try {
+    await sys.setMtLogLevel(level);
+    push(`Уровень лога MT: ${level}`, false);
+  } catch (e) {
+    mtLog.value.level = prev;
+    push(e instanceof Error ? e.message : String(e), true);
+  } finally {
+    mtLogBusy.value = false;
   }
 }
 
@@ -229,6 +265,23 @@ const resultOpen = computed({
       </template>
     </UiTable>
 
+    <!-- кноб уровня лога MT: только rev22+ форка; «NXDOMAIN-шум в syslog -
+         норма» владелец подтвердил 12.11, для диагностики уровень поднимают -->
+    <div
+      v-if="mtLog.mtCapable"
+      class="mtlog"
+    >
+      <span class="mtlog-label">уровень лога MT</span>
+      <UiSelect
+        v-model="mtLog.level"
+        bare
+        :busy="mtLogBusy"
+        :options="MT_LOG_LEVELS"
+        tooltip="debug/trace - подробный журнал MagiTrickle для диагностики; info - обычный режим; warn/error - только проблемы. Уровень переживает рестарт MT."
+        @update:model-value="setMtLogLevel"
+      />
+    </div>
+
     <SystemCores
       :busy-id="busyId"
       :run-install="runInstall"
@@ -295,6 +348,17 @@ const resultOpen = computed({
   min-width: 0;
 }
 .ver {
+  color: var(--dim);
+}
+.mtlog {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
+  font-size: 12.5px;
+}
+.mtlog-label {
+  flex: none;
   color: var(--dim);
 }
 .rstitle {

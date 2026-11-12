@@ -573,3 +573,32 @@ describe('SystemView: перезапуск MagiTrickle', () => {
     w.unmount();
   });
 });
+
+// Кноб «Уровень лога MT» (rev22 форка): шум WRN dns-proxy забивал syslog
+// OpenWrt (кейс Вячеслава 12.11) - из панели уровень поднимают для
+// диагностики и возвращают; на старых ревизиях контрола нет
+describe('SystemView - уровень лога MT', () => {
+  it('capable: кноб виден, выбор уровня уходит PUT-ом на /mt/loglevel', async () => {
+    const { w, f } = await makeView({ '/mt/loglevel': { level: 'info', mtCapable: true } });
+    const knob = w.findAll('.psel-btn').find((b) => b.text().includes('info'));
+    expect(knob).toBeTruthy();
+    await knob!.trigger('click');
+    await nextTick();
+    const opt = w.findAll('.psel-item').find((b) => b.text().includes('debug'));
+    expect(opt).toBeTruthy();
+    await opt!.trigger('click');
+    await vi.waitFor(() => {
+      const put = f.mock.calls.find((c) => (c[0] as string).endsWith('/mt/loglevel') && c[1]?.method === 'PUT');
+      expect(put).toBeTruthy();
+      expect(JSON.parse(put![1]!.body as string)).toEqual({ level: 'debug' });
+    });
+    w.unmount();
+  });
+
+  it('старый форк (mtCapable=false): контрола нет', async () => {
+    const { w, f } = await makeView({ '/mt/loglevel': { level: '', mtCapable: false } });
+    expect(w.find('.mtlog').exists()).toBe(false);
+    expect(f.mock.calls.some((c) => (c[0] as string).endsWith('/mt/loglevel') && c[1]?.method === 'PUT')).toBe(false);
+    w.unmount();
+  });
+});
