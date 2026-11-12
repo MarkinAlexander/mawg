@@ -10,6 +10,9 @@ import (
 
 	"mawg/internal/dnsprobe"
 	"mawg/internal/magitrickle"
+	"mawg/internal/platform/fake"
+	"mawg/internal/rotator"
+	"mawg/internal/store"
 )
 
 // normalizeUpstream: bare host -> host:53, ipv6, явный порт; мусор - ошибка
@@ -368,5 +371,37 @@ func TestBestOfPasses(t *testing.T) {
 	got = bestOfPasses(nil, second)
 	if len(got) != 2 || got[0].Level != "L2" || got[1].Level != "L4" {
 		t.Fatalf("порядок уровней потерян: %+v", got)
+	}
+}
+
+// Tunnel в политике - имя ПУЛА: группа dns-tunnel должна смотреть на
+// устройство пула (аудит мёртвых ссылок 12.11: писалось имя пула -
+// группа смотрела в несуществующий интерфейс "warp" вместо nwg2,
+// запросы к DoT/DoH не заворачивались в туннель)
+func TestDnsPolicyTunnelPoolNameResolvesToDevice(t *testing.T) {
+	magitrickle.SetShadowStorage(nil, nil)
+	fm := &fakeMT{version: "0.8.2-rev8-mawgfix1"}
+	mt := httptest.NewServer(fm.handler())
+	t.Cleanup(mt.Close)
+	fb := fake.New()
+	fb.ShellFn = dnsShellStub("dhcp.@dnsmasq[0].server='127.0.0.1#3553'\n")
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreatePool("dns-warp", store.PoolSettings{Platform: store.PlatformOpenwrt}); err != nil {
+		t.Fatal(err)
+	}
+	engine := rotator.New(st, fb, nil)
+	srv := httptest.NewServer(New(st, engine, fb, magitrickle.New(mt.URL), "test", nil).Handler())
+	t.Cleanup(srv.Close)
+
+	code, out := putJSON(t, srv.URL+"/api/v1/dns/policy",
+		`{"enabled":true,"primary":["8.8.8.8"],"tunnel":"dns-warp","fallback":["1.1.1.1:5353"],"yandex":false,"provider":false}`)
+	if code != http.StatusOK {
+		t.Fatalf("PUT: status=%d out=%+v", code, out)
+	}
+	if len(fm.groupPuts) != 1 || !strings.Contains(fm.groupPuts[0], "dns-tunnel@dns_warp") {
+		t.Fatalf("группа должна смотреть на устройство пула (dns_warp): %v", fm.groupPuts)
 	}
 }

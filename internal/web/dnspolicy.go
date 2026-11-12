@@ -383,7 +383,15 @@ func (s *Server) putDnsPolicy(w http.ResponseWriter, r *http.Request) {
 		for _, h := range failed {
 			s.store.LogEvent("dns", "policy", "адрес "+h+" не разрезолвился для статики dns-tunnel (применю без него; повторите позже)")
 		}
-		if _, err := s.ensureDnsTunnelGroup(r.Context(), p.Tunnel, ips); err != nil {
+		// Tunnel - имя ПУЛА: группе нужно устройство (аудит мёртвых
+		// ссылок 12.11: писалось имя пула - dns-tunnel смотрел на
+		// несуществующий интерфейс "warp" вместо nwg2, DoT/DoH не
+		// заворачивались в туннель)
+		tunnelDev := p.Tunnel
+		if tp, ok := s.store.Pool(p.Tunnel); ok {
+			tunnelDev = tp.DeviceName()
+		}
+		if _, err := s.ensureDnsTunnelGroup(r.Context(), tunnelDev, ips); err != nil {
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 			return
 		}
