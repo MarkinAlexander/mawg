@@ -40,6 +40,7 @@ type Engine struct {
 	actMu       sync.Mutex
 	lastApply   map[string]time.Time
 	extFails    map[string]int
+	extOks      map[string]int
 	extSamples  map[string]*probeCacheEntry
 	wanCache    wanCacheEntry
 	mtHealAt    time.Time
@@ -107,6 +108,7 @@ func New(st *store.Store, b platform.Backend, mt *magitrickle.Client) *Engine {
 		wake:          make(chan string, 32),
 		lastApply:     map[string]time.Time{},
 		extFails:      map[string]int{},
+		extOks:        map[string]int{},
 		extSamples:    map[string]*probeCacheEntry{},
 		probeCache:    map[string]*probeCacheEntry{},
 		tunnelAddrs:   map[string]string{},

@@ -49,6 +49,12 @@ func (e *Engine) syncCascadeHooks() {
 
 const extMemberFailThreshold = 2
 
+// доверие внешнему члену возвращается только после стольких успехов
+// подряд: одиночное «ок» флапающего туннеля не должно обнулять счётчик
+// провалов и возвращать бандл (кейс владельца 12.11: tun9 wdttc флапает,
+// ТГ рвётся в мёртвых окнах, пока бандл «залипает» на одиночном ок)
+const extMemberOkThreshold = 3
+
 func (e *Engine) memberDeviceHealth(member string, slots []platform.SlotInfo) (device string, healthy bool, external bool, sample *probeCacheEntry) {
 	if p, ok := e.store.Pool(member); ok {
 		if p.Disabled {
@@ -112,23 +118,32 @@ func (e *Engine) checkBundles() {
 		sel := ""
 		for _, m := range b.Members {
 			dev, healthy, external, sample := e.memberDeviceHealth(m, slots)
-			if external && slotsErr == nil && !healthy {
+			if external && slotsErr == nil {
 				key := b.Name + "/" + m
 				if sample == nil || e.extSamples[key] != sample {
-					e.extFails[key]++
 					e.extSamples[key] = sample
+					if healthy {
+						e.extOks[key]++
+						if e.extOks[key] >= extMemberOkThreshold {
+							delete(e.extFails, key) // стабильно жив
+						}
+					} else {
+						delete(e.extOks, key)
+						e.extFails[key]++
+					}
 				}
-				if e.extFails[key] < extMemberFailThreshold {
-					if dev == cur {
+				trusted := healthy && e.extFails[key] < extMemberFailThreshold
+				if !trusted {
+					// текущий член держится до порога провалов (одна плохая
+					// проба - не повод дёргать) или до набора доверия
+					if dev == cur && (healthy || e.extFails[key] < extMemberFailThreshold) {
 						sel = dev
 						break
 					}
 					continue
 				}
-			}
-			if external && healthy {
-				delete(e.extFails, b.Name+"/"+m)
-				delete(e.extSamples, b.Name+"/"+m)
+				sel = dev
+				break
 			}
 			if healthy {
 				sel = dev

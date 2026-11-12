@@ -663,3 +663,61 @@ func TestMemberDeviceHealthForeignTunnel(t *testing.T) {
 		t.Fatal("упавшая проба чужого туннеля должна быть unhealthy")
 	}
 }
+
+// Гистерезис доверия внешнего члена бандла: одиночные «ок» флапающего
+// туннеля не обнуляют счётчик провалов и не возвращают бандл (кейс
+// владельца 12.11: tun9 wdttc флапает, ТГ рвётся в мёртвых окнах).
+// Текущий член держится до порога провалов (2), возврат - после трёх
+// успехов подряд.
+func TestBundleForeignTunnelTrustHysteresis(t *testing.T) {
+	st, fb, cl := setup(t, store.FallbackDirect)
+	if err := st.SetIfaceMode("tun9", store.IfaceExternal); err != nil {
+		t.Fatal(err)
+	}
+	probe := store.ProbeConfig{Target: "8.8.8.8", MaxRTTms: 500}
+	if err := st.SetIfaceProbe("tun9", &probe); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateBundle(store.Bundle{Name: "tg", Members: []string{"tun9", "proton"}, Groups: []string{"g1"}}); err != nil {
+		t.Fatal(err)
+	}
+	e := newEngine(st.Store, fb, cl, "")
+	fb.TunnelsOverride = []platform.SlotInfo{{Device: "tun9", LinkUp: true}}
+	state := func() string { return st.BundleState("tg").Member }
+	setProbe := func(ok bool) {
+		cl.Add(31 * time.Second) // свежий сэмпл пробы (TTL кэша 30с)
+		fb.DeviceProbe["tun9"] = fake.DevProbe{OK: ok, RTTms: 100}
+	}
+
+	setProbe(true)
+	e.checkBundles()
+	if state() != "tun9" {
+		t.Fatalf("живой tun9 - бандл на tun9, state=%s", state())
+	}
+
+	setProbe(false) // первая плохая - текущего не дёргаем
+	e.checkBundles()
+	if state() != "tun9" {
+		t.Fatalf("после первой плохой пробы текущий держится: %s", state())
+	}
+
+	setProbe(false) // вторая подряд - уводим на proton (его устройство nwg2 в фейке)
+	e.checkBundles()
+	if state() != "nwg2" {
+		t.Fatalf("две плохие подряд - бандл на proton: %s", state())
+	}
+
+	setProbe(true) // одиночное ок - доверия нет, остаёмся на proton
+	e.checkBundles()
+	if state() != "nwg2" {
+		t.Fatalf("одиночное ок не должно возвращать на tun9: %s", state())
+	}
+
+	setProbe(true)
+	e.checkBundles()
+	setProbe(true) // третий успех подряд - доверие восстановлено
+	e.checkBundles()
+	if state() != "tun9" {
+		t.Fatalf("три ок подряд - возврат на tun9: %s", state())
+	}
+}
