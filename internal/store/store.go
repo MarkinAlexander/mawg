@@ -100,6 +100,12 @@ func (s *Store) RenamePool(oldName, newName string) (Pool, error) {
 		}
 	}
 	for i := range s.root.Pools {
+		// фоллбек "pool:имя" других пулов тоже следует за именем: иначе
+		// после rename молча вёл в несуществующий пул (fallback уходил
+		// direct с событием - семантика менялась без ведома владельца)
+		if s.root.Pools[i].Settings.Fallback == FallbackPoolPrefix+oldName {
+			s.root.Pools[i].Settings.Fallback = FallbackPoolPrefix + clean
+		}
 		sc := s.root.Pools[i].Settings.SmartCascade
 		if sc == nil {
 			continue
@@ -108,6 +114,25 @@ func (s *Store) RenamePool(oldName, newName string) (Pool, error) {
 			if v == oldName {
 				sc.Via[j] = clean
 			}
+		}
+	}
+	// пути зонного DNS (зона -> пул-туннель), участники бандлов и реестр
+	// привязок устройств - те же ссылки на имя пула
+	for i := range s.root.Settings.DnsZones {
+		if s.root.Settings.DnsZones[i].Pool == oldName {
+			s.root.Settings.DnsZones[i].Pool = clean
+		}
+	}
+	for bi := range s.root.Bundles {
+		for j, m := range s.root.Bundles[bi].Members {
+			if m == oldName {
+				s.root.Bundles[bi].Members[j] = clean
+			}
+		}
+	}
+	for i := range s.root.Settings.DeviceBindings {
+		if s.root.Settings.DeviceBindings[i].Pool == oldName {
+			s.root.Settings.DeviceBindings[i].Pool = clean
 		}
 	}
 	if st := s.state.Pools[oldName]; st != nil {

@@ -744,6 +744,8 @@ export interface BundleView {
   groups: string[]
   currentMember?: string
   memberDevices: Record<string, string>
+  // мёртвые ссылки набора: участник/группа, которых больше нет
+  issues?: string[]
 }
 
 // --- пулы: слоты/разбор ссылок/состав (Ф3.5б) ---

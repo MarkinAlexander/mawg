@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  UiBadge, UiButton, UiCard, UiDialog, UiHelp, UiHint, UiIcon, UiInput,
+  UiBadge, UiBanner, UiButton, UiCard, UiDialog, UiHelp, UiHint, UiIcon, UiInput,
   UiSelect, type UiSelectOption, UiSwitch,
 } from '../../components/ui'
 import { useBundles } from '../../stores/bundles'
@@ -474,6 +474,15 @@ async function saveWan(): Promise<void> {
       >
         <UiIcon name="trash" />
       </UiButton>
+      <!-- мёртвые ссылки (группа пересоздана, участник удалён): набор
+           при этом молча не переключается - показываем причину прямо тут -->
+      <UiBanner
+        v-for="(iss, i) in b.issues || []"
+        :key="i"
+        class="bundissue"
+        kind="err"
+        :text="iss"
+      />
     </div>
   </UiCard>
 
@@ -609,6 +618,9 @@ async function saveWan(): Promise<void> {
 }
 .bundrow:last-of-type {
   border-bottom: 0;
+}
+.bundissue {
+  width: 100%;
 }
 .bundname {
   min-width: 60px;

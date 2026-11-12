@@ -59,3 +59,53 @@ func TestRenamePoolRewritesCascadeRefs(t *testing.T) {
 		t.Fatalf("Via после переименования warp: %+v", cs)
 	}
 }
+
+// переименование пула перепривязывает ВСЕ ссылки на имя: фоллбек
+// "pool:имя" других пулов, путь зонного DNS, участники бандлов и
+// реестр привязок устройств - иначе каждая из них молча вела в
+// несуществующий пул (аудит dangling-ссылок, кейс 12.11)
+func TestRenamePoolRewritesAllNameRefs(t *testing.T) {
+	st, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []string{"proton", "warp"} {
+		if _, err := st.CreatePool(n, PoolSettings{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.UpdatePool("warp", PoolSettings{Fallback: "pool:proton"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetDnsZones([]DnsZone{{ID: "z1", Zone: "corp.example", Upstreams: []string{"10.0.0.1:53"}, Pool: "proton", Enable: true}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateBundle(Bundle{Name: "tg", Members: []string{"proton", "tun9"}, Groups: []string{"g1"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetDeviceBindings([]DeviceBinding{{Pool: "proton", IPs: []string{"192.168.1.50/32"}, Name: "Устройство: телефон"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := st.RenamePool("proton", "proton2"); err != nil {
+		t.Fatal(err)
+	}
+
+	p, ok := st.Pool("warp")
+	if !ok || p.Settings.Fallback != "pool:proton2" {
+		t.Fatalf("fallback после переименования: %+v", p.Settings.Fallback)
+	}
+	if zs := st.DnsZones(); zs[0].Pool != "proton2" {
+		t.Fatalf("пул зоны после переименования: %+v", zs[0].Pool)
+	}
+	for _, bundle := range st.Bundles() {
+		if bundle.Name == "tg" && (len(bundle.Members) != 2 || bundle.Members[0] != "proton2") {
+			t.Fatalf("участники бандла после переименования: %v", bundle.Members)
+		}
+	}
+	for _, bnd := range st.DeviceBindings() {
+		if bnd.Pool != "proton2" {
+			t.Fatalf("привязка устройства после переименования: %+v", bnd)
+		}
+	}
+}
