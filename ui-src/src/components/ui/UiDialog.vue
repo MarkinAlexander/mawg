@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { dialogBackClose, dialogBackOpen } from './dialogBack'
+import UiBusyOverlay from './UiBusyOverlay.vue'
 
 // Модальный диалог на нативном <dialog> (паритет legacy: панельный фон,
 // ::backdrop, busy гасит контент как dialog.busy > form). jsdom не всегда
@@ -10,12 +11,15 @@ const props = withDefaults(
     open: boolean
     title: string
     busy?: boolean
+    // текст оверлея «идёт применение» поверх гашения контента (118):
+    // медленные сохранения/установки должны показывать, что они живы
+    busyText?: string
     width?: string
     // locked запрещает закрытие по Esc/клику на backdrop (легаси
     // dlgUpdate/dlgAuth: dialog 'cancel' -> preventDefault)
     locked?: boolean
   }>(),
-  { busy: false, width: undefined, locked: false },
+  { busy: false, busyText: undefined, width: undefined, locked: false },
 )
 
 const emit = defineEmits<{ 'update:open': [value: boolean] }>()
@@ -110,6 +114,10 @@ onBeforeUnmount(() => {
       >
         <slot name="footer" />
       </div>
+      <UiBusyOverlay
+        :show="props.busy"
+        :text="props.busyText"
+      />
     </div>
   </dialog>
 </template>
@@ -138,11 +146,12 @@ h3 {
   padding: 18px;
   display: grid;
   gap: 10px;
+  position: relative; /* якорь оверлея «идёт применение» (118) */
 }
 .dcontent.busy {
-  opacity: 0.55;
+  /* гашение делает фон оверлея UiBusyOverlay: прозрачность тут давила бы
+     и сам оверлей со спиннером (он внутри dcontent) */
   pointer-events: none;
-  transition: opacity 0.2s;
 }
 .btnrow {
   display: flex;

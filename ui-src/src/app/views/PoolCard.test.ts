@@ -259,6 +259,29 @@ describe('PoolCard - мутации', () => {
     w.unmount();
   });
 
+  it('пока операция висит - оверлей «идёт применение» на карточке (118, слово владельца 14.11)', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const f = vi.fn(async (url: string, init?: { method?: string; body?: unknown }) => {
+      if ((url as string).endsWith('/pools/proton/rotate')) {
+        await gate; // ротатор применяет - ответ не спешит
+        return new Response('{"ok":true}', { status: 200 });
+      }
+      if ((url as string).endsWith('/status')) {
+        return new Response(JSON.stringify(statusFor()), { status: 200 });
+      }
+      if (typeof init?.body === 'string') return new Response(init.body, { status: 200 });
+      return new Response('{"ok":true}', { status: 200 });
+    });
+    vi.stubGlobal('fetch', f);
+    const w = makeCard(nativePool);
+    await btn(w, 'Сменить конфиг')[0].trigger('click');
+    expect(w.text()).toContain('смена конфига…');
+    release();
+    await vi.waitFor(() => expect(w.text()).not.toContain('смена конфига…'));
+    w.unmount();
+  });
+
   it('удалить пул: confirm -> DELETE', async () => {
     const f = stub();
     vi.stubGlobal('fetch', f);

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { UiBadge, UiBanner, UiButton, UiCard, UiHelp, UiHint, UiIcon, UiInput, UiSelect, type UiSelectOption, UiSwitch } from '../../components/ui'
+import { UiBadge, UiBanner, UiBusyOverlay, UiButton, UiCard, UiHelp, UiHint, UiIcon, UiInput, UiSelect, type UiSelectOption, UiSwitch } from '../../components/ui'
 import { useConfirm } from '../../stores/confirm'
 import { useGroups } from '../../stores/groups'
 import { useStatus } from '../../stores/status'
@@ -32,6 +32,17 @@ const a = usePoolActions();
 const secrets = useSecrets();
 
 const busy = ref(''); // «name:act» - одна busy-кнопка за раз (легаси withBusy)
+// оверлей «идёт применение» на всю карточку (118, слово владельца
+// 14.11: операция может висеть секундами - пересборка движка, проверка,
+// генерация WARP - надо видеть, что она жива)
+const cardBusyText = computed(() => {
+  const k = busy.value.slice(props.pool.name.length + 1);
+  if (k === 'check') return 'идёт проверка соединения…';
+  if (k === 'rotate') return 'смена конфига…';
+  if (k === 'warpgen') return 'генерация конфига WARP…';
+  if (k === 'del') return 'удаляю пул…';
+  return 'идёт применение настроек…';
+});
 // исключения (94-док): пуловые - из настроек пула, общие - из глобального
 // списка (действуют на все пулы); на карточке видно объединение
 const groups = useGroups();
@@ -298,6 +309,7 @@ async function doSwitchCountry(): Promise<void> {
 
 <template>
   <UiCard
+    class="busyroot"
     :title="pool.name"
     :subtitle="sub"
   >
@@ -330,6 +342,12 @@ async function doSwitchCountry(): Promise<void> {
       </UiButton>
       <UiHelp :text="G.pool" />
     </template>
+
+    <!-- медленная операция - вся карточка затемняется с оверлеем -->
+    <UiBusyOverlay
+      :show="!!busy"
+      :text="cardBusyText"
+    />
 
     <div class="kv">
       <!-- secret динамически: только адрес из конфигов; «проверка» и
@@ -530,6 +548,10 @@ async function doSwitchCountry(): Promise<void> {
 </template>
 
 <style scoped>
+.card.busyroot {
+  position: relative;
+}
+
 .actions .enstate {
   color: var(--dim);
   font-size: 11px;

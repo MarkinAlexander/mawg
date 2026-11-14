@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { UiBadge, UiButton, UiHelp, UiHint, UiInput, UiSelect, UiSwitch, type UiSelectOption } from '../../components/ui'
+import { UiBadge, UiBusyOverlay, UiButton, UiHelp, UiHint, UiInput, UiSelect, UiSwitch, type UiSelectOption } from '../../components/ui'
 import { usePoolActions } from '../../stores/pools'
 import { useToast } from '../../stores/toast'
 import { G } from '../glossary'
@@ -18,6 +18,16 @@ const { push } = useToast();
 const a = usePoolActions();
 
 const busy = ref(''); // «pool:act» - одна busy-кнопка секции за раз
+// оверлей «идёт применение» (118, слово владельца 14.11: смена режима
+// висела на несколько секунд без всякого фидбека, пока движок пересобирается)
+const busyText = computed(() => {
+  const k = busy.value.slice(props.pool.name.length + 1);
+  if (k === 'retest') return 'перемер задержек узлов…';
+  if (k === 'nodeoff') return 'пересобираю пул…';
+  if (k === 'nodeorder') return 'применяю порядок узлов…';
+  if (k === 'selnode') return 'выбираю узел…';
+  return 'идёт применение настроек…';
+});
 async function run(key: string, fn: () => Promise<void>): Promise<void> {
   if (busy.value) return;
   busy.value = key;
@@ -154,6 +164,10 @@ const modeOptions = groupModeDrawerOptions as UiSelectOption[];
       v-if="engineErr"
       :text="'ошибка: ' + engineErr"
     />
+    <UiBusyOverlay
+      :show="!!busy"
+      :text="busyText"
+    />
     <div class="moderow">
       <UiSelect
         v-model="modeSel"
@@ -288,6 +302,7 @@ const modeOptions = groupModeDrawerOptions as UiSelectOption[];
 <style scoped>
 .cfg {
   margin-top: 10px;
+  position: relative; /* якорь оверлея «идёт применение» */
 }
 .cfg summary {
   cursor: pointer;

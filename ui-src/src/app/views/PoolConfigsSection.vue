@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { UiBadge, UiButton, UiHelp, UiHint, UiSwitch } from '../../components/ui'
+import { UiBadge, UiBusyOverlay, UiButton, UiHelp, UiHint, UiSwitch } from '../../components/ui'
 import { usePoolActions } from '../../stores/pools'
 import { useToast } from '../../stores/toast'
 import { useSecrets } from '../secrets'
@@ -17,6 +17,10 @@ const secrets = useSecrets();
 const isEng = computed(() => props.pool.settings.engineMode === 'singbox');
 
 const busy = ref(''); // «act» - одна busy-кнопка секции за раз
+// оверлей «идёт применение» (118): загрузка/активация могут висеть
+// секундами - движок или ротатор применяют, надо видеть что живо
+const busyText = computed(() =>
+  busy.value.endsWith(':upload') ? 'загрузка конфигов…' : 'идёт применение настроек…');
 async function run(key: string, fn: () => Promise<void>): Promise<void> {
   if (busy.value) return;
   busy.value = key;
@@ -76,6 +80,10 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
       Конфиги ({{ (pool.configs || []).length }})<UiHelp :text="G.rotation" />
     </summary>
     <UiHint text="порядок списка = приоритет ротации, выше = раньше" />
+    <UiBusyOverlay
+      :show="!!busy"
+      :text="busyText"
+    />
     <!-- зона добавления - НАД списком: с десятками конфигов её
          не надо искать в самом низу (слово владельца 30.10) -->
     <div
@@ -213,6 +221,7 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
 <style scoped>
 .cfg {
   margin-top: 10px;
+  position: relative; /* якорь оверлея «идёт применение» */
 }
 .cfg summary {
   cursor: pointer;

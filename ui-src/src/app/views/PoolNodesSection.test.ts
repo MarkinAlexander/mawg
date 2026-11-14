@@ -155,4 +155,32 @@ describe('PoolNodesSection - селект режима в дровере (118 TA
       expect(useToast().toasts.list.some((t) => t.text.includes('Режим группы: по порядку'))).toBe(true));
     w.unmount();
   });
+
+  it('пока движок пересобирается - оверлей «идёт применение» на дровере (118, слово владельца 14.11)', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const stub = engineStub(payloadUrltest);
+    const base = stub.f;
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: { method?: string; body?: string }) => {
+      if ((url as string).endsWith('/pools/free') && init?.method === 'PUT') {
+        await gate; // пересборка движка висит - ответ не спешит
+        stub.state.groupMode = 'fallback'; // как сделал бы настоящий бэкенд
+        return new Response('{"ok":"updated"}', { status: 200 });
+      }
+      return base(url, init);
+    }));
+    const w = mount(PoolNodesSection, { props: { pool: { ...enginePool } } });
+    const d = w.find('details').element as HTMLDetailsElement;
+    d.open = true;
+    await w.find('details').trigger('toggle');
+    await vi.waitFor(() => expect(w.text()).toContain('узел-1'));
+    await w.find('.moderow .psel-btn').trigger('click');
+    await w.findAll('.psel-item').find((o) => o.text().includes('по порядку'))!.trigger('click');
+    // селект уже «по порядку», но ответа нет - оверлей объясняет, что живо
+    expect(w.text()).toContain('идёт применение настроек…');
+    release();
+    await vi.waitFor(() => expect(w.text()).toContain('активен первый живой узел'));
+    await vi.waitFor(() => expect(w.text()).not.toContain('идёт применение настроек…'));
+    w.unmount();
+  });
 });
