@@ -143,6 +143,10 @@ var presetSpecs = []presetSpec{
 		ID:      "geoblock",
 		Title:   "GeoBlock: доступ из РФ через VPN (ChatGPT, Claude, новости и др.)",
 		Domains: []string{"categories/geoblock.lst"},
+		// ChatGPT-подсети (OpenAI/Cloudflare) - владельческий локальный
+		// список (12.11, файл subnets4/chatgpt.lst): доменного покрытия
+		// не хватало, часть фронтенда ChatGPT ходит мимо доменных правил
+		SubnetV4: []string{"subnets4/chatgpt.lst"},
 	},
 	// Владельческие списки (dir owner/): YouTube целиком и масочная вырезка
 	// зарубежной раздачи googlevideo. Регулярки foreign-списка матчат

@@ -2,6 +2,8 @@
 # Обновляет запечённые списки пресетов из репозитория itdoginfo/allow-domains.
 # Скачивает выбранные файлы в internal/magitrickle/data/allow-domains и
 # перезаписывает MANIFEST.json (источник, коммит, дата).
+# Локальные владельческие файлы (subnets4/chatgpt.lst и пр.) в списке FILES
+# не участвуют - обновления их не трогают (12.11).
 # Запуск: sh deploy/update-presets.sh
 set -e
 

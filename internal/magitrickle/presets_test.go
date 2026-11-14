@@ -297,3 +297,39 @@ func TestOwnerPresets(t *testing.T) {
 		}
 	}
 }
+
+// GeoBlock несёт владельческие ChatGPT-подсети (12.11): доменного
+// покрытия фронтенду ChatGPT не хватало, часть ходит мимо доменных правил
+func TestGeoblockPresetHasChatGPTSubnets(t *testing.T) {
+	var gb *Preset
+	for i := range Presets {
+		if Presets[i].ID == "geoblock" {
+			gb = &Presets[i]
+			break
+		}
+	}
+	if gb == nil {
+		t.Fatal("пресет geoblock не найден")
+	}
+	// ожидания - из самого файла списка (литералы подсетей в тесте
+	// ловились gitleaks-ом как IPv4)
+	want := map[string]bool{}
+	for _, ln := range readList("subnets4/chatgpt.lst", true) {
+		want[ln] = false
+	}
+	if len(want) == 0 {
+		t.Fatal("файл chatgpt.lst пуст")
+	}
+	for _, rl := range gb.Rules {
+		if rl.Type == "subnet" {
+			if _, ok := want[rl.Rule]; ok {
+				want[rl.Rule] = true
+			}
+		}
+	}
+	for rule, ok := range want {
+		if !ok {
+			t.Fatalf("подсеть %s не в geoblock", rule)
+		}
+	}
+}
