@@ -18,6 +18,7 @@ import (
 func (s *Server) installLXCore(w http.ResponseWriter, r *http.Request, flavor string, backup bool, source, workdir string) {
 	if source != "" {
 		if _, ok := singbox.SourceByID(source); !ok {
+			s.store.LogEvent("system", "lxcore", "установка не запущена: неизвестный источник ядра "+source)
 			writeErr(w, fmt.Errorf("неизвестный источник ядра %q", source))
 			return
 		}

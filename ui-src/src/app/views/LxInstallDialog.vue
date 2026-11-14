@@ -148,6 +148,35 @@ watch(() => dlg.value?.source, (id) => {
   }
 });
 
+// копирование результата: модалка залочена - выделение мышью с отпусканием
+// мимо панели раньше закрывало её вместе с ошибкой (кейс владельца 14.11)
+const copied = ref(false);
+async function copyResult(): Promise<void> {
+  const d = dlg.value;
+  if (!d) return;
+  const text = (d.ok ? 'Установлено' : 'Ошибка установки')
+    + (d.sourceNote ? '\nисточник: ' + d.sourceNote : '')
+    + '\n' + d.out;
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      ta.remove();
+    }
+    copied.value = true;
+    setTimeout(() => (copied.value = false), 2000);
+  } catch {
+    // буфер запрещён - текст остаётся в модалке, выделяется руками
+  }
+}
+
 async function runInstall(payload: { id: string; flavor?: string; source?: string; backup?: boolean; workdir?: string }): Promise<void> {
   if (dlg.value) dlg.value.phase = 'progress';
   try {
@@ -184,7 +213,7 @@ function showResult(ok: boolean, output: string, errText: string, sourceNote: st
     v-model:open="open"
     :title="dlgTitle"
     :busy="dlg?.phase === 'progress'"
-    :locked="dlg?.phase === 'progress'"
+    :locked="dlg?.phase !== 'form'"
     width="480px"
   >
     <template v-if="dlg">
@@ -273,13 +302,19 @@ function showResult(ok: boolean, output: string, errText: string, sourceNote: st
           {{ dlg?.item?.actionLabel || 'Установить' }}
         </UiButton>
       </template>
-      <UiButton
-        v-else-if="dlg?.phase === 'result'"
-        variant="primary"
-        @click="open = false"
-      >
-        Закрыть
-      </UiButton>
+      <template v-else-if="dlg?.phase === 'result'">
+        <UiButton
+          @click="copyResult"
+        >
+          {{ copied ? 'Скопировано' : 'Копировать' }}
+        </UiButton>
+        <UiButton
+          variant="primary"
+          @click="open = false"
+        >
+          Закрыть
+        </UiButton>
+      </template>
     </template>
   </UiDialog>
 </template>

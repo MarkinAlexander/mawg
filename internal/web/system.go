@@ -65,6 +65,7 @@ func (s *Server) postSystemInstall(w http.ResponseWriter, r *http.Request) {
 		Workdir string `json:"workdir"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ID == "" {
+		s.store.LogEvent("system", "install", "установка не запущена: кривой запрос")
 		writeErr(w, fmt.Errorf("не указан id компонента"))
 		return
 	}
@@ -74,6 +75,9 @@ func (s *Server) postSystemInstall(w http.ResponseWriter, r *http.Request) {
 		req.Workdir = ""
 	}
 	if req.Workdir != "" && req.Workdir != "disk" {
+		// отказ тоже в журнал: пользователь мог пытаться несколько раз, а
+		// до установки дело не дошло - без события журнал молчал (14.11)
+		s.store.LogEvent("system", "install", "установка "+req.ID+" не запущена: кривой workdir "+req.Workdir)
 		writeErr(w, fmt.Errorf("workdir: пусто (авто) или disk"))
 		return
 	}
