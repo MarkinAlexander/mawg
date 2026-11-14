@@ -196,8 +196,9 @@ export interface PoolSettings {
   platform?: string
   engineMode?: string // "singbox" - пул через tun-движок
   engineCore?: string // "mihomo" - пул крутит второе ядро (88-док); пусто = sing-box
-  groupMode?: string // движковый пул: "selector" - ручной выбор узла; "rotate" - ротация по таймеру; "urltest" (дефолт) - лучший пинг
+  groupMode?: string // движковый пул: "selector" - ручной выбор узла; "rotate" - ротация по таймеру; "fallback" - первый живой по порядку; "urltest" (дефолт) - лучший пинг
   rotateSec?: number // интервал ротации для groupMode="rotate", сек
+  nodeOrder?: string[] // ручной порядок узлов: переживает обновление подписок, новые - в конец
   nodeOff?: Record<string, boolean> // выключенные узлы подписки (имя -> true)
   tunName?: string
   source?: string
@@ -800,6 +801,7 @@ export interface PoolMember {
 // владельца 2026-10-17: у подключений разнобой - показывать тип).
 export interface EngineNode {
   tag: string
+  name?: string // ConfName узла: ключ ручного порядка (nodeOrder)
   delay: number
   type?: string
   transport?: string
@@ -808,7 +810,7 @@ export interface EngineNode {
 
 export interface PoolEngine {
   mode: string
-  groupMode?: string // режим по настройкам mawg: urltest | selector | rotate
+  groupMode?: string // режим по настройкам mawg: urltest | selector | rotate | fallback
   now: string
   nodes: EngineNode[]
 }

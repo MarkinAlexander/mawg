@@ -405,3 +405,25 @@ func TestBuildConfigPQRealitySkipped(t *testing.T) {
 		t.Fatalf("причина не объяснена: %v", skipped)
 	}
 }
+
+// fallback рендерится как select (переключает сам mawg), default - первый
+// узел по ручному порядку
+func TestBuildConfigFallbackIsSelect(t *testing.T) {
+	spec := PoolSpec{
+		Name: "p", Tun: "tun1", TunIP: "172.19.1.1/30", MixedPort: 2382,
+		GroupMode: "fallback",
+		Nodes:     []links.Node{vlessNode("first"), vlessNode("second")},
+	}
+	data, _, err := BuildConfig([]PoolSpec{spec}, Params{ClashPort: 2391})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := parseYAML(t, data)
+	g := cfg["proxy-groups"].([]any)[0].(map[string]any)
+	if g["type"] != "select" {
+		t.Fatalf("type: %v", g["type"])
+	}
+	if g["default-selected"] != "mawg-p|first" {
+		t.Fatalf("default должен быть первым по порядку: %v", g["default-selected"])
+	}
+}

@@ -583,3 +583,36 @@ func TestBuildConfigDuplicateNodeNames(t *testing.T) {
 		t.Fatalf("оба узла обязаны попасть в конфиг: %v", seen)
 	}
 }
+
+// fallback-режим рендерится как selector (переключает сам mawg), default -
+// первый узел по ручному порядку
+func TestBuildConfigFallbackIsSelector(t *testing.T) {
+	spec := PoolSpec{Name: "demo", Tun: "tun1", TunIP: TuneIP(1), MixedPort: 2282, GroupMode: "fallback", Nodes: mustNodes(t, fakeVless)}
+	data, skipped, err := BuildConfig([]PoolSpec{spec}, Params{ClashPort: 2291})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(skipped) != 0 {
+		t.Fatalf("skipped: %v", skipped)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	nodes := mustNodes(t, fakeVless)
+	first := "mawg-demo|" + nodes[0].ConfName()
+	obs, _ := cfg["outbounds"].([]any)
+	for _, o := range obs {
+		om, _ := o.(map[string]any)
+		if om["tag"] == "mawg-demo" {
+			if om["type"] != "selector" {
+				t.Fatalf("fallback должен рендериться selector-ом: %v", om["type"])
+			}
+			if om["default"] != first {
+				t.Fatalf("default должен быть первым по порядку (%s): %v", first, om["default"])
+			}
+			return
+		}
+	}
+	t.Fatalf("группа mawg-demo не найдена: %v", obs)
+}

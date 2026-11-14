@@ -603,3 +603,17 @@ func (s *Store) MutateBundleState(name string, fn func(*BundleState)) error {
 	s.lastStateJSON = string(data)
 	return nil
 }
+
+// SetPoolNodeOrder - ручной порядок узлов движкового пула: переживает
+// обновление подписок (нормализацию делает web-слой перед записью).
+func (s *Store) SetPoolNodeOrder(name string, order []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.root.Pools {
+		if s.root.Pools[i].Name == name {
+			s.root.Pools[i].Settings.NodeOrder = order
+			return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
+		}
+	}
+	return fmt.Errorf("пул %q не найден", name)
+}

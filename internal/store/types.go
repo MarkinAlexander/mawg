@@ -100,10 +100,16 @@ type PoolSettings struct {
 	EngineDetour string `json:"engineDetour,omitempty"`
 	// GroupMode - режим группы движка (60-док): "selector" - ручной выбор
 	// узла; "rotate" - ротация по таймеру строго на рабочие узлы;
-	// пусто/"urltest" - лучший по пингу (авто, дефолт).
+	// "fallback" - первый живой по NodeOrder, при отказе - следующий,
+	// возврат на старший после стабилизации (управляет mawg); пусто/
+	// "urltest" - лучший по пингу (авто, дефолт).
 	GroupMode string `json:"groupMode,omitempty"`
 	// RotateSec - интервал ротации узлов для GroupMode="rotate" (сек).
 	RotateSec int `json:"rotateSec,omitempty"`
+	// NodeOrder - ручной порядок узлов движкового пула (ConfName-ы):
+	// переживает обновление подписок - знакомые узлы остаются на местах,
+	// новые добавляются в конец (слово владельца 13.11).
+	NodeOrder []string `json:"nodeOrder,omitempty"`
 	// NodeOff - выключенные узлы подписки (ключ - имя узла, ConfName):
 	// в конфиг движка не попадают, переживают обновление источника.
 	NodeOff map[string]bool `json:"nodeOff,omitempty"`

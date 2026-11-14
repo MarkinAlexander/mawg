@@ -430,10 +430,13 @@ func BuildConfig(pools []PoolSpec, p Params) ([]byte, []string, error) {
 			skipped = append(skipped, fmt.Sprintf("пул %s: ни один узел не подходит движку, tun не создан", spec.Name))
 			continue
 		}
-		if spec.GroupMode == "selector" || spec.GroupMode == "rotate" {
-			// rotate - тоже selector: переключает сам mawg по таймеру,
-			// строго на узлы, ответившие замеру (слово владельца
-			// 2026-10-17: ротация каждые N секунд/минут на рабочие)
+		if spec.GroupMode == "selector" || spec.GroupMode == "rotate" || spec.GroupMode == "fallback" {
+			// rotate/fallback - тоже selector: переключает сам mawg.
+			// rotate - по таймеру строго на узлы, ответившие замеру (слово
+			// владельца 2026-10-17); fallback - первый живой по порядку
+			// узлов, при отказе следующий, возврат после стабилизации
+			// (13.11). default = первый по порядку (spec.Nodes уже
+			// нормализованы по NodeOrder).
 			def := tags[0]
 			for _, t := range tags {
 				if t == spec.Selected {

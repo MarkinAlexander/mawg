@@ -163,6 +163,12 @@ export function usePoolActions() {
     await api('PUT', `/pools/${encodeURIComponent(name)}/engine/select`, { node });
     void refresh();
   }
+  // ручной порядок узлов (13.11): переживает обновление подписок (новые -
+  // в конец); пересобирает движок, чтобы порядок доехал до конфига группы
+  async function nodeOrder(name: string, order: string[]): Promise<void> {
+    await api('PUT', `/pools/${encodeURIComponent(name)}/node-order`, { order });
+    void refresh();
+  }
 
   async function engineToggle(name: string, node: string): Promise<{ ok: boolean; off: boolean }> {
     const r = await api<{ ok: boolean; off: boolean }>('POST', `/pools/${encodeURIComponent(name)}/engine/toggle`, { node });
@@ -190,7 +196,7 @@ export function usePoolActions() {
   return {
     act, del, upload, toggleCfg, moveCfg, delCfg, activateCfg, importPremium, switchPremiumCountry,
     create, createFromSource, requestFree, inspect, slots, createSlot,
-    refreshSource, update, rename, reissueFree, members, configText, engine, engineSelect, engineToggle, engineRetest, smartCascade,
+    refreshSource, update, rename, reissueFree, members, configText, engine, engineSelect, nodeOrder, engineToggle, engineRetest, smartCascade,
   };
 }
 

@@ -464,16 +464,24 @@ func BuildConfig(pools []PoolSpec, p Params) ([]byte, []string, error) {
 			},
 		)
 		g := group{Name: groupTag, Proxies: tags}
-		if spec.GroupMode == "selector" || spec.GroupMode == "rotate" {
-			// rotate - тоже select: переключает сам mawg по таймеру,
-			// строго на ответившие замеру (слово владельца 2026-10-17)
+		if spec.GroupMode == "selector" || spec.GroupMode == "rotate" || spec.GroupMode == "fallback" {
+			// rotate/fallback - тоже select: переключает сам mawg.
+			// rotate - по таймеру (2026-10-17); fallback - первый живой
+			// по порядку узлов, при отказе следующий, возврат после
+			// стабилизации (13.11). default = первый по порядку
+			// (spec.Nodes уже нормализованы по NodeOrder)
 			g.Type = "select"
+			def := ""
 			for _, t := range tags {
 				if t == spec.Selected {
-					g.DefaultSelected = t
+					def = t
 					break
 				}
 			}
+			if def == "" && spec.GroupMode == "fallback" {
+				def = tags[0]
+			}
+			g.DefaultSelected = def
 		} else {
 			g.Type = "url-test"
 			g.URL = spec.ProbeTarget

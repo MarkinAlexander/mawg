@@ -41,6 +41,8 @@ type Manager struct {
 	webPort       int
 	logEvent      func(pool, kind, msg string)
 	lastRotate    map[string]time.Time
+	lastFallback    map[string]time.Time // пул -> прошлый замер fallback-группы (не чаще 30с)
+	fallbackStreak  map[string]int       // пул -> подряд успехи старшего узла (гистерезис возврата)
 	pid           int
 	probeLoopStop chan struct{}
 	lastSpecs     []PoolSpec
@@ -71,6 +73,8 @@ func NewManagerConfig(dir string, cfg RunConfig) (*Manager, error) {
 		webPort: cfg.WebPort, logEvent: cfg.LogEvent,
 		engineLog:  platform.EngineLogPath(dir, "mihomo"),
 		lastRotate: map[string]time.Time{},
+		lastFallback: map[string]time.Time{},
+		fallbackStreak: map[string]int{},
 		statuses:   map[string]*singbox.PoolStatus{}, nodeCooldown: map[string]time.Time{}}
 	m.probeLoopStop = make(chan struct{})
 	go m.probeLoop()
@@ -311,8 +315,54 @@ func (m *Manager) probeLoop() {
 					m.rotateTimed(spec)
 				}
 			}
+			// fallback-режим: первый живой по ручному порядку узлов,
+			// при отказе - следующий, возврат на старший после стабилизации
+			if spec.GroupMode == "fallback" {
+				if prev, ok := m.lastFallback[spec.Name]; !ok || now.Sub(prev) >= 30*time.Second {
+					m.lastFallback[spec.Name] = now
+					m.fallbackTick(spec)
+				}
+			}
 		}
 	}
+}
+
+// fallbackTick - замер группы и выбор первого живого узла по порядку
+// (singbox.FallbackPick, та же логика что у sing-box). Никто не жив -
+// остаёмся на текущем.
+func (m *Manager) fallbackTick(spec singbox.PoolSpec) {
+	group := "mawg-" + spec.Name
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	delays, err := m.ClashGroupDelay(ctx, group, spec.ProbeTarget, 5*time.Second)
+	if err != nil {
+		m.note(spec.Name, "fallback не удался: "+err.Error())
+		return
+	}
+	var order []string
+	for _, n := range spec.Nodes {
+		if tag := mihomoNodeTag(n.Tag, spec.Name); tag != "" {
+			order = append(order, tag)
+		}
+	}
+	alive := make(map[string]bool, len(delays))
+	for tag := range delays {
+		alive[tag] = true
+	}
+	cur := ""
+	if proxies, err := m.ClashProxies(ctx); err == nil {
+		cur = proxies[group].Now
+	}
+	pick, sw, streak := singbox.FallbackPick(order, alive, cur, m.fallbackStreak[spec.Name])
+	m.fallbackStreak[spec.Name] = streak
+	if !sw {
+		return
+	}
+	if err := m.ClashSelect(ctx, group, pick); err != nil {
+		m.note(spec.Name, "fallback не удался: "+err.Error())
+		return
+	}
+	m.note(spec.Name, "fallback: активен "+pick)
 }
 
 // rotateTimed - очередной переход таймерной ротации на следующего рабочего.

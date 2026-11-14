@@ -250,8 +250,8 @@ func (s *Server) updatePool(w http.ResponseWriter, r *http.Request) {
 		merged.MagitrickleGroupID = patch.MagitrickleGroupID
 	}
 	if patch.GroupMode != "" {
-		if patch.GroupMode != "urltest" && patch.GroupMode != "selector" && patch.GroupMode != "rotate" {
-			writeErr(w, fmt.Errorf("groupMode: urltest|selector|rotate"))
+		if patch.GroupMode != "urltest" && patch.GroupMode != "selector" && patch.GroupMode != "rotate" && patch.GroupMode != "fallback" {
+			writeErr(w, fmt.Errorf("groupMode: urltest|selector|rotate|fallback"))
 			return
 		}
 		merged.GroupMode = patch.GroupMode

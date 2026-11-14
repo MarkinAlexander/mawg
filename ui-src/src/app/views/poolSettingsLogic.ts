@@ -21,6 +21,7 @@ export const groupModeOptions: UiSelectOption[] = [
   { value: 'urltest', label: 'лучший пинг (авто)' },
   { value: 'selector', label: 'ручной выбор узла' },
   { value: 'rotate', label: 'ротация по таймеру (только рабочие)' },
+  { value: 'fallback', label: 'по порядку: первый живой, при отказе - следующий' },
 ];
 export const coreOptions: UiSelectOption[] = [
   { value: '', label: 'sing-box' },

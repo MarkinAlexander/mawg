@@ -477,6 +477,46 @@ type engineSpec struct {
 	spec singbox.PoolSpec
 }
 
+// applyNodeOrder - ручной порядок узлов (PoolSettings.NodeOrder):
+// знакомые узлы остаются на местах, новые добавляются в конец, исчезнувшие
+// выпадают. Нормализованный список сохраняется в стор - порядок переживает
+// обновление подписок (слово владельца 13.11). Без NodeOrder - как в
+// подписке.
+func (s *Server) applyNodeOrder(p store.Pool, nodes []links.Node) []links.Node {
+	order := p.Settings.NodeOrder
+	if len(order) == 0 || len(nodes) == 0 {
+		return nodes
+	}
+	idx := make(map[string]int, len(nodes))
+	for i, n := range nodes {
+		idx[n.ConfName()] = i
+	}
+	ordered := make([]links.Node, 0, len(nodes))
+	seen := make(map[string]bool, len(nodes))
+	for _, cn := range order {
+		if i, ok := idx[cn]; ok && !seen[cn] {
+			ordered = append(ordered, nodes[i])
+			seen[cn] = true
+		}
+	}
+	for _, n := range nodes {
+		if !seen[n.ConfName()] {
+			ordered = append(ordered, n)
+			seen[n.ConfName()] = true
+		}
+	}
+	fresh := make([]string, 0, len(ordered))
+	for _, n := range ordered {
+		fresh = append(fresh, n.ConfName())
+	}
+	if strings.Join(fresh, "|") != strings.Join(order, "|") {
+		if err := s.store.SetPoolNodeOrder(p.Name, fresh); err == nil {
+			p.Settings.NodeOrder = fresh
+		}
+	}
+	return ordered
+}
+
 // engineSpecs собирает спецификации ВСЕХ движковых пулов (оба ядра) -
 // общая сборка, ядро определяет EngineCore пула. Задвоение tun ловится
 // здесь же, до каких-либо менеджеров.
@@ -526,6 +566,7 @@ func (s *Server) engineSpecs() ([]engineSpec, error) {
 				}
 				spec.Nodes = kept
 			}
+			spec.Nodes = s.applyNodeOrder(p, spec.Nodes)
 		case os.IsNotExist(err) && len(p.Configs) > 0:
 			// пул без nodes.json, но с конфигами WG/AWG (Amnezia Free и
 			// AWG 3.x-импорт) - движку подкладывается ОДИН активный конфиг
@@ -833,4 +874,38 @@ func (s *Server) refreshSource(w http.ResponseWriter, r *http.Request) {
 	}
 	s.recordSourceRefresh(name, res.bodyHash, res.intervalH)
 	writeJSON(w, http.StatusOK, plan)
+}
+
+// putPoolNodeOrder - PUT /pools/{name}/node-order {order}: ручной
+// порядок узлов (13.11): переживает обновление подписок (новые - в
+// конец), пересборка движка чтобы порядок доехал до конфига группы.
+func (s *Server) putPoolNodeOrder(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	pool, ok := s.store.Pool(name)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	if pool.Settings.EngineMode == "" {
+		writeErr(w, fmt.Errorf("порядок узлов - только для движковых пулов"))
+		return
+	}
+	var req struct {
+		Order []string `json:"order"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, fmt.Errorf("кривой запрос"))
+		return
+	}
+	if err := s.store.SetPoolNodeOrder(name, req.Order); err != nil {
+		writeErr(w, err)
+		return
+	}
+	s.store.LogEvent(name, "node-order", fmt.Sprintf("порядок узлов обновлён (%d)", len(req.Order)))
+	skipped, err := s.applyEngine()
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "warning": "движок не пересобрал конфиг: " + err.Error(), "skipped": skipped})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

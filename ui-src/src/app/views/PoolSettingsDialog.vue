@@ -215,7 +215,7 @@ watch(open, (v) => {
   keepalive.value = String(p.settings.keepalive ?? 0);
   updateInt.value = String(p.settings.updateIntervalH || 0);
   const gm = p.settings.groupMode;
-  groupMode.value = gm === 'selector' || gm === 'rotate' ? gm : 'urltest';
+  groupMode.value = gm === 'selector' || gm === 'rotate' || gm === 'fallback' ? gm : 'urltest';
   engineCore.value = p.settings.engineCore === 'mihomo' ? 'mihomo' : '';
   rotateSec.value = String((p.settings.rotateSec || 0) > 0 ? (p.settings.rotateSec as number) : 300);
   if (isEng.value) void loadEngineNodes();

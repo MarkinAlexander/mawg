@@ -63,6 +63,8 @@ func (s *Server) getPoolEngine(w http.ResponseWriter, r *http.Request) {
 	}
 	type node struct {
 		Tag       string `json:"tag"`
+		// Name - ConfName узла: ключ ручного порядка (NodeOrder, 13.11)
+		Name      string `json:"name,omitempty"`
 		Delay     int    `json:"delay"`
 		Type      string `json:"type,omitempty"`
 		Transport string `json:"transport,omitempty"`
@@ -76,8 +78,9 @@ func (s *Server) getPoolEngine(w http.ResponseWriter, r *http.Request) {
 	}
 	nodes := make([]node, 0, len(group.All))
 	for _, tag := range group.All {
-		nd := node{Tag: tag, Delay: singbox.LastDelay(proxies[tag])}
-		if n, found := byName[strings.TrimPrefix(tag, engineGroupTag+name+"|")]; found {
+		cn := strings.TrimPrefix(tag, engineGroupTag+name+"|")
+		nd := node{Tag: tag, Name: cn, Delay: singbox.LastDelay(proxies[tag])}
+		if n, found := byName[cn]; found {
 			nd.Type = strings.ToUpper(n.Type)
 			nd.Transport = strings.TrimPrefix(transportBadgeOf(n), "/")
 		}
@@ -92,7 +95,7 @@ func (s *Server) getPoolEngine(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			nodes = append(nodes, node{
-				Tag: engineGroupTag + name + "|" + cn, Delay: 0,
+				Tag: engineGroupTag + name + "|" + cn, Name: cn, Delay: 0,
 				Type: strings.ToUpper(n.Type), Transport: strings.TrimPrefix(transportBadgeOf(n), "/"),
 				Off: true,
 			})

@@ -204,6 +204,21 @@ async function pickNode(tag: string): Promise<void> {
     await loadEngine();
   });
 }
+// ручной порядок узлов (13.11): знакомые узлы переживают обновление
+// подписок, новые - в конец; движок пересобирается, порядок доехал
+async function moveNode(idx: number, dir: -1 | 1): Promise<void> {
+  const st = engineState.value;
+  if (!st || busy.value) return;
+  const j = idx + dir;
+  if (j < 0 || j >= st.nodes.length) return;
+  const arr = [...st.nodes];
+  [arr[idx], arr[j]] = [arr[j], arr[idx]];
+  st.nodes = arr;
+  await run(`${props.pool.name}:nodeorder`, async () => {
+    await a.nodeOrder(props.pool.name, arr.filter((n) => !n.off && n.name).map((n) => n.name as string));
+    await loadEngine();
+  });
+}
 async function retestNodes(): Promise<void> {
   if (busy.value) return;
   await run(`${props.pool.name}:retest`, async () => {
@@ -493,7 +508,7 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
         class="cfglist"
       >
         <div
-          v-for="n in engineState.nodes"
+          v-for="(n, idx) in engineState.nodes"
           :key="n.tag"
           class="cfgrow"
           :class="{ active: !n.off && engineState.now === n.tag, dimmed: n.off }"
@@ -525,6 +540,27 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
             />
           </span>
           <span class="cfgctl">
+            <template v-if="engMode !== 'urltest' && !n.off">
+              <!-- порядок узлов (13.11): для fallback/selector/rotate -->
+              <UiButton
+                variant="icon"
+                tooltip="поднять в порядке"
+                :disabled="!!busy || idx === 0"
+                :busy="busy === `${pool.name}:nodeorder`"
+                @click="moveNode(idx, -1)"
+              >
+                ↑
+              </UiButton>
+              <UiButton
+                variant="icon"
+                tooltip="опустить в порядке"
+                :disabled="!!busy || idx === (engineState?.nodes.length ?? 0) - 1"
+                :busy="busy === `${pool.name}:nodeorder`"
+                @click="moveNode(idx, 1)"
+              >
+                ↓
+              </UiButton>
+            </template>
             <UiButton
               v-if="engMode === 'selector' && !n.off"
               variant="icon"
@@ -558,6 +594,16 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
       <UiHint
         v-if="engineState && engMode === 'rotate'"
         :text="'Ротация: mawg меняет узел по кругу каждые ' + (pool.settings.rotateSec || 300) + ' с, перемеряя группу и переходя только на рабочие.'"
+      />
+      <!-- режимы с порядком (13.11): порядок стрелками, переживает
+           обновление подписок - новые узлы добавляются в конец -->
+      <UiHint
+        v-if="engineState && engMode !== 'urltest'"
+        text="Порядок стрелками сохраняется и переживает обновление подписок: новые узлы подписки добавляются в конец."
+      />
+      <UiHint
+        v-if="engineState && engMode === 'fallback'"
+        text="По порядку: активен первый живой узел; при его отказе mawg переходит на следующий живой, а на старший возвращается сам, когда тот стабильно ответит 3 замера подряд."
       />
     </details>
 
