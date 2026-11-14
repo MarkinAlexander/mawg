@@ -31,6 +31,17 @@ describe('UiSelect', () => {
     w.unmount()
   })
 
+  it('busy: кнопка задизейблена с busy-классом (спиннер), список не открывается', async () => {
+    const w = mount(UiSelect, { props: { modelValue: '', options, busy: true } })
+    const btn = w.find('.psel-btn')
+    expect((btn.element as HTMLButtonElement).disabled).toBe(true)
+    expect(btn.classes()).toContain('busy')
+    await btn.trigger('click')
+    await nextTick()
+    expect(w.find('.psel-list').exists()).toBe(false)
+    w.unmount()
+  })
+
   it('Escape закрывает', async () => {
     const w = mount(UiSelect, { props: { modelValue: '', options } })
     await w.find('.psel-btn').trigger('click')

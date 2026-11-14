@@ -174,7 +174,7 @@ const modeOptions = groupModeDrawerOptions as UiSelectOption[];
         :options="modeOptions"
         bare
         tooltip="режим группы: как движок выбирает рабочий узел"
-        :disabled="!!busy"
+        :busy="!!busy"
       />
       <template v-if="engMode === 'rotate'">
         <UiInput

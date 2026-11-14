@@ -178,6 +178,8 @@ describe('PoolNodesSection - селект режима в дровере (118 TA
     await w.findAll('.psel-item').find((o) => o.text().includes('по порядку'))!.trigger('click');
     // селект уже «по порядку», но ответа нет - оверлей объясняет, что живо
     expect(w.text()).toContain('идёт применение настроек…');
+    // сам селект показывает занятость спиннером (busy-класс на кнопке)
+    expect(w.find('.moderow .psel-btn').classes()).toContain('busy');
     release();
     await vi.waitFor(() => expect(w.text()).toContain('активен первый живой узел'));
     await vi.waitFor(() => expect(w.text()).not.toContain('идёт применение настроек…'));

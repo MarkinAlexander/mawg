@@ -115,7 +115,7 @@ function pick(o: UiSelectOption) {
       <button
         type="button"
         class="psel-btn"
-        :class="{ on: open }"
+        :class="{ on: open, busy: props.busy }"
         :disabled="props.disabled || props.busy"
         :title="selected?.label ?? props.tooltip"
         @click="toggle"
@@ -170,7 +170,7 @@ function pick(o: UiSelectOption) {
           <button
             type="button"
             class="psel-btn"
-            :class="{ on: open }"
+            :class="{ on: open, busy: props.busy }"
             :disabled="props.disabled || props.busy"
             :title="selected?.label ?? props.tooltip"
             @click="toggle"
@@ -274,6 +274,26 @@ function pick(o: UiSelectOption) {
 .psel-btn:disabled {
   opacity: 0.55;
   cursor: default;
+}
+/* busy - спиннер слева от подписи (стиль UiButton): селект режима в
+   дровере применяет пересборку движка секундами; оверлей гасит весь
+   дровер, а спиннер на селекте показывает занятость конкретно его */
+.psel-btn.busy::before {
+  content: '';
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  margin-right: 7px;
+  vertical-align: -2px;
+  animation: uipsel-spin 0.7s linear infinite;
+}
+@keyframes uipsel-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 /* Дефолт (absolute под кнопкой) - пока JS не измерил геометрию; при
    открытии syncListBox переводит список в position:fixed по координатам

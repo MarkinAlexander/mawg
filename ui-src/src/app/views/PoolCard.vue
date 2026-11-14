@@ -540,7 +540,7 @@ async function doSwitchCountry(): Promise<void> {
           v-model="premCountry"
           :options="countryOptions"
           label="Страна"
-          :disabled="premiumBusy"
+          :busy="premiumBusy"
         >
           <template #action>
             <UiButton
