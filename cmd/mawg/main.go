@@ -250,7 +250,16 @@ func main() {
 		log.Fatalf("unknown platform %q", plat)
 	}
 	if err := backend.Detect(); err != nil {
-		log.Fatalf("platform detect failed: %v", err)
+		// NDM CLI недоступен (инцидент пользователя 15.11: ndmc system
+		// failed [0xcffd0062] валил старт целиком) - панель нужна даже
+		// с недоступным ndm: операции повторят проверки на действиях.
+		// Семантические отказы (прошивка < 5.1, нет компонента) остаются
+		// фатальными - там ndmc жив и вердикт окончательный.
+		if errors.Is(err, keenetic.ErrNDMDown) {
+			log.Printf("предупреждение: %v - панель запущена в деградировавшем режиме; перезагрузите роутер, если ndm не оживёт", err)
+		} else {
+			log.Fatalf("platform detect failed: %v", err)
+		}
 	}
 
 	st, err := store.Open(dir)

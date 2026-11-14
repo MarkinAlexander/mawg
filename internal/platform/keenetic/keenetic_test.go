@@ -1,8 +1,10 @@
 package keenetic
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -19,6 +21,33 @@ const versionOut = `
            manufacturer: Keenetic Ltd.
               model: Giga (KN-1011)
 `
+
+// detект: NDM CLI не ответил (инцидент пользователя 15.11: ndmc
+// system failed [0xcffd0062] валил запуск mawg целиком) - вердикт
+// ErrNDMDown (панель стартует в деградировавшем режиме); ndmc жив -
+// семантические проверки как раньше и НЕ как ErrNDMDown
+// detект: NDM CLI не ответил (инцидент пользователя 15.11: ndmc
+// system failed [0xcffd0062] валил запуск mawg целиком) - вердикт
+// ErrNDMDown (панель стартует в деградировавшем режиме); ndmc жив -
+// семантические проверки как раньше и НЕ как ErrNDMDown
+func TestDetectVerdict(t *testing.T) {
+	down := "ndmc \"show version\": exit status 1: [C] Nov 15 01:45:29 ndm: ndmc: system failed [0xcffd0062].\n[C] Nov 15 01:45:29 ndm: Cli::Main: failed to initialize."
+	err := verdictDetect(down, errors.New("exit status 1"))
+	if !errors.Is(err, ErrNDMDown) {
+		t.Fatalf("ndm не ответил - ждём ErrNDMDown: %v", err)
+	}
+	old := verdictDetect("release: 4.03.C.1.0-1\ncomponents: base,opkg\n", nil)
+	if errors.Is(old, ErrNDMDown) || !strings.Contains(old.Error(), "ниже 5.1") {
+		t.Fatalf("4.x - семантический отказ, не ErrNDMDown: %v", old)
+	}
+	nowg := verdictDetect("release: 5.1\ncomponents: base,opkg\n", nil)
+	if errors.Is(nowg, ErrNDMDown) || !strings.Contains(nowg.Error(), "WireGuard") {
+		t.Fatalf("5.1 без компонента: %v", nowg)
+	}
+	if err := verdictDetect("release: 5.2\ncomponents: base,opkg,wireguard\n", nil); err != nil {
+		t.Fatalf("5.2 с wireguard - detект должен пройти: %v", err)
+	}
+}
 
 func TestParseVersion(t *testing.T) {
 	b := New()

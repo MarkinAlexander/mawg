@@ -1,6 +1,7 @@
 package keenetic
 
 import (
+	"errors"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -130,17 +131,46 @@ func (b *Backend) SupportsNativeAWG3() bool {
 	return kawg3Prev
 }
 
+// ErrNDMDown - NDM CLI не инициализирует сессию на старте (system failed
+// / failed to initialize, инцидент пользователя 15.11: ndmc [0xcffd0062]
+// валил запуск mawg целиком): прошивку и компоненты проверить не удалось,
+// но детект платформы файловый - панель стартует в деградировавшем
+// режиме, ndmc-проверки повторятся на действиях.
+var ErrNDMDown = errors.New("ndm недоступен")
+
+const (
+	ndmDetectAttempts = 3
+	ndmDetectPause    = 3 * time.Second
+)
+
 func (b *Backend) Detect() error {
 	if _, err := os.Stat("/bin/ndmc"); err != nil {
 		return fmt.Errorf("ndmc не найден: это не Keenetic")
 	}
-	out, err := b.ndmc("show version")
-	if err != nil {
-		return fmt.Errorf("ndmc show version: %v", err)
+	// CLI может быть не готов на буте Entware или временно перегружен -
+	// несколько попыток, прежде чем признать NDM лежащим
+	var out string
+	var err error
+	for attempt := 0; ; attempt++ {
+		out, err = b.ndmc("show version")
+		if err == nil && b.parseVersion(out).major > 0 {
+			break
+		}
+		if attempt >= ndmDetectAttempts-1 {
+			return verdictDetect(out, err)
+		}
+		time.Sleep(ndmDetectPause)
 	}
-	info := b.parseVersion(out)
+	return verdictDetect(out, nil)
+}
+
+// verdictDetect - финальный вердикт detекта: версию не разобрали (CLI
+// не ответил/чужой формат) - ErrNDMDown (деградированный старт),
+// разобрали - семантические проверки (окончательные, ndmc жив).
+func verdictDetect(out string, err error) error {
+	info := (&Backend{}).parseVersion(out)
 	if info.major == 0 {
-		return fmt.Errorf("не удалось разобрать версию прошивки: %s", out)
+		return fmt.Errorf("%w: show version не ответил валидной версией: %v", ErrNDMDown, err)
 	}
 	if info.major < 5 || (info.major == 5 && info.minor < 1) {
 		return fmt.Errorf("прошивка %d.%d ниже 5.1: расширенные AWG-параметры asc не поддерживаются", info.major, info.minor)
