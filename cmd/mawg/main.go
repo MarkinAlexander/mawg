@@ -134,6 +134,7 @@ const usage = `mawg - Multi-AWG Changer ` + `
   -port <n>                    порт веб-панели (перекрывает настройки)
   -listen <ip>                 адрес прослушивания (перекрывает настройки)
   -no-auth                     разово запустить без авторизации (аварийный)
+  -version                     показать версию и выйти
 `
 
 func main() {
@@ -143,8 +144,17 @@ func main() {
 	noAuth := flag.Bool("no-auth", false, "disable web panel authentication (open api)")
 	resetAuth := flag.Bool("reset-auth", false, "set a new panel password interactively and exit")
 	password := flag.String("password", "", "set panel password non-interactively and exit")
+	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Usage = func() { fmt.Print(usage) }
 	flag.Parse()
+
+	// до определения платформы: проверка версии на роутере не должна
+	// требовать ни каталога данных, ни detекта платформы (деплой-скрипты
+	// и поддержка сверяют бинарь после подмены)
+	if *showVersion {
+		fmt.Println(version)
+		return
+	}
 
 	cmd := strings.TrimSpace(flag.Arg(0))
 	if cmd == "help" || cmd == "-h" {
@@ -157,6 +167,9 @@ func main() {
 		os.Exit(cmdLinks(flag.Args()[1:]))
 	case "singbox":
 		os.Exit(cmdSingbox(flag.Args()[1:]))
+	case "version":
+		fmt.Println(version)
+		return
 	}
 
 	plat := *platformName

@@ -45,6 +45,17 @@ export const scTrigOptions: UiSelectOption[] = [
   { value: 'fails', label: 'после отказов подряд (быстрее)' },
 ];
 
+// короткая подпись режима группы для подзаголовка карточки (118):
+// режим виден не открывая дровер «Узлы»
+export function groupModeShort(mode: string): string {
+  switch (mode) {
+    case 'selector': return 'ручной выбор';
+    case 'rotate': return 'ротация';
+    case 'fallback': return 'по порядку';
+    default: return 'лучший пинг';
+  }
+}
+
 // короткое имя узла движка: тег вида «подписка|узел» - после «|»
 export function nodeShortName(tag: string): string {
   return tag.includes('|') ? tag.slice(tag.indexOf('|') + 1) : tag;

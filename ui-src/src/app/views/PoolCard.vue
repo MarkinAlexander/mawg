@@ -11,6 +11,7 @@ import { useSecrets } from '../secrets'
 import { G } from '../glossary'
 import { probeHuman } from './groupsLogic'
 import { agoText, isWarpPool } from './poolsLogic'
+import { groupModeShort } from './poolSettingsLogic'
 import SmartCascadeChip from './SmartCascadeChip.vue'
 import DeviceGroupDialog from './DeviceGroupDialog.vue'
 import LxInstallDialog from './LxInstallDialog.vue'
@@ -245,7 +246,10 @@ const sub = computed(() => {
     // ядро пула (88-док): mihomo-пулы берут состояние своего движка
     const core = p.settings.engineCore === 'mihomo' ? 'mihomo' : 'sing-box';
     const eng = core === 'mihomo' ? status.data?.engines?.mihomo : engine.value;
-    return `${p.settings.tunName} | движок ${core}${eng?.version ? ' ' + eng.version : ''}${eng && !eng.running ? ' (не запущен)' : ''}`;
+    // режим группы - прямо в подзаголовке (118): виден не открывая дровер
+    const mode = p.settings.groupMode || 'urltest';
+    const rot = mode === 'rotate' ? ` ${Math.max(10, p.settings.rotateSec || 300)}с` : '';
+    return `${p.settings.tunName} | движок ${core}${eng?.version ? ' ' + eng.version : ''}${eng && !eng.running ? ' (не запущен)' : ''} · режим: ${groupModeShort(mode)}${rot}`;
   }
   const slot = p.slot ? `${p.slot} = ` : '';
   if (p.disabled) return `${slot}${p.device} | ротация остановлена`;

@@ -213,6 +213,20 @@ describe('PoolCard - отображение', () => {
     w.unmount();
   });
 
+  it('режим группы в подзаголовке карточки (118): дефолт, fallback, ротация с интервалом', () => {
+    const w = makeCard(enginePool);
+    expect(w.text()).toContain('режим: лучший пинг');
+    w.unmount();
+
+    const wf = makeCard({ ...enginePool, settings: { ...enginePool.settings, groupMode: 'fallback' } });
+    expect(wf.text()).toContain('· режим: по порядку');
+    wf.unmount();
+
+    const wr = makeCard({ ...enginePool, settings: { ...enginePool.settings, groupMode: 'rotate', rotateSec: 450 } });
+    expect(wr.text()).toContain('режим: ротация 450с');
+    wr.unmount();
+  });
+
   it('движковый на mihomo: подзаголовок от engines.mihomo (88-док)', () => {
     const w = makeCard(
       { ...enginePool, settings: { ...enginePool.settings, engineCore: 'mihomo' } },
