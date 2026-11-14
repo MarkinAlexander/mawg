@@ -40,6 +40,9 @@ mock_package_command() {
             return 1;;
         opkg:list-installed)
             for package in $MOCK_INSTALLED; do echo "$package - 1.0-r1"; done;;
+        opkg:info)
+            [ "$2" = magitrickle ] && { echo "Version: $MOCK_MT_VERSION"; return 0; }
+            return 1;;
         apk:--print-arch) echo "$MOCK_ARCH";;
         opkg:print-architecture) echo "arch $MOCK_ARCH 10";;
         *) return 1;;
@@ -53,7 +56,9 @@ type installerFixture struct {
 	apk, opkg, nativeOpkg bool
 	installed             string
 	updateStatus          int
-	repoStatus            int
+	// fetchBody - тело ответа do_fetch (релиз форка); пусто - старый мок
+	// add_repo-сценария. mtVersion - что отвечает opkg info magitrickle.
+	fetchBody, mtVersion  string
 	wantMagiTrickle       bool
 }
 
@@ -125,13 +130,13 @@ func (f installerFixture) run(t *testing.T, suffix string) installerResult {
 	script := definitions + packageCommands + "\nPLATFORM=openwrt\n"
 	script += "TMP=" + shellQuote(filepath.Join(dir, "tmp")) + "\nmkdir -p \"$TMP\"\n"
 	script += "WANT_MT=" + wantMT + "\n"
-	script += "do_fetch() { printf '#!/bin/sh\\nexit %s\\n' \"$MOCK_REPO_STATUS\" > \"$2\"; }\n"
+	script += "do_fetch() { if [ -n \"$MOCK_FETCH_BODY\" ]; then printf '%s' \"$MOCK_FETCH_BODY\" > \"$2\"; else printf '#!/bin/sh\\nexit %s\\n' \"$MOCK_REPO_STATUS\" > \"$2\"; fi; }\n"
 	script += "PKG_MANAGER=$(detect_pkg_manager) || exit 1\n" + suffix
 	output, runErr := runShell(t, script,
 		fmt.Sprintf("MOCK_APK=%d", boolInt(f.apk)), fmt.Sprintf("MOCK_OPKG=%d", boolInt(f.opkg)),
 		fmt.Sprintf("MOCK_NATIVE_OPKG=%d", boolInt(f.nativeOpkg)),
 		"MOCK_INSTALLED="+f.installed, fmt.Sprintf("MOCK_UPDATE_STATUS=%d", f.updateStatus),
-		fmt.Sprintf("MOCK_REPO_STATUS=%d", f.repoStatus), "MOCK_ARCH=mips_24kc", "PKG_LOG="+filepath.ToSlash(log))
+		"MOCK_FETCH_BODY="+f.fetchBody, "MOCK_MT_VERSION="+f.mtVersion, "MOCK_REPO_STATUS=0", "MOCK_ARCH=mips_24kc", "PKG_LOG="+filepath.ToSlash(log))
 	calls, err := os.ReadFile(log)
 	if err != nil && !os.IsNotExist(err) {
 		t.Fatal(err)
@@ -158,20 +163,20 @@ func TestInstallerPackageManagers(t *testing.T) {
 	for _, manager := range []string{"apk", "opkg"} {
 		for _, scenario := range []struct {
 			name, installed, wantInstall string
-			updateStatus, repoStatus     int
+			updateStatus                int
 			wantMT, wantFailure          bool
 		}{
 			{name: "installed", installed: installedPackages},
 			{name: "missing-wireguard", installed: "amneziawg-tools magitrickle", wantInstall: "kmod-wireguard wireguard-tools luci-proto-wireguard"},
 			{name: "update-failed-installed", installed: installedPackages, updateStatus: 1},
 			{name: "update-failed-missing", updateStatus: 1, wantFailure: true},
-			{name: "missing-awg-and-magitrickle", installed: "wireguard-tools", wantMT: true, wantInstall: "magitrickle"},
-			{name: "failed-magitrickle-feed", installed: "wireguard-tools amneziawg-tools", wantMT: true, repoStatus: 1},
+			{name: "missing-awg-and-magitrickle", installed: "wireguard-tools", wantMT: true, wantInstall: "kmod-amneziawg amneziawg-tools"},
+			{name: "mt-release-unmatched", installed: "wireguard-tools amneziawg-tools", wantMT: true},
 			{name: "similar-package-name", installed: "wireguard-tools-extra amneziawg-tools magitrickle", wantInstall: "kmod-wireguard wireguard-tools luci-proto-wireguard"},
 		} {
 			t.Run(manager+"/"+scenario.name, func(t *testing.T) {
 				fixture := installerFixture{apk: manager == "apk", opkg: manager == "opkg", installed: scenario.installed,
-					updateStatus: scenario.updateStatus, repoStatus: scenario.repoStatus, wantMagiTrickle: scenario.wantMT}
+					updateStatus: scenario.updateStatus, wantMagiTrickle: scenario.wantMT}
 				result := fixture.run(t, dependencyChecks(t))
 				if (result.err != nil) != scenario.wantFailure {
 					t.Fatalf("unexpected exit: %v\n%s", result.err, result.output)
@@ -190,8 +195,9 @@ func TestInstallerPackageManagers(t *testing.T) {
 				if scenario.wantInstall == "" && strings.Contains(result.calls, manager+" "+verb+" ") {
 					t.Fatalf("unexpected installation: %s", result.calls)
 				}
-				if scenario.repoStatus != 0 && !strings.Contains(result.output, "не удалось добавить") {
-					t.Fatalf("missing repository failure warning: %s", result.output)
+				if scenario.wantMT && !strings.Contains(result.output, "не удалось определить пакет") {
+					// тело do_fetch в моке - не JSON: релиз не матчится, честный warn
+					t.Fatalf("missing mt-release warning: %s", result.output)
 				}
 				if scenario.name == "missing-awg-and-magitrickle" && !strings.Contains(result.calls, manager+" "+verb+" kmod-amneziawg amneziawg-tools") {
 					t.Fatalf("missing AWG installation: %s", result.calls)
@@ -224,9 +230,29 @@ func TestInstallerManagerSelection(t *testing.T) {
 			}
 		})
 	}
-	result := (installerFixture{apk: true, opkg: true, nativeOpkg: true, installed: "wireguard-tools amneziawg-tools", wantMagiTrickle: true}).run(t, dependencyChecks(t))
-	if result.err != nil || !strings.Contains(result.calls, "opkg install magitrickle") || strings.Contains(result.calls, "apk ") {
-		t.Fatalf("native opkg feed/install mismatch: %v %s", result.err, result.calls)
+	// MT теперь ставится ФАЙЛОМ из релиза форка: JSON отдаёт ассет под
+	// таргет, opkg install файла (кейс пользователя 15.11: инсталлер
+	// ставил апстрим с bin.magitrickle.dev)
+	body := `{"assets":[{"name":"magitrickle_0.8.2-22_openwrt_mips_24kc.ipk","browser_download_url":"https://github.com/MarkinAlexander/magitrickle/releases/download/0.8.2-rev22/magitrickle_0.8.2-22_openwrt_mips_24kc.ipk"}]}`
+	result := (installerFixture{apk: true, opkg: true, nativeOpkg: true, installed: "wireguard-tools amneziawg-tools", wantMagiTrickle: true, fetchBody: body}).run(t, dependencyChecks(t))
+	if result.err != nil || strings.Contains(result.calls, "apk ") {
+		t.Fatalf("native opkg fork-install mismatch: %v %s", result.err, result.calls)
+	}
+	if !strings.Contains(result.calls, "opkg install") || strings.Contains(result.calls, "opkg install magitrickle") {
+		t.Fatalf("fork package must install from FILE, not by name: %s", result.calls)
+	}
+	if !strings.Contains(result.output, "релиз форка: magitrickle_0.8.2-22_openwrt_mips_24kc.ipk") {
+		t.Fatalf("fork asset not selected: %s", result.output)
+	}
+	// апстрим-версия (без тире в Version) - заменяется на форк
+	up := (installerFixture{apk: true, opkg: true, nativeOpkg: true, installed: "wireguard-tools amneziawg-tools", wantMagiTrickle: true, fetchBody: body, mtVersion: "0.8.2"}).run(t, dependencyChecks(t))
+	if !strings.Contains(up.calls, "opkg install") || !strings.Contains(up.output, "заменю на форк") {
+		t.Fatalf("upstream package must be replaced: %s %s", up.output, up.calls)
+	}
+	// форк уже стоит (ревизия с тире) - пропускается
+	fork := (installerFixture{apk: true, opkg: true, nativeOpkg: true, installed: "wireguard-tools amneziawg-tools", wantMagiTrickle: true, fetchBody: body, mtVersion: "0.8.2-22"}).run(t, dependencyChecks(t))
+	if strings.Contains(fork.calls, "opkg install") || !strings.Contains(fork.output, "форк (0.8.2-22) уже установлен") {
+		t.Fatalf("fork must be skipped: %s %s", fork.output, fork.calls)
 	}
 }
 

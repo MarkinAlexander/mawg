@@ -371,8 +371,20 @@ if [ "$MODE" = install ]; then
         fi
     fi
 
+    # форк vs апстрим: у форка в версии ревизия с тире (0.8.2-22), апстрим
+    # ставился без неё с bin.magitrickle.dev (кейс пользователя 15.11:
+    # инсталлер ставил апстрим, форк приходилось накатывать отдельно)
     mt_installed=0
-    if pkg_installed magitrickle; then
+    if [ "$PKG_MANAGER" = opkg ]; then
+        # форк vs апстрим: у форка ревизия с тире (0.8.2-22), апстрим - без
+        mt_ver="$(opkg info magitrickle 2>/dev/null | awk '/^Version:/{print $2; exit}')"
+        case "$mt_ver" in
+            *-*) mt_installed=1; echo "   MagiTrickle форк ($mt_ver) уже установлен";;
+            "")  mt_installed=0;;
+            *)   mt_installed=0
+                 echo "   найден апстрим-пакет magitrickle $mt_ver (без ревизий форка) - заменю на форк";;
+        esac
+    elif pkg_installed magitrickle; then
         mt_installed=1
         echo "   magitrickle уже установлен"
     fi
@@ -382,26 +394,75 @@ if [ "$MODE" = install ]; then
             do_mt=yes
         elif [ "$WANT_MT" = ask ]; then
             say "MagiTrickle не найден: маршрутизация по доменам работать не будет"
-            if ask "добавить репозиторий bin.magitrickle.dev и установить MagiTrickle"; then
+            if ask "установить MagiTrickle (релиз форка: зоны, лог-уровень)"; then
                 do_mt=yes
             fi
         fi
-        if [ "$do_mt" = yes ] && [ "$pkg_update_ok" = 1 ]; then
-            say "установка MagiTrickle"
-            do_fetch "http://bin.magitrickle.dev/packages/add_repo.sh" "$TMP/mt.sh" || warn "не удалось скачать add_repo.sh"
-            if [ -s "$TMP/mt.sh" ]; then
-                if ! sh "$TMP/mt.sh" >/dev/null 2>&1 || ! pkg_update >/dev/null 2>&1; then
-                    warn "не удалось добавить или обновить репозиторий MagiTrickle"
-                elif [ "$PLATFORM" = keenetic ]; then
-                    pkg_install magitrickle socat >/dev/null 2>&1 \
-                        && chmod +x /opt/etc/init.d/S99magitrickle 2>/dev/null \
-                        && /opt/etc/init.d/S99magitrickle start >/dev/null 2>&1 \
-                        || warn "magitrickle не установился"
-                else
-                    pkg_install magitrickle >/dev/null 2>&1 \
-                        && /etc/init.d/magitrickle enable >/dev/null 2>&1 \
-                        && /etc/init.d/magitrickle start >/dev/null 2>&1 \
-                        || warn "magitrickle не установился"
+        if [ "$do_mt" = yes ]; then
+            say "установка MagiTrickle (форк)"
+            # пакет берётся ФАЙЛОМ из релиза форка на GitHub (как mtinstall
+            # в панели): репозиторий апстрима bin.magitrickle.dev остался
+            # в прошлом - без rev-фич
+            mt_target=""
+            mt_ext=".ipk"
+            if [ "$PKG_MANAGER" = apk ]; then
+                mt_ext=".apk"
+                mt_target="$(head -n 1 /etc/apk/arch 2>/dev/null)"
+                [ -n "$mt_target" ] || mt_target="$(apk --print-arch 2>/dev/null)"
+            elif command -v opkg >/dev/null 2>&1; then
+                mt_target="$(opkg print-architecture 2>/dev/null | awk '$1=="arch" && $2!="all" && $2!="noarch" {print $2; exit}')"
+            fi
+            mt_prefix=openwrt
+            [ "$PLATFORM" = keenetic ] && mt_prefix=entware
+            mt_url=""
+            if [ -n "$mt_target" ]; then
+                mt_json="$TMP/mt-release.json"
+                do_fetch "https://api.github.com/repos/MarkinAlexander/magitrickle/releases/latest" "$mt_json" || true
+                if [ -s "$mt_json" ]; then
+                    if [ "$PLATFORM" = keenetic ]; then
+                        mt_url=$(grep -o "https://[^\"]*_${mt_prefix}_${mt_target}_kn${mt_ext}" "$mt_json" | head -n 1)
+                        [ -n "$mt_url" ] || mt_url=$(grep -o "https://[^\"]*_${mt_prefix}_${mt_target}${mt_ext}" "$mt_json" | head -n 1)
+                    else
+                        mt_url=$(grep -o "https://[^\"]*_${mt_prefix}_${mt_target}${mt_ext}" "$mt_json" | head -n 1)
+                        [ -n "$mt_url" ] || mt_url=$(grep -o "https://[^\"]*_${mt_prefix}_${mt_target}_generic${mt_ext}" "$mt_json" | head -n 1)
+                    fi
+                fi
+            fi
+            if [ -z "$mt_url" ]; then
+                warn "не удалось определить пакет MagiTrickle для ${mt_prefix}/${mt_target:-?} - поставьте из панели mawg (она ставит релиз форка)"
+            else
+                say "релиз форка: $(basename "$mt_url")"
+                mt_file="$TMP/mt-pkg"
+                do_fetch "$mt_url" "$mt_file" && [ -s "$mt_file" ] || warn "не удалось скачать пакет MagiTrickle"
+                if [ -s "$mt_file" ]; then
+                    # стоп до замены: файл живого бинаря не заменяется (ETXTBSY)
+                    if [ "$PLATFORM" = keenetic ]; then
+                        /opt/etc/init.d/S99magitrickle stop >/dev/null 2>&1
+                        pkg_install socat >/dev/null 2>&1 || true
+                    else
+                        /etc/init.d/magitrickle stop >/dev/null 2>&1
+                    fi
+                    if [ "$PKG_MANAGER" = apk ]; then
+                        apk add --allow-untrusted "$mt_file" >/dev/null 2>&1 \
+                            || warn "magitrickle не установился"
+                    else
+                        mt_out="$(opkg install "$mt_file" 2>&1)" \
+                            || warn "magitrickle не установился: $(echo "$mt_out" | tail -n 1)"
+                        case "$mt_out" in
+                            *"up to date"*|*"Up to date"*)
+                                opkg install --force-reinstall "$mt_file" >/dev/null 2>&1 || true;;
+                        esac
+                    fi
+                    if [ "$PLATFORM" = keenetic ]; then
+                        chmod +x /opt/etc/init.d/S99magitrickle 2>/dev/null
+                        /opt/etc/init.d/S99magitrickle start >/dev/null 2>&1 \
+                            || warn "служба MagiTrickle не стартовала"
+                    else
+                        /etc/init.d/magitrickle enable >/dev/null 2>&1
+                        /etc/init.d/magitrickle start >/dev/null 2>&1 \
+                            || warn "служба MagiTrickle не стартовала"
+                    fi
+                    rm -f "$mt_file"
                 fi
             fi
         fi
