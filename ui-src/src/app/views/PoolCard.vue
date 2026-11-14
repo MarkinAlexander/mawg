@@ -14,7 +14,9 @@ import { agoText, isWarpPool } from './poolsLogic'
 import SmartCascadeChip from './SmartCascadeChip.vue'
 import DeviceGroupDialog from './DeviceGroupDialog.vue'
 import LxInstallDialog from './LxInstallDialog.vue'
-import type { ConfigView, PoolEngine, PoolView, TunInfo } from '../../api/types'
+import PoolNodesSection from './PoolNodesSection.vue'
+import PoolConfigsSection from './PoolConfigsSection.vue'
+import type { PoolView, TunInfo } from '../../api/types'
 
 // Карточка пула (легаси ensureCard/updateCard 67-265): данные из /status
 // (5с), карточка чисто отображает + мутации. Шестерёнка настроек и
@@ -166,67 +168,8 @@ const engineWaits = computed<{ detail: string; needsLx: boolean } | null>(() => 
   return { detail: tun.detail || 'узлы не поддерживаются текущим ядром', needsLx: core === 'singbox' };
 });
 const lxOpen = ref(false);
-
-// узлы движкового пула (60-док): список + пинги из clash_api движка;
-// ленивая загрузка по открытию секции - как «Конфиги» у нативных пулов
-const nodesOpen = ref(false);
 // «устройство целиком через пул» (слово владельца 2026-10-28)
 const devOpen = ref(false);
-const engineState = ref<PoolEngine | null>(null);
-const engineErr = ref('');
-async function loadEngine(): Promise<void> {
-  engineErr.value = '';
-  try {
-    engineState.value = await a.engine(props.pool.name);
-  } catch (e) {
-    engineState.value = null;
-    engineErr.value = e instanceof Error ? e.message : String(e);
-  }
-}
-watch(nodesOpen, (v) => {
-  if (v) void loadEngine();
-});
-const engMode = computed(() =>
-  engineState.value?.groupMode || props.pool.settings.groupMode || engineState.value?.mode || 'urltest');
-async function toggleNode(tag: string, on: boolean): Promise<void> {
-  if (busy.value) return;
-  await run(`${props.pool.name}:nodeoff`, async () => {
-    await a.engineToggle(props.pool.name, tag);
-    push(on ? 'Узел исключён из пула' : 'Узел возвращён в пул');
-    await loadEngine();
-  });
-}
-async function pickNode(tag: string): Promise<void> {
-  if (busy.value) return;
-  await run(`${props.pool.name}:selnode`, async () => {
-    await a.engineSelect(props.pool.name, tag);
-    push(`Выбран узел: ${tag}`);
-    await loadEngine();
-  });
-}
-// ручной порядок узлов (13.11): знакомые узлы переживают обновление
-// подписок, новые - в конец; движок пересобирается, порядок доехал
-async function moveNode(idx: number, dir: -1 | 1): Promise<void> {
-  const st = engineState.value;
-  if (!st || busy.value) return;
-  const j = idx + dir;
-  if (j < 0 || j >= st.nodes.length) return;
-  const arr = [...st.nodes];
-  [arr[idx], arr[j]] = [arr[j], arr[idx]];
-  st.nodes = arr;
-  await run(`${props.pool.name}:nodeorder`, async () => {
-    await a.nodeOrder(props.pool.name, arr.filter((n) => !n.off && n.name).map((n) => n.name as string));
-    await loadEngine();
-  });
-}
-async function retestNodes(): Promise<void> {
-  if (busy.value) return;
-  await run(`${props.pool.name}:retest`, async () => {
-    push('Перемер задержек узлов запущен…');
-    await a.engineRetest(props.pool.name);
-    await loadEngine();
-  });
-}
 const modeBadge = computed(() => {
   if (props.pool.disabled) return { text: 'выключен', variant: 'muted' as const, tooltip: '' };
   if (props.pool.mode === 'fallback') return { text: 'фоллбек', variant: 'err' as const, tooltip: G.fallback };
@@ -351,39 +294,6 @@ async function doSwitchCountry(): Promise<void> {
     premiumBusy.value = false;
   }
 }
-
-const cfgOpen = ref(false); // легаси <details> - открытое состояние держится
-const fileInput = ref<HTMLInputElement | null>(null);
-const dragOver = ref(false);
-
-function cfgRowClass(c: ConfigView): string {
-  return c.file === props.pool.activeFile ? 'active' : (c.enabled ? '' : 'dimmed');
-}
-function pickFiles(): void {
-  fileInput.value?.click();
-}
-function onDrop(e: DragEvent): void {
-  dragOver.value = false;
-  void doUpload(e.dataTransfer?.files);
-}
-function onFiles(e: Event): void {
-  const inp = e.target as HTMLInputElement;
-  void doUpload(inp.files).finally(() => { inp.value = ''; });
-}
-async function doUpload(files: FileList | null | undefined): Promise<void> {
-  if (!files || !files.length) return;
-  await run(`${props.pool.name}:upload`, async () => {
-    const r = await a.upload(props.pool.name, files);
-    let msg = `Добавлено ${r.added}. Дубликаты: ${(r.duplicates || []).length}. Ошибки: ${(r.errors || []).length}`;
-    if (r.warnings?.length) msg += '. Конфликты: ' + r.warnings.length;
-    push(msg);
-    for (const w of r.warnings || []) push(w, true);
-  });
-}
-function cfgAct(key: string, fn: () => Promise<void>): void {
-  void run(key, fn);
-}
-const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
 </script>
 
 <template>
@@ -488,124 +398,12 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
       />
     </div>
 
-    <!-- узлы движкового пула: подписка целиком в группе движка (60-док) -->
-    <details
+    <!-- узлы движкового пула (60-док): режим группы и порядок узлов
+         прямо в дровере (118 TASK 0, слово владельца 14.11) -->
+    <PoolNodesSection
       v-if="isEng"
-      class="cfg"
-      :open="nodesOpen"
-      @toggle="nodesOpen = ($event.target as HTMLDetailsElement).open"
-    >
-      <summary title="узлы подписки в группе движка; urltest держит лучший пинг сам">
-        Узлы ({{ engineState ? engineState.nodes.length : '…' }})<UiHelp :text="G.urltest" />
-      </summary>
-      <UiHint text="Пинг - замер движка до цели пробы, не пинг самого сервера." />
-      <UiHint
-        v-if="engineErr"
-        :text="'ошибка: ' + engineErr"
-      />
-      <div
-        v-if="engineState"
-        class="cfglist"
-      >
-        <div
-          v-for="(n, idx) in engineState.nodes"
-          :key="n.tag"
-          class="cfgrow"
-          :class="{ active: !n.off && engineState.now === n.tag, dimmed: n.off }"
-        >
-          <span class="cfgmain">
-            <span class="cfgname">{{ n.tag }}</span>
-            <UiBadge
-              v-if="n.type"
-              :text="n.type + (n.transport ? '/' + n.transport : '')"
-              variant="muted"
-              tooltip="протокол узла и его транспорт"
-            />
-            <UiBadge
-              v-if="n.off"
-              text="исключён"
-              variant="warn"
-              tooltip="узел не попадает в конфиг движка; вернуть - тумблером справа"
-            />
-            <UiBadge
-              v-if="!n.off && engineState.now === n.tag"
-              text="активен"
-              variant="ok"
-            />
-            <UiBadge
-              v-if="!n.off"
-              :text="n.delay > 0 ? `${n.delay} мс` : '—'"
-              :variant="n.delay > 0 ? 'ok' : 'muted'"
-              :tooltip="n.delay > 0 ? 'последний замер движка' : 'не измерен или не отвечает'"
-            />
-          </span>
-          <span class="cfgctl">
-            <template v-if="engMode !== 'urltest' && !n.off">
-              <!-- порядок узлов (13.11): для fallback/selector/rotate -->
-              <UiButton
-                variant="icon"
-                tooltip="поднять в порядке"
-                :disabled="!!busy || idx === 0"
-                :busy="busy === `${pool.name}:nodeorder`"
-                @click="moveNode(idx, -1)"
-              >
-                ↑
-              </UiButton>
-              <UiButton
-                variant="icon"
-                tooltip="опустить в порядке"
-                :disabled="!!busy || idx === (engineState?.nodes.length ?? 0) - 1"
-                :busy="busy === `${pool.name}:nodeorder`"
-                @click="moveNode(idx, 1)"
-              >
-                ↓
-              </UiButton>
-            </template>
-            <UiButton
-              v-if="engMode === 'selector' && !n.off"
-              variant="icon"
-              tooltip="выбрать этот узел (selector - ручной режим)"
-              :disabled="engineState.now === n.tag"
-              :busy="busy === `${pool.name}:selnode`"
-              @click="pickNode(n.tag)"
-            >
-              ⚡
-            </UiButton>
-            <UiSwitch
-              :model-value="!n.off"
-              tooltip="участвует в пуле (выключенный узел не попадает в конфиг движка)"
-              :disabled="!!busy"
-              @update:model-value="(v: boolean) => toggleNode(n.tag, !v)"
-            />
-          </span>
-        </div>
-      </div>
-      <div
-        v-if="engineState"
-        class="btnrow"
-      >
-        <UiButton
-          :busy="busy === `${pool.name}:retest`"
-          @click="retestNodes"
-        >
-          Перемерить пинги
-        </UiButton>
-      </div>
-      <UiHint
-        v-if="engineState && engMode === 'rotate'"
-        :text="'Ротация: mawg меняет узел по кругу каждые ' + (pool.settings.rotateSec || 300) + ' с, перемеряя группу и переходя только на рабочие.'"
-      />
-      <!-- режимы с порядком (13.11): порядок стрелками, переживает
-           обновление подписок - новые узлы добавляются в конец -->
-      <UiHint
-        v-if="engineState && engMode !== 'urltest'"
-        text="Порядок стрелками сохраняется и переживает обновление подписок: новые узлы подписки добавляются в конец."
-      />
-      <UiHint
-        v-if="engineState && engMode === 'fallback'"
-        text="По порядку: активен первый живой узел; при его отказе mawg переходит на следующий живой, а на старший возвращается сам, когда тот стабильно ответит 3 замера подряд."
-      />
-    </details>
+      :pool="pool"
+    />
 
     <div class="btnrow">
       <template v-if="enabled">
@@ -716,151 +514,7 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
       </div>
     </div>
 
-    <details
-      class="cfg"
-      :open="cfgOpen"
-      @toggle="cfgOpen = ($event.target as HTMLDetailsElement).open"
-    >
-      <summary
-        :title="isEng
-          ? 'конфиги WG/AWG едут wireguard-эндпоинтами движка; порядок = приоритет, включённость учитывается'
-          : 'порядок конфигов = приоритет ротации'"
-      >
-        Конфиги ({{ (pool.configs || []).length }})<UiHelp :text="G.rotation" />
-      </summary>
-      <UiHint text="порядок списка = приоритет ротации, выше = раньше" />
-      <!-- зона добавления - НАД списком: с десятками конфигов её
-           не надо искать в самом низу (слово владельца 30.10) -->
-      <div
-        v-if="!premium.imported"
-        class="drop"
-        :class="{ hover: dragOver }"
-        @click="pickFiles"
-        @dragover.prevent="dragOver = true"
-        @dragleave="dragOver = false"
-        @drop.prevent="onDrop"
-      >
-        перетащите .conf / .zip или нажмите
-      </div>
-      <input
-        ref="fileInput"
-        type="file"
-        multiple
-        accept=".conf,.zip"
-        style="display: none"
-        @change="onFiles"
-      >
-      <div class="cfglist">
-        <div
-          v-for="(c, i) in pool.configs || []"
-          :key="c.file"
-          class="cfgrow"
-          :class="cfgRowClass(c)"
-        >
-          <span class="cfgmain">
-            <span class="cfgname">{{ c.original }}</span>
-            <UiBadge
-              v-if="c.file === pool.activeFile"
-              text="активен"
-              variant="ok"
-            />
-            <UiBadge
-              v-if="(c.coolForSec || 0) > 0"
-              :text="`cooldown ${coolMin(c.coolForSec)}м`"
-              variant="muted"
-              :tooltip="G.cooldown"
-            />
-            <UiBadge
-              v-if="c.conflict"
-              text="!"
-              variant="warn"
-              :tooltip="`${c.conflict}: исключён из ротации, переключатель его не включит`"
-            />
-            <span
-              class="cfgend"
-              :class="{ secret: secrets.endpoint(c.endpoint) }"
-            >{{ c.endpoint }}</span>
-          </span>
-          <span class="cfgctl">
-            <!-- явный выбор активного конфига (слово владельца): бэкенд-эндпоинт
-                 /activate был, UI не выставлял; конфликт адресов валидирует сервер -->
-            <!-- скачивание для внешнего клиента - по уровню конфига (слово
-                 владельца, третья правка): голый WG - только он сам
-                 (ничего не накидываем; AWG-вариант - возможно в будущем,
-                 другим цветом с пометкой «наша обфускация»); 2.0 - обе:
-                 WG = антиобфускация (снять поля, комментарии остаются),
-                 AWG = как есть со своими полями; 3.x - никаких -->
-            <a
-              v-if="c.awg === 'plain'"
-              class="cfgdl"
-              :href="`/api/v1/pools/${encodeURIComponent(pool.name)}/configs/${encodeURIComponent(c.file)}`"
-              :download="c.file"
-              title="голый WireGuard - скачивается как есть"
-            >WG</a>
-            <template v-if="c.awg === 'awg2'">
-              <a
-                class="cfgdl"
-                :href="`/api/v1/pools/${encodeURIComponent(pool.name)}/configs/${encodeURIComponent(c.file)}?variant=plain`"
-                :download="c.file"
-                title="антиобфускация: снять поля AmneziaWG (голый WireGuard, комментарии остаются)"
-              >WG</a>
-              <a
-                class="cfgdl"
-                :href="`/api/v1/pools/${encodeURIComponent(pool.name)}/configs/${encodeURIComponent(c.file)}`"
-                :download="c.file"
-                title="скачать как есть (поля обфускации уже в конфиге)"
-              >AWG</a>
-            </template>
-            <UiButton
-              variant="icon"
-              :tooltip="isEng
-                ? 'подкинуть движку этот конфиг: пересборка с ним (один активный, как ротация нативных)'
-                : 'сделать активным: переключить интерфейс на этот конфиг'"
-              :disabled="c.file === pool.activeFile"
-              :busy="busy === `${c.file}:activate`"
-              @click="cfgAct(`${c.file}:activate`, async () => {
-                await a.activateCfg(pool.name, c.file);
-                push(`Конфиг активирован: ${c.original}`);
-              })"
-            >
-              ⚡
-            </UiButton>
-            <UiButton
-              variant="icon"
-              tooltip="выше в ротации"
-              :disabled="i === 0"
-              :busy="busy === `${c.file}:up`"
-              @click="cfgAct(`${c.file}:up`, () => a.moveCfg(pool.name, c.file, -1))"
-            >
-              ↑
-            </UiButton>
-            <UiButton
-              variant="icon"
-              tooltip="ниже в ротации"
-              :disabled="i === (pool.configs || []).length - 1"
-              :busy="busy === `${c.file}:down`"
-              @click="cfgAct(`${c.file}:down`, () => a.moveCfg(pool.name, c.file, 1))"
-            >
-              ↓
-            </UiButton>
-            <UiSwitch
-              :model-value="c.enabled"
-              tooltip="участвует в ротации"
-              :disabled="!!busy"
-              @update:model-value="(v: boolean) => cfgAct(`${c.file}:toggle`, () => a.toggleCfg(pool.name, c.file, v))"
-            />
-            <UiButton
-              variant="icon"
-              tooltip="удалить конфиг"
-              :busy="busy === `${c.file}:del`"
-              @click="cfgAct(`${c.file}:del`, () => a.delCfg(pool.name, c.file))"
-            >
-              ✕
-            </UiButton>
-          </span>
-        </div>
-      </div>
-    </details>
+    <PoolConfigsSection :pool="pool" />
   </UiCard>
 
   <DeviceGroupDialog
@@ -905,81 +559,5 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
 }
 .prem {
   margin-top: 10px;
-}
-.cfg {
-  margin-top: 10px;
-}
-.cfg summary {
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 600;
-}
-.cfglist {
-  display: grid;
-  gap: 2px;
-  margin-top: 6px;
-}
-.cfgrow {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  justify-content: space-between;
-  padding: 3px 0;
-  border-bottom: 1px solid var(--border);
-  font-size: 13px;
-}
-.cfgrow:last-child {
-  border-bottom: 0;
-}
-.cfgrow.active {
-  color: var(--ok);
-}
-.cfgrow.dimmed {
-  opacity: 0.45;
-}
-.cfgmain {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  flex-wrap: wrap;
-}
-.cfgname {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.cfgend {
-  color: var(--dim);
-  font-size: 11px;
-}
-.cfgctl {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  flex: none;
-}
-.drop {
-  margin-top: 8px;
-  border: 1px dashed var(--border);
-  border-radius: 8px;
-  padding: 14px;
-  text-align: center;
-  font-size: 12px;
-  color: var(--dim);
-  cursor: pointer;
-}
-.drop.hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-.cfgdl {
-  color: var(--accent);
-  font: 600 10.5px/1 system-ui, sans-serif;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 3px 5px;
-  text-decoration: none;
-  white-space: nowrap;
 }
 </style>

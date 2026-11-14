@@ -23,6 +23,14 @@ export const groupModeOptions: UiSelectOption[] = [
   { value: 'rotate', label: 'ротация по таймеру (только рабочие)' },
   { value: 'fallback', label: 'по порядку: первый живой, при отказе - следующий' },
 ];
+// для дровера узлов (118 TASK 0): короткие подписи в строку карточки +
+// hint в выпадающем списке, следствие смены режима видно не отходя
+export const groupModeDrawerOptions: UiSelectOption[] = [
+  { value: 'urltest', label: 'лучший пинг (авто)', hint: 'движок сам держит самый быстрый узел' },
+  { value: 'selector', label: 'ручной выбор', hint: 'активен узел, выбранный молнией' },
+  { value: 'rotate', label: 'ротация по таймеру', hint: 'mawg сам меняет узел по кругу, только на рабочих' },
+  { value: 'fallback', label: 'по порядку', hint: 'активен первый живой; при отказе - следующий' },
+];
 export const coreOptions: UiSelectOption[] = [
   { value: '', label: 'sing-box' },
   { value: 'mihomo', label: 'mihomo (Clash.Meta)' },
