@@ -4,7 +4,7 @@ import { UiBadge, UiBanner, UiBusyOverlay, UiButton, UiCard, UiHelp, UiHint, UiI
 import { useConfirm } from '../../stores/confirm'
 import { useGroups } from '../../stores/groups'
 import { useStatus } from '../../stores/status'
-import { usePoolActions, type PoolAct } from '../../stores/pools'
+import { usePoolActions, type PoolAct, type PoolRefs } from '../../stores/pools'
 import { useToast } from '../../stores/toast'
 import { useWarp } from '../../stores/warp'
 import { useSecrets } from '../secrets'
@@ -114,14 +114,34 @@ async function checkNow(): Promise<void> {
 }
 const probing = ref(false);
 
+// кто использует пул (14.11): наборы-участники, зоны с путём, фоллбеки
+// других пулов - предупреждение ДО удаления; аудит подсвечивает мёртвые
+// ссылки постфактум, а здесь владелец ещё может передумать. Эндпоинт
+// недоступен - удаляем как раньше, без варнинга
+async function refsWarning(): Promise<string> {
+  let refs: PoolRefs;
+  try {
+    refs = await a.references(props.pool.name);
+  } catch {
+    return '';
+  }
+  const parts: string[] = [];
+  if (refs.bundles.length) parts.push('набор' + (refs.bundles.length > 1 ? 'ы' : '') + ' ' + refs.bundles.join(', '));
+  if (refs.zones.length) parts.push((refs.zones.length > 1 ? 'зоны ' : 'зона ') + refs.zones.join(', '));
+  if (refs.pools.length) parts.push('фоллбек ' + (refs.pools.length > 1 ? 'пулов: ' : 'пула ') + refs.pools.join(', '));
+  if (!parts.length) return '';
+  return `\n\nПул используют: ${parts.join('; ')}. После удаления эти ссылки станут мёртвыми - панель их подсвечивает.`;
+}
+
 async function delPool(): Promise<void> {
+  const refs = await refsWarning();
   // есть устройства через пул - выбор судьбы их групп (слово владельца
   // 30.10: «удаление пула должно удалять группу, а если пользователь не
   // удаляет - перевести на директ»: суть mawg - не лишать интернета)
   if (devRow.value.length) {
     const choice = await confirmChoice({
       title: 'Удаление пула с устройствами',
-      text: `Удалить пул ${props.pool.name}? Через него ходят устройства: ${devRowText.value}.\n\n«Удалить пул и устройства» - их группы удалятся вместе с пулом.\n«Оставить напрямую» - группы останутся, но выключатся: устройства пойдут напрямую, без интернета никто не останется.`,
+      text: `Удалить пул ${props.pool.name}? Через него ходят устройства: ${devRowText.value}.\n\n«Удалить пул и устройства» - их группы удалятся вместе с пулом.\n«Оставить напрямую» - группы останутся, но выключатся: устройства пойдут напрямую, без интернета никто не останется.${refs}`,
       okLabel: 'Удалить пул и устройства',
       altLabel: 'Оставить напрямую',
     });
@@ -131,7 +151,7 @@ async function delPool(): Promise<void> {
   }
   const ok = await confirm({
     title: 'Удаление пула',
-    text: `Удалить пул ${props.pool.name}? Интерфейс будет выключен, конфиги удалены из mawg.`,
+    text: `Удалить пул ${props.pool.name}? Интерфейс будет выключен, конфиги удалены из mawg.${refs}`,
     okLabel: 'Удалить',
   });
   if (!ok) return;

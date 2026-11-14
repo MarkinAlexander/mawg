@@ -287,13 +287,36 @@ describe('PoolCard - мутации', () => {
     vi.stubGlobal('fetch', f);
     const card = makeCard(nativePool);
     await btn(card, 'удалить пул')[0].trigger('click');
-    await nextTick();
-    expect(useConfirm().state.open).toBe(true);
+    // confirm открывается после async references (варнинг ссылок, 14.11)
+    await vi.waitFor(() => expect(useConfirm().state.open).toBe(true));
     expect(useConfirm().state.text).toContain('Удалить пул proton?');
     useConfirm().ok();
     await vi.waitFor(() => {
       const del = f.mock.calls.find((c) => (c[0] as string).endsWith('/pools/proton') && c[1]?.method === 'DELETE');
       expect(del).toBeTruthy();
+    });
+    card.unmount();
+  });
+
+  it('пул используют набор/зона/фоллбек - варнинг в подтверждении ДО удаления (14.11)', async () => {
+    const f = vi.fn(async (url: string, init?: { method?: string; body?: unknown }) => {
+      if ((url as string).endsWith('/pools/proton/references')) {
+        return new Response(JSON.stringify({ bundles: ['tg'], zones: ['corp.example'], pools: ['warp'] }), { status: 200 });
+      }
+      if ((url as string).endsWith('/status')) {
+        return new Response(JSON.stringify(statusFor()), { status: 200 });
+      }
+      if (typeof init?.body === 'string') return new Response(init.body, { status: 200 });
+      return new Response('{"ok":true}', { status: 200 });
+    });
+    vi.stubGlobal('fetch', f);
+    const card = makeCard(nativePool);
+    await btn(card, 'удалить пул')[0].trigger('click');
+    await vi.waitFor(() => expect(useConfirm().state.open).toBe(true));
+    expect(useConfirm().state.text).toContain('Пул используют: набор tg; зона corp.example; фоллбек пула warp');
+    useConfirm().ok();
+    await vi.waitFor(() => {
+      expect(f.mock.calls.some((c) => (c[0] as string).endsWith('/pools/proton') && c[1]?.method === 'DELETE')).toBe(true);
     });
     card.unmount();
   });
@@ -312,14 +335,29 @@ describe('PoolCard - мутации', () => {
   });
 
   it('удаление пула с устройствами (слово владельца 30.10): выбор судьбы -> ?devices=', async () => {
-    useGroups().state.bindings = [{ pool: 'proton', ips: ['192.168.0.82/32'], name: 'Устройство: 192.168.0.82' }];
-    const f = stub();
+    // привязки отдаёт СЕРВЕР, а не стор руками: mount грузит реестр
+    // асинхронно и затёр бы ручной список - References-фетч (14.11) открыл
+    // это окно гонки
+    const binding = { pool: 'proton', ips: ['192.168.0.82/32'], name: 'Устройство: 192.168.0.82' };
+    const f = vi.fn(async (url: string, init?: { method?: string; body?: unknown }) => {
+      if ((url as string).endsWith('/device-bindings')) {
+        return new Response(JSON.stringify({ bindings: [binding] }), { status: 200 });
+      }
+      if ((url as string).endsWith('/status')) {
+        return new Response(JSON.stringify(statusFor()), { status: 200 });
+      }
+      if (typeof init?.body === 'string') return new Response(init.body, { status: 200 });
+      return new Response('{"ok":true}', { status: 200 });
+    });
     vi.stubGlobal('fetch', f);
     const card = makeCard(nativePool);
+    await vi.waitFor(() => expect(useGroups().state.bindings.length).toBe(1));
     await btn(card, 'удалить пул')[0].trigger('click');
-    await nextTick();
-    // диалог выбора: главная кнопка - удалить вместе с устройствами,
-    // третья - оставить напрямую; текст объясняет последствия
+    // диалог выбора открывается после async references (варнинг, 14.11):
+    // главная кнопка - удалить вместе с устройствами, третья - оставить
+    // напрямую; текст объясняет последствия. Ждём open: settle не чистит
+    // altLabel, waitFor по нему ловит стейл от чужого диалога
+    await vi.waitFor(() => expect(useConfirm().state.open).toBe(true));
     expect(useConfirm().state.altLabel).toBe('Оставить напрямую');
     expect(useConfirm().state.okLabel).toBe('Удалить пул и устройства');
     expect(useConfirm().state.text).toContain('192.168.0.82/32');
@@ -331,12 +369,22 @@ describe('PoolCard - мутации', () => {
     });
     card.unmount();
 
-    const f2 = stub();
+    const f2 = vi.fn(async (url: string, init?: { method?: string; body?: unknown }) => {
+      if ((url as string).endsWith('/device-bindings')) {
+        return new Response(JSON.stringify({ bindings: [{ pool: 'proton', ips: ['192.168.0.82/32'], name: 'x' }] }), { status: 200 });
+      }
+      if ((url as string).endsWith('/status')) {
+        return new Response(JSON.stringify(statusFor()), { status: 200 });
+      }
+      if (typeof init?.body === 'string') return new Response(init.body, { status: 200 });
+      return new Response('{"ok":true}', { status: 200 });
+    });
     vi.stubGlobal('fetch', f2);
-    useGroups().state.bindings = [{ pool: 'proton', ips: ['192.168.0.82/32'], name: 'x' }];
     const card2 = makeCard(nativePool);
+    await vi.waitFor(() => expect(useGroups().state.bindings.length).toBe(1));
     await btn(card2, 'удалить пул')[0].trigger('click');
-    await nextTick();
+    await vi.waitFor(() => expect(useConfirm().state.open).toBe(true));
+    expect(useConfirm().state.altLabel).toBe('Оставить напрямую');
     useConfirm().ok();
     await vi.waitFor(() => {
       const del = f2.mock.calls.find((c) => (c[0] as string).includes('/pools/proton') && c[1]?.method === 'DELETE');

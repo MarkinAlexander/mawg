@@ -411,6 +411,20 @@ func (m *Manager) restoreFragment(prev []byte, hadPrev bool) {
 }
 
 func (m *Manager) applyShared(runnable []PoolSpec, skipped []string) ([]string, error) {
+	// Фрагмент пишем ДО preflight (117 §0, инцидент 12.11): при мёртвом
+	// сервисе чужой config.json может не читаться/не разбираться - раньше
+	// на этом выходили до записи, и старый mawg-pools.json с уже
+	// удалёнными пулами консервировался и продолжал валить сервис при его
+	// старте (лечилось rm фрагмента + рестарт mawg). Желаемое состояние
+	// должно попадать в SharedDir всегда: тег резолвера на этот раз
+	// безопасный дефолт («local» у чужих конфигов - частое имя), после
+	// удачного preflight фрагмент пересобирается по фактам.
+	prev, prevErr := os.ReadFile(m.fragmentPath())
+	hadPrev := prevErr == nil
+	m.resolverTag = "mawg-local"
+	if err := m.writeConfig(runnable); err != nil {
+		return skipped, err
+	}
 	facts, err := m.preflightShared()
 	if err != nil {
 		return skipped, err
@@ -461,8 +475,6 @@ func (m *Manager) applyShared(runnable []PoolSpec, skipped []string) ([]string, 
 		}
 	}
 	m.backupShared()
-	prev, prevErr := os.ReadFile(m.fragmentPath())
-	hadPrev := prevErr == nil
 	if err := m.writeConfig(runnable); err != nil {
 		return skipped, err
 	}

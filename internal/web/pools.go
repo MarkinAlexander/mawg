@@ -354,6 +354,44 @@ func (s *Server) updatePool(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "updated"})
 }
 
+// getPoolReferences - GET /api/v1/pools/{name}/references: кто использует
+// пул - наборы (участник), зоны (путь DNS), фоллбеки других пулов.
+// Аудит 12.11 подсвечивает мёртвые ссылки постфактум; панель предупреждает
+// ДО удаления (слово владельца 14.11). Само удаление не запрещаем: ссылки
+// станут мёртвыми, но живыми их держит владелец.
+func (s *Server) getPoolReferences(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	var bundles, zones, pools []string
+	for _, b := range s.store.Bundles() {
+		for _, m := range b.Members {
+			if m == name {
+				bundles = append(bundles, b.Name)
+				break
+			}
+		}
+	}
+	for _, z := range s.store.DnsZones() {
+		if z.Pool == name {
+			zones = append(zones, z.Zone)
+		}
+	}
+	for _, p := range s.store.Pools() {
+		if p.Name != name && p.Settings.Fallback == store.FallbackPoolPrefix+name {
+			pools = append(pools, p.Name)
+		}
+	}
+	if bundles == nil {
+		bundles = []string{}
+	}
+	if zones == nil {
+		zones = []string{}
+	}
+	if pools == nil {
+		pools = []string{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"bundles": bundles, "zones": zones, "pools": pools})
+}
+
 func (s *Server) deletePool(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	// судьба групп устройств пула (97-док, слово владельца 30.10):
@@ -383,6 +421,7 @@ func (s *Server) deletePool(w http.ResponseWriter, r *http.Request) {
 			s.store.LogEvent(name, "applied", "движок не пересобран после удаления: "+err.Error())
 		}
 	}
+	s.reapplyZonesAfterPoolDrop(r.Context(), name)
 	s.cascSyncPool(name) // каскады с этим источником погасятся
 	warn := s.deletePoolDeviceGroups(r.Context(), name, devices)
 	if warn != nil {

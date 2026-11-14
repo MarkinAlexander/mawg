@@ -155,6 +155,13 @@ export function usePoolActions() {
     return r.members || [];
   }
 
+  // кто использует пул (14.11): наборы-участники, зоны с путём в него,
+  // фоллбеки других пулов - предупреждение ДО удаления (аудит 12.11
+  // подсвечивает постфактум, ссылка мёртвая уже после)
+  async function references(name: string): Promise<PoolRefs> {
+    const r = await api<Partial<PoolRefs>>('GET', `/pools/${encodeURIComponent(name)}/references`);
+    return { bundles: r.bundles || [], zones: r.zones || [], pools: r.pools || [] };
+  }
   async function engine(name: string): Promise<PoolEngine> {
     return api<PoolEngine>('GET', `/pools/${encodeURIComponent(name)}/engine`);
   }
@@ -196,8 +203,15 @@ export function usePoolActions() {
   return {
     act, del, upload, toggleCfg, moveCfg, delCfg, activateCfg, importPremium, switchPremiumCountry,
     create, createFromSource, requestFree, inspect, slots, createSlot,
-    refreshSource, update, rename, reissueFree, members, configText, engine, engineSelect, nodeOrder, engineToggle, engineRetest, smartCascade,
+    refreshSource, update, rename, reissueFree, members, configText, engine, engineSelect, nodeOrder, engineToggle, engineRetest, smartCascade, references,
   };
+}
+
+// ответ GET /pools/{name}/references: кто ссылается на пул
+export interface PoolRefs {
+  bundles: string[]
+  zones: string[]
+  pools: string[]
 }
 
 // SourcePlan из api/types

@@ -328,6 +328,35 @@ func zoneListShort(zones []store.DnsZone) string {
 	return strings.Join(names, ", ")
 }
 
+// reapplyZonesAfterPoolDrop - после удаления пула зоны, смотревшие на
+// него, применяются заново: осиротевшая dnszone-* группа пути сносится
+// (иначе живая группа остаётся с мёртвым интерфейсом - кейс владельца
+// 14.11, группы сносили руками), зона остаётся в таблице без пути и
+// вернётся вместе с пулом. Best-effort: MT недоступен - удаление пула
+// не валим, снос дотянет следующее применение зон.
+func (s *Server) reapplyZonesAfterPoolDrop(ctx context.Context, pool string) {
+	zones := s.store.DnsZones()
+	hit := false
+	for _, z := range zones {
+		if z.Pool == pool {
+			hit = true
+			break
+		}
+	}
+	if !hit {
+		return
+	}
+	warnings, err := s.applyDnsZones(ctx, zones)
+	for _, wn := range warnings {
+		s.store.LogEvent("dns", "zones", wn)
+	}
+	if err != nil {
+		s.store.LogEvent("dns", "zones", "переприменение зон после удаления пула "+pool+" не удалось ("+err.Error()+"): группа пути dnszone-* снесётся при следующем применении зон")
+		return
+	}
+	s.store.LogEvent("dns", "zones", "путь зон удалённого пула "+pool+" пересчитан: группы dnszone-* снесены")
+}
+
 // postDnsZonesProbe - POST /api/v1/dns/zones/{id}/probe: канарейка по
 // каждому серверу зоны; путь - как у клиентов dns-proxy (маркировка
 // группой зоны через OUTPUT форка rev7+), так что проба честно идёт

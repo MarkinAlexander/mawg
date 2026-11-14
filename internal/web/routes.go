@@ -74,6 +74,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/pools/{name}/configs", s.uploadConfigs)
 	mux.HandleFunc("GET /api/v1/pools/{name}/premium", s.getPremium)
 	mux.HandleFunc("GET /api/v1/pools/{name}/members", s.getPoolMembers)
+	mux.HandleFunc("GET /api/v1/pools/{name}/references", s.getPoolReferences)
 	mux.HandleFunc("GET /api/v1/pools/{name}/engine", s.getPoolEngine)
 	mux.HandleFunc("PUT /api/v1/pools/{name}/engine/select", s.putPoolEngineSelect)
 	mux.HandleFunc("PUT /api/v1/pools/{name}/node-order", s.putPoolNodeOrder)
