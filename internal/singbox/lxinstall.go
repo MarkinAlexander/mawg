@@ -255,11 +255,13 @@ func HasLXSuffix(version string) bool { return strings.Contains(version, "-lx.")
 // HasExtSuffix - ядро форка extended (версия "...-extended-2.7.3").
 func HasExtSuffix(version string) bool { return strings.Contains(version, "-extended-") }
 
-// MatchesVersion - форма версии, ожидаемая от источника: lx - "-lx.",
-// extended - "-extended-", апстрим - чистая версия без суффиксов форков.
+// MatchesVersion - форма версии, ожидаемая от источника: lx и наш форк
+// (lx-own) - "-lx.", extended - "-extended-", апстрим - чистая версия без
+// суффиксов форков. lx-own в default-ветке отвергал СВОЮ сборку: 1.14.2-lx.12
+// браковалась как «не сборка наш форк» (кейс владельца 14.11).
 func (s Source) MatchesVersion(v string) bool {
 	switch s.ID {
-	case SourceLXID:
+	case SourceLXID, SourceLXOwnID:
 		return HasLXSuffix(v)
 	case SourceExtID:
 		return HasExtSuffix(v)

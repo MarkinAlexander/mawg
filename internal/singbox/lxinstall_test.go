@@ -890,3 +890,25 @@ func TestInstallLXCoreNowhereToWork(t *testing.T) {
 		}
 	}
 }
+
+// lx-own (наш форк) - тоже lx-сборка: версия с "-lx." проходит валидацию
+// своего источника (кейс владельца 14.11: его 1.14.2-lx.12 браковалась
+// как «не сборка наш форк»)
+func TestMatchesVersionLxOwn(t *testing.T) {
+	own, ok := SourceByID(SourceLXOwnID)
+	if !ok {
+		t.Fatal("источник lx-own не найден")
+	}
+	if !own.MatchesVersion("1.14.2-lx.12") {
+		t.Fatal("lx-версия собственного форка должна проходить валидацию")
+	}
+	if own.MatchesVersion("1.14.4") {
+		t.Fatal("версия без lx-суффикса не от нашего форка")
+	}
+	if lx, _ := SourceByID(SourceLXID); !lx.MatchesVersion("1.14.4-lx.35") {
+		t.Fatal("Leadaxe lx-версия должна проходить")
+	}
+	if up, _ := SourceByID(SourceUpID); up.MatchesVersion("1.14.2-lx.12") {
+		t.Fatal("lx-версия не должна проходить валидацию апстрима")
+	}
+}
