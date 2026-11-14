@@ -57,7 +57,9 @@ const flavorOptions = computed<UiSelectOption[]>(() => {
 // флешкой оперативку можно не насиловать вовсе); авто сам уходит на ПЗУ
 // при тесной tmpfs/RAM (кейс «signal: killed» / «Failed to fetch»)
 const workdirOptions: UiSelectOption[] = [
-  { value: 'auto', label: 'автоматически: /tmp (RAM), при нехватке — флешка', hint: 'mawg сверяет свободное место в /tmp и доступную оперативную память; тесно — сам перекладывает на ПЗУ/флешку' },
+  // '' = авто: бэкенд принимает только ''/disk, литерал 'auto' ломал
+  // установку (регрессия 10.3-10.5, кейс владельца 14.11)
+  { value: '', label: 'автоматически: /tmp (RAM), при нехватке — флешка', hint: 'mawg сверяет свободное место в /tmp и доступную оперативную память; тесно — сам перекладывает на ПЗУ/флешку' },
   { value: 'disk', label: 'всегда на флешку (ПЗУ): не занимать оперативную память', hint: 'для роутеров с маленькой RAM и флешкой: скачивание и распаковка целиком на ПЗУ, временные файлы удаляются' },
 ];
 
@@ -120,7 +122,7 @@ watch(open, async (v) => {
     item: fresh, phase: 'form',
     source: fresh.source || 'extended',
     flavor: 'plain',
-    workdir: 'auto',
+    workdir: '',
     backup: fresh.action === 'singbox-lx-replace' && (fresh.backupBytes || 0) > 0 && (fresh.freeBytes || 0) > (fresh.backupBytes || 0) + 64 * 1048576,
     ok: false, out: '', sourceNote: '',
     initSource: fresh.source || 'extended', initFlavor: 'plain',

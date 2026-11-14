@@ -68,6 +68,11 @@ func (s *Server) postSystemInstall(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, fmt.Errorf("не указан id компонента"))
 		return
 	}
+	// "auto" - синоним "" (диалог установки слал литерал; регрессия
+	// 10.3-10.5: установка lx падала «workdir: пусто (авто) или disk»)
+	if req.Workdir == "auto" {
+		req.Workdir = ""
+	}
 	if req.Workdir != "" && req.Workdir != "disk" {
 		writeErr(w, fmt.Errorf("workdir: пусто (авто) или disk"))
 		return
