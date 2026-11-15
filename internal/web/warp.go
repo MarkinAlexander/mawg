@@ -40,6 +40,11 @@ type warpGenerateReq struct {
 	Count        int      `json:"count"`
 	Mode         string   `json:"mode"` // "random" | "fixed"; пусто = random
 	Endpoint     string   `json:"endpoint"`
+	// Address - свой локальный адрес первого конфига (120-док, слово
+	// владельца 15.11): пусто = адрес от регистрации Cloudflare; задан -
+	// каждому следующему последний октет +1 (мультипул разводим подсетью
+	// 172.16.0.x так же, как Proton).
+	Address      string   `json:"address"`
 	Sites        []string `json:"sites"`
 	Subnets      []string `json:"subnets"`
 	// Dest - куда девать конфиги: "download" (по умолчанию) - только
@@ -258,6 +263,28 @@ func (s *Server) warpGenerate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Свой локальный адрес: считаем ДО регистраций (плохой адрес или
+	// переполнение /24 - честный отказ без потраченных регистраций)
+	var localAddrs []string
+	if a := strings.TrimSpace(req.Address); a != "" {
+		ipPart, pfx := a, ""
+		if i := strings.Index(a, "/"); i >= 0 {
+			ipPart, pfx = strings.TrimSpace(a[:i]), a[i:]
+		}
+		if _, err := wgconf.IncV4(ipPart, 0); err != nil {
+			writeErr(w, err)
+			return
+		}
+		for i := 0; i < req.Count; i++ {
+			inc, err := wgconf.IncV4(ipPart, i)
+			if err != nil {
+				writeErr(w, err)
+				return
+			}
+			localAddrs = append(localAddrs, inc+pfx)
+		}
+	}
+
 	// Регистрации идут последовательно с паузой - Cloudflare
 	// рейт-лимитит, спешить некуда (прецедент mtinstall: долгие
 	// операции синхронно, у UI нет 90с-таймаута).
@@ -280,6 +307,19 @@ func (s *Server) warpGenerate(w http.ResponseWriter, r *http.Request) {
 			lastErr = err
 			results = append(results, warpResultOne{Endpoint: ep, Error: err.Error()})
 			continue
+		}
+		if len(localAddrs) > 0 {
+			newRaw, err := wgconf.SetAddress(nc.Raw, localAddrs[i])
+			if err != nil {
+				results = append(results, warpResultOne{Endpoint: ep, Error: err.Error()})
+				continue
+			}
+			if cfg, err := wgconf.Parse(newRaw); err != nil {
+				results = append(results, warpResultOne{Endpoint: ep, Error: "конфиг с новым адресом не разбирается: " + err.Error()})
+				continue
+			} else {
+				nc.Raw, nc.Config = newRaw, cfg
+			}
 		}
 		devs = append(devs, dev)
 		ncs = append(ncs, nc)

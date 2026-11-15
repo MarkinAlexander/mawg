@@ -271,6 +271,7 @@ export interface ConfigView {
   coolForSec?: number
   conflict?: string
   awg?: string // plain | awg2 | awg3 - какие кнопки скачивания показывать
+  addresses?: string[] // локальные v4+v6 конфига: перенумерация мультипула (120-док)
 }
 
 export interface PremiumCountry {

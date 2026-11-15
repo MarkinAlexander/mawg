@@ -4,8 +4,11 @@ import { UiBadge, UiBusyOverlay, UiButton, UiHelp, UiHint, UiSwitch } from '../.
 import { usePoolActions } from '../../stores/pools'
 import { useToast } from '../../stores/toast'
 import { useSecrets } from '../secrets'
+import { occupiedV4, nextFreeV4, providerOf } from './poolsLogic'
 import { G } from '../glossary'
 import type { ConfigView, PoolView } from '../../api/types'
+import PoolReaddressDialog from './PoolReaddressDialog.vue'
+import { usePools } from '../../stores/status'
 
 // Дровер «Конфиги» карточки пула: порядок = приоритет ротации, drag-n-drop
 // загрузка, вкл/выкл/перестановка/удаление. У движковых пулов WG/AWG-конфиги
@@ -15,6 +18,21 @@ const { push } = useToast();
 const a = usePoolActions();
 const secrets = useSecrets();
 const isEng = computed(() => props.pool.settings.engineMode === 'singbox');
+
+// Перенумерация адресов (120-док): пометить можно, когда у однотипной
+// кучи адрес один (Proton все с 10.2.0.2) - ровно её переносит одним
+// ходом; куча обычно ВЫКЛЮЧЕНА конфликтом - смотрим все конфиги
+const { pools } = usePools();
+const readdressOpen = ref(false);
+const readdressHint = computed(() => {
+  if (props.pool.premium?.imported || !(props.pool.configs || []).length) return '';
+  const prov = providerOf(props.pool.configs?.find((c) => (c.addresses || []).length)?.addresses);
+  if (!prov) return '';
+  const same = (props.pool.configs || []).filter((c) => (c.addresses || []).some((x) => !x.includes(':') && x.startsWith(prov.prefix)));
+  if (same.length < 2) return '';
+  return 'одинаковый адрес у ' + same.length + ' конфигов - первый свободный: ' +
+    nextFreeV4(occupiedV4(pools.value), prov.prefix);
+});
 
 const busy = ref(''); // «act» - одна busy-кнопка секции за раз
 // оверлей «идёт применение» (118): загрузка/активация могут висеть
@@ -105,6 +123,26 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
       style="display: none"
       @change="onFiles"
     >
+    <!-- перенумерация мультипула (120-док): у однотипной кучи адрес один,
+         два пула с ним одновременно не поднимутся -->
+    <div
+      v-if="readdressHint"
+      class="readdr"
+    >
+      <span class="readdr-text">{{ readdressHint }}</span>
+      <UiButton
+        variant="ghost"
+        :disabled="!!busy"
+        @click="readdressOpen = true"
+      >
+        адреса
+      </UiButton>
+    </div>
+    <PoolReaddressDialog
+      :pool="pool"
+      :open="readdressOpen"
+      @update:open="readdressOpen = $event"
+    />
     <div class="cfglist">
       <div
         v-for="(c, i) in pool.configs || []"
@@ -286,6 +324,21 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
 .drop.hover {
   border-color: var(--accent);
   color: var(--accent);
+}
+.readdr {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid var(--warn);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--warn);
+}
+.readdr-text {
+  min-width: 0;
 }
 .cfgdl {
   color: var(--accent);

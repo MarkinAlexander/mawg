@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SlotInfo } from '../../api/types'
-import { fallbackHint, inspectLine, isWarpEndpoint, isWarpPool, planView, protoGate, slotGate, slotOptions, agoText } from './poolsLogic'
+import { fallbackHint, inspectLine, isWarpEndpoint, isWarpPool, planView, protoGate, slotGate, slotOptions, agoText, providerOf, occupiedV4, nextFreeV4 } from './poolsLogic'
 import { probeHuman } from './groupsLogic'
 
 const slot = (over: Partial<SlotInfo>): SlotInfo => ({
@@ -182,5 +182,34 @@ describe('warp - isWarpPool', () => {
     expect(agoText(now / 1000 - 125, now)).toBe('2 мин назад');
     expect(agoText(now / 1000 - 3 * 3600, now)).toBe('3 ч назад');
     expect(agoText(now / 1000 - 50 * 3600, now)).toBe('2 дн назад');
+  });
+});
+
+describe('мультипул - providerOf/occupiedV4/nextFreeV4 (120-док)', () => {
+  it('providerOf: Proton и WARP по локальному v4, прочее и v6 - мимо', () => {
+    expect(providerOf(['10.2.0.2/32', '2a07:b944::2:2/128'])?.kind).toBe('proton');
+    expect(providerOf(['172.16.0.5/32'])?.kind).toBe('warp');
+    expect(providerOf(['10.9.0.2/32'])).toBeNull();
+    expect(providerOf(['2a07:b944::2:2/128'])).toBeNull();
+    expect(providerOf([])).toBeNull();
+    expect(providerOf(undefined)).toBeNull();
+  });
+
+  it('occupiedV4: собирает v4 всех конфигов всех пулов, v6 пропускает', () => {
+    const pools = [
+      { configs: [{ addresses: ['10.2.0.2/32', '2a07:b944::2:2/128'] }] },
+      { configs: [{ addresses: ['172.16.0.2/32'] }, { addresses: ['10.2.0.2/32'] }] },
+      { configs: [] },
+    ];
+    expect(occupiedV4(pools)).toEqual(['10.2.0.2/32', '172.16.0.2/32', '10.2.0.2/32']);
+    expect(occupiedV4([])).toEqual([]);
+  });
+
+  it('nextFreeV4: с хвоста 2, занятое пропускает, /24 кончился - пусто', () => {
+    expect(nextFreeV4([], '10.2.0.')).toBe('10.2.0.2');
+    expect(nextFreeV4(['10.2.0.2/32'], '10.2.0.')).toBe('10.2.0.3');
+    expect(nextFreeV4(['10.2.0.2', '10.2.0.3', '10.2.0.5'], '10.2.0.')).toBe('10.2.0.4');
+    const full = Array.from({ length: 254 }, (_, i) => '10.2.0.' + (i + 2));
+    expect(nextFreeV4(full, '10.2.0.')).toBe('');
   });
 });

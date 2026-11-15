@@ -200,11 +200,26 @@ export function usePoolActions() {
     return apiText(`/pools/${encodeURIComponent(name)}/configs/${encodeURIComponent(file)}`);
   }
 
+  // Перенумерация локальных адресов (120-док, слово владельца 15.11):
+  // base - адрес первого конфига, следующим файлам +1 к последнему
+  // октету; files пуст - все включённые (в порядке ротации)
+  async function readdress(name: string, base: string, files?: string[]): Promise<ReaddressRes> {
+    const r = await api<ReaddressRes>('POST', `/pools/${encodeURIComponent(name)}/configs/readdress`, { base, files });
+    later();
+    return r;
+  }
+
   return {
     act, del, upload, toggleCfg, moveCfg, delCfg, activateCfg, importPremium, switchPremiumCountry,
     create, createFromSource, requestFree, inspect, slots, createSlot,
-    refreshSource, update, rename, reissueFree, members, configText, engine, engineSelect, nodeOrder, engineToggle, engineRetest, smartCascade, references,
+    refreshSource, update, rename, reissueFree, members, configText, engine, engineSelect, nodeOrder, engineToggle, engineRetest, smartCascade, references, readdress,
   };
+}
+
+// ответ POST /pools/{name}/configs/readdress (120-док)
+export interface ReaddressRes {
+  changed: { file: string; old?: string; address: string }[]
+  warnings?: string[]
 }
 
 // ответ GET /pools/{name}/references: кто ссылается на пул

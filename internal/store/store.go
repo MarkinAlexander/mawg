@@ -392,6 +392,41 @@ func (s *Store) LoadConfigFile(pool, file string) (wgconf.Config, error) {
 	return wgconf.Parse(data)
 }
 
+// WriteConfigRaw - заменить текст конфига (перенумерация локальных
+// адресов мультипула, 120-док): файл на диске + реестр адресов одним
+// ходом. Новый текст обязан парситься - мусор в пул не попадает.
+func (s *Store) WriteConfigRaw(pool, file string, raw []byte) error {
+	if filepath.Base(file) != file || !strings.HasSuffix(file, ".conf") {
+		return fmt.Errorf("недопустимое имя файла конфига: %q", file)
+	}
+	parsed, err := wgconf.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("новый текст конфига не разбирается: %w", err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.root.Pools {
+		if s.root.Pools[i].Name != pool {
+			continue
+		}
+		if s.root.Pools[i].Premium {
+			return errors.New("адрес Premium-конфига завязан на ключ, пул не перенумеровывается")
+		}
+		for j := range s.root.Pools[i].Configs {
+			if s.root.Pools[i].Configs[j].File != file {
+				continue
+			}
+			if err := os.WriteFile(filepath.Join(s.PoolDir(pool), file), raw, 0o600); err != nil {
+				return err
+			}
+			s.root.Pools[i].Configs[j].Addresses = parsed.Addresses
+			return s.saveLocked(filepath.Join(s.base, "config.json"), s.root)
+		}
+		return fmt.Errorf("конфиг %q не найден в пуле %q", file, pool)
+	}
+	return fmt.Errorf("пул %q не найден", pool)
+}
+
 func (s *Store) RemoveConfig(pool, file string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

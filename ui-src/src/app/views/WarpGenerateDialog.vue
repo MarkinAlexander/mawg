@@ -25,6 +25,7 @@ const dlg = ref<{
   mode: 'random' | 'preset' | 'custom'
   preset: string
   custom: string
+  address: string
   sites: string[]
   subnets: string
   dest: 'download' | 'add' | 'new'
@@ -47,6 +48,7 @@ watch(open, async (v) => {
     mode: 'random',
     preset: warp.state.presets?.presets[0] || '',
     custom: '',
+    address: '',
     sites: [],
     subnets: '',
     dest: 'download',
@@ -84,7 +86,18 @@ const fixedErr = computed(() => {
   if (!ep) return 'укажите эндпоинт';
   return /^[a-z0-9.[\]:]+$/i.test(ep) && /:\d+$/.test(ep) ? null : 'эндпоинт в форме host:порт';
 });
-const canGo = computed(() => !!dlg.value && !countErr.value && !fixedErr.value && !subnetErr.value);
+// свой локальный адрес (120-док): пусто = адрес от регистрации;
+// задан - первому конфигу этот, следующим +1 к последнему октету
+const addressErr = computed(() => {
+  const a = dlg.value?.address.trim() || '';
+  if (!a) return null;
+  const m = IPV4_RE.exec(a);
+  if (!m || a.split('/')[0].split('.').some((p) => Number(p) > 255)) {
+    return 'локальный адрес - IPv4 вида 172.16.0.5';
+  }
+  return null;
+});
+const canGo = computed(() => !!dlg.value && !countErr.value && !fixedErr.value && !subnetErr.value && !addressErr.value);
 
 const siteList = computed(() => warp.state.presets?.sites || []);
 
@@ -146,6 +159,9 @@ async function run(): Promise<void> {
   if (dlg.value.mode !== 'random') {
     body.mode = 'fixed';
     body.endpoint = fixedEndpoint.value;
+  }
+  if (dlg.value.address.trim()) {
+    body.address = dlg.value.address.trim();
   }
   body.dest = dlg.value.dest === 'download' ? 'download' : 'pool';
   if (dlg.value.dest === 'add') {
@@ -253,6 +269,16 @@ function dlHref(res: WarpResultOne, variant: string): string {
         <UiHint
           v-if="dlg.mode === 'random'"
           :text="'Случайные пары из сетей WARP: ' + (warp.state.presets?.v4Blocks || []).join(', ') + ' и порты ' + (warp.state.presets?.ports || []).slice(0, 6).join(', ') + '... Если провайдер придавит один адрес:порт - выживут остальные.'"
+        />
+        <UiInput
+          v-model="dlg.address"
+          label="Свой локальный адрес (необязательно)"
+          placeholder="172.16.0.5"
+          :validator="() => addressErr"
+        />
+        <UiHint
+          v-if="!!dlg.address.trim()"
+          text="Адрес от регистрации Cloudflare будет заменён: этому конфигу - указанный, каждому следующему последний октет +1. Так несколько WARP-пулов разводятся одной подсетью (172.16.0.x)."
         />
         <details
           class="sites"

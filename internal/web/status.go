@@ -110,7 +110,9 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 			if until, ok := st.Cooldowns[c.File]; ok {
 				cv.CoolFor = until - now
 			}
-			cv.Conflict = s.configConflict(p.Name, p.DeviceName(), s.poolConfigAddrs(p.Name, c))
+			addrs := s.poolConfigAddrs(p.Name, c)
+			cv.Addresses = addrs
+			cv.Conflict = s.configConflict(p.Name, p.DeviceName(), addrs)
 			if c.File == st.ActiveFile {
 				view.ActiveEndpoint = c.Endpoint
 			}
@@ -199,6 +201,9 @@ type configView struct {
 	Enabled  bool   `json:"enabled"`
 	CoolFor  int64  `json:"coolForSec,omitempty"`
 	Conflict string `json:"conflict,omitempty"`
+	// Addresses - локальные адреса конфига (v4+v6): панель показывает их
+	// в перенумерации мультипула и предлагает свободный адрес (120-док).
+	Addresses []string `json:"addresses,omitempty"`
 	// Awg - уровень обфускации (plain/awg2/awg3): панель по нему
 	// показывает кнопки скачивания WG/AWG.
 	Awg string `json:"awg,omitempty"`

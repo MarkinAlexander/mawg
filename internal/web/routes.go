@@ -72,6 +72,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/v1/pools/{name}", s.updatePool)
 	mux.HandleFunc("DELETE /api/v1/pools/{name}", s.deletePool)
 	mux.HandleFunc("POST /api/v1/pools/{name}/configs", s.uploadConfigs)
+	mux.HandleFunc("POST /api/v1/pools/{name}/configs/readdress", s.readdressConfigs)
 	mux.HandleFunc("GET /api/v1/pools/{name}/premium", s.getPremium)
 	mux.HandleFunc("GET /api/v1/pools/{name}/members", s.getPoolMembers)
 	mux.HandleFunc("GET /api/v1/pools/{name}/references", s.getPoolReferences)

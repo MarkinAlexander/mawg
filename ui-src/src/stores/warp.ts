@@ -55,6 +55,7 @@ export interface WarpGenerateBody {
   count: number
   mode: 'random' | 'fixed'
   endpoint?: string
+  address?: string // свой локальный адрес первого конфига, следующим +1 (120-док)
   sites?: string[]
   subnets?: string[]
   dest?: 'download' | 'pool' // download (по умолчанию) - роутер не трогаем

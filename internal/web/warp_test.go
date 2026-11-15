@@ -600,3 +600,33 @@ func TestWarpGenerateKeeneticAutoSlotExplicit(t *testing.T) {
 		t.Fatalf("CreateSlot не должен был вызываться, вызван %d", fb.created)
 	}
 }
+
+// Свой локальный адрес (120-док): адрес регистрации (фейк всегда даёт
+// 172.16.0.2) заменяется на заданный, каждому следующему конфигу
+// последний октет +1 - мультипул WARP разводится подсетью.
+func TestWarpGenerateCustomAddress(t *testing.T) {
+	ts, _, _ := warpTestServer(t)
+	code, body := warpPost(ts, "/api/v1/warp/generate",
+		`{"count":2,"mode":"random","dest":"download","address":"172.16.0.10"}`)
+	if code != 200 {
+		t.Fatalf("generate: %d %s", code, body)
+	}
+	var plan warpPlan
+	if err := json.Unmarshal(body, &plan); err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	for i, want := range []string{"172.16.0.10", "172.16.0.11"} {
+		if plan.Configs[i].Address != want {
+			t.Fatalf("configs[%d].address: %q, want %s", i, plan.Configs[i].Address, want)
+		}
+		if !strings.Contains(plan.Configs[i].WG, "Address = "+want) {
+			t.Fatalf("конфиг %d без адреса %s:\n%s", i, want, plan.Configs[i].WG)
+		}
+	}
+	// Плохой адрес - отказ ДО регистраций
+	code, body = warpPost(ts, "/api/v1/warp/generate",
+		`{"count":1,"mode":"random","dest":"download","address":"bogus"}`)
+	if code == 200 {
+		t.Fatalf("мусорный адрес принят: %s", body)
+	}
+}

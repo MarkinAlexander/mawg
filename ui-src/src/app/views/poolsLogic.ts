@@ -187,6 +187,52 @@ export function isWarpPool(p: { settings?: { warp?: unknown }; configs?: { endpo
   return (p.configs || []).some((c) => isWarpEndpoint(c.endpoint));
 }
 
+// Мультипул одного провайдера (120-док): пулы разводятся разными
+// локальными адресами подсети - Proton живьём принимает 10.2.0.3/.4,
+// WARP 172.16.0.5. Зеркало internal/wgconf/address.go - при изменении
+// там менять и тут. Эндпоинт в детекте не участвует: у Proton в конфигах
+// голые IP серверов, домена protonvpn.net нет.
+export const PROVIDER_SUBNETS = [
+  { kind: 'proton', label: 'Proton', prefix: '10.2.0.' },
+  { kind: 'warp', label: 'WARP', prefix: '172.16.0.' },
+] as const;
+
+export type ProviderSubnet = (typeof PROVIDER_SUBNETS)[number];
+
+// providerOf - провайдер по локальному v4-адресу конфига (подсказка
+// подсети в перенумерации; строгий детект Address+DNS - на бэкенде).
+export function providerOf(addresses?: string[]): ProviderSubnet | null {
+  const v4 = (addresses || []).find((a) => !a.includes(':'));
+  if (!v4) return null;
+  return PROVIDER_SUBNETS.find((p) => v4.startsWith(p.prefix)) || null;
+}
+
+// occupiedV4 - все v4-адреса конфигов всех пулов: у однотипной кучи они
+// совпадают (10.2.0.2 у всех Proton), отсюда берётся занятость.
+export function occupiedV4(pools: { configs?: { addresses?: string[] }[] }[]): string[] {
+  const out: string[] = [];
+  for (const p of pools || []) {
+    for (const c of p.configs || []) {
+      for (const a of c.addresses || []) {
+        if (!a.includes(':')) out.push(a);
+      }
+    }
+  }
+  return out;
+}
+
+// nextFreeV4 - первый свободный адрес подсети с хвоста 2 (10.2.0.2, .3,
+// ...). Подсказка базы перенумерации; сервер ещё раз проверит занятость -
+// у него виднее живые туннели.
+export function nextFreeV4(taken: string[], prefix: string): string {
+  const used = new Set(taken.map((a) => a.split('/')[0]));
+  for (let n = 2; n <= 255; n++) {
+    const addr = prefix + n;
+    if (!used.has(addr)) return addr;
+  }
+  return '';
+}
+
 // agoText - сколько времени назад была проба (probeAt - unix-сек из
 // /status и /ifaces: время той же единственной пробы пула).
 export function agoText(at?: number, now = Date.now()): string {
