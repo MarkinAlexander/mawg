@@ -378,6 +378,12 @@ export interface KeeneticOwn {
   dot: { address: string; port?: string; sni?: string }[]
   udp: { interface: string; servers: string[] }[]
   v6?: { interface: string; servers: string[] }[]
+  // контролька «DNS роутера завязан на туннели» (кейс 17.11): nil -
+  // вердикта нет (есть незаинтерфейсный upstream или апстримов нет)
+  tunnelDep?: {
+    dependent: boolean
+    tunnels: { interface: string; up: boolean; servers: number }[]
+  }
 }
 
 // GET/PUT /dns/keenetic/dns: режим «DNS самого роутера» (98-док). По

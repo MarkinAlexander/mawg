@@ -367,3 +367,52 @@ func TestCollectEmptyServersNotNil(t *testing.T) {
 		t.Fatal("Servers = nil, want пустой []")
 	}
 }
+
+// Контролька «DNS роутера завязан на туннели» (кейс 17.11: весь
+// name-server в туннелях, после ребута DNS лежит до подъёма WARP).
+func TestDetectTunnelDep(t *testing.T) {
+	own := KeeneticOwn{
+		Udp: []KeeneticUdp{
+			{Interface: "Wireguard5", Servers: []string{"8.8.8.8", "8.8.4.4"}},
+			{Interface: "Wireguard6", Servers: []string{"10.2.0.1"}},
+		},
+		V6: []KeeneticUdp{{Interface: "Wireguard5", Servers: []string{"2001:4860:4860::8888"}}},
+	}
+	tunnels := map[string]bool{"Wireguard5": true, "Wireguard6": false, "Wireguard7": true}
+
+	dep := DetectTunnelDep(own, tunnels)
+	if dep == nil || !dep.Dependent {
+		t.Fatalf("зависимость не найдена: %+v", dep)
+	}
+	if len(dep.Tunnels) != 2 {
+		t.Fatalf("tunnels: %+v", dep.Tunnels)
+	}
+	// порядок стабильный по имени; Up из живого списка; Servers суммируются
+	if dep.Tunnels[0].Interface != "Wireguard5" || !dep.Tunnels[0].Up || dep.Tunnels[0].Servers != 3 {
+		t.Fatalf("tunnels[0]: %+v", dep.Tunnels[0])
+	}
+	if dep.Tunnels[1].Interface != "Wireguard6" || dep.Tunnels[1].Up || dep.Tunnels[1].Servers != 1 {
+		t.Fatalf("tunnels[1]: %+v", dep.Tunnels[1])
+	}
+
+	// апстрим вне туннеля (провайдер) - зависимости нет, вердикт не выдумываем
+	mixed := own
+	mixed.Udp = append(append([]KeeneticUdp{}, own.Udp...), KeeneticUdp{Interface: "Eth0", Servers: []string{"1.1.1.1"}})
+	if DetectTunnelDep(mixed, tunnels) != nil {
+		t.Fatal("смешанные апстримы помечены как зависимые")
+	}
+
+	// глобальный DoH/DoT вердикт НЕ отменяет: он не привязан к интерфейсу,
+	// но едет по таблице маршрутизации - эмпирика 17.11 (резолвер молчал
+	// на старте целиком); вердикт честно про простые записи
+	withDoh := KeeneticOwn{Udp: own.Udp, DoH: []KeeneticDoh{{URI: "https://1.1.1.1/dns-query"}}}
+	depDoh := DetectTunnelDep(withDoh, tunnels)
+	if depDoh == nil || !depDoh.Dependent {
+		t.Fatal("глобальный DoH должен оставлять вердикт по простым записям")
+	}
+
+	// простых записей нет вовсе - nil
+	if DetectTunnelDep(KeeneticOwn{}, tunnels) != nil {
+		t.Fatal("пустой own дал вердикт")
+	}
+}

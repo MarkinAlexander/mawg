@@ -155,6 +155,24 @@ func (s *Server) dnsKeeneticOwn(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	// Контролька «DNS завязан на туннели» (кейс 17.11: весь name-server
+	// в туннелях - после ребута резолвер роутера молчит до подъёма WARP).
+	// Классификация интерфейсов по ЖИВОМУ списку, не по имени: running-
+	// config зовёт их WireguardN (ndm), в ядре они nwgN - нужны ОБА имени
+	// (Slots: пары слот+устройство; SysTunnels: свежий kernel-линк).
+	up := map[string]bool{}
+	if slots, err := s.backend.Slots(); err == nil {
+		for _, sl := range slots {
+			up[sl.Device] = sl.LinkUp
+			up[sl.ID] = sl.LinkUp
+		}
+	}
+	if slots, err := s.backend.SysTunnels(); err == nil {
+		for _, sl := range slots {
+			up[sl.Device] = sl.LinkUp
+		}
+	}
+	own.TunnelDep = dnsmgr.DetectTunnelDep(own, up)
 	writeJSON(w, http.StatusOK, own)
 }
 

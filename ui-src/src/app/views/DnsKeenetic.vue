@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue';
 import { UiBadge, UiBanner, UiButton, UiCard, UiHelp, UiHint } from '../../components/ui';
 import { api } from '../../api/client';
 import type { DnsProbeRow, DnsState, KeeneticDNSState, KeeneticOwn } from '../../api/types';
-import { ownAdviceOf, ownEncryptedOf, ownPlainOf, ownPlainRealOf, ownRowsOf } from './dnsKeenetic';
+import { ownAdviceOf, ownEncryptedOf, ownPlainOf, ownPlainRealOf, ownRowsOf, tunnelDepBannerOf } from './dnsKeenetic';
 import { verdictRu, verdictVariant } from './dnsLogic';
 import { useToast } from '../../stores/toast';
 import { useConfirm } from '../../stores/confirm';
@@ -89,6 +89,9 @@ const ownAdvice = computed(() => {
 const ownEncryptedRows = computed(() => ownEncryptedOf(ownRows.value));
 const ownPlainRows = computed(() => ownPlainOf(ownRows.value));
 const ownPlainReal = computed(() => ownPlainRealOf(ownRows.value));
+
+// контролька «DNS завязан на туннели» (кейс 17.11)
+const tunnelDepBanner = computed(() => tunnelDepBannerOf(own.value?.tunnelDep));
 
 async function probeOwn(): Promise<void> {
   if (ownProbing.value) return;
@@ -193,6 +196,11 @@ async function probeOwn(): Promise<void> {
         Проверить
       </UiButton>
     </div>
+    <UiBanner
+      v-if="tunnelDepBanner"
+      :kind="tunnelDepBanner.kind"
+      :text="tunnelDepBanner.text"
+    />
     <div class="kv">
       <template
         v-for="e in ownEncryptedRows"

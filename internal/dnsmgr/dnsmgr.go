@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -171,6 +172,9 @@ type KeeneticOwn struct {
 	// запросы :53 - транзит клиентов с чужим DNS и свои собственные
 	// (эмпирика 31.10: nslookup к 8.8.8.8 отвечает профильный upstream).
 	Intercept bool `json:"intercept"`
+	// TunnelDep - контролька «DNS роутера завязан на туннели» (nil -
+	// вердикта нет): заполняет web-слой из живого списка туннелей.
+	TunnelDep *KeeneticTunnelDep `json:"tunnelDep,omitempty"`
 }
 
 type KeeneticDoh struct {
@@ -187,6 +191,56 @@ type KeeneticDot struct {
 type KeeneticUdp struct {
 	Interface string   `json:"interface"`
 	Servers   []string `json:"servers"`
+}
+
+// KeeneticTunnelDep - «DNS роутера завязан на VPN-туннели» (кейс 17.11:
+// владелец завёл ВСЕ name-server'ы в туннели - после ребута резолвер
+// роутера молчал, пока WARP не поднялся; панель это состояние не
+// показывала). Классификация интерфейса - по факту: он числится в живом
+// списке туннелей роутера (SysTunnels), без имени-гадания.
+type KeeneticTunnelDep struct {
+	Dependent bool             `json:"dependent"` // все простые апстримы сидят на туннелях
+	Tunnels   []KeeneticTunnel `json:"tunnels,omitempty"`
+}
+
+type KeeneticTunnel struct {
+	Interface string `json:"interface"`
+	Up        bool   `json:"up"`
+	Servers   int    `json:"servers"` // сколько name-server записей на нём
+}
+
+// DetectTunnelDep - вердикт «DNS зависит от туннелей»: простые
+// name-server'ы есть и КАЖДЫЙ их интерфейс - туннель из tunnelsUp
+// (ключ - имя устройства, значение - LinkUp). Глобальные DoH/DoT
+// dns-proxy вердикт не отменяют: они не привязаны к интерфейсу, но едут
+// по таблице маршрутизации - эмпирика 17.11: при всех простых в
+// туннелях резолвер роутера на старте молчал целиком (до подъёма WARP
+// не отвечал даже локальный :53). В остальных случаях nil: вердикта
+// нет, не догадка.
+func DetectTunnelDep(own KeeneticOwn, tunnelsUp map[string]bool) *KeeneticTunnelDep {
+	if len(own.Udp)+len(own.V6) == 0 {
+		return nil
+	}
+	seen := map[string]*KeeneticTunnel{}
+	for _, u := range append(append([]KeeneticUdp{}, own.Udp...), own.V6...) {
+		if _, tun := tunnelsUp[u.Interface]; !tun {
+			return nil // хоть один апстрим вне туннеля - зависимости нет
+		}
+		t, ok := seen[u.Interface]
+		if !ok {
+			t = &KeeneticTunnel{Interface: u.Interface, Up: tunnelsUp[u.Interface]}
+			seen[u.Interface] = t
+		}
+		t.Servers += len(u.Servers)
+	}
+	dep := &KeeneticTunnelDep{Dependent: true}
+	for _, t := range seen {
+		dep.Tunnels = append(dep.Tunnels, *t)
+	}
+	sort.Slice(dep.Tunnels, func(i, j int) bool {
+		return dep.Tunnels[i].Interface < dep.Tunnels[j].Interface
+	})
+	return dep
 }
 
 // ParseKeeneticOwn - разбор running-config Keenetic (69-док): глобальные

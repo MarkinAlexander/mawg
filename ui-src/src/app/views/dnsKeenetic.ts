@@ -66,3 +66,23 @@ export function ownPlainOf(rows: KeeneticOwnRow[]): KeeneticOwnRow[] {
 export function ownPlainRealOf(rows: KeeneticOwnRow[]): KeeneticOwnRow[] {
   return rows.filter((e) => e.kind === 'udp');
 }
+
+// контролька «DNS роутера завязан на туннели» (кейс 17.11: весь
+// name-server привязан к WireguardN - после ребута резолвер роутера
+// молчит, пока туннель не поднимется; mawg это не показывал). null -
+// вердикта нет. kind err - все туннели с DNS лежат (DNS роутера мёртв
+// прямо сейчас), warn - зависимость есть, но хоть один туннель жив.
+export function tunnelDepBannerOf(
+  dep: NonNullable<KeeneticOwn['tunnelDep']> | undefined,
+): { kind: 'warn' | 'err'; text: string } | null {
+  if (!dep?.dependent || !dep.tunnels?.length) return null;
+  const names = dep.tunnels.map((t) => {
+    const live = t.up ? 'поднят' : 'ЛЕЖИТ';
+    return `${t.interface} (${t.servers} сервер${t.servers === 1 ? '' : 'а'}) - ${live}`;
+  });
+  const anyUp = dep.tunnels.some((t) => t.up);
+  const head = anyUp
+    ? 'Простые DNS-серверы роутера привязаны к туннелям: после перезагрузки резолвер роутера молчит, пока туннели не поднимутся (шифрованные upstream dns-proxy едут по той же таблице маршрутизации и на старте не спасают). Сейчас:'
+    : 'Туннели с DNS роутера лежат - простые серверы недоступны, резолвер роутера не работает: локальные записи (ip host), обновления и поднятие туннелей с доменными эндпоинтами встают вместе с туннелем. Сейчас:';
+  return { kind: anyUp ? 'warn' : 'err', text: head + ' ' + names.join(', ') + '.' };
+}
