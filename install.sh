@@ -4,6 +4,11 @@
 #   [--with-magitrickle] [--without-magitrickle] [--with-awg3] [--port N]
 # по умолчанию: определить платформу, проверить зависимости (спросить при
 # необходимости), скачать бинарник последнего релиза, поставить сервис.
+# -r/--remove: остановить и снять mawg (бинарь, сервис, лог); вернуть
+#   dnsmasq с MT:3553; движки и MagiTrickle - спросит (yes в флагах
+#   --with/--without-magitrickle - без вопросов). --purge ещё и данные
+#   стирает. Пулы удаляйте в ПАНЕЛИ до uninstall - интерфейсы роутера
+#   скрипт не сносит (имена могут совпадать с вашими собственными).
 # --port N - порт веб-панели (по умолчанию 8090; занятый порт установщик
 # заметит и предложит другой). MAWG_DEBUG=1 - печатать тайминги шагов.
 # Обновление (-u) не вызывает apk/opkg вовсе: скачивание существующим
@@ -56,7 +61,7 @@ for arg in "$@"; do
         --without-magitrickle) WANT_MT="no";;
         --with-awg3) WANT_AWG3="yes";;
         --port) PENDING="port";;
-        -h|--help) sed -n '2,10p' "$0"; exit 0;;
+        -h|--help) sed -n '2,13p' "$0"; exit 0;;
         *) die "неизвестный аргумент $arg (см. --help)";;
     esac
 done
@@ -227,6 +232,116 @@ svc_start() {
     fi
 }
 
+# restore_dnsmasq - вернуть dnsmasq с MT:3553 на прежние серверы ДО сноса
+# MagiTrickle: панель в режиме «через MT» прячет прежний список в
+# mawg_server_bak (dnsmgr.SetDnsmasqTarget); без возврата LAN остаётся с
+# мёртвым DNS - резолверить некому (кейс «поставил и не понравилось»).
+# Пустой bak = прежнего списка не было (дефолт WAN) - просто убираем MT.
+restore_dnsmasq() {
+    [ "$PLATFORM" = openwrt ] || return 0
+    srv=$(uci show dhcp.@dnsmasq[0].server 2>/dev/null)
+    case "$srv" in
+        *127.0.0.1#3553*)
+            uci -q delete dhcp.@dnsmasq[0].server
+            bak=$(uci show dhcp.@dnsmasq[0].mawg_server_bak 2>/dev/null | sed -E "s/^.*='(.*)'$/\1/")
+            for s in $bak; do uci add_list dhcp.@dnsmasq[0].server="$s"; done
+            uci -q delete dhcp.@dnsmasq[0].mawg_server_bak
+            uci commit dhcp
+            /etc/init.d/dnsmasq restart >/dev/null 2>&1
+            say "dnsmasq возвращён с MT:3553 на прежние серверы${bak:+: $bak}"
+            ;;
+    esac
+}
+
+# remove_engines - движковые бинари (sing-box-lx, mihomo) ставились mawg'ом:
+# маркер-каталог из lxinstall/MihomoInstall - признак «поставлено mawg», без
+# него бинарь не трогаем (вдруг пользователь ставил свой sing-box в тот же путь)
+remove_engines() {
+    if [ "$PLATFORM" = openwrt ]; then
+        if [ -d /etc/sing-box-lx ]; then
+            killall sing-box 2>/dev/null; rm -f /usr/bin/sing-box; rm -rf /etc/sing-box-lx
+            say "движок sing-box удалён"
+        fi
+        if [ -d /etc/mihomo-mawg ]; then
+            killall mihomo 2>/dev/null; rm -f /usr/bin/mihomo; rm -rf /etc/mihomo-mawg
+            say "движок mihomo удалён"
+        fi
+    else
+        if [ -d /opt/etc/sing-box-lx ]; then
+            killall sing-box 2>/dev/null; rm -f /opt/bin/sing-box; rm -rf /opt/etc/sing-box-lx
+            say "движок sing-box удалён"
+        fi
+        if [ -d /opt/etc/mihomo-mawg ]; then
+            killall mihomo 2>/dev/null; rm -f /opt/bin/mihomo; rm -rf /opt/etc/mihomo-mawg
+            say "движок mihomo удалён"
+        fi
+    fi
+}
+
+# flush_mt_chains - снять jump-правила в родительские цепочки и вычистить
+# MT_* (remap MT_DNSOR + группы правил): stop MagiTrickle чистит сам,
+# это страховка на kill -9/сбой; без промывки DNAT клиентов на :3553
+# остаётся висеть на мёртвый порт
+flush_mt_chains() {
+    if [ "$PLATFORM" = openwrt ]; then IPT=/usr/sbin/iptables; else IPT=/opt/sbin/iptables; fi
+    [ -x "$IPT" ] || IPT=$(command -v iptables 2>/dev/null) || return 0
+    for t in nat mangle filter; do
+        "$IPT" -t "$t" -S 2>/dev/null | grep ' -j MT_' | sed 's/^-A/-D/' | while read -r rule; do
+            # разделение по пробелам осознанное: правила без кавычек-комментов
+            "$IPT" -t "$t" $rule >/dev/null 2>&1
+        done
+        for c in $("$IPT" -t "$t" -S 2>/dev/null | grep -oE '^-N MT_[A-Za-z0-9_-]+' | awk '{print $2}'); do
+            "$IPT" -t "$t" -F "$c" >/dev/null 2>&1
+            "$IPT" -t "$t" -X "$c" >/dev/null 2>&1
+        done
+    done
+}
+
+# remove_magitrickle - «не понравилось ни то ни другое» (вопрос владельца
+# 17.11): mawg и MT ставятся одной командой, снос должен быть одним ходом.
+# WANT_MT: yes - удалить без вопросов, ask - спросить (неинтерактивный
+# ask = нет), no - не трогать (MT могли поставить сами и отдельно)
+remove_magitrickle() {
+    [ "$WANT_MT" = no ] && return 0
+    if [ "$WANT_MT" != yes ]; then
+        ask "удалить MagiTrickle тоже (его ставил этот установщик)" || return 0
+    fi
+    if [ "$PLATFORM" = openwrt ]; then
+        /etc/init.d/magitrickle stop >/dev/null 2>&1
+    else
+        /opt/etc/init.d/S99magitrickle stop >/dev/null 2>&1
+    fi
+    killall magitrickled 2>/dev/null
+    need_pkg
+    if pkg_installed magitrickle; then
+        say "удаление пакета magitrickle"
+        case "$PKG_MANAGER" in
+            apk) apk del magitrickle >/dev/null 2>&1;;
+            *) "$PKG_MANAGER" remove magitrickle >/dev/null 2>&1;;
+        esac
+    fi
+    [ "$PLATFORM" = keenetic ] && rm -f /opt/etc/init.d/S99magitrickle
+    flush_mt_chains
+    # opkg/apk не сносит изменённые каталоги состояния (живой кейс 17.11
+    # на 0.62: /etc/magitrickle/state остался после remove пакета)
+    if [ "$PLATFORM" = openwrt ]; then rm -rf /etc/magitrickle; else rm -rf /opt/etc/magitrickle; fi
+    say "MagiTrickle удалён (сервис, пакет, iptables-цепочки MT_*)"
+}
+
+# pool_cleanup_hint - интерфейсы пулов не сносим автоматически: имена
+# uci-секций могут совпадать с СОБСТВЕННЫМИ wireguard-интерфейсами
+# пользователя. Правильный порядок - удалить пулы в панели ДО uninstall.
+pool_cleanup_hint() {
+    if [ "$PLATFORM" = openwrt ]; then
+        secs=$(uci show network 2>/dev/null | grep -E "\.proto='(wireguard|amneziawg)'" | sed -E "s/^network\.([^.]+)\..*/\1/" | tr '\n' ' ')
+        if [ -n "$secs" ]; then
+            warn "остались uci-секции туннелей: $secs - если это пулы mawg (а не ваши собственные), удалите: uci delete network.<имя> для каждого, затем uci commit network && /etc/init.d/network reload"
+        fi
+    else
+        warn "слоты ndm (WireguardN) от пулов не удаляются автоматически - удалите пулы в панели ДО uninstall или снесите слоты в веб-интерфейсе Keenetic"
+    fi
+}
+
 write_init_openwrt() {
     cat > "$INIT" <<'EOF'
 #!/bin/sh /etc/rc.common
@@ -305,13 +420,23 @@ report() {
 if [ "$MODE" = remove ] || [ "$MODE" = purge ]; then
     say "удаление mawg"
     svc_stop
-    rm -f "$BIN" "$INIT"
+    # дети svc_stop: движковые пулы живут процессами sing-box/mihomo,
+    # их mawg порождает сам - без глушения держат туннели дальше
+    killall sing-box 2>/dev/null
+    killall mihomo 2>/dev/null
+    # dnsmasq вернуть с MT:3553 ДО сноса MT, иначе LAN без DNS
+    restore_dnsmasq
+    rm -f "$BIN" "$INIT" "$LOG"
+    remove_engines
+    remove_magitrickle
     if [ "$MODE" = purge ]; then
         rm -rf "$DATA"
         say "данные $DATA удалены"
     else
         say "данные $DATA сохранены (для полного удаления: --purge)"
     fi
+    pool_cleanup_hint
+    say "готово"
     exit 0
 fi
 
@@ -433,8 +558,18 @@ if [ "$MODE" = install ]; then
             else
                 say "релиз форка: $(basename "$mt_url")"
                 mt_file="$TMP/mt-pkg"
-                do_fetch "$mt_url" "$mt_file" && [ -s "$mt_file" ] || warn "не удалось скачать пакет MagiTrickle"
-                if [ -s "$mt_file" ]; then
+                # валидация magic "!<arch>" (ar-архив ipk): github иногда
+                # отдаёт на скачивание HTML-интерстишл с 200 - opkg на нём
+                # падает непонятным "Cannot install package" (живой кейс 17.11
+                # на 0.62); один ретрай, потом честная ошибка
+                mt_ok=""
+                for mt_try in 1 2; do
+                    do_fetch "$mt_url" "$mt_file" && [ -s "$mt_file" ] || { warn "не удалось скачать пакет MagiTrickle (попытка $mt_try)"; continue; }
+                    if head -c 8 "$mt_file" | grep -q "!<arch>"; then mt_ok=1; break; fi
+                    warn "скачался не пакет (попытка $mt_try) - повтор"
+                    sleep 2
+                done
+                if [ -n "$mt_ok" ]; then
                     # стоп до замены: файл живого бинаря не заменяется (ETXTBSY)
                     if [ "$PLATFORM" = keenetic ]; then
                         /opt/etc/init.d/S99magitrickle stop >/dev/null 2>&1

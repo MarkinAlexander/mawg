@@ -58,8 +58,8 @@ type installerFixture struct {
 	updateStatus          int
 	// fetchBody - тело ответа do_fetch (релиз форка); пусто - старый мок
 	// add_repo-сценария. mtVersion - что отвечает opkg info magitrickle.
-	fetchBody, mtVersion  string
-	wantMagiTrickle       bool
+	fetchBody, mtVersion string
+	wantMagiTrickle      bool
 }
 
 type installerResult struct {
@@ -130,7 +130,7 @@ func (f installerFixture) run(t *testing.T, suffix string) installerResult {
 	script := definitions + packageCommands + "\nPLATFORM=openwrt\n"
 	script += "TMP=" + shellQuote(filepath.Join(dir, "tmp")) + "\nmkdir -p \"$TMP\"\n"
 	script += "WANT_MT=" + wantMT + "\n"
-	script += "do_fetch() { if [ -n \"$MOCK_FETCH_BODY\" ]; then printf '%s' \"$MOCK_FETCH_BODY\" > \"$2\"; else printf '#!/bin/sh\\nexit %s\\n' \"$MOCK_REPO_STATUS\" > \"$2\"; fi; }\n"
+	script += "do_fetch() { case \"$2\" in *mt-pkg*) printf '!<arch>\\nfake-ipk' > \"$2\";; *) if [ -n \"$MOCK_FETCH_BODY\" ]; then printf '%s' \"$MOCK_FETCH_BODY\" > \"$2\"; else printf '#!/bin/sh\\nexit %s\\n' \"$MOCK_REPO_STATUS\" > \"$2\"; fi;; esac; }\n"
 	script += "PKG_MANAGER=$(detect_pkg_manager) || exit 1\n" + suffix
 	output, runErr := runShell(t, script,
 		fmt.Sprintf("MOCK_APK=%d", boolInt(f.apk)), fmt.Sprintf("MOCK_OPKG=%d", boolInt(f.opkg)),
@@ -163,7 +163,7 @@ func TestInstallerPackageManagers(t *testing.T) {
 	for _, manager := range []string{"apk", "opkg"} {
 		for _, scenario := range []struct {
 			name, installed, wantInstall string
-			updateStatus                int
+			updateStatus                 int
 			wantMT, wantFailure          bool
 		}{
 			{name: "installed", installed: installedPackages},
@@ -409,5 +409,189 @@ func TestInstallerLocalBinary(t *testing.T) {
 	copied, err := os.ReadFile(filepath.Join(dir, "tmp", "mawg"))
 	if err != nil || !bytes.Equal(copied, data) {
 		t.Fatalf("local binary not preserved: %v", err)
+	}
+}
+
+// ---- remove/purge: «поставил и не понравилось ни то ни другое»
+// (вопрос владельца 17.11) ----
+
+// removeGlue - моки окружения remove-режима: killall не должен трогать
+// процессы хоста, uci - с состоянием в файле, iptables - фиксированный
+// набор MT-цепочек как на живом роутере
+const removeGlue = `
+uci() {
+    echo "uci $*" >> "$PKG_LOG"
+    if [ "$1" = -q ]; then shift; fi
+    case "$1" in
+        show) grep -F "$2" "$UCI_STATE" 2>/dev/null;;
+        delete) grep -vF "$2" "$UCI_STATE" > "$UCI_STATE.tmp" && mv "$UCI_STATE.tmp" "$UCI_STATE";;
+        add_list) echo "${2%%=*}='${2#*=}'" >> "$UCI_STATE";;
+    esac
+}
+iptables() {
+    echo "iptables $*" >> "$PKG_LOG"
+    case "$*" in
+        *"-t nat -S")
+            printf -- '-N MT_DNSOR\n-N MT_a2d34556\n-A PREROUTING -j MT_DNSOR\n-A PREROUTING -j MT_a2d34556\n-A MT_DNSOR -p udp -j DNAT --to-destination :3553\n';;
+        *"-t mangle -S")
+            printf -- '-N MT_fd1e1ebe\n-A PREROUTING -j MT_fd1e1ebe\n';;
+    esac
+}
+killall() { echo "killall $*" >> "$PKG_LOG"; }
+`
+
+// runRemove - suffix remove/purge-блока с временными путями вместо реальных
+// (замены по литералам install.sh: BIN/INIT/DATA/LOG, движки, MT-init)
+func runRemove(t *testing.T, mode, wantMT string, state []string) (installerResult, map[string]string) {
+	t.Helper()
+	source := installerSource(t)
+	definitions := before(t, source, "\nPLATFORM=$(detect_platform)")
+	dir := t.TempDir()
+	log := filepath.Join(dir, "calls.log")
+
+	paths := map[string]string{
+		"/usr/bin/mawg":     filepath.ToSlash(filepath.Join(dir, "bin", "mawg")),
+		"/etc/init.d/mawg":  filepath.ToSlash(filepath.Join(dir, "init", "mawg")),
+		"/etc/mawg":         filepath.ToSlash(filepath.Join(dir, "data")),
+		"/var/log/mawg.log": filepath.ToSlash(filepath.Join(dir, "mawg.log")),
+		"/usr/bin/sing-box": filepath.ToSlash(filepath.Join(dir, "bin", "sing-box")),
+		"/usr/bin/mihomo":   filepath.ToSlash(filepath.Join(dir, "bin", "mihomo")),
+		"/etc/sing-box-lx":  filepath.ToSlash(filepath.Join(dir, "sing-box-lx")),
+		"/etc/mihomo-mawg":  filepath.ToSlash(filepath.Join(dir, "mihomo-mawg")),
+		"/etc/magitrickle":  filepath.ToSlash(filepath.Join(dir, "magitrickle")),
+	}
+	suffix := after(t, source, "\nPLATFORM=$(detect_platform)")
+	for from, to := range paths {
+		suffix = strings.ReplaceAll(suffix, from, to)
+	}
+	suffix = strings.ReplaceAll(suffix, "/etc/init.d/magitrickle", shellQuote(filepath.ToSlash(filepath.Join(dir, "init", "magitrickle"))))
+
+	for _, p := range []string{
+		paths["/usr/bin/mawg"], paths["/etc/init.d/mawg"], paths["/var/log/mawg.log"],
+		paths["/usr/bin/sing-box"], paths["/usr/bin/mihomo"],
+	} {
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("x"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(paths["/etc/mawg"], 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(paths["/etc/mawg"], "config.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(paths["/etc/sing-box-lx"], 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// MT-состояние: opkg не сносит изменённые каталоги - зачистка на инсталлере
+	if err := os.MkdirAll(filepath.Join(paths["/etc/magitrickle"], "state"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(paths["/etc/magitrickle"], "state", "config.yaml"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	statePath := filepath.ToSlash(filepath.Join(dir, "uci.state"))
+	if err := os.WriteFile(statePath, []byte(strings.Join(state, "\n")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	script := definitions + packageCommands + removeGlue + "\nPLATFORM=openwrt\nMODE=" + mode + "\nWANT_MT=" + wantMT + "\n"
+	script += "UCI_STATE=" + shellQuote(statePath) + "\n"
+	script += "PKG_MANAGER=opkg\n" + suffix
+	output, runErr := runShell(t, script,
+		"MOCK_APK=0", "MOCK_OPKG=1", "MOCK_NATIVE_OPKG=0",
+		"MOCK_INSTALLED=wireguard-tools magitrickle", "PKG_LOG="+filepath.ToSlash(log))
+	calls, err := os.ReadFile(log)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	return installerResult{output: output, calls: string(calls), err: runErr}, paths
+}
+
+func TestInstallerRemoveMode(t *testing.T) {
+	res, paths := runRemove(t, "remove", "yes", []string{
+		"dhcp.@dnsmasq[0].server='127.0.0.1#3553'",
+		"dhcp.@dnsmasq[0].mawg_server_bak='8.8.8.8'",
+		"network.proton.proto='amneziawg'",
+	})
+	if res.err != nil {
+		t.Fatalf("remove не прошёл: %v\n%s", res.err, res.output)
+	}
+	for _, p := range []string{paths["/usr/bin/mawg"], paths["/etc/init.d/mawg"], paths["/var/log/mawg.log"],
+		paths["/usr/bin/sing-box"], paths["/etc/sing-box-lx"], paths["/etc/magitrickle"]} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Fatalf("не удалено: %s", p)
+		}
+	}
+	if _, err := os.Stat(paths["/etc/mawg"]); err != nil {
+		t.Fatalf("данные при remove должны сохраняться: %v", err)
+	}
+	// mihomo без маркера /etc/mihomo-mawg - не наша постановка, не тронут
+	if _, err := os.Stat(paths["/usr/bin/mihomo"]); err != nil {
+		t.Fatalf("чужой mihomo не должен удаляться: %v", err)
+	}
+	// dnsmasq: server=MT заменён на bak, bak удалён
+	if strings.Contains(string(res.calls), "add_list dhcp.@dnsmasq[0].server=8.8.8.8") {
+		// порядок вызовов не важен - проверяем наличие
+	} else {
+		t.Fatalf("bak не восстановлен в dnsmasq: %s", res.calls)
+	}
+	if strings.Count(string(res.calls), "delete dhcp.@dnsmasq[0].server") < 1 {
+		t.Fatalf("server с MT:3553 не снят: %s", res.calls)
+	}
+	if strings.Count(string(res.calls), "delete dhcp.@dnsmasq[0].mawg_server_bak") < 1 {
+		t.Fatalf("bak-ключ не удалён: %s", res.calls)
+	}
+	// MT: пакет снят, цепочки промыты (jump -D, потом -F/-X)
+	for _, want := range []string{
+		"opkg remove magitrickle",
+		"iptables -t nat -D PREROUTING -j MT_DNSOR",
+		"iptables -t nat -F MT_DNSOR",
+		"iptables -t nat -X MT_DNSOR",
+		"iptables -t mangle -X MT_fd1e1ebe",
+	} {
+		if !strings.Contains(string(res.calls), want) {
+			t.Fatalf("нет вызова %q:\n%s", want, res.calls)
+		}
+	}
+	if !strings.Contains(res.output, "данные") || !strings.Contains(res.output, "сохранены") {
+		t.Fatalf("remove должен сохранять данные: %s", res.output)
+	}
+	if !strings.Contains(res.output, "остались uci-секции") {
+		t.Fatalf("hint про пулы не показан: %s", res.output)
+	}
+}
+
+func TestInstallerPurgeMode(t *testing.T) {
+	res, paths := runRemove(t, "purge", "yes", []string{
+		"dhcp.@dnsmasq[0].server='127.0.0.1#3553'",
+	})
+	if res.err != nil {
+		t.Fatalf("purge не прошёл: %v\n%s", res.err, res.output)
+	}
+	if _, err := os.Stat(paths["/etc/mawg"]); !os.IsNotExist(err) {
+		t.Fatalf("purge должен удалять данные: %v", err)
+	}
+	if !strings.Contains(res.output, "удалены") {
+		t.Fatalf("нет сообщения о purged-данных: %s", res.output)
+	}
+}
+
+func TestInstallerRemoveKeepsMT(t *testing.T) {
+	// --without-magitrickle: MT могли поставить сами и отдельно - не трогаем
+	res, _ := runRemove(t, "remove", "no", []string{
+		"dhcp.@dnsmasq[0].server='127.0.0.1#3553'",
+	})
+	if res.err != nil {
+		t.Fatalf("remove без MT не прошёл: %v\n%s", res.err, res.output)
+	}
+	if strings.Contains(string(res.calls), "remove magitrickle") {
+		t.Fatalf("WANT_MT=no должен сохранять MagiTrickle: %s", res.calls)
+	}
+	if !strings.Contains(res.output, "удаление mawg") {
+		t.Fatalf("mawg должен удаляться: %s", res.output)
 	}
 }
