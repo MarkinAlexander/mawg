@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
-import { UiBadge, UiBusyOverlay, UiButton, UiHelp, UiHint, UiSwitch } from '../../components/ui'
+import { UiBadge, UiBusyOverlay, UiButton, UiDialog, UiHelp, UiHint, UiSwitch } from '../../components/ui'
 import { usePoolActions } from '../../stores/pools'
 import { useToast } from '../../stores/toast'
 import { useSecrets } from '../secrets'
@@ -92,6 +92,27 @@ function cfgAct(key: string, fn: () => Promise<void>): void {
   void run(key, fn);
 }
 const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
+
+// просмотр конфига как он сейчас лежит на роутере (слово владельца 20.11):
+// raw-файл, приватный режим блюрит через .secret (клик - раскрыть)
+const viewOpen = ref(false);
+const viewFile = ref('');
+const viewText = ref('');
+const viewBusy = ref(false);
+
+async function viewConfig(c: ConfigView): Promise<void> {
+  viewFile.value = c.file;
+  viewText.value = '';
+  viewOpen.value = true;
+  viewBusy.value = true;
+  try {
+    viewText.value = await a.configText(props.pool.name, c.file);
+  } catch (e) {
+    push(e instanceof Error ? e.message : String(e), true);
+    viewOpen.value = false;
+  }
+  viewBusy.value = false;
+}
 </script>
 
 <template>
@@ -153,6 +174,19 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
       :open="readdressOpen"
       @update:open="readdressOpen = $event"
     />
+    <!-- модалка просмотра: raw-файл как он есть, приватный режим блюрит -->
+    <UiDialog
+      :open="viewOpen"
+      :title="viewFile + (viewFile === pool.activeFile ? ' · активен' : '')"
+      width="760px"
+      @update:open="viewOpen = $event"
+    >
+      <UiBusyOverlay
+        :show="viewBusy"
+        text="загрузка конфига…"
+      />
+      <pre class="cfgview secret">{{ viewText }}</pre>
+    </UiDialog>
     <div class="cfglist">
       <div
         v-for="(c, i) in pool.configs || []"
@@ -185,6 +219,17 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
           >{{ c.endpoint }}</span>
         </span>
         <span class="cfgctl">
+          <!-- просмотр raw-конфига как он лежит на роутере (слово владельца
+               20.11: у строки были скачивание/вкл/удаление, а посмотреть
+               содержимое было негде) -->
+          <UiButton
+            variant="icon"
+            tooltip="показать конфиг как он сейчас на роутере"
+            :busy="viewOpen && viewFile === c.file && viewBusy"
+            @click="viewConfig(c)"
+          >
+            👁
+          </UiButton>
           <!-- явный выбор активного конфига (слово владельца): бэкенд-эндпоинт
                /activate был, UI не выставлял; конфликт адресов валидирует сервер -->
           <!-- скачивание для внешнего клиента - по уровню конфига (слово
@@ -358,5 +403,13 @@ const coolMin = (sec?: number) => Math.ceil((sec || 0) / 60);
   padding: 3px 5px;
   text-decoration: none;
   white-space: nowrap;
+}
+.cfgview {
+  margin: 0;
+  font: 12px/1.5 ui-monospace, monospace;
+  white-space: pre;
+  overflow: auto;
+  max-height: 60vh;
+  user-select: all;
 }
 </style>
