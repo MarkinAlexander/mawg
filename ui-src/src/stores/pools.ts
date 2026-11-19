@@ -202,9 +202,10 @@ export function usePoolActions() {
 
   // Перенумерация локальных адресов (120-док, слово владельца 15.11):
   // base - адрес первого конфига, следующим файлам +1 к последнему
-  // октету; files пуст - все включённые (в порядке ротации)
-  async function readdress(name: string, base: string, files?: string[]): Promise<ReaddressRes> {
-    const r = await api<ReaddressRes>('POST', `/pools/${encodeURIComponent(name)}/configs/readdress`, { base, files });
+  // октету; files пуст - весь пул. Либо явные addresses 1:1 к files
+  // (правка по одному, слово владельца 20.11)
+  async function readdress(name: string, body: { base?: string; files?: string[]; addresses?: string[] }): Promise<ReaddressRes> {
+    const r = await api<ReaddressRes>('POST', `/pools/${encodeURIComponent(name)}/configs/readdress`, body);
     later();
     return r;
   }

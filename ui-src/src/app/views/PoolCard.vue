@@ -17,6 +17,7 @@ import DeviceGroupDialog from './DeviceGroupDialog.vue'
 import LxInstallDialog from './LxInstallDialog.vue'
 import PoolNodesSection from './PoolNodesSection.vue'
 import PoolConfigsSection from './PoolConfigsSection.vue'
+import PoolReaddressDialog from './PoolReaddressDialog.vue'
 import type { PoolView, TunInfo } from '../../api/types'
 
 // Карточка пула (легаси ensureCard/updateCard 67-265): данные из /status
@@ -33,6 +34,8 @@ const a = usePoolActions();
 const secrets = useSecrets();
 
 const busy = ref(''); // «name:act» - одна busy-кнопка за раз (легаси withBusy)
+// массовая смена локальных IP конфигов (120-док, слово владельца 20.11)
+const readdrOpen = ref(false);
 // оверлей «идёт применение» на всю карточку (118, слово владельца
 // 14.11: операция может висеть секундами - пересборка движка, проверка,
 // генерация WARP - надо видеть, что она жива)
@@ -499,6 +502,15 @@ async function doSwitchCountry(): Promise<void> {
           Генерация нового конфига
         </UiButton>
       </template>
+      <!-- массовая смена локальных IP (120-док, слово владельца 20.11:
+           кнопка на карточке, не только в дровере конфигов) -->
+      <UiButton
+        v-if="!premium.imported && (pool.configs || []).length"
+        tooltip="перенумеровать или сменить локальные адреса конфигов: однотипная куча приходит с одним адресом - два таких пула одновременно не поднимутся"
+        @click="readdrOpen = true"
+      >
+        🔄 Массовая смена IP
+      </UiButton>
       <UiButton
         variant="danger"
         :busy="busy === `${pool.name}:del`"
@@ -507,6 +519,12 @@ async function doSwitchCountry(): Promise<void> {
         удалить пул
       </UiButton>
     </div>
+
+    <PoolReaddressDialog
+      :pool="pool"
+      :open="readdrOpen"
+      @update:open="readdrOpen = $event"
+    />
 
     <div
       v-if="premPanelShown"

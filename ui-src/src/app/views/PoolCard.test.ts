@@ -69,6 +69,23 @@ beforeEach(() => {
   useToast().toasts.list.splice(0);
 });
 
+describe('PoolCard - массовая смена IP (120-док, слово владельца 20.11)', () => {
+  it('кнопка на карточке при конфигах, открывает диалог перенумерации', async () => {
+    const w = makeCard(nativePool);
+    const b = w.findAll('button').filter((x) => x.text().includes('Массовая смена IP'));
+    expect(b.length).toBe(1);
+    await b[0].trigger('click');
+    await nextTick();
+    expect(w.text()).toContain('Локальные адреса - proton');
+  });
+  it('без конфигов или premium - кнопки нет', () => {
+    const w1 = makeCard({ ...nativePool, configs: [] });
+    expect(w1.findAll('button').filter((x) => x.text().includes('Массовая смена IP')).length).toBe(0);
+    const w2 = makeCard({ ...nativePool, premium: { imported: true, countries: [] } });
+    expect(w2.findAll('button').filter((x) => x.text().includes('Массовая смена IP')).length).toBe(0);
+  });
+});
+
 describe('PoolCard - отображение', () => {
   it('исключения пула: строка с адресами при списке, нет - без', () => {
     const w = makeCard({ ...nativePool, settings: { ...nativePool.settings, excludes: ['203.0.113.9', '198.51.100.0/24'] } });

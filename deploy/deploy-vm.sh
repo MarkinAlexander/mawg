@@ -11,11 +11,15 @@ PWARG=""
 if [ -n "${MAWG_VM_PW:-}" ]; then PWARG="-pw $MAWG_VM_PW"; fi
 # сборка через build.sh: версия (MAWG_VERSION или git describe) вшивается
 # в бинарь - деплой без версии не отличить от предыдущего (14.11)
-sh deploy/build.sh 386 >/dev/null && "/c/Program Files/PuTTY/pscp" -scp -batch $AUTH $PWARG dist/mawg-386 "$TARGET:/tmp/mawg"
+sh deploy/build.sh 386 >/dev/null
+# стоп службы ДО заливки: cp поверх исполняемого бинаря = ETXTBSY
+# (как в install.sh, 28a2e44) - иначе старый процесс живёт со старой версией
+"/c/Program Files/PuTTY/plink" -ssh -batch $AUTH $PWARG "$TARGET" "/etc/init.d/mawg stop 2>/dev/null; killall mawg 2>/dev/null; true"
+"/c/Program Files/PuTTY/pscp" -scp -batch $AUTH $PWARG dist/mawg-386 "$TARGET:/tmp/mawg"
 "/c/Program Files/PuTTY/plink" -ssh -batch $AUTH $PWARG "$TARGET" "
   cp /tmp/mawg /usr/bin/mawg && chmod +x /usr/bin/mawg &&
   cp /tmp/mawg-init.sh /etc/init.d/mawg 2>/dev/null || true
-  /etc/init.d/mawg restart 2>/dev/null || /usr/bin/mawg -base /etc/mawg &
+  /etc/init.d/mawg start 2>/dev/null || /usr/bin/mawg -base /etc/mawg &
 "
 "/c/Program Files/PuTTY/plink" -ssh -batch $AUTH $PWARG "$TARGET" "/usr/bin/mawg -version 2>/dev/null || /usr/bin/mawg version 2>/dev/null" || true
 echo deployed

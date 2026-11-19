@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import { UiBadge, UiBusyOverlay, UiButton, UiHelp, UiHint, UiSwitch } from '../../components/ui'
 import { usePoolActions } from '../../stores/pools'
 import { useToast } from '../../stores/toast'
@@ -8,7 +8,7 @@ import { occupiedV4, nextFreeV4, providerOf } from './poolsLogic'
 import { G } from '../glossary'
 import type { ConfigView, PoolView } from '../../api/types'
 import PoolReaddressDialog from './PoolReaddressDialog.vue'
-import { usePools } from '../../stores/status'
+import { usePools, useStatus } from '../../stores/status'
 
 // Дровер «Конфиги» карточки пула: порядок = приоритет ротации, drag-n-drop
 // загрузка, вкл/выкл/перестановка/удаление. У движковых пулов WG/AWG-конфиги
@@ -23,6 +23,7 @@ const isEng = computed(() => props.pool.settings.engineMode === 'singbox');
 // кучи адрес один (Proton все с 10.2.0.2) - ровно её переносит одним
 // ходом; куча обычно ВЫКЛЮЧЕНА конфликтом - смотрим все конфиги
 const { pools } = usePools();
+const { refresh: refreshStatus } = useStatus();
 const readdressOpen = ref(false);
 const readdressHint = computed(() => {
   if (props.pool.premium?.imported || !(props.pool.configs || []).length) return '';
@@ -76,6 +77,21 @@ async function doUpload(files: FileList | null | undefined): Promise<void> {
     if (r.warnings?.length) msg += '. Конфликты: ' + r.warnings.length;
     push(msg);
     for (const w of r.warnings || []) push(w, true);
+    // смена адресов сразу на этапе загрузки (слово владельца 20.11):
+    // куча однотипных пришла с одним адресом или с конфликтами - диалог
+    // с планом перенумерации открывается сам
+    await refreshStatus();
+    await nextTick();
+    const seen = new Map<string, number>();
+    let dup = false;
+    for (const c of props.pool.configs || []) {
+      const v4 = (c.addresses || []).find((x) => !x.includes(':'))?.split('/')[0];
+      if (!v4) continue;
+      const n = (seen.get(v4) || 0) + 1;
+      if (n >= 2) dup = true;
+      seen.set(v4, n);
+    }
+    if (dup || (r.warnings || []).length) readdressOpen.value = true;
   });
 }
 function cfgAct(key: string, fn: () => Promise<void>): void {

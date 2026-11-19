@@ -179,3 +179,75 @@ func TestReaddressOverflowAndPremium(t *testing.T) {
 		t.Fatalf("файл перезаписан при отказе:\n%s", raw[:n])
 	}
 }
+
+// Явные адреса 1:1 к files (правка по одному, 20.11): UI шлёт только
+// выбранные строки со своими адресами
+func TestReaddressExplicitAddresses(t *testing.T) {
+	ts := newTestServer(t)
+	readdressSetup(t, ts, "proton", map[string]string{
+		"nl-15.conf": readdressProton("QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI=", "198.51.100.15"),
+		"nl-29.conf": readdressProton("Q0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0M=", "198.51.100.29"),
+	})
+	raw, _ := json.Marshal(map[string]any{
+		"files":     []string{"nl-15.conf"},
+		"addresses": []string{"10.2.0.9"},
+	})
+	resp, err := http.Post(ts.URL+"/api/v1/pools/proton/configs/readdress", "application/json", strings.NewReader(string(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out map[string]any
+	json.NewDecoder(resp.Body).Decode(&out)
+	if resp.StatusCode != 200 {
+		t.Fatalf("explicit readdress: %d %v", resp.StatusCode, out)
+	}
+	resp2, err := http.Get(ts.URL + "/api/v1/pools/proton/configs/nl-15.conf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	buf := make([]byte, 4096)
+	n, _ := resp2.Body.Read(buf)
+	if !strings.Contains(string(buf[:n]), "Address = 10.2.0.9/32") || !strings.Contains(string(buf[:n]), "2a07:b944::2:9/128") {
+		t.Fatalf("nl-15 не переписан на явный адрес:\n%s", buf[:n])
+	}
+	// nl-29 не тронут (не в files)
+	resp3, err := http.Get(ts.URL + "/api/v1/pools/proton/configs/nl-29.conf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp3.Body.Close()
+	buf3 := make([]byte, 4096)
+	n3, _ := resp3.Body.Read(buf3)
+	if !strings.Contains(string(buf3[:n3]), "10.2.0.2") {
+		t.Fatalf("файл вне files должен остаться нетронутым:\n%s", buf3[:n3])
+	}
+
+	// длины не совпали - отказ до записи
+	bad, _ := json.Marshal(map[string]any{
+		"files":     []string{"nl-15.conf"},
+		"addresses": []string{"10.2.0.9", "10.2.0.10"},
+	})
+	resp4, err := http.Post(ts.URL+"/api/v1/pools/proton/configs/readdress", "application/json", strings.NewReader(string(bad)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp4.Body.Close()
+	if resp4.StatusCode != 400 {
+		t.Fatalf("разные длины должны отказывать: %d", resp4.StatusCode)
+	}
+	// мусорный адрес - отказ
+	bad2, _ := json.Marshal(map[string]any{
+		"files":     []string{"nl-15.conf"},
+		"addresses": []string{"bogus"},
+	})
+	resp5, err := http.Post(ts.URL+"/api/v1/pools/proton/configs/readdress", "application/json", strings.NewReader(string(bad2)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp5.Body.Close()
+	if resp5.StatusCode != 400 {
+		t.Fatalf("мусорный адрес должен отказывать: %d", resp5.StatusCode)
+	}
+}

@@ -22,7 +22,10 @@ import (
 type readdressReq struct {
 	// Base - адрес первого конфига («10.2.0.3» или «10.2.0.3/32»),
 	// следующим файлам последний октет +1.
-	Base string `json:"base"`
+	Base string `json:"base,omitempty"`
+	// Addresses - явные адреса 1:1 к files (правка по одному: UI шлёт
+	// только выбранные строки со своими адресами); не пусто - Base не нужен.
+	Addresses []string `json:"addresses,omitempty"`
 	// Files - какие конфиги перенумеровать; пусто = ВЕСЬ пул (в порядке
 	// ротации): свежая куча как раз выключена конфликтом адресов ещё до
 	// первой ротации - по включённым её не достать.
@@ -43,8 +46,8 @@ type readdressOne struct {
 func (s *Server) readdressConfigs(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	var req readdressReq
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil || req.Base == "" {
-		writeErr(w, fmt.Errorf("нужен base (адрес первого конфига)"))
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil || (req.Base == "" && len(req.Addresses) == 0) {
+		writeErr(w, fmt.Errorf("нужен base (адрес первого конфига) или addresses (явные адреса к files)"))
 		return
 	}
 	pool, ok := s.store.Pool(name)
@@ -59,9 +62,11 @@ func (s *Server) readdressConfigs(w http.ResponseWriter, r *http.Request) {
 		basePfx = base[i:]
 		ipPart = base[:i]
 	}
-	if _, err := wgconf.IncV4(ipPart, 0); err != nil {
-		writeErr(w, err)
-		return
+	if base != "" {
+		if _, err := wgconf.IncV4(ipPart, 0); err != nil {
+			writeErr(w, err)
+			return
+		}
 	}
 	cfgByFile := map[string]store.ManagedConfig{}
 	var files []string
@@ -87,16 +92,31 @@ func (s *Server) readdressConfigs(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, fmt.Errorf("перенумеровывать нечего: в пуле нет конфигов"))
 		return
 	}
-	// Адреса заранее: последний не должен вывалиться из /24 после того,
-	// как первые уже записаны
-	addrs := make([]string, len(files))
-	for i := range files {
-		inc, err := wgconf.IncV4(ipPart, i)
-		if err != nil {
-			writeErr(w, err)
+	// Адреса заранее: последний не должен вывалиться из /24 (base-режим)
+	// или не разбираться (addresses-режим) после того, как первые уже записаны
+	var addrs []string
+	if len(req.Addresses) > 0 {
+		if len(req.Addresses) != len(files) {
+			writeErr(w, fmt.Errorf("addresses (%d) и files (%d) разной длины", len(req.Addresses), len(files)))
 			return
 		}
-		addrs[i] = inc + basePfx
+		for _, a := range req.Addresses {
+			if _, err := wgconf.IncV4(strings.SplitN(strings.TrimSpace(a), "/", 2)[0], 0); err != nil {
+				writeErr(w, err)
+				return
+			}
+		}
+		addrs = req.Addresses
+	} else {
+		addrs = make([]string, len(files))
+		for i := range files {
+			inc, err := wgconf.IncV4(ipPart, i)
+			if err != nil {
+				writeErr(w, err)
+				return
+			}
+			addrs[i] = inc + basePfx
+		}
 	}
 	target := map[string]bool{}
 	for _, f := range files {
@@ -114,8 +134,10 @@ func (s *Server) readdressConfigs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var warnings []string
-	if msg := s.subnetHint(name, files, ipPart); msg != "" {
-		warnings = append(warnings, msg)
+	if base != "" {
+		if msg := s.subnetHint(name, files, ipPart); msg != "" {
+			warnings = append(warnings, msg)
+		}
 	}
 	changed := make([]readdressOne, 0, len(files))
 	for i, f := range files {

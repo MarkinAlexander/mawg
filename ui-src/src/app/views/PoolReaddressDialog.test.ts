@@ -6,8 +6,10 @@ import { useStatus } from '../../stores/status'
 import { useToast } from '../../stores/toast'
 import type { PoolView, Status } from '../../api/types'
 
-// Перенумерация локальных адресов (120-док): однотипная куча Proton с
-// одним адресом - подсказка первого свободного + массовый POST readdress
+// Перенумерация/смена локальных адресов (120-док + слово владельца 20.11
+// «менять прям на этапе загрузки, как по одному так и массово»): база
+// генерирует план, каждый адрес правится руками, галочка снимает строку -
+// уходит только выбранное (явные addresses 1:1 к files)
 const pool: PoolView = {
   name: 'proton', platform: 'keenetic', device: 'nwg0', slot: 'nwg0', mode: 'up',
   activeFile: '', activeEndpoint: '', lastResult: '', lastError: '', rotations: 0,
@@ -34,11 +36,23 @@ beforeEach(() => {
   useToast().toasts.list.splice(0);
 });
 
+const textInputs = (w: ReturnType<typeof mount>) =>
+  w.findAll('input').filter((i) => i.attributes('type') !== 'checkbox');
+const checkboxes = (w: ReturnType<typeof mount>) =>
+  w.findAll('input[type=checkbox]');
+const applyBtn = (w: ReturnType<typeof mount>) =>
+  w.findAll('button').find((b) => b.text() === 'Сменить адреса');
+
+async function openDlg(w: ReturnType<typeof mount>): Promise<void> {
+  await w.setProps({ open: true });
+  await nextTick();
+}
+
 describe('PoolReaddressDialog', () => {
-  it('подсказка базы - первый свободный адрес занятой подсети; применение шлёт base и показывает занятость', async () => {
+  it('база генерирует план по строкам, массовое применение шлёт явные addresses 1:1', async () => {
     seed();
     const calls: string[] = [];
-    const f = vi.fn(async (url: unknown, init?: { method?: string; body?: string }) => {
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown, init?: { method?: string; body?: string }) => {
       const u = url as string;
       calls.push(u + ' ' + (init?.method || '') + ' ' + (init?.body || ''));
       if (u.endsWith('/configs/readdress')) {
@@ -46,64 +60,98 @@ describe('PoolReaddressDialog', () => {
           changed: [
             { file: 'nl-15.conf', old: '10.2.0.2', address: '10.2.0.3' },
             { file: 'nl-29.conf', old: '10.2.0.2', address: '10.2.0.4' },
+            { file: 'off.conf', old: '10.2.0.2', address: '10.2.0.5' },
           ],
         }), { status: 200 });
       }
       return new Response('{}', { status: 200 });
-    });
-    vi.stubGlobal('fetch', f);
-    // open с false -> true: подсказка базы прилетает watch'ем на открытие
+    }));
     const w = mount(PoolReaddressDialog, { props: { pool, open: false } });
-    await w.setProps({ open: true });
-    await nextTick();
-    const input = w.find('input');
-    expect((input.element as HTMLInputElement).value).toBe('10.2.0.3');
+    await openDlg(w);
+    // подсказка базы: первый свободный адрес занятой подсети
+    const inputs = textInputs(w);
+    expect((inputs[0].element as HTMLInputElement).value).toBe('10.2.0.3');
     expect(w.text()).toContain('Proton');
-    // перенумеруется весь пул: выключенный тоже - куча обычно выключена
-    // конфликтом адресов ещё до первой ротации (120-док)
-    expect(w.text()).toContain('10.2.0.2 → 10.2.0.3');
-    expect(w.text()).toContain('10.2.0.2 → 10.2.0.4');
+    // план: каждому конфигу +1, выключенный тоже
+    expect((inputs[1].element as HTMLInputElement).value).toBe('10.2.0.3');
+    expect((inputs[2].element as HTMLInputElement).value).toBe('10.2.0.4');
+    expect((inputs[3].element as HTMLInputElement).value).toBe('10.2.0.5');
     expect(w.text()).toContain('выключенный');
-    const btn = w.findAll('button').find((b) => b.text() === 'Перенумеровать');
+    expect(checkboxes(w).length).toBe(3);
+    const btn = applyBtn(w);
     expect(btn).toBeTruthy();
     await btn!.trigger('click');
     await new Promise((r) => setTimeout(r, 0));
     const post = calls.find((c) => c.includes('/configs/readdress'));
     expect(post).toBeTruthy();
-    expect(post).toContain('"base":"10.2.0.3"');
-    expect(useToast().toasts.list.map((t) => t.text).join(' ')).toContain('Перенумеровано');
+    expect(post).toContain('"files":["nl-15.conf","nl-29.conf","off.conf"]');
+    expect(post).toContain('"addresses":["10.2.0.3","10.2.0.4","10.2.0.5"]');
+    expect(useToast().toasts.list.map((t) => t.text).join(' ')).toContain('Сменено');
     expect(w.emitted()['update:open']).toBeTruthy();
   });
 
-  it('занятость других пулов входит в подсказку; переполнение /24 блокирует кнопку', async () => {
+  it('правка по одному: снятые галочки не уходят, адрес правится руками', async () => {
     seed();
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown, init?: { method?: string; body?: string }) => {
+      calls.push((url as string) + ' ' + (init?.body || ''));
+      if ((url as string).endsWith('/configs/readdress')) {
+        return new Response(JSON.stringify({ changed: [{ file: 'nl-29.conf', old: '10.2.0.2', address: '10.2.0.9' }] }), { status: 200 });
+      }
+      return new Response('{}', { status: 200 });
+    }));
+    const w = mount(PoolReaddressDialog, { props: { pool, open: false } });
+    await openDlg(w);
+    // снимаем первую и третью галочки, второй ставим свой адрес
+    await checkboxes(w)[0].setValue(false);
+    await checkboxes(w)[2].setValue(false);
+    const inputs = textInputs(w);
+    await inputs[2].setValue('10.2.0.9');
+    await nextTick();
+    await applyBtn(w)!.trigger('click');
+    await new Promise((r) => setTimeout(r, 0));
+    const post = calls.find((c) => c.includes('/configs/readdress'));
+    expect(post).toContain('"files":["nl-29.conf"]');
+    expect(post).toContain('"addresses":["10.2.0.9"]');
+  });
+
+  it('битый адрес блокирует кнопку, пустой - строка пропускается', async () => {
+    seed();
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 200 })));
+    const w = mount(PoolReaddressDialog, { props: { pool, open: false } });
+    await openDlg(w);
+    const inputs = textInputs(w);
+    await inputs[1].setValue('not-an-ip');
+    await nextTick();
+    expect(applyBtn(w)!.attributes('disabled')).toBeDefined();
+    // пустой адрес = строка пропускается, кнопка снова жива
+    await inputs[1].setValue('');
+    await inputs[2].setValue('');
+    await nextTick();
+    expect(applyBtn(w)!.attributes('disabled')).toBeUndefined();
+    // занятость других пулов входит в подсказку
     useStatus().state.data!.pools!.push({
       ...pool, name: 'proton2', configs: [
         { file: 'x.conf', enabled: true, addresses: ['10.2.0.3/32'] },
       ],
     } as PoolView);
-    const w = mount(PoolReaddressDialog, { props: { pool, open: false } });
+    await w.setProps({ open: false });
     await w.setProps({ open: true });
     await nextTick();
-    const input = w.find('input');
-    expect((input.element as HTMLInputElement).value).toBe('10.2.0.4');
-    // база у края: второму адресу не хватает - применение задизейблено
-    await input.setValue('10.2.0.255');
-    await nextTick();
-    expect(w.text()).toContain('не влезает');
-    const btn = w.findAll('button').find((b) => b.text() === 'Перенумеровать');
-    expect(btn!.attributes('disabled')).toBeDefined();
-    // серверный отказ (адрес занят) - тост с ошибкой, диалог не закрылся
+    expect((textInputs(w)[0].element as HTMLInputElement).value).toBe('10.2.0.4');
+  });
+
+  it('серверный отказ - тост с ошибкой, диалог не закрылся', async () => {
+    seed();
     vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
       if ((url as string).endsWith('/configs/readdress')) {
-        return new Response(JSON.stringify({ error: 'адреса заняты: 10.2.0.4 занят' }), { status: 400 });
+        return new Response(JSON.stringify({ error: 'адреса заняты: 10.2.0.3 занят' }), { status: 400 });
       }
       return new Response('{}', { status: 200 });
     }));
-    await input.setValue('10.2.0.4');
-    await nextTick();
-    const ok = w.findAll('button').find((b) => b.text() === 'Перенумеровать');
-    await ok!.trigger('click');
+    const w = mount(PoolReaddressDialog, { props: { pool, open: false } });
+    await openDlg(w);
+    await applyBtn(w)!.trigger('click');
     await new Promise((r) => setTimeout(r, 0));
     expect(useToast().toasts.list.map((t) => t.text).join(' ')).toContain('заняты');
     expect(w.emitted()['update:open']).toBeFalsy();
