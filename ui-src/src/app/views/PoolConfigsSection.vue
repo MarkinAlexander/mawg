@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
-import { UiBadge, UiBusyOverlay, UiButton, UiDialog, UiHelp, UiHint, UiSwitch } from '../../components/ui'
+import { UiBadge, UiBusyOverlay, UiButton, UiDialog, UiHelp, UiHint, UiIcon, UiSwitch } from '../../components/ui'
 import { usePoolActions } from '../../stores/pools'
 import { useToast } from '../../stores/toast'
 import { useSecrets } from '../secrets'
@@ -113,6 +113,29 @@ async function viewConfig(c: ConfigView): Promise<void> {
   }
   viewBusy.value = false;
 }
+
+// копировать весь конфиг в буфер (слово владельца 20.11: значок в шапке
+// модалки правее «активен»): clipboard API только в secure context -
+// панель на http, фолбэк execCommand через скрытую textarea
+async function copyConfig(): Promise<void> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(viewText.value);
+    } else {
+      const ta = document.createElement('textarea');
+      ta.value = viewText.value;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      ta.remove();
+    }
+    push('Конфиг скопирован в буфер обмена');
+  } catch (e) {
+    push('Не удалось скопировать: ' + (e instanceof Error ? e.message : String(e)), true);
+  }
+}
 </script>
 
 <template>
@@ -174,13 +197,31 @@ async function viewConfig(c: ConfigView): Promise<void> {
       :open="readdressOpen"
       @update:open="readdressOpen = $event"
     />
-    <!-- модалка просмотра: raw-файл как он есть, приватный режим блюрит -->
+    <!-- модалка просмотра: raw-файл как он есть, приватный режим блюрит;
+         в шапке - копирование всего конфига (слово владельца 20.11:
+         значок правее имени, правее «активен») -->
     <UiDialog
       :open="viewOpen"
-      :title="viewFile + (viewFile === pool.activeFile ? ' · активен' : '')"
+      :title="viewFile"
       width="760px"
       @update:open="viewOpen = $event"
     >
+      <template #title>
+        <span class="vhead">
+          <span>{{ viewFile }}</span>
+          <span
+            v-if="viewFile === pool.activeFile"
+            class="vact"
+          >· активен</span>
+          <UiButton
+            variant="icon"
+            tooltip="скопировать конфиг целиком в буфер обмена"
+            @click="copyConfig"
+          >
+            <UiIcon name="copy" />
+          </UiButton>
+        </span>
+      </template>
       <UiBusyOverlay
         :show="viewBusy"
         text="загрузка конфига…"
@@ -411,5 +452,14 @@ async function viewConfig(c: ConfigView): Promise<void> {
   overflow: auto;
   max-height: 60vh;
   user-select: all;
+}
+.vhead {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.vact {
+  color: var(--ok);
+  font-size: 12px;
 }
 </style>

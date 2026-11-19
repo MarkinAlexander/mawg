@@ -106,7 +106,9 @@ onBeforeUnmount(() => {
       class="dcontent"
       :class="{ busy: props.busy }"
     >
-      <h3>{{ props.title }}</h3>
+      <h3>
+        <slot name="title">{{ props.title }}</slot>
+      </h3>
       <slot />
       <div
         v-if="$slots.footer"

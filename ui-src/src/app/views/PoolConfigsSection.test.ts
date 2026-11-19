@@ -63,6 +63,27 @@ describe('PoolConfigsSection - просмотр конфига', () => {
     expect(calls.some((c) => c.includes('/pools/protonb/configs/nl-15.conf'))).toBe(true);
   });
 
+  it('копирование из шапки: execCommand-фолбэк на http, тост подтверждения', async () => {
+    seed();
+    const exec = vi.fn(() => true);
+    (document as unknown as { execCommand: unknown }).execCommand = exec;
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
+      if ((url as string).includes('/configs/nl-15.conf')) return new Response(RAW, { status: 200 });
+      return new Response('{}', { status: 200 });
+    }));
+    const w = mount(PoolConfigsSection, { props: { pool } });
+    await w.findAll('button').find((b) => b.text().includes('👁'))!.trigger('click');
+    await new Promise((r) => setTimeout(r, 0));
+    // значок копирования в шапке - ПОСЛЕ текста «активен»
+    const h3 = [...w.element.querySelectorAll('dialog')].find((d) => d.open)!.querySelector('h3')!;
+    expect(h3.textContent).toContain('активен');
+    const copy = h3.querySelector('button');
+    expect(copy).toBeTruthy();
+    await copy!.click();
+    expect(exec).toHaveBeenCalledWith('copy');
+    expect(useToast().toasts.list.map((t) => t.text).join(' ')).toContain('скопирован');
+  });
+
   it('второй конфиг - своя модалка без пометки «активен»', async () => {
     seed();
     vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
