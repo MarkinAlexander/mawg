@@ -1,37 +1,27 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { UiBadge, UiButton, UiCheckbox, UiDialog, UiHint, UiInput } from '../../components/ui'
+import { UiBadge, UiButton, UiDialog, UiHint, UiInput } from '../../components/ui'
 import { usePoolActions } from '../../stores/pools'
 import { usePools } from '../../stores/status'
 import { useToast } from '../../stores/toast'
 import { nextFreeV4, occupiedV4, providerOf } from './poolsLogic'
 import type { PoolView } from '../../api/types'
 
-// Перенумерация/смена локальных адресов конфигов пула (120-док, слово
-// владельца 15.11 «массово менять в них адрес локальный» + 20.11 «менять
-// прям на этапе загрузки, как по одному так и массово»): однотипная куча
-// (Proton 10.2.0.x, WARP 172.16.0.x) приходит с ОДНИМ адресом - два таких
-// пула одновременно не поднимутся. База генерирует план (+1 к последнему
-// октету), каждый адрес можно поправить руками и снять галочку - уйдут
-// только выбранные строки (сервер валидирует занятость и переприменяет).
+// Смена единого локального адреса всего пула (120-док, слово владельца
+// 20.11: «в рамках пула конфиги ротируются - активен один, адрес общий;
+// второй пул того же провайдера получает тот же адрес от провайдера -
+// беру один раз и всем меняю, например на 10.2.0.3, и интерфейсы
+// поднимаются вместе без коллизии»). Не +1 по конфигам: коллизия только
+// МЕЖДУ пулами. Сервер валидирует занятость (исключая сам пул - его
+// старый адрес освобождается) и переприменяет туннель.
 const props = defineProps<{ pool: PoolView; open: boolean }>();
 const emit = defineEmits<{ 'update:open': [value: boolean] }>();
 const a = usePoolActions();
 const { push } = useToast();
 const { pools } = usePools();
 
-interface Row {
-  file: string;
-  name: string;
-  off: boolean;
-  old: string;
-  addr: string;
-  checked: boolean;
-}
-
-const base = ref('');
+const addr = ref('');
 const busy = ref(false);
-const rows = ref<Row[]>([]);
 
 // Провайдер по первому опознанному конфигу: подпись + подсеть подсказки
 const provider = computed(() => {
@@ -45,63 +35,41 @@ const provider = computed(() => {
 const v4of = (addresses?: string[]): string =>
   (addresses || []).find((x) => !x.includes(':'))?.split('/')[0] || '';
 
-// адрес без префикса - префикс прежний сохранит сервер (SetAddress)
 const v4ok = (s: string): boolean => {
   const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(s.trim());
   if (!m) return false;
   return m.slice(1).every((o) => Number(o) <= 255);
 };
 
+// подсказка: первый свободный адрес подсети СРЕДИ ДРУГИХ пулов - свой
+// адрес освобождается (второму протону предлагается 10.2.0.3, а не .6)
 const suggestion = computed(() => {
   if (!provider.value) return '';
-  return nextFreeV4(occupiedV4(pools.value), provider.value.prefix);
+  const others = occupiedV4((pools.value || []).filter((p) => p.name !== props.pool.name));
+  return nextFreeV4(others, provider.value.prefix);
 });
 
-// план по базе: i-му конфигу последний октет +i; база невалидна -
-// адреса строк не трогаем (ручные правки остаются)
-function refill(): void {
-  const m = base.value.trim().match(/^(\d{1,3}\.\d{1,3}\.\d{1,3})\.(\d{1,3})$/);
-  if (!m) return;
-  const first = Number(m[2]);
-  rows.value.forEach((r, i) => {
-    r.addr = first + i <= 255 ? `${m[1]}.${first + i}` : '';
-  });
-}
+// конфиги с IPv4 - только они несут локальный адрес; всем уходит ОДИН
+const targets = computed(() => (props.pool.configs || []).filter((c) => v4of(c.addresses)));
 
-function rebuild(): void {
-  rows.value = (props.pool.configs || []).map((c) => ({
-    file: c.file,
-    name: c.original || c.file,
-    off: !c.enabled,
-    old: v4of(c.addresses),
-    addr: '',
-    checked: true,
-  }));
-  refill();
-}
+const ok = computed(() => v4ok(addr.value));
+const blocked = computed(() => !ok.value || busy.value);
 
 watch(() => props.open, (v) => {
-  if (v) {
-    base.value = suggestion.value;
-    rebuild();
-  }
+  if (v) addr.value = suggestion.value;
 });
 
-// уйдут только выбранные строки с валидным непустым адресом
-const chosen = computed(() =>
-  rows.value.filter((r) => r.checked && r.addr && v4ok(r.addr)));
-const blocked = computed(() =>
-  rows.value.some((r) => r.checked && r.addr && !v4ok(r.addr)) || !chosen.value.length);
-
 async function apply(): Promise<void> {
-  if (busy.value || blocked.value) return;
+  if (blocked.value) return;
   busy.value = true;
+  const a0 = addr.value.trim();
+  const files = targets.value.map((c) => c.file);
   try {
     const r = await a.readdress(props.pool.name, {
-      files: chosen.value.map((x) => x.file),
-      addresses: chosen.value.map((x) => x.addr.trim()),
+      files,
+      addresses: files.map(() => a0),
     });
-    push('Сменено: ' + r.changed.map((c) => c.file + ' → ' + c.address).join(', '));
+    push('Сменено: весь пул на ' + a0 + ' (' + r.changed.length + ' конфигов)');
     for (const w of r.warnings || []) push(w, true);
     emit('update:open', false);
   } catch (e) {
@@ -117,60 +85,48 @@ async function apply(): Promise<void> {
     :title="'Локальные адреса - ' + pool.name"
     :busy="busy"
     busy-text="идёт смена адресов…"
-    width="520px"
+    width="500px"
     @update:open="emit('update:open', $event)"
   >
     <UiHint
       :text="provider
-        ? 'Похоже на ' + provider.label + ' (' + provider.prefix + 'x): одинаковые адреса в нескольких пулах не поднимутся одновременно - разведите их одной подсетью. База задает план (+1 каждому), адрес можно поправить руками, галочка снимает строку'
-        : 'Одинаковые локальные адреса в нескольких пулах не поднимутся одновременно: задайте базу (план +1 каждому), поправьте адреса руками или снимите галочки - уйдут только выбранные строки'"
+        ? 'Похоже на ' + provider.label + ' (' + provider.prefix + 'x). Весь пул получает ОДИН адрес: внутри пула конфиги ротируются - активен один, коллизия только между пулами. Второму пулу провайдера достаточно первого свободного адреса (для протона обычно 10.2.0.3)'
+        : 'Весь пул получает ОДИН локальный адрес: внутри пула конфиги ротируются - активен один, коллизия только между пулами. Укажите свободный адрес'"
     />
     <div class="rrow">
       <UiInput
-        v-model="base"
-        label="Базовый адрес"
-        :placeholder="suggestion || '10.2.0.2'"
+        v-model="addr"
+        label="Новый адрес пула"
+        :placeholder="suggestion || '10.2.0.3'"
         mono
         class="rin"
-        @update:model-value="refill"
+        :validator="() => addr.trim() && !v4ok(addr.trim()) ? 'адрес - IPv4 вида 10.2.0.3' : null"
       />
       <UiButton
         v-if="suggestion"
         variant="ghost"
         :disabled="busy"
-        tooltip="первый свободный адрес подсети"
-        @click="base = suggestion; refill()"
+        tooltip="первый свободный адрес подсети среди других пулов"
+        @click="addr = suggestion"
       >
         {{ suggestion }}
       </UiButton>
     </div>
     <div class="rlist">
       <div
-        v-for="r in rows"
-        :key="r.file"
+        v-for="c in targets"
+        :key="c.file"
         class="rrow-item"
-        :class="{ bad: r.checked && r.addr && !v4ok(r.addr), skip: !r.checked }"
       >
-        <UiCheckbox
-          :model-value="r.checked"
-          @update:model-value="(v: boolean) => (r.checked = v)"
-        />
-        <span class="rname">{{ r.name }}<UiBadge
-          v-if="r.off"
+        <span class="rname">{{ c.original || c.file }}<UiBadge
+          v-if="!c.enabled"
           text="выкл"
           variant="muted"
         /></span>
-        <span class="raddr">{{ r.old || '?' }} →</span>
-        <UiInput
-          v-model="r.addr"
-          bare
-          mono
-          class="rinput"
-          :placeholder="r.old ? r.old.split('/')[0] : 'адрес'"
-        />
+        <span class="raddr">{{ v4of(c.addresses) || '?' }} → {{ addr.trim() || '?' }}</span>
       </div>
     </div>
-    <UiHint text="Пустой адрес = строка пропускается. Занятость и валидность перепроверит сервер (у него виднее живые туннели)." />
+    <UiHint text="Занятость перепроверит сервер: старый адрес этого пула освобождается, чужой - отказ с перечислением." />
     <template #footer>
       <UiButton
         variant="ghost"
@@ -181,11 +137,11 @@ async function apply(): Promise<void> {
       </UiButton>
       <UiButton
         variant="primary"
-        :disabled="busy || blocked"
+        :disabled="blocked"
         :busy="busy"
         @click="apply"
       >
-        Сменить адреса
+        Сменить IP пула
       </UiButton>
     </template>
   </UiDialog>
@@ -205,13 +161,14 @@ async function apply(): Promise<void> {
   margin-top: 10px;
   display: grid;
   gap: 2px;
-  max-height: 260px;
+  max-height: 240px;
   overflow-y: auto;
 }
 .rrow-item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: space-between;
+  gap: 10px;
   font-size: 12.5px;
   padding: 3px 0;
   border-bottom: 1px solid var(--border);
@@ -219,14 +176,7 @@ async function apply(): Promise<void> {
 .rrow-item:last-child {
   border-bottom: 0;
 }
-.rrow-item.bad {
-  color: var(--warn);
-}
-.rrow-item.skip {
-  opacity: 0.45;
-}
 .rname {
-  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -235,8 +185,5 @@ async function apply(): Promise<void> {
 .raddr {
   color: var(--dim);
   white-space: nowrap;
-}
-.rinput {
-  width: 120px;
 }
 </style>

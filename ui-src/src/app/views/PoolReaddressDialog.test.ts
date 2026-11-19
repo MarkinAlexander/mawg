@@ -4,28 +4,28 @@ import { nextTick } from 'vue'
 import PoolReaddressDialog from './PoolReaddressDialog.vue'
 import { useStatus } from '../../stores/status'
 import { useToast } from '../../stores/toast'
+import { crossPoolCollisionOf, nextFreeV4, occupiedV4 } from './poolsLogic'
 import type { PoolView, Status } from '../../api/types'
 
-// Перенумерация/смена локальных адресов (120-док + слово владельца 20.11
-// «менять прям на этапе загрузки, как по одному так и массово»): база
-// генерирует план, каждый адрес правится руками, галочка снимает строку -
-// уходит только выбранное (явные addresses 1:1 к files)
-const pool: PoolView = {
-  name: 'proton', platform: 'keenetic', device: 'nwg0', slot: 'nwg0', mode: 'up',
+// Смена ЕДИНОГО адреса всего пула (120-док + уточнение владельца 20.11:
+// «в рамках пула конфиги ротируются - активен один, адрес общий; второму
+// пулу провайдера беру один адрес, например 10.2.0.3, и интерфейсы
+// поднимаются вместе»; НЕ +1 по конфигам - коллизия только между пулами)
+const mkPool = (name: string, addrs: string[], off = false): PoolView => ({
+  name, platform: 'openwrt', device: name, slot: name, mode: 'up',
   activeFile: '', activeEndpoint: '', lastResult: '', lastError: '', rotations: 0,
   disabled: false, consecFails: 0, settings: {},
-  configs: [
-    { file: 'nl-15.conf', original: 'NL-FREE#15', enabled: true, addresses: ['10.2.0.2/32', '2a07:b944::2:2/128'] },
-    { file: 'nl-29.conf', original: 'NL-FREE#29', enabled: true, addresses: ['10.2.0.2/32', '2a07:b944::2:2/128'] },
-    { file: 'off.conf', original: 'выключенный', enabled: false, addresses: ['10.2.0.2/32'] },
-  ],
+  configs: addrs.map((a, i) => ({
+    file: name + '-' + i + '.conf', original: name + '-' + i, enabled: !off,
+    addresses: a ? [a, '2a07:b944::2:2/128'] : [],
+  })),
   premium: { imported: false, countries: [] }, protos: [],
-} as unknown as PoolView;
+} as unknown as PoolView);
 
-function seed(): void {
+function seed(pools: PoolView[]): void {
   useStatus().state.data = {
-    version: 'v', platform: 'keenetic', backendName: 'keenetic', authEnabled: false,
-    nativeAWG3: false, mtSources: true, pools: [pool], engine: undefined,
+    version: 'v', platform: 'openwrt', backendName: 'openwrt', authEnabled: false,
+    nativeAWG3: false, mtSources: true, pools, engine: undefined,
   } as Status;
 }
 
@@ -38,122 +38,102 @@ beforeEach(() => {
 
 const textInputs = (w: ReturnType<typeof mount>) =>
   w.findAll('input').filter((i) => i.attributes('type') !== 'checkbox');
-const checkboxes = (w: ReturnType<typeof mount>) =>
-  w.findAll('input[type=checkbox]');
 const applyBtn = (w: ReturnType<typeof mount>) =>
-  w.findAll('button').find((b) => b.text() === 'Сменить адреса');
+  w.findAll('button').find((b) => b.text() === 'Сменить IP пула');
 
 async function openDlg(w: ReturnType<typeof mount>): Promise<void> {
   await w.setProps({ open: true });
   await nextTick();
 }
 
-describe('PoolReaddressDialog', () => {
-  it('база генерирует план по строкам, массовое применение шлёт явные addresses 1:1', async () => {
-    seed();
+describe('PoolReaddressDialog - единый адрес пула', () => {
+  it('подсказка исключает СВОЙ пул: второму протону с .2 предлагается .3, не следующий', async () => {
+    // protonb держит .3/.4 (свои), proton - .2: свой адрес освобождается
+    seed([
+      mkPool('proton', ['10.2.0.2/32']),
+      mkPool('protonb', ['10.2.0.3/32', '10.2.0.4/32']),
+    ]);
+    const protonb = mkPool('protonb', ['10.2.0.3/32', '10.2.0.4/32']);
+    const w = mount(PoolReaddressDialog, { props: { pool: protonb, open: false } });
+    await openDlg(w);
+    expect((textInputs(w)[0].element as HTMLInputElement).value).toBe('10.2.0.3');
+    // в списке все строки получают ОДИН адрес
+    expect(w.text()).toContain('10.2.0.3 → 10.2.0.3');
+    expect(w.text()).toContain('10.2.0.4 → 10.2.0.3');
+  });
+
+  it('применение: всем конфигам (с v4) один адрес, конфиги без v4 пропущены', async () => {
+    const withNoV4 = mkPool('protonb', ['10.2.0.3/32', '']);
+    const p = { ...withNoV4 } as PoolView;
+    seed([mkPool('proton', ['10.2.0.2/32']), p]);
     const calls: string[] = [];
     vi.stubGlobal('fetch', vi.fn(async (url: unknown, init?: { method?: string; body?: string }) => {
-      const u = url as string;
-      calls.push(u + ' ' + (init?.method || '') + ' ' + (init?.body || ''));
-      if (u.endsWith('/configs/readdress')) {
+      calls.push((url as string) + ' ' + (init?.body || ''));
+      if ((url as string).endsWith('/configs/readdress')) {
         return new Response(JSON.stringify({
           changed: [
-            { file: 'nl-15.conf', old: '10.2.0.2', address: '10.2.0.3' },
-            { file: 'nl-29.conf', old: '10.2.0.2', address: '10.2.0.4' },
-            { file: 'off.conf', old: '10.2.0.2', address: '10.2.0.5' },
+            { file: 'protonb-0.conf', old: '10.2.0.3', address: '10.2.0.3' },
+            { file: 'protonb-1.conf', old: '10.2.0.3', address: '10.2.0.3' },
           ],
         }), { status: 200 });
       }
       return new Response('{}', { status: 200 });
     }));
-    const w = mount(PoolReaddressDialog, { props: { pool, open: false } });
+    const w = mount(PoolReaddressDialog, { props: { pool: p, open: false } });
     await openDlg(w);
-    // подсказка базы: первый свободный адрес занятой подсети
-    const inputs = textInputs(w);
-    expect((inputs[0].element as HTMLInputElement).value).toBe('10.2.0.3');
-    expect(w.text()).toContain('Proton');
-    // план: каждому конфигу +1, выключенный тоже
-    expect((inputs[1].element as HTMLInputElement).value).toBe('10.2.0.3');
-    expect((inputs[2].element as HTMLInputElement).value).toBe('10.2.0.4');
-    expect((inputs[3].element as HTMLInputElement).value).toBe('10.2.0.5');
-    expect(w.text()).toContain('выключенный');
-    expect(checkboxes(w).length).toBe(3);
+    // конфиг без v4 (движковый) не попадает в список - менять нечего
+    expect(w.text()).not.toContain('protonb-1');
     const btn = applyBtn(w);
     expect(btn).toBeTruthy();
     await btn!.trigger('click');
     await new Promise((r) => setTimeout(r, 0));
     const post = calls.find((c) => c.includes('/configs/readdress'));
     expect(post).toBeTruthy();
-    expect(post).toContain('"files":["nl-15.conf","nl-29.conf","off.conf"]');
-    expect(post).toContain('"addresses":["10.2.0.3","10.2.0.4","10.2.0.5"]');
-    expect(useToast().toasts.list.map((t) => t.text).join(' ')).toContain('Сменено');
+    expect(post).toContain('"files":["protonb-0.conf"]');
+    expect(post).toContain('"addresses":["10.2.0.3"]');
+    expect(useToast().toasts.list.map((t) => t.text).join(' ')).toContain('весь пул на 10.2.0.3');
     expect(w.emitted()['update:open']).toBeTruthy();
   });
 
-  it('правка по одному: снятые галочки не уходят, адрес правится руками', async () => {
-    seed();
-    const calls: string[] = [];
-    vi.stubGlobal('fetch', vi.fn(async (url: unknown, init?: { method?: string; body?: string }) => {
-      calls.push((url as string) + ' ' + (init?.body || ''));
-      if ((url as string).endsWith('/configs/readdress')) {
-        return new Response(JSON.stringify({ changed: [{ file: 'nl-29.conf', old: '10.2.0.2', address: '10.2.0.9' }] }), { status: 200 });
-      }
-      return new Response('{}', { status: 200 });
-    }));
-    const w = mount(PoolReaddressDialog, { props: { pool, open: false } });
+  it('битый адрес блокирует кнопку; серверный отказ - тост, диалог открыт', async () => {
+    seed([mkPool('proton', ['10.2.0.2/32']), mkPool('protonb', ['10.2.0.3/32', '10.2.0.4/32'])]);
+    const p = mkPool('protonb', ['10.2.0.3/32', '10.2.0.4/32']);
+    const w = mount(PoolReaddressDialog, { props: { pool: p, open: false } });
     await openDlg(w);
-    // снимаем первую и третью галочки, второй ставим свой адрес
-    await checkboxes(w)[0].setValue(false);
-    await checkboxes(w)[2].setValue(false);
-    const inputs = textInputs(w);
-    await inputs[2].setValue('10.2.0.9');
-    await nextTick();
-    await applyBtn(w)!.trigger('click');
-    await new Promise((r) => setTimeout(r, 0));
-    const post = calls.find((c) => c.includes('/configs/readdress'));
-    expect(post).toContain('"files":["nl-29.conf"]');
-    expect(post).toContain('"addresses":["10.2.0.9"]');
-  });
-
-  it('битый адрес блокирует кнопку, пустой - строка пропускается', async () => {
-    seed();
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 200 })));
-    const w = mount(PoolReaddressDialog, { props: { pool, open: false } });
-    await openDlg(w);
-    const inputs = textInputs(w);
-    await inputs[1].setValue('not-an-ip');
+    const input = textInputs(w)[0];
+    await input.setValue('bogus');
     await nextTick();
     expect(applyBtn(w)!.attributes('disabled')).toBeDefined();
-    // пустой адрес = строка пропускается, кнопка снова жива
-    await inputs[1].setValue('');
-    await inputs[2].setValue('');
-    await nextTick();
-    expect(applyBtn(w)!.attributes('disabled')).toBeUndefined();
-    // занятость других пулов входит в подсказку
-    useStatus().state.data!.pools!.push({
-      ...pool, name: 'proton2', configs: [
-        { file: 'x.conf', enabled: true, addresses: ['10.2.0.3/32'] },
-      ],
-    } as PoolView);
-    await w.setProps({ open: false });
-    await w.setProps({ open: true });
-    await nextTick();
-    expect((textInputs(w)[0].element as HTMLInputElement).value).toBe('10.2.0.4');
-  });
-
-  it('серверный отказ - тост с ошибкой, диалог не закрылся', async () => {
-    seed();
     vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
       if ((url as string).endsWith('/configs/readdress')) {
-        return new Response(JSON.stringify({ error: 'адреса заняты: 10.2.0.3 занят' }), { status: 400 });
+        return new Response(JSON.stringify({ error: 'адреса заняты: 10.2.0.3 занят (конфиг x.conf пула proton)' }), { status: 400 });
       }
       return new Response('{}', { status: 200 });
     }));
-    const w = mount(PoolReaddressDialog, { props: { pool, open: false } });
-    await openDlg(w);
+    await input.setValue('10.2.0.3');
+    await nextTick();
     await applyBtn(w)!.trigger('click');
     await new Promise((r) => setTimeout(r, 0));
     expect(useToast().toasts.list.map((t) => t.text).join(' ')).toContain('заняты');
     expect(w.emitted()['update:open']).toBeFalsy();
+  });
+});
+
+describe('poolsLogic - межпуловая коллизия (внутри пула общий адрес - норма)', () => {
+  it('адрес совпадает с другим пулом - коллизия; только внутри пула - null', () => {
+    const proton = mkPool('proton', ['10.2.0.2/32']);
+    const protonb = mkPool('protonb', ['10.2.0.2/32', '10.2.0.2/32']);
+    expect(crossPoolCollisionOf(protonb, [proton])).toEqual({ addr: '10.2.0.2', pool: 'proton' });
+    // ротация в ОДНОМ пуле: все с .2, других пулов нет - коллизии нет
+    expect(crossPoolCollisionOf(protonb, [])).toBeNull();
+    expect(crossPoolCollisionOf(mkPool('x', ['10.9.9.9/32']), [proton])).toBeNull();
+  });
+
+  it('nextFreeV4 по чужим адресам: protonb со своими .3/.4 получит .3 (свой освобождается)', () => {
+    const others = occupiedV4([
+      mkPool('proton', ['10.2.0.2/32']),
+      mkPool('protonc', ['10.2.0.5/32']),
+    ]);
+    expect(nextFreeV4(others, '10.2.0.')).toBe('10.2.0.3');
   });
 });

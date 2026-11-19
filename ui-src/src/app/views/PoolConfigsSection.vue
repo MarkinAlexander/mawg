@@ -4,7 +4,7 @@ import { UiBadge, UiBusyOverlay, UiButton, UiHelp, UiHint, UiSwitch } from '../.
 import { usePoolActions } from '../../stores/pools'
 import { useToast } from '../../stores/toast'
 import { useSecrets } from '../secrets'
-import { occupiedV4, nextFreeV4, providerOf } from './poolsLogic'
+import { occupiedV4, nextFreeV4, providerOf, crossPoolCollisionOf } from './poolsLogic'
 import { G } from '../glossary'
 import type { ConfigView, PoolView } from '../../api/types'
 import PoolReaddressDialog from './PoolReaddressDialog.vue'
@@ -19,20 +19,21 @@ const a = usePoolActions();
 const secrets = useSecrets();
 const isEng = computed(() => props.pool.settings.engineMode === 'singbox');
 
-// Перенумерация адресов (120-док): пометить можно, когда у однотипной
-// кучи адрес один (Proton все с 10.2.0.2) - ровно её переносит одним
-// ходом; куча обычно ВЫКЛЮЧЕНА конфликтом - смотрим все конфиги
+// Смена адресов (120-док): внутри пула общий адрес - НОРМА (ротация,
+// активен один конфиг); тревога только когда адрес пула совпадает с
+// адресом ДРУГОГО пула - такие интерфейсы одновременно не поднимутся
 const { pools } = usePools();
 const { refresh: refreshStatus } = useStatus();
 const readdressOpen = ref(false);
 const readdressHint = computed(() => {
   if (props.pool.premium?.imported || !(props.pool.configs || []).length) return '';
+  const hit = crossPoolCollisionOf(props.pool, pools.value);
+  if (!hit) return '';
   const prov = providerOf(props.pool.configs?.find((c) => (c.addresses || []).length)?.addresses);
-  if (!prov) return '';
-  const same = (props.pool.configs || []).filter((c) => (c.addresses || []).some((x) => !x.includes(':') && x.startsWith(prov.prefix)));
-  if (same.length < 2) return '';
-  return 'одинаковый адрес у ' + same.length + ' конфигов - первый свободный: ' +
-    nextFreeV4(occupiedV4(pools.value), prov.prefix);
+  const sugg = prov
+    ? nextFreeV4(occupiedV4((pools.value || []).filter((p) => p.name !== props.pool.name)), prov.prefix)
+    : '';
+  return 'адрес ' + hit.addr + ' совпадает с пулом ' + hit.pool + ' - одновременно не поднимутся; свободный: ' + (sugg || 'проверьте подсеть');
 });
 
 const busy = ref(''); // «act» - одна busy-кнопка секции за раз
@@ -78,20 +79,13 @@ async function doUpload(files: FileList | null | undefined): Promise<void> {
     push(msg);
     for (const w of r.warnings || []) push(w, true);
     // смена адресов сразу на этапе загрузки (слово владельца 20.11):
-    // куча однотипных пришла с одним адресом или с конфликтами - диалог
-    // с планом перенумерации открывается сам
+    // свежая куча с адресом, совпадающим с ДРУГИМ пулом, - диалог сам
+    // предложит единый свободный адрес всего пула
     await refreshStatus();
     await nextTick();
-    const seen = new Map<string, number>();
-    let dup = false;
-    for (const c of props.pool.configs || []) {
-      const v4 = (c.addresses || []).find((x) => !x.includes(':'))?.split('/')[0];
-      if (!v4) continue;
-      const n = (seen.get(v4) || 0) + 1;
-      if (n >= 2) dup = true;
-      seen.set(v4, n);
+    if (crossPoolCollisionOf(props.pool, pools.value) || (r.warnings || []).length) {
+      readdressOpen.value = true;
     }
-    if (dup || (r.warnings || []).length) readdressOpen.value = true;
   });
 }
 function cfgAct(key: string, fn: () => Promise<void>): void {

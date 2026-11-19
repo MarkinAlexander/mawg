@@ -233,6 +233,26 @@ export function nextFreeV4(taken: string[], prefix: string): string {
   return '';
 }
 
+// crossPoolCollisionOf - адрес пула совпадает с адресом ДРУГОГО пула
+// (120-док): внутри пула общий адрес - норма ротации (активен один
+// конфиг), коллизия только между пулами. Смотрится самый частый адрес
+// пула. null - коллизии нет.
+export function crossPoolCollisionOf(
+  pool: { name: string; configs?: { addresses?: string[] }[] },
+  pools: { name: string; configs?: { addresses?: string[] }[] }[],
+): { addr: string; pool: string } | null {
+  const counts = new Map<string, number>();
+  for (const c of pool.configs || []) {
+    const v4 = (c.addresses || []).find((x) => !x.includes(':'))?.split('/')[0];
+    if (v4) counts.set(v4, (counts.get(v4) || 0) + 1);
+  }
+  const dominant = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+  if (!dominant) return null;
+  const other = (pools || []).find((p) => p.name !== pool.name &&
+    (p.configs || []).some((c) => (c.addresses || []).some((x) => !x.includes(':') && x.split('/')[0] === dominant)));
+  return other ? { addr: dominant, pool: other.name } : null;
+}
+
 // agoText - сколько времени назад была проба (probeAt - unix-сек из
 // /status и /ifaces: время той же единственной пробы пула).
 export function agoText(at?: number, now = Date.now()): string {
