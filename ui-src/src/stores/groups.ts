@@ -14,6 +14,7 @@ interface GroupsState {
   wrapper: boolean
   backendFlavor: string // семейство бэкенда MT (107-док): mawg-c | mawg-dev | upstream
   sourcesCapable: boolean
+  localOnlyCapable: boolean // rev23+: OUTPUT-прыжок условный, «вся локалка» не захватывает роутера
   duplicates: Record<string, DupInfo[]>
   ifaces: MtIface[] // селекты интерфейсов (легаси MT_IFACES, опрос 60с)
   cycles: PolicyCycles | null // гистерезис политик (легаси loadPolicyCycles)
@@ -39,6 +40,7 @@ const state = reactive<GroupsState>({
   wrapper: false,
   backendFlavor: '',
   sourcesCapable: true,
+  localOnlyCapable: false,
   duplicates: {},
   ifaces: [],
   cycles: null,
@@ -94,6 +96,7 @@ export function useGroups() {
       state.wrapper = !!r.wrapper;
       state.backendFlavor = r.backendFlavor || '';
       state.sourcesCapable = r.sources !== false;
+      state.localOnlyCapable = !!r.localOnlyCapable;
       // 114-док: режим автосохранения и черновик приходят вместе с группами;
       // до кэш-проверки списка - смена черновика без смены групп тоже видна.
       // Поля нет (переходный старый бэкенд) - не затираем draft, полученный

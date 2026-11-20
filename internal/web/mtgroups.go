@@ -229,7 +229,7 @@ func (s *Server) mtGroupsView(w http.ResponseWriter, r *http.Request, groups []m
 		flavor = string(c.BackendFlavor())
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"available": true, "groups": out, "glitchy": s.store.MTGlitchy(), "wrapper": wrapper,
-		"sources": s.mtSourcesCapable(r.Context()), "backendFlavor": flavor,
+		"sources": s.mtSourcesCapable(r.Context()), "backendFlavor": flavor, "localOnlyCapable": s.mtLocalOnlyCapable(r.Context()),
 		"autoSave": s.autoSaveOn(), "draft": s.draftStatus()})
 }
 

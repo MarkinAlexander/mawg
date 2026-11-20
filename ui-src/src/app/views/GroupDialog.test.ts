@@ -141,7 +141,7 @@ describe('GroupDialog', () => {
     const dlg = dlgOf(w);
     await dlg.findAll('.psel-btn')[1].trigger('click');
     await nextTick();
-    await dlg.findAll('.psel-item').filter((o) => o.text() === 'вся локальная сеть')[0].trigger('click');
+    await dlg.findAll('.psel-item').filter((o) => o.text() === 'вся локальная сеть (без роутера)')[0].trigger('click');
     await nextTick();
     expect(dlg.findAll('input').some((i) => i.attributes('placeholder')?.includes('192.168.1.50'))).toBe(false);
     await btnIn(dlg, 'Сохранить')[0].trigger('click');

@@ -214,10 +214,15 @@ func (m *Manager) SyncHooks() {
 	// исключения из обработки синхронятся независимо от каскадов
 	// (роутер без единого каскада тоже имеет право на исключения)
 	hasExcl := m.excludesPresent()
+	// localOnly-синк живёт на пуловых группах («вся локалка» без роутера):
+	// нужны либо stored-политики, либо сами пулы (дефолтный режим не
+	// хранится - SetGroupPolicy сбрасывает запись с пустым SourcesMode)
+	poolPolicies := m.Store.GroupPoliciesAll()
+	hasPools := len(m.Store.Pools()) > 0
 	m.mu.Lock()
 	exclActive := m.exclActive
 	m.mu.Unlock()
-	if len(casc) == 0 && len(routerPolicies) == 0 && !hasExcl && !exclActive {
+	if len(casc) == 0 && len(routerPolicies) == 0 && !hasExcl && !exclActive && len(poolPolicies) == 0 && !hasPools {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -277,6 +282,7 @@ func (m *Manager) SyncHooks() {
 			}
 		}
 	}
+	m.syncLocalOnly(ctx, groups, poolPolicies)
 	if hasExcl {
 		m.syncExclusions(groups)
 	}

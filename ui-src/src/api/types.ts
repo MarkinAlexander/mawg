@@ -81,6 +81,7 @@ export interface MtGroupsRes {
   wrapper: boolean // в OUTPUT видна обёртка юзера (MR_*)
   sources: boolean // MT понимает sources (форк rev3+)
   backendFlavor?: string // семейство бэкенда MT: mawg-c | mawg-dev | upstream
+  localOnlyCapable?: boolean // MT понимает localOnly (форк rev23+): «вся локалка» не захватывает роутера
   // черновик записей (114-док): включён - каждое действие сразу пишется в MT
   autoSave?: boolean
   draft?: MtDraft // состояние черновика записей; бэкенд шлёт всегда объектом

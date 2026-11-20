@@ -127,6 +127,99 @@ func (m *Manager) syncGroupSources(id string, want []string) error {
 	return nil
 }
 
+// serviceGroupPrefix - маркер служебных групп (каскады «Служебная: X через
+// Y»; тот же префикс в web/dnszones.go isDnsPathGroup). Они живут на
+// роутерном трафике - localOnly им не положен, включая обратный дрейф
+// (на 0.62 каскад владельца не был зарегистрирован в сторе - по id скип
+// не сработал, синк погасил OUTPUT-прыжок живого каскада).
+const serviceGroupPrefix = "Служебная: "
+
+// syncLocalOnly - дрейф флага localOnly у пуловых групп mawg. «Вся
+// локалка» (дефолт: у группы нет stored-политики источников) на
+// capable-форке rev23+ должна исключать роутера: у группы без sources
+// guard'а нет, и без флага OUTPUT-прыжок форка тащит в туннель пробы/DNS
+// самого роутера (затор-пункт 01, googlevideo 21.11). Режимы «+ роутер»
+// и «список» (stored-политика с непустым SourcesMode) гвардят роутера
+// сами - флаг там false. Каскады и DNS-путь (dns-tunnel, зоны «dnszone-»)
+// всегда с роутером - у них флаг снимается и обратным дрейфом. Пуловые
+// группы узнаются по интерфейсу = DeviceName пула (как suspendGroups/
+// rebindGroups); чужие группы вне пулов не трогаем. Пишем одним bulk-PUT
+// в защитном окне: флип флага пересобирает цепочку группы
+// (disable/enable у форка), как sources-правка. Версию берём на каждый
+// тик: rotator проталкивает только flavor, ревизия - здесь.
+func (m *Manager) syncLocalOnly(ctx context.Context, groups []magitrickle.Group, policies map[string]store.GroupPolicy) {
+	if len(groups) == 0 {
+		return
+	}
+	version, err := m.MT.GetVersion(ctx)
+	if err != nil || !magitrickle.LocalOnlySupported(version) {
+		return
+	}
+	devIsPool := map[string]bool{}
+	for _, p := range m.Store.Pools() {
+		devIsPool[p.DeviceName()] = true
+	}
+	type wantFlag struct {
+		id   string
+		name string
+		flag bool
+	}
+	var drift []wantFlag
+	for _, g := range groups {
+		_, isCasc := m.Store.CascadeByGroup(g.ID)
+		protected := isCasc ||
+			strings.HasPrefix(g.Name, serviceGroupPrefix) ||
+			g.Name == "dns-tunnel" ||
+			strings.HasPrefix(g.Name, "dnszone-")
+		var want bool
+		pol, hasPol := policies[g.ID]
+		switch {
+		case protected:
+			want = false // служебные всегда с роутером
+		case hasPol && !pol.SourcesEmpty():
+			want = false // «+ роутер»/«список»: роутер входит/гвардится сам
+		case devIsPool[g.Interface]:
+			want = true // пуловая группа без режима = «вся локалка»
+		default:
+			continue // чужая группа вне пулов mawg - не трогаем
+		}
+		if g.LocalOnly != want {
+			drift = append(drift, wantFlag{id: g.ID, name: g.Name, flag: want})
+		}
+	}
+	if len(drift) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(drift))
+	for _, d := range drift {
+		ids = append(ids, d.name+" ("+d.id+") -> "+strconv.FormatBool(d.flag))
+	}
+	// флип флага пересобирает цепочку группы, на которой может висеть её
+	// роутерный хук - то же защитное окно, что у sources-правки
+	m.beginMutate()
+	m.reportStuck(m.sweepOutputHooks())
+	err = m.retry("localonly", func() error {
+		return m.MT.MutateGroups(context.Background(), func(groups []magitrickle.Group) bool {
+			changed := false
+			for i := range groups {
+				for _, d := range drift {
+					if groups[i].ID == d.id && groups[i].LocalOnly != d.flag {
+						groups[i].LocalOnly = d.flag
+						changed = true
+					}
+				}
+			}
+			return changed
+		})
+	})
+	m.endMutate()
+	if err != nil {
+		m.log("policy", "localonly", "не применил роутер-флаг ("+strings.Join(ids, ", ")+"): "+err.Error())
+		return
+	}
+	m.log("policy", "localonly", "роутер-флаг групп обновлён: "+strings.Join(ids, ", "))
+}
+
 func equalStrings(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

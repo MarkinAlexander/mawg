@@ -168,3 +168,18 @@ func MtLogLevelSupported(version string) bool {
 	n, err := strconv.Atoi(m[1])
 	return err == nil && n >= mtLogLevelRevMin
 }
+
+const localOnlyRevMin = 23 // rev23: поле localOnly группы - OUTPUT-прыжок условный
+
+// LocalOnlySupported: rev23+ понимают localOnly у группы - mangle
+// OUTPUT-прыжок не ставится и роутер не попадает в группу («вся
+// локалка» контроллера). Старые ревизии поле молча проигнорируют
+// (json-анмаршаллинг), поэтому гейт обязателен перед отправкой.
+func LocalOnlySupported(version string) bool {
+	m := revRe.FindStringSubmatch(version)
+	if m == nil {
+		return false
+	}
+	n, err := strconv.Atoi(m[1])
+	return err == nil && n >= localOnlyRevMin
+}

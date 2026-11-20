@@ -264,10 +264,22 @@ export function cyclesValid(fail: string, restore: string): boolean {
 // источники группы (легаси SRC_MODE_HINTS 1411, заполнение 1379-1389)
 
 export const SRC_MODE_HINTS: Record<string, string> = {
-  all: 'Любое устройство локальной сети: группа ловит весь трафик к своим доменам. Роутер в группу не ходит.',
-  'all+router': 'Как «вся локалка», плюс собственный трафик роутера уходит в группу (проверка IP с роутера покажет адрес туннеля).',
-  list: 'В группу ходят только перечисленные адреса (роутер - по галке). Остальная локалка - напрямую.',
+  all: 'Через пул ходят устройства локальной сети; свой трафик роутера (пробы, DNS, проверки) идёт напрямую. Оговорка (до фикса форка): бэкенды пока прыгают OUTPUT для всех групп (форк rev22, mt-c), так что роутер тоже попадает в группу.',
+  'all+router': 'Как «вся локальная сеть (без роутера)», плюс собственный трафик роутера уходит в группу (проверка IP с роутера покажет адрес туннеля).',
+  list: 'Через пул ходят только перечисленные адреса (роутер - по галке «Включая роутер»); остальные устройства - напрямую.',
 };
+
+// форк rev23+ (localOnlyCapable): OUTPUT-прыжка у «вся локалка» нет -
+// оговорка про захват роутера снимается
+export const SRC_MODE_HINTS_LOCALONLY: Record<string, string> = {
+  all: 'Через пул ходят устройства локальной сети; свой трафик роутера (пробы, DNS, проверки) идёт напрямую: OUTPUT-прыжок группе не ставится.',
+  'all+router': SRC_MODE_HINTS['all+router'],
+  list: SRC_MODE_HINTS.list,
+};
+
+export function srcModeHints(localOnlyCapable: boolean): Record<string, string> {
+  return localOnlyCapable ? SRC_MODE_HINTS_LOCALONLY : SRC_MODE_HINTS;
+}
 
 // человеческий вердикт пробы для тостов (словарь строк rotator.go 601-641;
 // жалоба владельца: «icmp lossy» непонятно). Сырая строка сохраняется.
@@ -284,7 +296,7 @@ export function probeHuman(s: string | undefined): string {
 }
 
 export const SRC_MODE_OPTIONS: { value: string; label: string }[] = [
-  { value: 'all', label: 'вся локальная сеть' },
+  { value: 'all', label: 'вся локальная сеть (без роутера)' },
   { value: 'all+router', label: 'локальная сеть + роутер' },
   { value: 'list', label: 'только выбранные IP' },
 ];

@@ -117,6 +117,28 @@ func (s *Server) mtLogLevelCapable(ctx context.Context) bool {
 	return false
 }
 
+// mtLocalOnlyCapable - форк понимает localOnly у группы (rev23+):
+// OUTPUT-прыжок условный, «вся локалка» не захватывает трафик роутера.
+// Порядок тот же, что у sources (фолбэк на configVersion дискового
+// конфига). Для UI: оговорка в подсказке режима снимается.
+func (s *Server) mtLocalOnlyCapable(ctx context.Context) bool {
+	if v, err := s.mtClient().GetVersion(ctx); err == nil && v != "" {
+		return magitrickle.LocalOnlySupported(v)
+	}
+	if s.backend == nil {
+		return false
+	}
+	path := s.backend.MTConfigPath()
+	if path == "" {
+		return false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	return magitrickle.LocalOnlySupported(magitrickle.ConfigVersion(data))
+}
+
 func (s *Server) mtDnsZonesCapable(ctx context.Context) bool {
 	if v, err := s.mtClient().GetVersion(ctx); err == nil && v != "" {
 		return magitrickle.DnsZonesSupported(v)

@@ -104,3 +104,22 @@ func TestMtLogLevelSupported(t *testing.T) {
 		}
 	}
 }
+
+func TestLocalOnlySupported(t *testing.T) {
+	cases := []struct {
+		version string
+		want    bool
+	}{
+		{"0.8.2-rev22", false}, // localOnly появился в rev23
+		{"0.8.2-rev22-mawg-dev", false},
+		{"0.8.2-rev23-mawg-dev", true},
+		{"0.8.2-rev30-mawg-dev", true},
+		{"0.8.2", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		if got := LocalOnlySupported(c.version); got != c.want {
+			t.Errorf("LocalOnlySupported(%q) = %v, want %v", c.version, got, c.want)
+		}
+	}
+}

@@ -6,7 +6,7 @@ import { useToast } from '../../stores/toast'
 import type { GroupPolicy, GroupView } from '../../api/types'
 import { G } from '../glossary'
 import {
-  parseSources, POLICY_HINTS, POLICY_OPTIONS, srcListInitial, SRC_MODE_HINTS,
+  parseSources, POLICY_HINTS, POLICY_OPTIONS, srcListInitial, srcModeHints,
   SRC_MODE_OPTIONS, srcModeInitial,
 } from './groupsLogic'
 
@@ -35,6 +35,7 @@ const busy = ref(false);
 const isCascade = computed(() => !!props.group?.cascade);
 const isBlock = computed(() => iface.value === 'blackhole');
 const srcSupported = computed(() => state.sourcesCapable);
+const srcHints = computed(() => srcModeHints(state.localOnlyCapable));
 const srcVisible = computed(() => !isCascade.value && srcSupported.value);
 const srcListVisible = computed(() => srcMode.value === 'list');
 
@@ -141,7 +142,7 @@ async function save(): Promise<void> {
         v-model="srcMode"
         :options="SRC_MODE_OPTIONS"
         label="Кто ходит в группу"
-        :hint="SRC_MODE_HINTS[srcMode] || ''"
+        :hint="srcHints[srcMode] || ''"
       />
       <template v-if="srcListVisible">
         <div class="hrow">

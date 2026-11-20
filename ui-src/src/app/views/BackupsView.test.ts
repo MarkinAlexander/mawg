@@ -239,7 +239,7 @@ describe('BackupsView - импорт из файла', () => {
 
     // «вся локальная сеть» - после импорта PUT policy на новую группу
     await transfer.findAll('.psel-btn')[0].trigger('click');
-    await transfer.findAll('.psel-item').filter((o) => o.text() === 'вся локальная сеть')[0].trigger('click');
+    await transfer.findAll('.psel-item').filter((o) => o.text() === 'вся локальная сеть (без роутера)')[0].trigger('click');
     await btnIn(transfer, 'импортировать')[0].trigger('click');
     await vi.waitFor(() => {
       const pol = f.mock.calls.find((c) => (c[0] as string).endsWith('/policy') && c[1]?.method === 'PUT');

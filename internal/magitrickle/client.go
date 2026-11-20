@@ -30,7 +30,11 @@ type Group struct {
 	Interface string   `json:"interface"`
 	Enable    bool     `json:"enable"`
 	Sources   []string `json:"sources,omitempty"`
-	Rules     []Rule   `json:"rules,omitempty"`
+	// LocalOnly (rev23+): группа не обрабатывает трафик самого роутера -
+	// форк не ставит mangle OUTPUT-прыжок. Гейт LocalOnlySupported
+	// обязателен: старые ревизии поле молча проигнорируют.
+	LocalOnly bool   `json:"localOnly,omitempty"`
+	Rules     []Rule `json:"rules,omitempty"`
 }
 
 type Client struct {
