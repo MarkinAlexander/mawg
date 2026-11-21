@@ -47,8 +47,9 @@ async function openDlg(w: ReturnType<typeof mount>): Promise<void> {
 }
 
 describe('PoolReaddressDialog - единый адрес пула', () => {
-  it('подсказка исключает СВОЙ пул: второму протону с .2 предлагается .3, не следующий', async () => {
-    // protonb держит .3/.4 (свои), proton - .2: свой адрес освобождается
+  it('подсказка свободна и от чужих пулов, и от СВОИХ текущих адресов: protonb с .3/.4 получает .5', async () => {
+    // proton держит .2, protonb - свои .3/.4: предлагать собственный адрес
+    // бессмысленно («10.2.0.3 → 10.2.0.3»), берём реально новый
     seed([
       mkPool('proton', ['10.2.0.2/32']),
       mkPool('protonb', ['10.2.0.3/32', '10.2.0.4/32']),
@@ -56,10 +57,33 @@ describe('PoolReaddressDialog - единый адрес пула', () => {
     const protonb = mkPool('protonb', ['10.2.0.3/32', '10.2.0.4/32']);
     const w = mount(PoolReaddressDialog, { props: { pool: protonb, open: false } });
     await openDlg(w);
-    expect((textInputs(w)[0].element as HTMLInputElement).value).toBe('10.2.0.3');
+    expect((textInputs(w)[0].element as HTMLInputElement).value).toBe('10.2.0.5');
     // в списке все строки получают ОДИН адрес
-    expect(w.text()).toContain('10.2.0.3 → 10.2.0.3');
-    expect(w.text()).toContain('10.2.0.4 → 10.2.0.3');
+    expect(w.text()).toContain('10.2.0.3 → 10.2.0.5');
+    expect(w.text()).toContain('10.2.0.4 → 10.2.0.5');
+  });
+
+  it('одиночный пул без соседей: подсказка не предлагает собственный адрес (172.16.0.2 → .3)', async () => {
+    const warp = mkPool('warp', ['172.16.0.2/32', '172.16.0.2/32']);
+    seed([warp]);
+    const w = mount(PoolReaddressDialog, { props: { pool: warp, open: false } });
+    await openDlg(w);
+    expect((textInputs(w)[0].element as HTMLInputElement).value).toBe('172.16.0.3');
+    expect(w.text()).toContain('172.16.0.2 → 172.16.0.3');
+  });
+
+  it('no-op блокирует кнопку: адрес совпадает с текущим - менять нечего', async () => {
+    seed([mkPool('proton', ['10.2.0.2/32'])]);
+    const p = mkPool('protonb', ['10.2.0.3/32']);
+    const w = mount(PoolReaddressDialog, { props: { pool: p, open: false } });
+    await openDlg(w);
+    const input = textInputs(w)[0];
+    await input.setValue('10.2.0.3');
+    await nextTick();
+    expect(applyBtn(w)!.attributes('disabled')).toBeDefined();
+    await input.setValue('10.2.0.5');
+    await nextTick();
+    expect(applyBtn(w)!.attributes('disabled')).toBeUndefined();
   });
 
   it('применение: всем конфигам (с v4) один адрес, конфиги без v4 пропущены', async () => {
@@ -72,8 +96,7 @@ describe('PoolReaddressDialog - единый адрес пула', () => {
       if ((url as string).endsWith('/configs/readdress')) {
         return new Response(JSON.stringify({
           changed: [
-            { file: 'protonb-0.conf', old: '10.2.0.3', address: '10.2.0.3' },
-            { file: 'protonb-1.conf', old: '10.2.0.3', address: '10.2.0.3' },
+            { file: 'protonb-0.conf', old: '10.2.0.3', address: '10.2.0.4' },
           ],
         }), { status: 200 });
       }
@@ -90,8 +113,8 @@ describe('PoolReaddressDialog - единый адрес пула', () => {
     const post = calls.find((c) => c.includes('/configs/readdress'));
     expect(post).toBeTruthy();
     expect(post).toContain('"files":["protonb-0.conf"]');
-    expect(post).toContain('"addresses":["10.2.0.3"]');
-    expect(useToast().toasts.list.map((t) => t.text).join(' ')).toContain('весь пул на 10.2.0.3');
+    expect(post).toContain('"addresses":["10.2.0.4"]');
+    expect(useToast().toasts.list.map((t) => t.text).join(' ')).toContain('весь пул на 10.2.0.4');
     expect(w.emitted()['update:open']).toBeTruthy();
   });
 
@@ -106,11 +129,11 @@ describe('PoolReaddressDialog - единый адрес пула', () => {
     expect(applyBtn(w)!.attributes('disabled')).toBeDefined();
     vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
       if ((url as string).endsWith('/configs/readdress')) {
-        return new Response(JSON.stringify({ error: 'адреса заняты: 10.2.0.3 занят (конфиг x.conf пула proton)' }), { status: 400 });
+        return new Response(JSON.stringify({ error: 'адреса заняты: 10.2.0.5 занят (конфиг x.conf пула proton)' }), { status: 400 });
       }
       return new Response('{}', { status: 200 });
     }));
-    await input.setValue('10.2.0.3');
+    await input.setValue('10.2.0.5');
     await nextTick();
     await applyBtn(w)!.trigger('click');
     await new Promise((r) => setTimeout(r, 0));

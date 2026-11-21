@@ -41,19 +41,26 @@ const v4ok = (s: string): boolean => {
   return m.slice(1).every((o) => Number(o) <= 255);
 };
 
-// подсказка: первый свободный адрес подсети СРЕДИ ДРУГИХ пулов - свой
-// адрес освобождается (второму протону предлагается 10.2.0.3, а не .6)
+// подсказка: первый адрес подсети, свободный и от ДРУГИХ пулов, и от
+// текущих адресов этого пула - предлагать собственный адрес бессмысленно
+// («172.16.0.2 → 172.16.0.2»); сервер при проверке свой адрес снимает,
+// но подсказка должна показывать реальную смену
 const suggestion = computed(() => {
   if (!provider.value) return '';
-  const others = occupiedV4((pools.value || []).filter((p) => p.name !== props.pool.name));
-  return nextFreeV4(others, provider.value.prefix);
+  const taken = [
+    ...occupiedV4((pools.value || []).filter((p) => p.name !== props.pool.name)),
+    ...occupiedV4([props.pool]),
+  ];
+  return nextFreeV4(taken, provider.value.prefix);
 });
 
 // конфиги с IPv4 - только они несут локальный адрес; всем уходит ОДИН
 const targets = computed(() => (props.pool.configs || []).filter((c) => v4of(c.addresses)));
 
 const ok = computed(() => v4ok(addr.value));
-const blocked = computed(() => !ok.value || busy.value);
+// смена есть, если хоть у одного конфига адрес реально отличается
+const changed = computed(() => targets.value.some((c) => v4of(c.addresses) !== addr.value.trim()));
+const blocked = computed(() => !ok.value || busy.value || !changed.value);
 
 watch(() => props.open, (v) => {
   if (v) addr.value = suggestion.value;
@@ -106,7 +113,7 @@ async function apply(): Promise<void> {
         v-if="suggestion"
         variant="ghost"
         :disabled="busy"
-        tooltip="первый свободный адрес подсети среди других пулов"
+        tooltip="первый адрес подсети, свободный и от других пулов, и от текущего адреса этого пула"
         @click="addr = suggestion"
       >
         {{ suggestion }}
@@ -139,6 +146,7 @@ async function apply(): Promise<void> {
         variant="primary"
         :disabled="blocked"
         :busy="busy"
+        :tooltip="ok && !changed ? 'адрес совпадает с текущим - менять нечего' : ''"
         @click="apply"
       >
         Сменить IP пула
@@ -150,12 +158,18 @@ async function apply(): Promise<void> {
 <style scoped>
 .rrow {
   display: flex;
-  align-items: end;
+  align-items: flex-end;
+  flex-wrap: nowrap;
   gap: 8px;
   margin-top: 10px;
 }
 .rin {
   flex: 1;
+  min-width: 0;
+}
+.rrow > .uibtn {
+  flex: none;
+  white-space: nowrap;
 }
 .rlist {
   margin-top: 10px;
