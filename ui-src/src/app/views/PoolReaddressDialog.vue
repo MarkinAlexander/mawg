@@ -100,24 +100,28 @@ async function apply(): Promise<void> {
         ? 'Похоже на ' + provider.label + ' (' + provider.prefix + 'x). Весь пул получает ОДИН адрес: внутри пула конфиги ротируются - активен один, коллизия только между пулами. Второму пулу провайдера достаточно первого свободного адреса (для протона обычно 10.2.0.3)'
         : 'Весь пул получает ОДИН локальный адрес: внутри пула конфиги ротируются - активен один, коллизия только между пулами. Укажите свободный адрес'"
     />
-    <div class="rrow">
-      <UiInput
-        v-model="addr"
-        label="Новый адрес пула"
-        :placeholder="suggestion || '10.2.0.3'"
-        mono
-        class="rin"
-        :validator="() => addr.trim() && !v4ok(addr.trim()) ? 'адрес - IPv4 вида 10.2.0.3' : null"
-      />
-      <UiButton
-        v-if="suggestion"
-        variant="ghost"
-        :disabled="busy"
-        tooltip="первый адрес подсети, свободный и от других пулов, и от текущего адреса этого пула"
-        @click="addr = suggestion"
-      >
-        {{ suggestion }}
-      </UiButton>
+    <div class="addrblock">
+      <div class="albl">
+        Новый адрес пула
+      </div>
+      <div class="rrow">
+        <UiInput
+          v-model="addr"
+          :placeholder="suggestion || '10.2.0.3'"
+          mono
+          class="rin"
+          :validator="() => addr.trim() && !v4ok(addr.trim()) ? 'адрес - IPv4 вида 10.2.0.3' : null"
+        />
+        <UiButton
+          v-if="suggestion"
+          variant="ghost"
+          :disabled="busy"
+          tooltip="первый адрес подсети, свободный и от других пулов, и от текущего адреса этого пула"
+          @click="addr = suggestion"
+        >
+          {{ suggestion }}
+        </UiButton>
+      </div>
     </div>
     <div class="rlist">
       <div
@@ -156,12 +160,21 @@ async function apply(): Promise<void> {
 </template>
 
 <style scoped>
+.addrblock {
+  margin-top: 10px;
+}
+/* подпись отдельной строкой, инпут+кнопка-подсказка в одном флекс-ряду
+   по центральной линии (владелец 21.11: кнопка раньше уезжала ниже
+   инпута из-за полей UiField внутри ряда) */
+.albl {
+  color: var(--dim);
+  font-size: 13px;
+}
 .rrow {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   flex-wrap: nowrap;
   gap: 8px;
-  margin-top: 10px;
 }
 .rin {
   flex: 1;
