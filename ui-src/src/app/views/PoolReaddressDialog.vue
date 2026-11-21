@@ -183,6 +183,9 @@ async function apply(): Promise<void> {
 .rrow > .uibtn {
   flex: none;
   white-space: nowrap;
+  /* владельческая подгонка 21.11: кнопка уезжала к верху, 4px выравнивают
+     её по линии инпута */
+  margin-top: 4px;
 }
 .rlist {
   margin-top: 10px;
