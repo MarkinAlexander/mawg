@@ -81,7 +81,7 @@ paths = [
 # плейсхолдеры): стандартное правило generic-api-key ругается на них по
 # энтропии. Точные значения - реальный ключ здесь не пройдёт.
 [allowlist]
-description = "синтетические ключи тестовых фикстур"
+description = "синтетические ключи тестовых фикстур; история: эндпоинт Proton в комментарии wgconf/address.go (60144956, IP убран из кода - не креденшал, переписывание запушенной истории дороже)"
 regexes = [
   '''^SMAp//W\+/qjES6qfuxaVCM8jQlQtHhgDgHZrhDCfe00=$''',
   '''^V0FSUC1TQ09VVC1URVNULUtFWS0wMDEtMjM0LTU2Nzg=$''',
@@ -92,4 +92,7 @@ regexes = [
   '''^kLKh8p7664kHCd8rKtcfHWgmaWqzv1mTUAQxtCf/GVU=$''',
   '''^uJd2xK5t0mFvqWz\+YbN8cLrA3eHh7oPqQ1wZsX4dC6k=$''',
   '''^q9Xk1AbCdefGHIjklMNOpqrsTUVwxyz0123456789stu=$''',
+]
+commits = [
+  "601449569b54cffddaf90b4804e6c348df919a02",
 ]
