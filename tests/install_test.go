@@ -465,6 +465,30 @@ func runRemove(t *testing.T, mode, wantMT string, state []string) (installerResu
 		suffix = strings.ReplaceAll(suffix, from, to)
 	}
 	suffix = strings.ReplaceAll(suffix, "/etc/init.d/magitrickle", shellQuote(filepath.ToSlash(filepath.Join(dir, "init", "magitrickle"))))
+	// flush_mt_chains зовёт iptables АБСОЛЮТНЫМ путём (/usr/sbin/iptables на
+	// openwrt) - шелл-функция-мок из removeGlue абсолютный путь не
+	// перехватывает, а на CI-раннере ubuntu по этому пути лежит реальный
+	// iptables: его вызовы молча падают мимо PKG_LOG (локально на Windows
+	// пути нет - срабатывал fallback command -v, и тест был зелёным).
+	// Мок ставится по литералам путей, как остальные фикстуры.
+	iptPath := filepath.ToSlash(filepath.Join(dir, "bin", "iptables"))
+	suffix = strings.ReplaceAll(suffix, "/usr/sbin/iptables", shellQuote(iptPath))
+	suffix = strings.ReplaceAll(suffix, "/opt/sbin/iptables", shellQuote(iptPath))
+	if err := os.MkdirAll(filepath.Dir(filepath.FromSlash(iptPath)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	iptScript := `#!/bin/sh
+echo "iptables $*" >> "$PKG_LOG"
+case "$*" in
+    *"-t nat -S")
+        printf -- '-N MT_DNSOR\n-N MT_a2d34556\n-A PREROUTING -j MT_DNSOR\n-A PREROUTING -j MT_a2d34556\n-A MT_DNSOR -p udp -j DNAT --to-destination :3553\n';;
+    *"-t mangle -S")
+        printf -- '-N MT_fd1e1ebe\n-A PREROUTING -j MT_fd1e1ebe\n';;
+esac
+`
+	if err := os.WriteFile(filepath.FromSlash(iptPath), []byte(iptScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	for _, p := range []string{
 		paths["/usr/bin/mawg"], paths["/etc/init.d/mawg"], paths["/var/log/mawg.log"],
