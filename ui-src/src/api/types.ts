@@ -753,14 +753,31 @@ export interface SourcePlan {
 
 // --- наборы интерфейсов (ротация) ---
 
+export interface MemberHealth {
+  device: string
+  ok: boolean
+  note: string
+  // результата проверки ещё нет
+  pending?: boolean
+}
+
 export interface BundleView {
   name: string
   members: string[]
   groups: string[]
   currentMember?: string
   memberDevices: Record<string, string>
+  // жив ли участник и почему нет
+  memberHealth?: Record<string, MemberHealth>
   // мёртвые ссылки набора: участник/группа, которых больше нет
   issues?: string[]
+}
+
+// когда участник набора считается живым и гистерезис переключения (GET /mt/bundle-rules)
+export interface BundleRules {
+  healthSource: 'probe' | 'state'
+  failCycles: number
+  restoreCycles: number
 }
 
 // --- пулы: слоты/разбор ссылок/состав (Ф3.5б) ---

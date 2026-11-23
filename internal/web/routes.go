@@ -153,6 +153,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/v1/mt/groups/{id}/policy", s.mtSetPolicy)
 	mux.HandleFunc("GET /api/v1/mt/policy-cycles", s.getPolicyCycles)
 	mux.HandleFunc("PUT /api/v1/mt/policy-cycles", s.putPolicyCycles)
+	mux.HandleFunc("GET /api/v1/mt/bundle-rules", s.getBundleRules)
+	mux.HandleFunc("PUT /api/v1/mt/bundle-rules", s.putBundleRules)
 
 	mux.HandleFunc("GET /api/v1/subs", s.getSubs)
 	mux.HandleFunc("POST /api/v1/subs", s.postSubs)

@@ -75,6 +75,11 @@ func (e *Engine) firstDue(now time.Time) string {
 			}
 			return p.Name
 		}
+		// первая проверка после применения - сразу по окончании settle: до
+		// неё пул не подтверждён, его группы и набор ждут
+		if st.GraceUntil > st.LastCheck.Unix() && now.Unix() >= st.GraceUntil {
+			return p.Name
+		}
 		if now.Sub(st.LastCheck) >= time.Duration(p.Settings.CheckIntervalSec)*time.Second {
 			return p.Name
 		}
@@ -209,22 +214,31 @@ func (e *Engine) probeAndMaybeRotate(p store.Pool, st *store.PoolState) {
 		})
 		return
 	}
-	verdict, rtt, detail := e.probe(p)
+	res := e.probe(p)
+	now := e.now()
 	e.store.MutateState(p.Name, func(s *store.PoolState) {
-		s.LastCheck = e.now()
-		s.LastResult = detail
-		s.ProbeOK = verdict == probeOK
-		s.ProbeMs = rtt
+		s.LastCheck = now
+		s.LastResult = res.detail
+		s.ProbeOK = res.verdict == probeOK
+		s.ProbeMs = res.rttMs
+		if s.AppliedAt.IsZero() {
+			// после рестарта mawg момент применения неизвестен: туннель считаем
+			// давним, иначе пул с рукопожатием, но без ответа пробы, слишком
+			// долго не подтверждён и политики групп успевают его деградировать
+			s.AppliedAt = now.Add(-handshakeConfirmAfter)
+		}
+		s.Confirmed = res.reply || (res.verdict != probeFail && now.Sub(s.AppliedAt) >= handshakeConfirmAfter)
 	})
-	if verdict != probeFail {
-		if st.ConsecFails > 0 && verdict == probeOK {
+	e.restoreIfConfirmed(p)
+	if res.verdict != probeFail {
+		if st.ConsecFails > 0 && res.verdict == probeOK {
 			e.store.MutateState(p.Name, func(s *store.PoolState) { s.ConsecFails = 0 })
 		}
 		return
 	}
 	if e.wanDown() {
 		e.store.MutateState(p.Name, func(s *store.PoolState) {
-			s.LastResult = detail + ", канал провайдера недоступен, отказ не засчитан"
+			s.LastResult = res.detail + ", канал провайдера недоступен, отказ не засчитан"
 		})
 		return
 	}
@@ -246,7 +260,7 @@ func (e *Engine) probeAndMaybeRotate(p store.Pool, st *store.PoolState) {
 	if fails < p.Settings.FailThreshold {
 		return
 	}
-	e.store.LogEvent(p.Name, "rotate", fmt.Sprintf("config %s failed %d checks (%s), rotating", st.ActiveFile, fails, detail))
+	e.store.LogEvent(p.Name, "rotate", fmt.Sprintf("config %s failed %d checks (%s), rotating", st.ActiveFile, fails, res.detail))
 	e.rotate(p, e.store.State(p.Name), st.ActiveFile)
 }
 
@@ -256,13 +270,28 @@ const (
 	probeLossy = 2
 )
 
-func (e *Engine) probe(p store.Pool) (verdict int, rttMs int, detail string) {
+type probeResult struct {
+	verdict int
+	rttMs   int
+	// reply - проба получила ответ через туннель; «lossy» (рукопожатие без
+	// ответа) ответом не считается
+	reply  bool
+	detail string
+}
+
+// handshakeConfirmAfter - сколько туннель держит рукопожатие без ответа
+// пробы, чтобы считаться подтверждённым: дольше одной сессии WireGuard
+// (отказы начинаются с 120с после рукопожатия). Рукопожатие при включении
+// проходит и у нерабочего туннеля, одно оно - не подтверждение.
+const handshakeConfirmAfter = 150 * time.Second
+
+func (e *Engine) probe(p store.Pool) probeResult {
 	status, err := e.backend.Status(p)
 	if err != nil {
-		return probeFail, 0, "status error: " + err.Error()
+		return probeResult{verdict: probeFail, detail: "status error: " + err.Error()}
 	}
 	if !status.LinkUp {
-		return probeFail, 0, "link down"
+		return probeResult{verdict: probeFail, detail: "link down"}
 	}
 	target := p.Settings.ProbeHost
 	var gotReply bool
@@ -276,7 +305,7 @@ func (e *Engine) probe(p store.Pool) (verdict int, rttMs int, detail string) {
 		gotReply, rtt, _ = e.backend.Probe(p, target)
 	}
 	if gotReply && rtt > 0 && p.Settings.MaxRTTms > 0 && rtt > p.Settings.MaxRTTms {
-		return probeFail, rtt, fmt.Sprintf("%s %dms выше порога %dms", kind, rtt, p.Settings.MaxRTTms)
+		return probeResult{verdict: probeFail, rttMs: rtt, reply: true, detail: fmt.Sprintf("%s %dms выше порога %dms", kind, rtt, p.Settings.MaxRTTms)}
 	}
 	rttSuffix := ""
 	if rtt > 0 {
@@ -285,13 +314,13 @@ func (e *Engine) probe(p store.Pool) (verdict int, rttMs int, detail string) {
 	if !gotReply {
 		if status.HandshakeAgo >= 0 && status.HandshakeAgo <= 120 {
 			if p.Settings.MaxRTTms > 0 {
-				return probeLossy, 0, fmt.Sprintf("ok (handshake %ds ago, %s lossy), отказы не сброшены: задан порог %dms", status.HandshakeAgo, kind, p.Settings.MaxRTTms)
+				return probeResult{verdict: probeLossy, detail: fmt.Sprintf("ok (handshake %ds ago, %s lossy), отказы не сброшены: задан порог %dms", status.HandshakeAgo, kind, p.Settings.MaxRTTms)}
 			}
-			return probeOK, 0, fmt.Sprintf("ok (handshake %ds ago, %s lossy)", status.HandshakeAgo, kind)
+			return probeResult{verdict: probeOK, detail: fmt.Sprintf("ok (handshake %ds ago, %s lossy)", status.HandshakeAgo, kind)}
 		}
-		return probeFail, 0, "probe " + target + " failed"
+		return probeResult{verdict: probeFail, detail: "probe " + target + " failed"}
 	}
-	return probeOK, rtt, fmt.Sprintf("ok (handshake %ds ago%s)", status.HandshakeAgo, rttSuffix)
+	return probeResult{verdict: probeOK, rttMs: rtt, reply: true, detail: fmt.Sprintf("ok (handshake %ds ago%s)", status.HandshakeAgo, rttSuffix)}
 }
 
 type wanCacheEntry struct {
@@ -382,23 +411,30 @@ func (e *Engine) startDeviceProbe(device string, cfg store.ProbeConfig) *probeCa
 // статусы проб внешних интерфейсов тяжелые (ping до 2с, http до 5с), поэтому
 // они живут в кэше с TTL и обновляются фоном: /ifaces отвечает мгновенно,
 // а строки проб не мигают из-за того, что чья-то проба не успела в бюджет.
+func (e *Engine) cachedProbe(device string, cfg store.ProbeConfig) *probeCacheEntry {
+	e.probeMu.Lock()
+	defer e.probeMu.Unlock()
+	c := e.probeCache[device]
+	if c == nil || c.cfg != cfg {
+		return nil
+	}
+	select {
+	case <-c.done:
+		if e.now().Sub(c.at) < probeStatusTTL {
+			return c
+		}
+	default:
+	}
+	return nil
+}
+
 func (e *Engine) DeviceProbeStatus(device string) string {
 	probe := e.store.IfaceProbe(device)
 	if probe == nil {
 		return ""
 	}
-	e.probeMu.Lock()
-	defer e.probeMu.Unlock()
-	c := e.probeCache[device]
-	if c == nil || c.cfg != probe.Normalized() {
-		return ""
-	}
-	select {
-	case <-c.done:
-		if e.now().Sub(c.at) < probeStatusTTL {
-			return c.status()
-		}
-	default:
+	if c := e.cachedProbe(device, probe.Normalized()); c != nil {
+		return c.status()
 	}
 	return ""
 }

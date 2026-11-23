@@ -5,6 +5,7 @@ import { nextTick } from 'vue'
 import { createRouter, createWebHashHistory } from 'vue-router'
 import InterfacesView from './InterfacesView.vue'
 import { ConfirmHost, UiSwitch } from '../../components/ui'
+import { useBundles } from '../../stores/bundles'
 import { useConfirm } from '../../stores/confirm'
 import { useIfaces } from '../../stores/ifaces'
 import { useStatus } from '../../stores/status'
@@ -72,6 +73,60 @@ beforeEach(() => {
   useStatus().state.data = null;
   useConfirm().cancel();
   useToast().toasts.list.splice(0);
+  useBundles().stop();
+  useBundles().state.list = [];
+  useBundles().state.rules = null;
+});
+
+const bundlesCard = (w: ReturnType<typeof mount>) => w.findAll('.card').find((c) => c.text().includes('Наборы интерфейсов'))!;
+
+describe('InterfacesView - наборы: здоровье участников и правила переключения', () => {
+  it('мёртвый участник - красный с причиной, форма правил заполняется, изменение уходит PUT', async () => {
+    const { w, f } = await makeView({
+      '/bundles': {
+        bundles: [{
+          name: 'awg-pool', members: ['ferret', 'spare'], groups: ['g1'], currentMember: 'nwg5',
+          memberDevices: { ferret: 'nwg7', spare: 'nwg5' },
+          memberHealth: {
+            ferret: { device: 'nwg7', ok: false, note: 'ждёт подтверждения пробой' },
+            spare: { device: 'nwg5', ok: true, note: 'ok (icmp 45ms)' },
+          },
+        }],
+      },
+      '/mt/bundle-rules': { healthSource: 'probe', failCycles: 2, restoreCycles: 3 },
+    });
+    await vi.waitFor(() => expect(useBundles().state.rules).not.toBeNull());
+    const card = bundlesCard(w);
+    const badges = card.findAll('.bundrow .uibadge');
+    expect(badges[0].text()).toBe('nwg7');
+    expect(badges[0].classes().join(' ')).toContain('v-err');
+    expect(badges[0].attributes('title')).toBe('ferret - не жив: ждёт подтверждения пробой');
+    expect(badges[1].classes().join(' ')).toContain('v-ok');
+
+    expect(card.find('.rules .psel-btn').text()).toBe('по ответу на пробу');
+    const nums = card.findAll('.rules input[type=number]');
+    expect(nums.map((n) => (n.element as HTMLInputElement).value)).toEqual(['2', '3']);
+    const save = btn(card, 'сохранить')[0];
+    expect(save.attributes('disabled')).toBeDefined();
+
+    await nums[1].setValue('5');
+    await nextTick();
+    expect(save.attributes('disabled')).toBeUndefined();
+    await save.trigger('click');
+    await vi.waitFor(() => {
+      const put = f.mock.calls.find((c) => (c[0] as string).endsWith('/mt/bundle-rules') && c[1]?.method === 'PUT');
+      expect(put).toBeTruthy();
+      expect(JSON.parse(put![1]!.body as string)).toEqual({ healthSource: 'probe', failCycles: 2, restoreCycles: 5 });
+    });
+    w.unmount();
+  });
+
+  it('без наборов блок правил не показывается', async () => {
+    const { w } = await makeView({ '/mt/bundle-rules': { healthSource: 'probe', failCycles: 2, restoreCycles: 3 } });
+    await vi.waitFor(() => expect(useBundles().state.rules).not.toBeNull());
+    expect(bundlesCard(w).find('.rules').exists()).toBe(false);
+    w.unmount();
+  });
 });
 
 describe('InterfacesView - карточка «Интерфейсы роутера»', () => {

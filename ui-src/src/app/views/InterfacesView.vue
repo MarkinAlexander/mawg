@@ -14,6 +14,7 @@ import type { BundleView, IfaceInfo, ProbeConfig } from '../../api/types'
 import { PROBE_DEFAULTS, probeBadgeOf, probeTypeOf, targetOnTypeChange } from './ifacesLogic'
 import { poolProbeBadge } from './ifacesLogic'
 import { agoText } from './poolsLogic'
+import { HEALTH_SOURCE_OPTIONS, memberBadge, useBundleRulesForm } from './bundlesLogic'
 import { G } from '../glossary'
 import BundleDialog from './BundleDialog.vue'
 import CaptchaHost from './CaptchaHost.vue'
@@ -46,6 +47,10 @@ const warpOpen = ref(false);
 const bundles = useBundles();
 const bundleDlgOpen = ref(false);
 const bundleEditing = ref<BundleView | null>(null);
+const {
+  source: rulesSource, fail: rulesFail, restore: rulesRestore,
+  saving: rulesSaving, changed: rulesChanged, save: saveRulesForm,
+} = useBundleRulesForm();
 
 onMounted(() => {
   ifaces.start(30000);
@@ -451,8 +456,8 @@ async function saveWan(): Promise<void> {
           >&gt;</span>
           <UiBadge
             :text="(b.memberDevices || {})[m] || m"
-            :variant="(b.memberDevices || {})[m] === b.currentMember ? 'ok' : 'muted'"
-            :tooltip="m"
+            :variant="memberBadge(b, m).variant"
+            :tooltip="memberBadge(b, m).tip"
           />
         </template>
       </span>
@@ -484,6 +489,46 @@ async function saveWan(): Promise<void> {
         :text="iss"
       />
     </div>
+    <template v-if="bundles.state.list.length">
+      <div class="rules">
+        <UiSelect
+          v-model="rulesSource"
+          :options="HEALTH_SOURCE_OPTIONS"
+          class="rsource"
+          label="Участник считается живым"
+        />
+        <span class="bundcnt">уходить с него после</span>
+        <UiInput
+          v-model="rulesFail"
+          type="number"
+          bare
+          class="rnum"
+          placeholder="2"
+          tooltip="проверок подряд без ответа, после которых набор уходит на следующего участника"
+        />
+        <span class="bundcnt">проверок без ответа, возвращаться после</span>
+        <UiInput
+          v-model="rulesRestore"
+          type="number"
+          bare
+          class="rnum"
+          placeholder="3"
+          tooltip="проверок подряд с ответом, после которых набор возвращается на приоритетного участника"
+        />
+        <span class="bundcnt">с ответом</span>
+        <UiButton
+          :disabled="!rulesChanged"
+          :busy="rulesSaving"
+          @click="saveRulesForm"
+        >
+          сохранить
+        </UiButton>
+      </div>
+      <UiHint
+        class="ruleshint"
+        text="Проверка набора - раз в минуту. «По ответу на пробу»: после включения или смены конфига пул получает трафик, когда его проба получит ответ через туннель; рукопожатие без ответа не считается. По этому же правилу пулу возвращаются его собственные группы и работают политики групп. «По состоянию» - пул считается живым сразу после включения, как раньше."
+      />
+    </template>
   </UiCard>
 
   <BundleDialog
@@ -644,6 +689,26 @@ async function saveWan(): Promise<void> {
 .bundcur {
   color: var(--dim);
   font-size: 11px;
+}
+.rules {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  font-size: 12px;
+}
+.rules :deep(.inline) {
+  margin-top: 0;
+}
+.rsource {
+  min-width: 220px;
+}
+.rnum {
+  width: 64px;
+}
+.ruleshint {
+  margin-top: 4px;
 }
 .toolbar {
   display: flex;

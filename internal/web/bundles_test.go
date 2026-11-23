@@ -101,6 +101,79 @@ func TestBundleIssuesReported(t *testing.T) {
 	}
 }
 
+// настройки наборов: способ оценки и гистерезис читаются, пишутся и
+// отвергают кривые значения (слово владельца 23.11: задавать явно)
+func TestBundleRulesAPI(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fb := fake.New()
+	e := rotator.New(st, fb, magitrickle.New("http://127.0.0.1:1"))
+	ts := httptest.NewServer(New(st, e, fb, nil, "test", nil).Handler())
+	t.Cleanup(ts.Close)
+
+	got := httpGetJSON(t, ts.URL+"/api/v1/mt/bundle-rules")
+	if got["healthSource"] != "probe" || got["failCycles"] != float64(2) || got["restoreCycles"] != float64(3) {
+		t.Fatalf("дефолты: %v", got)
+	}
+
+	code, _ := httpDo(t, ts.URL, "PUT", "/api/v1/mt/bundle-rules", `{"healthSource":"state","failCycles":5,"restoreCycles":10}`)
+	if code != 200 {
+		t.Fatalf("put: %d", code)
+	}
+	if s := st.Settings(); s.HealthSource != "state" || s.BundleFailCycles != 5 || s.BundleRestoreCycles != 10 {
+		t.Fatalf("не сохранилось: %+v", s)
+	}
+	got = httpGetJSON(t, ts.URL+"/api/v1/mt/bundle-rules")
+	if got["healthSource"] != "state" || got["failCycles"] != float64(5) || got["restoreCycles"] != float64(10) {
+		t.Fatalf("после сохранения: %v", got)
+	}
+
+	for _, body := range []string{
+		`{"healthSource":"magic","failCycles":2,"restoreCycles":3}`,
+		`{"healthSource":"probe","failCycles":0,"restoreCycles":3}`,
+		`{"healthSource":"probe","failCycles":2,"restoreCycles":21}`,
+	} {
+		if code, _ := httpDo(t, ts.URL, "PUT", "/api/v1/mt/bundle-rules", body); code != 400 {
+			t.Fatalf("%s: хочу 400, got %d", body, code)
+		}
+	}
+}
+
+// /bundles отдаёт здоровье участников: пул без подтверждения пробой -
+// «ждёт», неизвестный интерфейс - «не найден»
+func TestBundleMemberHealthReported(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreatePool("p1", store.PoolSettings{Platform: store.PlatformKeenetic, KeeneticSlot: "Wireguard1"}); err != nil {
+		t.Fatal(err)
+	}
+	fb := fake.New()
+	fb.TunnelsOverride = []platform.SlotInfo{{Device: "tun9", LinkUp: true}}
+	e := rotator.New(st, fb, magitrickle.New("http://127.0.0.1:1"))
+	ts := httptest.NewServer(New(st, e, fb, nil, "test", nil).Handler())
+	t.Cleanup(ts.Close)
+	if _, err := st.CreateBundle(store.Bundle{Name: "tg", Members: []string{"p1", "nwg99"}, Groups: []string{"g1"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	got := httpGetJSON(t, ts.URL+"/api/v1/bundles")
+	list, _ := got["bundles"].([]any)
+	first, _ := list[0].(map[string]any)
+	health, _ := first["memberHealth"].(map[string]any)
+	p1, _ := health["p1"].(map[string]any)
+	if p1["ok"] != false || p1["note"] != "ждёт подтверждения пробой" {
+		t.Fatalf("p1: %v", p1)
+	}
+	unknown, _ := health["nwg99"].(map[string]any)
+	if unknown["ok"] != false || unknown["note"] != "интерфейс не найден" {
+		t.Fatalf("nwg99: %v", unknown)
+	}
+}
+
 // Флаги мёртвых ссылок в payload'ах (аудит dangling-ссылок, кейс
 // владельца 12.11 - dns-tunnel смотрел на имя пула, не устройства):
 // ifaceDead у групп MT, poolDead у зон, fallbackDead у пулов

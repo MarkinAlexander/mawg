@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"mawg/internal/magitrickle"
-	"mawg/internal/platform"
 	"mawg/internal/store"
 )
 
@@ -18,7 +17,7 @@ import (
 // владельца «пробы по очереди либо с интервалом».
 func (e *Engine) runHousework() {
 	if houseworkBundles(e.tickN) {
-		e.checkBundles()
+		e.checkBundles(true)
 		e.refreshProbedExternals()
 		return
 	}
@@ -45,153 +44,6 @@ func (e *Engine) syncCascadeHooks() {
 	if e.casc != nil {
 		e.casc.SyncHooks()
 	}
-}
-
-const extMemberFailThreshold = 2
-
-// доверие внешнему члену возвращается только после стольких успехов
-// подряд: одиночное «ок» флапающего туннеля не должно обнулять счётчик
-// провалов и возвращать бандл (кейс владельца 12.11: tun9 wdttc флапает,
-// ТГ рвётся в мёртвых окнах, пока бандл «залипает» на одиночном ок)
-const extMemberOkThreshold = 3
-
-func (e *Engine) memberDeviceHealth(member string, slots []platform.SlotInfo) (device string, healthy bool, external bool, sample *probeCacheEntry) {
-	if p, ok := e.store.Pool(member); ok {
-		if p.Disabled {
-			return p.DeviceName(), false, false, nil
-		}
-		return p.DeviceName(), e.store.State(member).Mode == store.ModeUp, false, nil
-	}
-	for _, sl := range slots {
-		if sl.Device == member {
-			if !sl.LinkUp {
-				return member, false, true, nil
-			}
-			if probe := e.store.IfaceProbe(member); probe != nil {
-				c := e.deviceProbe(member, *probe)
-				return member, c.healthy(), true, c
-			}
-			fresh := sl.Connected
-			if !fresh {
-				hs := e.backend.IfaceHandshake(member)
-				fresh = hs >= 0 && hs < 180
-			}
-			return member, fresh, true, nil
-		}
-	}
-	return member, false, true, nil
-}
-
-func (e *Engine) CheckBundlesNow() {
-	e.checkBundles()
-}
-
-func (e *Engine) checkBundles() {
-	e.monitorMagitrickle()
-	bundles := e.store.Bundles()
-	if len(bundles) == 0 {
-		return
-	}
-	e.actMu.Lock()
-	defer e.actMu.Unlock()
-	slots, slotsErr := e.backend.Slots()
-	if tunnels, err := e.backend.SysTunnels(); err == nil {
-		// чужие туннели (tunN постороннего софта) - полноценные внешние
-		// члены бандла; без merge memberDeviceHealth читал бы «не найден
-		// в слотах» = всегда мёртв, и бандл залип на запасном (кейс
-		// владельца 12.11: tun9 wdttc основной, proton запасной)
-		seen := make(map[string]bool, len(slots))
-		for _, sl := range slots {
-			seen[sl.Device] = true
-		}
-		for _, sl := range tunnels {
-			if !seen[sl.Device] {
-				slots = append(slots, sl)
-			}
-		}
-	}
-	for _, b := range bundles {
-		if len(b.Members) == 0 || len(b.Groups) == 0 {
-			continue
-		}
-		cur := e.store.BundleState(b.Name).Member
-		sel := ""
-		for _, m := range b.Members {
-			dev, healthy, external, sample := e.memberDeviceHealth(m, slots)
-			if external && slotsErr == nil {
-				key := b.Name + "/" + m
-				if sample == nil || e.extSamples[key] != sample {
-					e.extSamples[key] = sample
-					if healthy {
-						e.extOks[key]++
-						if e.extOks[key] >= extMemberOkThreshold {
-							delete(e.extFails, key) // стабильно жив
-						}
-					} else {
-						delete(e.extOks, key)
-						e.extFails[key]++
-					}
-				}
-				trusted := healthy && e.extFails[key] < extMemberFailThreshold
-				if !trusted {
-					// текущий член держится до порога провалов (одна плохая
-					// проба - не повод дёргать) или до набора доверия
-					if dev == cur && (healthy || e.extFails[key] < extMemberFailThreshold) {
-						sel = dev
-						break
-					}
-					continue
-				}
-				sel = dev
-				break
-			}
-			if healthy {
-				sel = dev
-				break
-			}
-		}
-		if sel == "" {
-			continue
-		}
-		e.switchBundle(b, sel)
-	}
-}
-
-func (e *Engine) switchBundle(b store.Bundle, device string) {
-	if e.mt != nil {
-		inBundle := map[string]bool{}
-		for _, id := range b.Groups {
-			inBundle[id] = true
-		}
-		var moved []string
-		err := e.applyGroupChanges("bundle:"+b.Name, func(groups []magitrickle.Group) bool {
-			changed := false
-			for i := range groups {
-				if inBundle[groups[i].ID] && groups[i].Interface != device {
-					groups[i].Interface = device
-					moved = append(moved, groups[i].Name)
-					changed = true
-				}
-			}
-			return changed
-		})
-		if err == nil && len(moved) > 0 {
-			e.store.LogEvent("bundle:"+b.Name, "switch", "member -> "+device+", groups: "+fmt.Sprint(moved))
-		}
-	}
-	e.store.MutateBundleState(b.Name, func(s *store.BundleState) {
-		s.Member = device
-	})
-}
-
-func (e *Engine) bundleGroupIDs() map[string]bool {
-	out := map[string]bool{}
-	for _, b := range e.store.Bundles() {
-		for _, id := range b.Groups {
-			out[id] = true
-		}
-	}
-	return out
 }
 
 // magitrickle падает сам по себе; раз в тик проверяем живость и поднимаем,
@@ -351,16 +203,17 @@ func (e *Engine) rebindGroups(p store.Pool, targetDevice string) {
 	e.store.LogEvent(p.Name, "magitrickle", "groups rebound to "+targetDevice+": "+fmt.Sprint(rebound))
 }
 
-func (e *Engine) restoreReboundGroups(p store.Pool) {
+// restoreReboundGroups - true, когда возвращать больше нечего.
+func (e *Engine) restoreReboundGroups(p store.Pool) bool {
 	st := e.store.State(p.Name)
 	if len(st.ReboundGroups) == 0 {
-		return
+		return true
 	}
 	if e.mt == nil {
 		e.store.MutateState(p.Name, func(s *store.PoolState) {
 			s.ReboundGroups = nil
 		})
-		return
+		return true
 	}
 	dev := p.DeviceName()
 	restore := map[string]bool{}
@@ -381,7 +234,7 @@ func (e *Engine) restoreReboundGroups(p store.Pool) {
 		return changed
 	})
 	if err != nil {
-		return
+		return false
 	}
 	e.store.MutateState(p.Name, func(s *store.PoolState) {
 		s.ReboundGroups = nil
@@ -389,6 +242,7 @@ func (e *Engine) restoreReboundGroups(p store.Pool) {
 	if len(restored) > 0 {
 		e.store.LogEvent(p.Name, "magitrickle", "groups rebound back to "+dev+": "+fmt.Sprint(restored))
 	}
+	return true
 }
 
 // checkGroupPolicies: политики групп на внешних интерфейсах и страховка
@@ -433,7 +287,11 @@ func (e *Engine) checkGroupPolicies() {
 	health := map[string]bool{}
 	samples := map[string]*probeCacheEntry{}
 	for _, pool := range e.store.Pools() {
-		health[pool.DeviceName()] = !pool.Disabled && e.store.State(pool.Name).Mode == store.ModeUp
+		st := e.store.State(pool.Name)
+		// не проверенный с момента старта пул не обвиняем
+		if !st.LastCheck.IsZero() {
+			health[pool.DeviceName()] = e.poolServing(pool, st)
+		}
 	}
 	if slots, err := e.backend.Slots(); err == nil {
 		for _, sl := range slots {
@@ -623,8 +481,8 @@ func (e *Engine) checkGroupPolicies() {
 }
 
 // restoreDegraded возвращает политики-группы на исходный интерфейс,
-// когда основной ожил.
-func (e *Engine) restoreDegraded(dev string) {
+// когда основной ожил. true - возвращать больше нечего.
+func (e *Engine) restoreDegraded(dev string) bool {
 	degraded := e.store.DegradedGroups()
 	var ids []string
 	for id, d := range degraded {
@@ -633,7 +491,7 @@ func (e *Engine) restoreDegraded(dev string) {
 		}
 	}
 	if len(ids) == 0 {
-		return
+		return true
 	}
 	restore := map[string]store.DegradedGroup{}
 	for _, id := range ids {
@@ -652,7 +510,7 @@ func (e *Engine) restoreDegraded(dev string) {
 		return changed
 	})
 	if err != nil {
-		return
+		return false
 	}
 	e.store.MutateDegraded(func(m map[string]store.DegradedGroup) {
 		for _, id := range ids {
@@ -660,17 +518,40 @@ func (e *Engine) restoreDegraded(dev string) {
 		}
 	})
 	e.store.LogEvent("policy", "restore", "основной интерфейс ожил, группы вернулись на "+dev)
+	return true
 }
 
-func (e *Engine) restoreGroups(p store.Pool, s *store.PoolState) {
-	if len(s.DisabledGroups) == 0 {
+// restorePoolGroups - пул ожил: выключенные и перевязанные при фоллбэке
+// группы и группы политик возвращаются на него. true - вернулись все.
+func (e *Engine) restorePoolGroups(p store.Pool) bool {
+	return e.restoreGroups(p, e.store.State(p.Name)) &&
+		e.restoreReboundGroups(p) && e.restoreDegraded(p.DeviceName())
+}
+
+// restoreIfConfirmed - группы возвращаются на пул после подтверждения
+// туннеля, а не в момент применения: иначе нерабочий туннель после каждого
+// кулдауна ненадолго забирает их. MT не ответил - повтор на следующей
+// проверке.
+func (e *Engine) restoreIfConfirmed(p store.Pool) {
+	if st := e.store.State(p.Name); !st.RestorePending || !st.Confirmed {
 		return
+	}
+	if e.restorePoolGroups(p) {
+		e.store.MutateState(p.Name, func(s *store.PoolState) {
+			s.RestorePending = false
+		})
+	}
+}
+
+func (e *Engine) restoreGroups(p store.Pool, s *store.PoolState) bool {
+	if len(s.DisabledGroups) == 0 {
+		return true
 	}
 	if e.mt == nil {
 		e.store.MutateState(p.Name, func(s2 *store.PoolState) {
 			s2.DisabledGroups = nil
 		})
-		return
+		return true
 	}
 	enable := map[string]bool{}
 	for _, id := range s.DisabledGroups {
@@ -690,7 +571,7 @@ func (e *Engine) restoreGroups(p store.Pool, s *store.PoolState) {
 		return changed
 	})
 	if err != nil {
-		return
+		return false
 	}
 	e.store.MutateState(p.Name, func(s2 *store.PoolState) {
 		s2.DisabledGroups = nil
@@ -698,4 +579,5 @@ func (e *Engine) restoreGroups(p store.Pool, s *store.PoolState) {
 	if len(restored) > 0 {
 		e.store.LogEvent(p.Name, "magitrickle", "enabled groups: "+fmt.Sprint(restored))
 	}
+	return true
 }

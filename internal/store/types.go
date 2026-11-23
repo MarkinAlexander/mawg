@@ -19,6 +19,11 @@ const (
 	ModeUp       = "up"
 	ModeFallback = "fallback"
 
+	// HealthSource - чем подтверждается туннель пула после применения
+	// конфига: ответом пробы или только статусом «включён».
+	HealthProbe = "probe"
+	HealthState = "state"
+
 	IfaceManaged  = "managed"
 	IfaceExternal = "external"
 	IfaceHidden   = "hidden"
@@ -303,6 +308,16 @@ type PoolState struct {
 	// LastCheck переиспользуется). Рантайм, как соседи выше.
 	ProbeOK bool `json:"-"`
 	ProbeMs int  `json:"-"`
+	// AppliedAt - момент последнего применения конфига: от него видно,
+	// держит ли туннель рукопожатие дольше одной сессии WireGuard.
+	AppliedAt time.Time `json:"-"`
+	// Confirmed - последняя проверка подтвердила туннель; сбрасывается при
+	// применении. До подтверждения пул не получает чужой трафик: набор,
+	// политики групп, возврат собственных групп после фоллбэка.
+	Confirmed bool `json:"-"`
+	// RestorePending - пул вернулся из фоллбэка, его группы вернутся после
+	// подтверждения. Персистится: рестарт mawg не должен терять возврат.
+	RestorePending bool `json:"restorePending,omitempty"`
 
 	// автообновление источника: хеш тела (гейт «ничего нового»), время и
 	// интервал обновления, кулдаун деградации, счётчик неудач для панели.
@@ -476,6 +491,13 @@ type Settings struct {
 	// до возврата (дефолт 2 и 2).
 	PolicyFailCycles    int `json:"policyFailCycles,omitempty"`
 	PolicyRestoreCycles int `json:"policyRestoreCycles,omitempty"`
+	// HealthSource/BundleFailCycles/BundleRestoreCycles - когда участник
+	// набора считается живым (слово владельца 23.11: задавать явно) и
+	// гистерезис наборов: проверок без ответа до ухода с текущего и
+	// проверок с ответом до возврата на приоритетного (дефолт 2 и 3).
+	HealthSource        string `json:"healthSource,omitempty"`
+	BundleFailCycles    int    `json:"bundleFailCycles,omitempty"`
+	BundleRestoreCycles int    `json:"bundleRestoreCycles,omitempty"`
 	// MTGlitchy - проба совместимости при старте поймала усечение на
 	// no-op PUT: глючная сборка MagiTrickle, панели показывают баннер со
 	// ссылкой на форк.
@@ -629,6 +651,15 @@ func (s Settings) WithDefaults() Settings {
 	}
 	if out.PolicyRestoreCycles <= 0 {
 		out.PolicyRestoreCycles = 2
+	}
+	if out.HealthSource != HealthState {
+		out.HealthSource = HealthProbe
+	}
+	if out.BundleFailCycles <= 0 {
+		out.BundleFailCycles = 2
+	}
+	if out.BundleRestoreCycles <= 0 {
+		out.BundleRestoreCycles = 3
 	}
 	return out
 }

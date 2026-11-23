@@ -319,3 +319,14 @@ func TestSubDeviceID(t *testing.T) {
 		t.Fatalf("авто-hwid не пережил переоткрытие: %q", st2.SubDeviceID())
 	}
 }
+
+func TestSettingsHealthDefaults(t *testing.T) {
+	got := Settings{}.WithDefaults()
+	if got.HealthSource != HealthProbe || got.BundleFailCycles != 2 || got.BundleRestoreCycles != 3 {
+		t.Fatalf("дефолты здоровья наборов: source=%q fail=%d restore=%d", got.HealthSource, got.BundleFailCycles, got.BundleRestoreCycles)
+	}
+	got = Settings{HealthSource: HealthState, BundleFailCycles: 7, BundleRestoreCycles: 10}.WithDefaults()
+	if got.HealthSource != HealthState || got.BundleFailCycles != 7 || got.BundleRestoreCycles != 10 {
+		t.Fatalf("заданные значения затёрты: source=%q fail=%d restore=%d", got.HealthSource, got.BundleFailCycles, got.BundleRestoreCycles)
+	}
+}

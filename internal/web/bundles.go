@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"mawg/internal/rotator"
 	"mawg/internal/store"
 )
 
@@ -60,10 +61,58 @@ type bundleView struct {
 	store.Bundle
 	CurrentMember string            `json:"currentMember,omitempty"`
 	MemberDevices map[string]string `json:"memberDevices"`
+	// MemberHealth - жив ли каждый участник и почему нет: без этого не
+	// видно, почему набор не возвращается на приоритетного
+	MemberHealth map[string]rotator.MemberState `json:"memberHealth"`
 	// Issues - мёртвые ссылки набора: участник/группа, которых больше
 	// нет. Набор с мёртвой группой молча не переключает её (applyGroup
 	// Changes не находит id), пользователь должен видеть почему.
 	Issues []string `json:"issues,omitempty"`
+}
+
+// bundleRules - когда участник набора считается живым и гистерезис
+// переключения (слово владельца 23.11: задавать явно).
+type bundleRules struct {
+	HealthSource  string `json:"healthSource"`
+	FailCycles    int    `json:"failCycles"`
+	RestoreCycles int    `json:"restoreCycles"`
+}
+
+func (s *Server) currentBundleRules() bundleRules {
+	st := s.store.Settings().WithDefaults()
+	return bundleRules{st.HealthSource, st.BundleFailCycles, st.BundleRestoreCycles}
+}
+
+func (s *Server) getBundleRules(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.currentBundleRules())
+}
+
+func (s *Server) putBundleRules(w http.ResponseWriter, r *http.Request) {
+	var req bundleRules
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, err)
+		return
+	}
+	switch req.HealthSource {
+	case store.HealthProbe, store.HealthState:
+	default:
+		writeErr(w, fmt.Errorf("неизвестный способ оценки %q (probe или state)", req.HealthSource))
+		return
+	}
+	if req.FailCycles < 1 || req.FailCycles > 20 || req.RestoreCycles < 1 || req.RestoreCycles > 20 {
+		writeErr(w, fmt.Errorf("циклы должны быть от 1 до 20"))
+		return
+	}
+	st := s.store.Settings()
+	st.HealthSource, st.BundleFailCycles, st.BundleRestoreCycles = req.HealthSource, req.FailCycles, req.RestoreCycles
+	if err := s.store.SetSettings(st); err != nil {
+		writeErr(w, err)
+		return
+	}
+	source := map[string]string{store.HealthProbe: "по ответу пробы", store.HealthState: "по состоянию"}[req.HealthSource]
+	s.store.LogEvent("bundles", "rules", fmt.Sprintf("участник живой - %s, уход после %d проверок без ответа, возврат после %d с ответом", source, req.FailCycles, req.RestoreCycles))
+	s.engine.CheckBundlesNow()
+	writeJSON(w, http.StatusOK, s.currentBundleRules())
 }
 
 // bundleLiveGroups - id живых MT-групп; nil = MT недоступен (проверку
@@ -81,10 +130,13 @@ func (s *Server) bundleLiveGroups() map[string]string {
 }
 
 func (s *Server) bundleToView(b store.Bundle, liveGroups map[string]string) bundleView {
-	v := bundleView{Bundle: b, MemberDevices: map[string]string{}, CurrentMember: s.store.BundleState(b.Name).Member}
+	v := bundleView{Bundle: b, MemberDevices: map[string]string{}, MemberHealth: map[string]rotator.MemberState{}, CurrentMember: s.store.BundleState(b.Name).Member}
 	devices, err := s.bundleMembersResolve(b.Members)
 	if err == nil {
 		v.MemberDevices = devices
+	}
+	if s.engine != nil {
+		v.MemberHealth = s.engine.BundleMemberStates(b.Members)
 	}
 	for _, m := range b.Members {
 		if !s.memberKnown(m) {

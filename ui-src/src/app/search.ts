@@ -35,6 +35,12 @@ export const SEARCH_PLACES: SearchPlace[] = [
     anchor: 'card-bundles',
   },
   {
+    title: 'Наборы: когда участник жив и возврат на приоритетного',
+    keywords: ['подтверждение', 'проба', 'рукопожатие', 'гистерезис наборов', 'возврат', 'живой', 'мёртвый пул'],
+    route: '/next/interfaces',
+    anchor: 'card-bundles',
+  },
+  {
     title: 'Проверка канала провайдера (WAN-probe)',
     keywords: ['wan', 'probe', 'проба', 'канал', 'провайдер', 'интернет', 'живость'],
     route: '/next/interfaces',

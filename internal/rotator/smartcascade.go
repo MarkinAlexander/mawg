@@ -77,31 +77,34 @@ func (e *Engine) smartEntry(p store.Pool, st *store.PoolState) (store.CascadeEnt
 	return store.CascadeEntry{}, false
 }
 
-// pickSmartVia - первый живой пул из списка (Mode==up, не Disabled);
-// skip - неработающий Via (перебор при повторном спасении), если есть
-// другие живые. Все лежат - "".
+// pickSmartVia - путь для каскада: первый подтверждённый пул из списка,
+// без таких - любой включённый (проверит smartBestProbe, но попытка
+// дороже: только что переприменённый пул может оказаться мёртвым); skip -
+// неработающий Via (перебор при повторном спасении), если есть другие
+// живые. Все лежат - "".
 func (e *Engine) pickSmartVia(via []string, skip string) string {
-	firstHealthy := ""
+	if v := e.pickVia(via, skip, e.poolServing); v != "" {
+		return v
+	}
+	return e.pickVia(via, skip, func(_ store.Pool, st *store.PoolState) bool { return st.Mode == store.ModeUp })
+}
+
+func (e *Engine) pickVia(via []string, skip string, ok func(store.Pool, *store.PoolState) bool) string {
+	first := ""
 	for _, name := range via {
-		p, ok := e.store.Pool(name)
-		if !ok || p.Disabled {
+		p, exists := e.store.Pool(name)
+		if !exists || p.Disabled || !ok(p, e.store.State(name)) {
 			continue
 		}
-		if e.store.State(name).Mode != store.ModeUp {
-			continue
-		}
-		if firstHealthy == "" {
-			firstHealthy = name
+		if first == "" {
+			first = name
 		}
 		if skip != "" && name == skip {
 			continue
 		}
 		return name
 	}
-	if skip == "" {
-		return firstHealthy
-	}
-	return firstHealthy // живых кроме skip нет - прежний остаётся единственным
+	return first
 }
 
 // smartEnable - включить каскад A→Via с верификацией пробой (под actMu).
@@ -213,16 +216,16 @@ func (e *Engine) smartRescue(p store.Pool) bool {
 // smartBestProbe - лучшая из двух проб с паузой между (хендшейк через
 // Via/напрямую должен успеть случиться за неё).
 func (e *Engine) smartBestProbe(p store.Pool) (bool, string) {
-	if verdict, _, detail := e.probe(p); verdict != probeFail {
-		return true, detail
+	if res := e.probe(p); res.verdict != probeFail {
+		return true, res.detail
 	}
 	pause := e.smartPause
 	if pause <= 0 {
 		pause = 5 * time.Second
 	}
 	time.Sleep(pause)
-	verdict, _, detail := e.probe(p)
-	return verdict != probeFail, detail
+	res := e.probe(p)
+	return res.verdict != probeFail, res.detail
 }
 
 // smartReturn - проверка прямого пути при живом каскаде (под actMu).

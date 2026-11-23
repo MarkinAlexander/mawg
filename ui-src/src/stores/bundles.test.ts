@@ -20,10 +20,23 @@ beforeEach(() => {
   const { state } = useBundles();
   state.loaded = false;
   state.list = [];
+  state.rules = null;
   useBundles().stop();
 });
 
 describe('bundles store', () => {
+  it('rules: грузятся с /mt/bundle-rules, сохраняются PUT-ом туда же', async () => {
+    const f = stub({ '/mt/bundle-rules': { healthSource: 'probe', failCycles: 2, restoreCycles: 3 } });
+    vi.stubGlobal('fetch', f);
+    const { state, loadRules, saveRules } = useBundles();
+    await loadRules();
+    expect(state.rules).toEqual({ healthSource: 'probe', failCycles: 2, restoreCycles: 3 });
+
+    await saveRules({ healthSource: 'state', failCycles: 4, restoreCycles: 3 });
+    const put = f.mock.calls.find((c) => c[1]?.method === 'PUT')!;
+    expect(put[0]).toMatch(/\/mt\/bundle-rules$/);
+    expect(JSON.parse(put[1]!.body as string)).toEqual({ healthSource: 'state', failCycles: 4, restoreCycles: 3 });
+  });
   it('refresh наполняет список; сетевой сбой молча держит прошлые', async () => {
     vi.stubGlobal('fetch', stub({ '/bundles': { bundles: [bundle] } }));
     const { state, refresh } = useBundles();

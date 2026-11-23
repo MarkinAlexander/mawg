@@ -2,14 +2,15 @@
 // GET /bundles каждые 30с таб-локально, мутации - POST/PUT/DELETE + перечитывание.
 import { reactive } from 'vue'
 import { api } from '../api/client'
-import type { BundleView } from '../api/types'
+import type { BundleRules, BundleView } from '../api/types'
 
 interface BundlesState {
   loaded: boolean
   list: BundleView[]
+  rules: BundleRules | null
 }
 
-const state = reactive<BundlesState>({ loaded: false, list: [] });
+const state = reactive<BundlesState>({ loaded: false, list: [], rules: null });
 
 let timer: ReturnType<typeof setInterval> | null = null;
 
@@ -23,8 +24,16 @@ export function useBundles() {
       // легаси: console.warn, держим предыдущее
     }
   }
+  async function loadRules(): Promise<void> {
+    try {
+      state.rules = await api<BundleRules>('GET', '/mt/bundle-rules');
+    } catch {
+      // ошибки молча: форма ждёт правила
+    }
+  }
   function start(intervalMs = 30000) {
     void refresh();
+    void loadRules();
     if (timer) return;
     timer = setInterval(() => void refresh(), intervalMs);
   }
@@ -48,5 +57,10 @@ export function useBundles() {
     await refresh();
   }
 
-  return { state, refresh, start, stop, save, del };
+  async function saveRules(rules: BundleRules): Promise<BundleRules> {
+    state.rules = await api<BundleRules>('PUT', '/mt/bundle-rules', rules);
+    return state.rules;
+  }
+
+  return { state, refresh, loadRules, start, stop, save, del, saveRules };
 }

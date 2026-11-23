@@ -39,9 +39,7 @@ type Engine struct {
 	mu          sync.Mutex
 	actMu       sync.Mutex
 	lastApply   map[string]time.Time
-	extFails    map[string]int
-	extOks      map[string]int
-	extSamples  map[string]*probeCacheEntry
+	bundleTrust map[string]*bundleTrust
 	wanCache    wanCacheEntry
 	mtHealAt    time.Time
 	mtEverAlive bool
@@ -107,9 +105,7 @@ func New(st *store.Store, b platform.Backend, mt *magitrickle.Client) *Engine {
 		mt:            mt,
 		wake:          make(chan string, 32),
 		lastApply:     map[string]time.Time{},
-		extFails:      map[string]int{},
-		extOks:        map[string]int{},
-		extSamples:    map[string]*probeCacheEntry{},
+		bundleTrust:   map[string]*bundleTrust{},
 		probeCache:    map[string]*probeCacheEntry{},
 		tunnelAddrs:   map[string]string{},
 		polFails:      map[string]int{},
@@ -362,9 +358,9 @@ func (e *Engine) PoolUp(pool string) error {
 		}
 	})
 	if restored {
-		e.restoreGroups(p, e.store.State(pool))
-		e.restoreReboundGroups(p)
-		e.restoreDegraded(p.DeviceName())
+		// вручную поднятый пул в подтверждении не нуждается
+		e.store.MutateState(pool, func(s *store.PoolState) { s.RestorePending = false })
+		e.restorePoolGroups(p)
 	}
 	return nil
 }
@@ -522,19 +518,22 @@ func (e *Engine) recordApplied(p store.Pool, file, endpoint string) error {
 		s.ActiveFile = file
 		s.ConsecFails = 0
 		s.Rotations++
+		s.AppliedAt = e.now()
 		s.GraceUntil = e.now().Add(settleSeconds * time.Second).Unix()
 		s.LastResult = "applied, settling"
 		s.ProbeOK, s.ProbeMs = false, 0
 		s.LastError = ""
+		s.Confirmed = false
 		if s.Mode == store.ModeFallback {
 			s.Mode = store.ModeUp
 			restored = true
+			// группы возвращаются после подтверждения (restoreIfConfirmed);
+			// движковый пул пробует сам движок - ему как раньше, сразу
+			s.RestorePending = p.Settings.EngineMode == ""
 		}
 	})
-	if restored {
-		e.restoreGroups(p, e.store.State(p.Name))
-		e.restoreReboundGroups(p)
-		e.restoreDegraded(p.DeviceName())
+	if restored && p.Settings.EngineMode != "" {
+		e.restorePoolGroups(p)
 	}
 	e.store.LogEvent(p.Name, "applied", file+" -> "+endpoint)
 	if e.casc != nil {
