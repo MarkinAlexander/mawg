@@ -376,6 +376,9 @@ func Install(ctx context.Context, opts Options) (Result, error) {
 		for _, l := range lines {
 			step("%s: %s", mgr, l)
 		}
+		// журнал снимается здесь: раньше его снимали до вызова, и строки
+		// менеджера не доходили до панели
+		res.Log = log.String()
 		text := firstLine(string(pout))
 		if len(lines) > 0 {
 			text = lines[0]
@@ -441,9 +444,11 @@ func Install(ctx context.Context, opts Options) (Result, error) {
 	// недостающие arch-строки, снять битую запись, поставить из файла.
 	// Те же формулировки opkg печатает, когда зависимостей пакета нет ни
 	// в базе, ни в списках (после перезагрузки списки пусты - они в RAM,
-	// жалоба 24.11): это лечит update ниже, поэтому строки opkg идут в
-	// лог как есть.
-	if err != nil && mgr == "opkg" && opkgArchRefused(string(out)) {
+	// жалоба 24.11): это не архитектура, лечит update ниже, а конфиг
+	// трогать нельзя - на стоковом OpenWrt arch-строк в opkg.conf нет
+	// (архитектура подставляется по умолчанию), явные строки умолчание
+	// отключают, и opkg перестаёт видеть все пакеты.
+	if err != nil && mgr == "opkg" && opkgArchRefused(string(out)) && !depsUnknown(string(out)) {
 		step("opkg не взял пакет (его архитектуры нет в opkg.conf / битая запись) - дополняю конфиг и ставлю из файла")
 		for _, l := range blame(string(out)) {
 			step("opkg: %s", l)
@@ -469,7 +474,6 @@ func Install(ctx context.Context, opts Options) (Result, error) {
 		// вернуть роутер в рабочее состояние, чем оставить без MT
 		if !depRetry(mgr, string(out)) {
 			_, _ = run(initScript, "start")
-			res.Log = log.String()
 			return res, pkgFail("install", err, out)
 		}
 		step("первая попытка упала по зависимостям, обновляю списки и повторяю")
@@ -496,7 +500,6 @@ func Install(ctx context.Context, opts Options) (Result, error) {
 		}
 		if err2 != nil {
 			_, _ = run(initScript, "start")
-			res.Log = log.String()
 			return res, pkgFail("install (повтор)", err2, out2)
 		}
 		out = out2
@@ -574,46 +577,6 @@ func updateLists(run func(string, ...string) ([]byte, error), mgr string) ([]byt
 		return run("apk", "update")
 	}
 	return run("opkg", "update")
-}
-
-// blame - строки ошибок пакетного менеджера из его вывода: « * …» после
-// «Collected errors» у opkg, «ERROR: …» у apk, обрыв загрузки списков.
-// До восьми.
-func blame(out string) []string {
-	var lines []string
-	for _, l := range strings.Split(out, "\n") {
-		l = strings.TrimSpace(l)
-		if l == "" || len(lines) == 8 {
-			continue
-		}
-		if strings.HasPrefix(l, "* ") || strings.HasPrefix(l, "***") ||
-			strings.HasPrefix(l, "ERROR") || strings.HasPrefix(l, "Signature") {
-			lines = append(lines, clip(strings.TrimLeft(l, "* ")))
-		}
-	}
-	return lines
-}
-
-// opkgFileName - opkg признаёт аргумент файлом пакета только по
-// расширению, иначе ищет пакет с таким именем (opkg_prepare_url_for_install).
-func opkgFileName(path string) bool {
-	for _, ext := range []string{".ipk", ".opk", ".deb"} {
-		if strings.HasSuffix(path, ext) {
-			return true
-		}
-	}
-	return false
-}
-
-// opkgAlias - тот же файл под именем с расширением .ipk: ссылкой рядом
-// (тот же tmpfs), иначе жёсткой.
-func opkgAlias(path string) (string, error) {
-	link := path + ".ipk"
-	_ = os.Remove(link)
-	if err := os.Symlink(path, link); err == nil {
-		return link, nil
-	}
-	return link, os.Link(path, link)
 }
 
 // depRetry - стоит ли повторять установку после обновления списков: отказ

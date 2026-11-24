@@ -119,3 +119,50 @@ func memberHash(tr *tar.Reader, name string) (string, error) {
 		return hex.EncodeToString(h.Sum(nil)), nil
 	}
 }
+
+// depsUnknown - opkg не нашёл зависимостей пакета: после перезагрузки
+// списки пусты (они в RAM), база могла пострадать (жалоба 24.11). Не
+// архитектура: arch-строками opkg.conf это не лечится, а вредит.
+func depsUnknown(out string) bool {
+	return strings.Contains(strings.ToLower(out), "cannot find dependency")
+}
+
+// blame - строки ошибок пакетного менеджера из его вывода: « * …» после
+// «Collected errors» у opkg, «ERROR: …» у apk, обрыв загрузки списков.
+// До восьми.
+func blame(out string) []string {
+	var lines []string
+	for _, l := range strings.Split(out, "\n") {
+		l = strings.TrimSpace(l)
+		if l == "" || len(lines) == 8 {
+			continue
+		}
+		if strings.HasPrefix(l, "* ") || strings.HasPrefix(l, "***") ||
+			strings.HasPrefix(l, "ERROR") || strings.HasPrefix(l, "Signature") {
+			lines = append(lines, clip(strings.TrimLeft(l, "* ")))
+		}
+	}
+	return lines
+}
+
+// opkgFileName - opkg признаёт аргумент файлом пакета только по
+// расширению, иначе ищет пакет с таким именем (opkg_prepare_url_for_install).
+func opkgFileName(path string) bool {
+	for _, ext := range []string{".ipk", ".opk", ".deb"} {
+		if strings.HasSuffix(path, ext) {
+			return true
+		}
+	}
+	return false
+}
+
+// opkgAlias - тот же файл под именем с расширением .ipk: ссылкой рядом
+// (тот же tmpfs), иначе жёсткой.
+func opkgAlias(path string) (string, error) {
+	link := path + ".ipk"
+	_ = os.Remove(link)
+	if err := os.Symlink(path, link); err == nil {
+		return link, nil
+	}
+	return link, os.Link(path, link)
+}

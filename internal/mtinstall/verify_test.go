@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -294,14 +295,30 @@ func TestForegroundProbeExecFail(t *testing.T) {
 	}
 }
 
-// форграунд-проба: процесс, переживший окно, глушится и считается живым
-func TestForegroundProbeSurvivor(t *testing.T) {
-	if _, err := os.Stat("/bin/sleep"); err != nil {
-		t.Skip("нет /bin/sleep: форграунд-проба проверяется на Linux")
+// форграунд-проба: процесс, переживший окно, глушится и считается живым;
+// вышедший сам - мёртвым, с последними словами. Только Linux: проба
+// запускает исполняемый файл без аргументов, как демон MT (первая версия
+// теста звала /bin/sleep без операнда и падала лишь на CI - GNU sleep
+// выходит с «missing operand»; на Windows тест пропускался)
+func TestForegroundProbe(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("форграунд-проба запускает исполняемый файл: проверяется на Linux")
 	}
-	out, alive := foregroundProbe("/bin/sleep", 300*time.Millisecond, "openwrt")
+	script := func(body string) string {
+		p := filepath.Join(t.TempDir(), "daemon")
+		if err := os.WriteFile(p, []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	out, alive := foregroundProbe(script("sleep 30"), 300*time.Millisecond, "openwrt")
 	if !alive {
 		t.Fatalf("переживший окно процесс должен считаться живым: %q", out)
+	}
+	out, alive = foregroundProbe(script("echo dying words; exit 3"), time.Second, "openwrt")
+	if alive || !strings.Contains(out, "dying words") {
+		t.Fatalf("вышедший сам процесс: alive=%v out=%q", alive, out)
 	}
 }
 
@@ -350,6 +367,14 @@ func TestInstallLocalPackageOpkgAlias(t *testing.T) {
 func TestInstallOpkgErrorsReachLog(t *testing.T) {
 	newFakeDaemon(t)
 	opts := newFakeDaemon(t).installOpts(nil)
+	// свой opkg.conf: без него тест на роутере правит НАСТОЯЩИЙ /etc/opkg.conf
+	// (дописанные arch-строки отключают архитектуру по умолчанию - opkg
+	// перестал видеть все пакеты тестовой ВМ 24.11)
+	const confBody = "dest root /\n"
+	opts.OpkgConf = filepath.Join(t.TempDir(), "opkg.conf")
+	if err := os.WriteFile(opts.OpkgConf, []byte(confBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	dest := filepath.Join(opts.TmpDir, rev23Pkg)
 	run := &fakeRun{script: map[string]resp{
 		"opkg|install " + dest: {
@@ -382,6 +407,14 @@ func TestInstallOpkgErrorsReachLog(t *testing.T) {
 			t.Errorf("в журнале нет %q:\n%s", want, res.Log)
 		}
 	}
+	// неизвестные зависимости - не архитектура: конфиг не трогается, запись
+	// пакета не снимается (лечит update)
+	if data, _ := os.ReadFile(opts.OpkgConf); string(data) != confBody {
+		t.Errorf("opkg.conf не должен меняться при неизвестных зависимостях: %q", data)
+	}
+	if run.saw("opkg remove") || strings.Contains(res.Log, "битая запись") {
+		t.Errorf("лечения архитектуры не должно быть; вызовы: %v\n%s", run.calls, res.Log)
+	}
 }
 
 func TestBlame(t *testing.T) {
@@ -401,5 +434,80 @@ func TestBlame(t *testing.T) {
 	}
 	if got := blame("ok\n\n"); len(got) != 0 {
 		t.Errorf("без ошибок список должен быть пуст: %q", got)
+	}
+}
+
+// живой кейс: пакет встал, start отчитался done, но демон умер сразу
+// (plain iptables без ndmmark) - mtinstall сам обновляет iptables до
+// keenetic-сборки и стартует заново; не вышло - честная ошибка
+func TestInstallPostStartDeathIptablesHeal(t *testing.T) {
+	// фиктивный /proc: на роутере с живым magitrickled настоящий /proc
+	// «оживлял» демона, и тест ждал ошибку, которой не было
+	enableChecks(t)
+	newFakeDaemon(t)
+
+	dir := t.TempDir()
+	run := &fakeRun{script: map[string]resp{
+		"iptables-save|": {
+			out: "iptables-save v1.4.21: Can't find library for match 'ndmmark'",
+			err: errors.New("exit status 1"),
+		},
+		"/opt/sbin/iptables-save|": {
+			out: "iptables-save v1.4.21: Can't find library for match 'ndmmark'",
+			err: errors.New("exit status 1"),
+		},
+	}}
+	_, err := Install(context.Background(), Options{
+		Platform: "keenetic",
+		Detect:   func() (string, string, error) { return "aarch64-3.10", "opkg print-architecture (Entware)", nil },
+		Latest: func(context.Context) (*Release, error) {
+			return &Release{TagName: "0.8.2-rev12", Assets: []Asset{
+				{Name: "magitrickle_0.8.2-12_entware_aarch64-3.10_kn.ipk", URL: "http://x/kn", Size: 9 << 20},
+			}}, nil
+		},
+		Fetch:  fetchFake(300_000),
+		Run:    run.run,
+		TmpDir: dir,
+	})
+	if err == nil || !strings.Contains(err.Error(), "сразу после старта") {
+		t.Fatalf("жду честную ошибку о смерти демона: %v", err)
+	}
+	for _, want := range []string{
+		"opkg update",
+		"opkg install iptables",
+		"/opt/sbin/iptables-save", // фолбэк полным путём после отказа PATH-вызова
+	} {
+		if !run.saw(want) {
+			t.Errorf("нет шага лечения %q; вызовы: %v", want, run.calls)
+		}
+	}
+	if n := len(run.calls); n < 1 || run.calls[n-1] != "/opt/etc/init.d/S99magitrickle start" {
+		t.Errorf("после лечения не было повторного старта; хвост: %v", run.calls[max(0, n-3):])
+	}
+}
+
+// демон умер, но iptables чист - лечение не должно дёргать opkg,
+// ошибка честная
+func TestInstallPostStartDeathNoHeal(t *testing.T) {
+	// фиктивный /proc: на роутере с живым magitrickled настоящий /proc
+	// «оживлял» демона, и тест ждал ошибку, которой не было
+	enableChecks(t)
+	newFakeDaemon(t)
+
+	dir := t.TempDir()
+	run := &fakeRun{}
+	_, err := Install(context.Background(), Options{
+		Platform: "openwrt",
+		Detect:   func() (string, string, error) { return "x86_64", "opkg", nil },
+		Latest:   func(context.Context) (*Release, error) { return testRelease(), nil },
+		Fetch:    fetchFake(300_000),
+		Run:      run.run,
+		TmpDir:   dir,
+	})
+	if err == nil || !strings.Contains(err.Error(), "сразу после старта") {
+		t.Fatalf("жду честную ошибку о смерти демона: %v", err)
+	}
+	if run.saw("opkg install iptables") {
+		t.Errorf("лечение не должно запускаться при чистом iptables-save; вызовы: %v", run.calls)
 	}
 }

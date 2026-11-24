@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -138,6 +139,7 @@ var daemonProbe = foregroundProbe
 
 func foregroundProbe(bin string, wait time.Duration, platform string) (string, bool) {
 	cmd := exec.Command(bin)
+	probeSetGroup(cmd)
 	cmd.Dir = "/"
 	cmd.Env = probeEnv(platform)
 	buf := &bytes.Buffer{}
@@ -155,12 +157,13 @@ func foregroundProbe(bin string, wait time.Duration, platform string) (string, b
 		return buf.String(), false
 	case <-time.After(wait):
 	}
-	// по Interrupt демон снимает свои правила; KILL только если не успел
-	_ = cmd.Process.Signal(os.Interrupt)
+	// по Interrupt демон снимает свои правила; KILL - только если не успел.
+	// Сигнал - группе целиком (см. probeSetGroup)
+	_ = probeSignalGroup(cmd, syscall.SIGINT)
 	select {
 	case <-exited:
 	case <-time.After(deathWait):
-		_ = cmd.Process.Kill()
+		_ = probeSignalGroup(cmd, syscall.SIGKILL)
 		<-exited
 	}
 	return buf.String(), true
