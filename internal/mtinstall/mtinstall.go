@@ -46,6 +46,12 @@ type Result struct {
 	Asset string `json:"asset"`
 	Bin   string `json:"bin"`
 	Log   string `json:"log"`
+
+	// SameVersion - версия пакета не менялась: opkg счёл её установленной,
+	// бинарь либо сверен с пакетом и оставлен, либо переустановлен
+	// принудительно. Равенство версии службы прежней здесь - норма, а не
+	// «бинарь мог не замениться».
+	SameVersion bool `json:"sameVersion"`
 }
 
 type Options struct {
@@ -209,6 +215,8 @@ func ServicePaths(platform string) (initScript, socket, bin string) {
 	return "/etc/init.d/magitrickle", "/var/run/magitrickle.sock", "/usr/bin/magitrickled"
 }
 
+var servicePaths = ServicePaths // подмена в тестах: бинарь во временном каталоге
+
 // LatestRelease опрашивает GitHub API о последнем релизе форка.
 func LatestRelease(ctx context.Context) (*Release, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, latestAPI, nil)
@@ -280,7 +288,11 @@ func Install(ctx context.Context, opts Options) (Result, error) {
 		mgr, ext = opts.PackageManagerFn()
 	}
 	if opts.LocalPackage != "" {
-		step("таргет %s (%s) не определялся: локальный пакет, менеджер %s", target, detail, mgr)
+		if target == "" {
+			step("таргет не определялся: локальный пакет, менеджер %s", mgr)
+		} else {
+			step("таргет %s (%s), локальный пакет, менеджер %s", target, detail, mgr)
+		}
 	} else {
 		step("таргет %s/%s (%s), менеджер %s", platform, target, detail, mgr)
 	}
@@ -333,8 +345,43 @@ func Install(ctx context.Context, opts Options) (Result, error) {
 		step("скачано %s", humanSize(size))
 	}
 
-	initScript, socket, bin := ServicePaths(opts.Platform)
+	// opkg признаёт аргумент файлом пакета только по расширению
+	// (.ipk/.opk/.deb), иначе ищет пакет с таким «именем»: загруженный
+	// через панель файл лежит как mawg-core-upload.bin, и установка из
+	// него на opkg обрывалась «Unknown package '/tmp/…/mawg-core-upload.bin'»
+	pkgPath := dest
+	if mgr == "opkg" && !opkgFileName(dest) {
+		if link, lerr := opkgAlias(dest); lerr == nil {
+			defer os.Remove(link)
+			pkgPath = link
+		} else {
+			step("ссылка с расширением .ipk для opkg не создалась (%v) - отдаю файл как есть", lerr)
+		}
+	}
+	// apk add на файл уже установленной версии ничего не меняет - для
+	// панели это та же «та же версия», что opkg «up to date»
+	if mgr == "apk" && apkSameVersion(run, assetName) {
+		res.SameVersion = true
+	}
+
+	initScript, socket, bin := servicePaths(opts.Platform)
 	res.Bin = bin
+	daemon := daemonCtl{platform: opts.Platform, initScript: initScript, bin: bin, run: run, step: step}
+
+	// строки ошибок пакетного менеджера - в лог, первая в текст: «exit
+	// status 255: Unknown package» без «Collected errors» ничего не
+	// объясняет (жалоба 24.11: причина была третьей строкой вывода)
+	pkgFail := func(stage string, perr error, pout []byte) error {
+		lines := blame(string(pout))
+		for _, l := range lines {
+			step("%s: %s", mgr, l)
+		}
+		text := firstLine(string(pout))
+		if len(lines) > 0 {
+			text = lines[0]
+		}
+		return fmt.Errorf("%s %s: %v: %s", mgr, stage, perr, text)
+	}
 
 	// предполётный чек iptables ДО остановки MT (сеть и резолв ещё живы):
 	// plain entware-iptables без ndm-расширений убьёт демона сразу после
@@ -342,7 +389,7 @@ func Install(ctx context.Context, opts Options) (Result, error) {
 	// пока opkg update работает; не вылечилось - повторит после старта
 	if out, err := probeIptablesSave(run, opts.Platform); err != nil && iptablesNdmmarkBroken(string(out)) {
 		step("iptables без ndm-расширений Keenetic - обновляю до keenetic-сборки до установки")
-		_ = updateLists(run, "opkg")
+		_, _ = updateLists(run, "opkg")
 		if iout, ie := run("opkg", "install", "iptables"); ie != nil {
 			step("обновить iptables не вышло (лечение повторится после старта): %s", firstLine(string(iout)))
 		}
@@ -368,15 +415,21 @@ func Install(ctx context.Context, opts Options) (Result, error) {
 	}
 	// стейл-сокет после убитого форграунда молча валит старт init-скриптом
 	_ = os.Remove(socket)
+	daemon.gone()
 
-	out, err := installPackage(run, mgr, dest)
+	out, err := installPackage(run, mgr, pkgPath)
 	// opkg молча пропускает установку при совпавшей версии («is up to
 	// date») - на диске может остаться чужой/старый бинарь (живой кейс:
 	// ручная подмена бинаря без переключения базы opkg, тест владельца
-	// на 0.42). Переустанавливаем принудительно.
+	// на 0.42). Переписываем пакет, только если бинарь отличается.
 	if err == nil && mgr == "opkg" && strings.Contains(strings.ToLower(string(out)), "up to date") {
-		step("opkg пропустил установку (up to date) - переустанавливаю принудительно")
-		out, err = installPackage(run, mgr, dest, "--force-reinstall")
+		res.SameVersion = true
+		if same, merr := pkgBinMatches(pkgPath, bin, bin); merr == nil && same {
+			step("эта версия уже установлена, бинарь на диске совпадает с пакетом - переустановку не делаю")
+		} else {
+			step("opkg пропустил установку (up to date) - переустанавливаю принудительно")
+			out, err = installPackage(run, mgr, pkgPath, "--force-reinstall")
+		}
 	}
 	// opkg не берёт файл пакета, когда его архитектуры нет в opkg.conf:
 	// файл молча игнорируется («has no valid architecture»), установка
@@ -386,8 +439,15 @@ func Install(ctx context.Context, opts Options) (Result, error) {
 	// кейс Keenetic-aarch64: в opkg.conf только «arch aarch64-3.10», нет
 	// ни «arch all», ни «aarch64-3.10_kn»). Лечение: дописать
 	// недостающие arch-строки, снять битую запись, поставить из файла.
+	// Те же формулировки opkg печатает, когда зависимостей пакета нет ни
+	// в базе, ни в списках (после перезагрузки списки пусты - они в RAM,
+	// жалоба 24.11): это лечит update ниже, поэтому строки opkg идут в
+	// лог как есть.
 	if err != nil && mgr == "opkg" && opkgArchRefused(string(out)) {
 		step("opkg не взял пакет (его архитектуры нет в opkg.conf / битая запись) - дополняю конфиг и ставлю из файла")
+		for _, l := range blame(string(out)) {
+			step("opkg: %s", l)
+		}
 		conf := opts.OpkgConf
 		if conf == "" {
 			conf = defaultOpkgConf(opts.Platform)
@@ -401,7 +461,7 @@ func Install(ctx context.Context, opts Options) (Result, error) {
 			}
 		}
 		_, _ = run("opkg", "remove", opkgPackage)
-		out, err = installPackage(run, mgr, dest)
+		out, err = installPackage(run, mgr, pkgPath)
 	}
 	if err != nil {
 		// зависимости могли не резолвнуться по пустым спискам - обновляем и
@@ -410,20 +470,23 @@ func Install(ctx context.Context, opts Options) (Result, error) {
 		if !depRetry(mgr, string(out)) {
 			_, _ = run(initScript, "start")
 			res.Log = log.String()
-			return res, fmt.Errorf("%s install: %v: %s", mgr, err, firstLine(string(out)))
+			return res, pkgFail("install", err, out)
 		}
 		step("первая попытка упала по зависимостям, обновляю списки и повторяю")
-		if uerr := updateLists(run, mgr); uerr != nil {
+		if uout, uerr := updateLists(run, mgr); uerr != nil {
 			step("%s update не удался: %v", mgr, uerr)
+			for _, l := range blame(string(uout)) {
+				step("%s: %s", mgr, l)
+			}
 		}
-		out2, err2 := installPackage(run, mgr, dest)
+		out2, err2 := installPackage(run, mgr, pkgPath)
 		// apk-солвер отказывает и при несовпадении arch устройства с arch
 		// пакета (живой кейс: /etc/apk/arch = aarch64, пакет aarch64_generic,
 		// v0.7.3 у пользователя); финальная попытка с --arch <arch пакета>
 		if err2 != nil && mgr == "apk" && strings.Contains(strings.ToLower(string(out2)), "unable to select packages") {
 			if arch := assetArch(assetName, ext); arch != "" {
 				step("повторяю с --arch %s", arch)
-				out3, err3 := installPackage(run, mgr, dest, "--arch", arch)
+				out3, err3 := installPackage(run, mgr, pkgPath, "--arch", arch)
 				if err3 == nil {
 					out, err2 = out3, nil
 				} else {
@@ -434,7 +497,7 @@ func Install(ctx context.Context, opts Options) (Result, error) {
 		if err2 != nil {
 			_, _ = run(initScript, "start")
 			res.Log = log.String()
-			return res, fmt.Errorf("%s install (повтор): %v: %s", mgr, err2, firstLine(string(out2)))
+			return res, pkgFail("install (повтор)", err2, out2)
 		}
 		out = out2
 	}
@@ -461,24 +524,23 @@ func Install(ctx context.Context, opts Options) (Result, error) {
 	// for match 'ndmmark'», а скрипт уже отчитался done). Перепроверка и
 	// самолечение известного случая: apt-аналог - поставить keenetic-_kn
 	// сборку iptables из keenetic-фида (её версия выше plain).
-	if procAlive() {
-		time.Sleep(postStartDelay)
-		if len(magitricklePids()) == 0 {
-			out, perr := probeIptablesSave(run, opts.Platform)
-			if perr != nil && iptablesNdmmarkBroken(string(out)) {
-				step("демон умер: iptables без ndm-расширений Keenetic - обновляю iptables до keenetic-сборки и стартую заново")
-				_ = updateLists(run, "opkg")
-				if iout, ie := run("opkg", "install", "iptables"); ie != nil {
-					step("обновить iptables не вышло: %s", firstLine(string(iout)))
-				}
-				_, _ = run(initScript, "start")
-				time.Sleep(postStartDelay)
+	if procAlive() && !daemon.settled() {
+		if out, perr := probeIptablesSave(run, opts.Platform); perr != nil && iptablesNdmmarkBroken(string(out)) {
+			step("демон умер: iptables без ndm-расширений Keenetic - обновляю iptables до keenetic-сборки и стартую заново")
+			_, _ = updateLists(run, "opkg")
+			if iout, ie := run("opkg", "install", "iptables"); ie != nil {
+				step("обновить iptables не вышло: %s", firstLine(string(iout)))
 			}
-			if len(magitricklePids()) == 0 {
+			_, _ = run(initScript, "start")
+			if daemon.settled() {
+				step("демон жив после перепроверки")
+			} else {
 				res.Log = log.String()
 				return res, fmt.Errorf("демон завершился сразу после старта - смотрите вывод iptables-save и журнал роутера (частая причина: зависимости/конфиг)")
 			}
-			step("демон жив после перепроверки")
+		} else if derr := daemon.diagnose(); derr != nil {
+			res.Log = log.String()
+			return res, derr
 		}
 	}
 	res.Log = log.String()
@@ -507,13 +569,51 @@ func assetArch(assetName, ext string) string {
 	return parts[2]
 }
 
-func updateLists(run func(string, ...string) ([]byte, error), mgr string) error {
+func updateLists(run func(string, ...string) ([]byte, error), mgr string) ([]byte, error) {
 	if mgr == "apk" {
-		_, err := run("apk", "update")
-		return err
+		return run("apk", "update")
 	}
-	_, err := run("opkg", "update")
-	return err
+	return run("opkg", "update")
+}
+
+// blame - строки ошибок пакетного менеджера из его вывода: « * …» после
+// «Collected errors» у opkg, «ERROR: …» у apk, обрыв загрузки списков.
+// До восьми.
+func blame(out string) []string {
+	var lines []string
+	for _, l := range strings.Split(out, "\n") {
+		l = strings.TrimSpace(l)
+		if l == "" || len(lines) == 8 {
+			continue
+		}
+		if strings.HasPrefix(l, "* ") || strings.HasPrefix(l, "***") ||
+			strings.HasPrefix(l, "ERROR") || strings.HasPrefix(l, "Signature") {
+			lines = append(lines, clip(strings.TrimLeft(l, "* ")))
+		}
+	}
+	return lines
+}
+
+// opkgFileName - opkg признаёт аргумент файлом пакета только по
+// расширению, иначе ищет пакет с таким именем (opkg_prepare_url_for_install).
+func opkgFileName(path string) bool {
+	for _, ext := range []string{".ipk", ".opk", ".deb"} {
+		if strings.HasSuffix(path, ext) {
+			return true
+		}
+	}
+	return false
+}
+
+// opkgAlias - тот же файл под именем с расширением .ipk: ссылкой рядом
+// (тот же tmpfs), иначе жёсткой.
+func opkgAlias(path string) (string, error) {
+	link := path + ".ipk"
+	_ = os.Remove(link)
+	if err := os.Symlink(path, link); err == nil {
+		return link, nil
+	}
+	return link, os.Link(path, link)
 }
 
 // depRetry - стоит ли повторять установку после обновления списков: отказ

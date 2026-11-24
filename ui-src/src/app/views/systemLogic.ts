@@ -61,8 +61,16 @@ export const coreStateBadge = (c: CoreInfo): { text: string; variant: 'ok' | 'er
   return c.running ? { text: 'работает', variant: 'ok' } : { text: 'остановлен', variant: 'warn' };
 };
 
+// engineUsable - ядро установлено и отвечает: только такое предлагают на
+// роль движка пула. Установленное, но глухое (ready === false) не входит
+// (конфиг всё равно не применится), но и «отсутствующим» не считается -
+// предложения поставить его нет
+export const engineUsable = (eng: EngineInfo | undefined): boolean =>
+  !!eng && !!eng.available && eng.ready !== false;
+
 export function engineInfoOf(eng: EngineInfo | undefined): string {
   if (!eng || !eng.available) return 'движок не найден';
+  if (eng.ready === false) return 'ядро не отвечает на запрос версии (мало памяти?)';
   // честные состояния (слово владельца 2026-10-17): «не запущено» -
   // процесса нет; «запущено, но не отвечает» - API молчит
   const state = !eng.running

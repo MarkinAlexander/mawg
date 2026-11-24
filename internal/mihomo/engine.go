@@ -2,6 +2,7 @@ package mihomo
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 
@@ -22,13 +23,26 @@ func (e Engine) Caps() singbox.CoreCaps { return singbox.CoreCaps{Hysteria2: tru
 
 var binCandidates = []string{"/opt/bin/mihomo", "/usr/bin/mihomo", "/usr/local/bin/mihomo"}
 
+// BinPresent - первый из кандидатов, кто есть на диске, даже если не
+// запускается (как singbox.BinPresent: нечитаемая версия - не «не установлен»).
+func BinPresent() (string, bool) {
+	for _, bin := range binCandidates {
+		if _, err := os.Stat(bin); err == nil {
+			return bin, true
+		}
+	}
+	return "", false
+}
+
 func Detect() (*Engine, error) {
 	for _, bin := range binCandidates {
 		ver, err := MihomoVersion(bin, nil)
-		if err != nil {
-			continue
+		if err == nil {
+			return &Engine{Bin: bin, Version: ver}, nil
 		}
-		return &Engine{Bin: bin, Version: ver}, nil
+		if _, serr := os.Stat(bin); serr == nil {
+			return nil, fmt.Errorf("бинар %s на месте, но не ответил на -v: %w", bin, err)
+		}
 	}
 	return nil, fmt.Errorf("бинар mihomo не найден (ищу в /opt/bin, /usr/bin, /usr/local/bin; установить можно в «Система → Ядра VPN»)")
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -84,5 +85,55 @@ func TestSystemInstallMagitrickleError(t *testing.T) {
 	}
 	if out.OK || out.Error == "" || !strings.Contains(out.Log, "halfway") {
 		t.Fatalf("ответ при ошибке: %+v", out)
+	}
+}
+
+// пакет той же версии (переустановлен принудительно): равенство версий
+// неизбежно - без ожидания смены и без «бинарь мог не замениться» (0.62,
+// 24.11: переустановка rev23 отвечала предупреждением через 15с)
+func TestSystemInstallMagitrickleReinstalledSameVersion(t *testing.T) {
+	mt := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/version" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"version":"0.8.2-rev23-mawg-dev"}`))
+	}))
+	t.Cleanup(mt.Close)
+	ts := newTestServerWithMT(t, mt.URL)
+	origInstall, origWait := mtInstall, mtVersionWait
+	t.Cleanup(func() { mtInstall, mtVersionWait = origInstall, origWait })
+	mtVersionWait = 1500 * time.Millisecond
+
+	post := func(reinstalled bool) (warning string, took time.Duration) {
+		mtInstall = func(context.Context, mtinstall.Options) (mtinstall.Result, error) {
+			return mtinstall.Result{Tag: "0.8.2-rev23", SameVersion: reinstalled}, nil
+		}
+		started := time.Now()
+		resp, err := http.Post(ts.URL+"/api/v1/system/install", "application/json", strings.NewReader(`{"id":"magitrickle"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var out struct {
+			OK      bool   `json:"ok"`
+			Version string `json:"version"`
+			Warning string `json:"warning"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			t.Fatal(err)
+		}
+		if !out.OK || out.Version != "0.8.2-rev23-mawg-dev" {
+			t.Fatalf("ответ: %+v", out)
+		}
+		return out.Warning, time.Since(started)
+	}
+
+	if warn, took := post(true); warn != "" || took > time.Second {
+		t.Errorf("переустановка той же версии: предупреждение %q за %s", warn, took)
+	}
+	if warn, _ := post(false); !strings.Contains(warn, "прежней версией") {
+		t.Errorf("обычная установка с прежней версией должна предупреждать: %q", warn)
 	}
 }

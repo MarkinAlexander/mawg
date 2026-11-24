@@ -588,7 +588,12 @@ export interface TunInfo {
 }
 
 export interface EngineInfo {
+  // available = «ядро установлено» (бинарь на месте); ready=false - оно
+  // установлено, но не отвечает на запрос версии (на роутере без памяти
+  // version-зонд убивает OOM): в выбор движка не входит, «отсутствующим»
+  // не считается
   available?: boolean
+  ready?: boolean
   running?: boolean
   api?: boolean
   version?: string

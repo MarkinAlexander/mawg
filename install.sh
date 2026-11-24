@@ -19,6 +19,7 @@ set -u
 REPO="${MAWG_REPO:-MarkinAlexander/mawg}"
 DL_BASE="https://github.com/${REPO}/releases/latest/download"
 TMP="/tmp/mawg-install.$$"
+PKG_UPDATE_LOG="/tmp/mawg-pkg-update.$$.log"
 MODE="install"
 WANT_MT="ask"
 WANT_AWG3="no"
@@ -33,6 +34,7 @@ warn() { echo "-- ВНИМАНИЕ: $*" >&2; }
 die() {
     echo "ОШИБКА: $*" >&2
     rm -rf "$TMP"
+    rm -f "$PKG_UPDATE_LOG"
     if [ "${SERVICE_STOPPED:-}" = 1 ]; then
         echo "восстанавливаю сервис прежней версии" >&2
         svc_start 2>/dev/null
@@ -95,7 +97,25 @@ need_pkg() {
     PKG_MANAGER=$(detect_pkg_manager)
 }
 
-pkg_update() { "$PKG_MANAGER" update; }
+# вывод update - в файл: «update не удался» без причины на роутере не
+# разобрать (кейс 24.11: opkg update из-под установщика обрывался, вручную
+# проходил; установщик молчал, что именно пишет opkg)
+pkg_update() { "$PKG_MANAGER" update >"$PKG_UPDATE_LOG" 2>&1; }
+
+# pkg_update_why - хвост вывода update без шумных строк загрузки
+pkg_update_why() {
+    grep -v -e '^Downloading' -e '^Updated list' -e 'Signature check passed' -e '^$' \
+        "$PKG_UPDATE_LOG" 2>/dev/null | tail -6
+}
+
+pkg_update_or_say() {
+    if pkg_update; then
+        return 0
+    fi
+    warn "$PKG_MANAGER update не удался, продолжаю без него"
+    pkg_update_why | sed 's/^/     /'
+    return 1
+}
 
 pkg_install() {
     case "$PKG_MANAGER" in
@@ -139,7 +159,7 @@ ensure_fetcher() {
     fi
     need_pkg
     say "нет curl и wget, ставлю curl через $PKG_MANAGER (один $PKG_MANAGER update)"
-    pkg_update >/dev/null 2>&1
+    pkg_update_or_say
     pkg_install curl >/dev/null 2>&1
     FETCHER=$(pick_fetcher)
     [ "$FETCHER" = curl ] || die "нужен curl или wget с https (установка curl через $PKG_MANAGER не удалась)"
@@ -454,8 +474,7 @@ mkdir -p "$TMP" || die "не создать $TMP"
 if [ "$MODE" = install ]; then
     pkg_update_ok=0
     say "$PKG_MANAGER update"
-    pkg_update >/dev/null 2>&1 && pkg_update_ok=1
-    [ "$pkg_update_ok" = 1 ] || warn "$PKG_MANAGER update не удался, продолжаю без него"
+    pkg_update_or_say && pkg_update_ok=1
     mark "$PKG_MANAGER update"
 
     if [ "$PLATFORM" = keenetic ]; then
@@ -613,7 +632,7 @@ else
         if [ "$MODE" = install ] && [ "$FETCHER" = wget ] && [ -z "${MAWG_BINARY:-}" ]; then
             warn "wget не смог скачать (возможно, не умеет https), ставлю curl и пробую снова"
             need_pkg
-            pkg_update >/dev/null 2>&1
+            pkg_update_or_say
             pkg_install curl >/dev/null 2>&1
             FETCHER=$(pick_fetcher)
             do_fetch "$DL_BASE/mawg-linux-$ARCH" "$TMP/mawg" \
@@ -694,4 +713,5 @@ else
 fi
 
 rm -rf "$TMP"
+rm -f "$PKG_UPDATE_LOG"
 report

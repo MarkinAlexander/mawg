@@ -280,6 +280,27 @@ describe('PoolCreateDialog', () => {
     dlg.unmount();
   });
 
+  // слово владельца 24.11: ядро на месте, но не отвечает на запрос версии (на
+  // роутере без памяти version-зонд убивает OOM) - оно установлено: «на
+  // роутере его нет, поставить сейчас» не показывается, в выбор не входит
+  it('ядро на месте, но не отвечает: предложения установки нет, в выбор движка не входит', async () => {
+    const { dlg, f } = await makeDialog({
+      '/links/inspect': { native: 0, engine: 1, types: ['vless'] },
+    }, {
+      platform: 'openwrt',
+      engine: { available: true, ready: false, running: false },
+      engines: { singbox: { available: true, ready: false, running: false } },
+    });
+    await btn(dlg, 'ссылка или подписка')[0].trigger('click');
+    await nextTick();
+    await dlg.find('textarea').setValue('vless://uuid@1.2.3.4:443?security=tls#node');
+    await vi.waitFor(() => expect(dlg.text()).toContain('прокси-узлов: 1 (vless)'), { timeout: 3000 });
+    expect(dlg.text()).not.toContain('нужен движок sing-box');
+    expect(dlg.text()).not.toContain('Ядро движка');
+    expect(f.mock.calls.some((c) => (c[0] as string).endsWith('/system/install'))).toBe(false);
+    dlg.unmount();
+  });
+
   // WG-источник при рабочих движках: селектор виден и для нативных
   // конфигов - можно увести пул в движок (старые Кинетики, 95-док)
   it('WG-источник + движки: селектор виден, выбор mihomo уходит в from-source', async () => {

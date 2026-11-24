@@ -37,14 +37,16 @@ func (s *Server) installMagitrickle(w http.ResponseWriter, r *http.Request) {
 	// служба стартует секунды, а procd stop не ждёт смерти старого
 	// процесса: первые ответы может давать ещё живой СТАРЫЙ бинарь -
 	// версию, равную прежней, не принимаем, пока окно не кончится
-	// (одинаковая версия в конце окна = честное предупреждение)
+	// (одинаковая версия в конце окна = честное предупреждение).
+	// Пакет той же версии (сверен и оставлен либо переустановлен
+	// принудительно): равенство неизбежно, версия принимается сразу.
 	version := ""
 	lastSeen := ""
 	deadline := time.Now().Add(mtVersionWait)
 	for time.Now().Before(deadline) {
 		if v, verr := s.mtClient().GetVersion(ctx); verr == nil && v != "" {
 			lastSeen = v
-			if prev == "" || v != prev {
+			if prev == "" || v != prev || res.SameVersion {
 				version = v
 				break
 			}
@@ -60,7 +62,7 @@ func (s *Server) installMagitrickle(w http.ResponseWriter, r *http.Request) {
 	case version == "":
 		msg += "; версия службы пока не прочитана (проверка зависимостей обновится)"
 		warn = "версия службы не прочитана: MT может не стартовать с новым пакетом - смотрите проверку зависимостей и журнал роутера"
-	case prev != "" && version == prev:
+	case prev != "" && version == prev && !res.SameVersion:
 		warn = "служба отвечает прежней версией (" + prev + "): пакет установлен, но бинарь мог не замениться или служба не перезапустилась"
 	}
 	if version != "" {

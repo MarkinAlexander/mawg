@@ -12,6 +12,7 @@ import { inspectLine, planView, protoGate, slotGate, slotOptions } from './pools
 import LxInstallDialog from './LxInstallDialog.vue'
 import { addrSecretIn } from '../secrets'
 import { G } from '../glossary'
+import { engineUsable } from './systemLogic'
 
 // Диалог создания пула (легаси dlgPool/setPoolMode 404-805): конфиги |
 // ссылка/подписка | Amnezia Free; капча Free - встроенной фазой диалога
@@ -96,10 +97,13 @@ watch(
 // ядро движкового пула (88-док + 95-док): mihomo - второй движок;
 // выбор появляется у всех источников с WG/AWG/прокси-узлами, когда
 // установлен хоть один движок - WG/AWG можно увести в движок и при
-// рабочем нативе (старые Кинетики, слово владельца 30.10)
+// рабочем нативе (старые Кинетики, слово владельца 30.10). Установленное,
+// но глухое ядро (ready === false: на роутере без памяти version-зонд убивает
+// OOM) в выбор не входит - конфиг всё равно не применится; «на роутере его
+// нет, поставить сейчас» при этом не показывается: available = «установлен»
 const engineCore = ref('');
-const mihomoAvailable = computed(() => !!status.data?.engines?.mihomo?.available);
-const singboxAvailable = computed(() => !!status.data?.engines?.singbox?.available);
+const mihomoAvailable = computed(() => engineUsable(status.data?.engines?.mihomo));
+const singboxAvailable = computed(() => engineUsable(status.data?.engines?.singbox));
 const showCoreSelect = computed(
   () =>
     mode.value === 'link' &&

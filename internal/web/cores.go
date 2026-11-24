@@ -71,6 +71,20 @@ func (s *Server) detectCore() (*singbox.Engine, bool) {
 	return coreDetect, coreDetectOK
 }
 
+// corePresentUnresponsive - бинар ядра на месте, но version-запрос не прошёл:
+// на роутере без памяти зонд запускает бинарь и его убивает OOM, а карточка
+// звала ставить ядро поверх имеющегося (жалоба 24.11). Считается установленным
+// - без версии, с честной причиной.
+func corePresentUnresponsive(v *coreView, bin string) {
+	v.Installed = true
+	v.LastError = "не отвечает на запрос версии (мало памяти? смотрите free)"
+	v.Note = "бинар " + bin + " на месте, версия не прочитана"
+}
+var (
+	binPresent   = singbox.BinPresent // подмена в тестах
+	mhBinPresent = mihomo.BinPresent
+)
+
 func (s *Server) coreDetectReset() {
 	coreDetectMu.Lock()
 	coreDetectAt = time.Time{}
@@ -109,6 +123,19 @@ func (s *Server) mihomoCoreView() coreView {
 	v := coreView{ID: "mihomo", Title: "mihomo (Clash.Meta)"}
 	eng, ok := s.detectMihomo()
 	if !ok {
+		if bin, present := mhBinPresent(); present {
+			corePresentUnresponsive(&v, bin)
+			v.Mode = "own"
+			v.Disabled = s.store.CoreDisabled("mihomo")
+			if mgr, err := s.mh(); err == nil {
+				v.Running = mgr.Status().Running
+			}
+			v.AutostartNote = "own-режим: ядро стартует вместе с движковыми пулами mawg"
+			// выключить (мастер-выключатель) можно и глухое ядро: «не трогать»
+			v.Caps.Start = v.Disabled || !v.Running
+			v.Caps.Stop = !v.Disabled
+			return v
+		}
 		v.Note = "не установлен (кнопка «Установить» ставит из релиза MetaCubeX)"
 		v.Caps.Install = true
 		v.Disabled = s.store.CoreDisabled("mihomo")
@@ -147,6 +174,32 @@ func (s *Server) singboxCoreView() coreView {
 	v := coreView{ID: "singbox", Title: "sing-box (движок туннелей)"}
 	eng, ok := s.detectCore()
 	if !ok {
+		if bin, present := binPresent(); present {
+			corePresentUnresponsive(&v, bin)
+			// версия из маркера установки - как в таблице зависимостей
+			// (инцидент 29.10: version-зонд попал на занятое окно)
+			if mv := singbox.MarkerVersion(singbox.LXTargetForPlatform(s.backend.Name()).MarkerDir); mv != "" {
+				v.Version, v.LX, v.Extended = mv, singbox.HasLXSuffix(mv), singbox.HasExtSuffix(mv)
+				v.Source = singbox.DetectSourceID(mv)
+				v.Note = "бинар " + bin + " на месте, версия из маркера установки; на запрос версии ядро не отвечает"
+			}
+			v.Mode = s.store.SingboxMode()
+			v.Disabled = s.store.EngineDisabled()
+			if mgr, err := s.sb(); err == nil {
+				v.Running = mgr.Status().Running
+			}
+			if v.Mode == "shared" {
+				v.Autostart = s.coreAutostart()
+				v.Caps.Enable = !v.Autostart
+				v.Caps.Disable = v.Autostart
+			} else {
+				v.AutostartNote = "own-режим: ядро стартует вместе с движковыми пулами mawg"
+			}
+			// выключить (мастер-выключатель) можно и глухое ядро: «не трогать»
+			v.Caps.Start = v.Disabled || !v.Running
+			v.Caps.Stop = !v.Disabled
+			return v
+		}
 		v.Note = "не установлен (пункт sing-box-lx в таблице зависимостей выше)"
 		return v
 	}

@@ -108,9 +108,14 @@ func awgToolsVersion(v string) int {
 	return n
 }
 
-const awgDirectAction = `rel=$(. /etc/openwrt_release 2>/dev/null; echo "$DISTRIB_RELEASE:$DISTRIB_ARCH") && ver=${rel%%:*} && arch=${rel##*:} && tgt=$(ubus call system board 2>/dev/null | tr -d ' ' | grep -o '"target":"[^"]*"' | cut -d'"' -f4 | tr '/' '_') && base="https://github.com/2Grey/awg-openwrt/releases/download/v$ver" && wget -4 -q -O /tmp/kmod-awg.ipk "$base/kmod-amneziawg_v${ver}_${arch}_${tgt}.ipk" && wget -4 -q -O /tmp/tools-awg.ipk "$base/amneziawg-tools_v${ver}_${arch}_${tgt}.ipk" && opkg install /tmp/kmod-awg.ipk /tmp/tools-awg.ipk && (modprobe amneziawg 2>/dev/null || true) && rm -f /tmp/kmod-awg.ipk /tmp/tools-awg.ipk`
+// wget без -q: с ним отказ приходил в панель голым «exit status 4»
+// (uclient-fetch: не удалось отправить запрос), а причина была в строке,
+// которую он же выводил (жалоба 24.11: исходящие соединения роутера
+// дропались). kmod перезагружается, если не занят: иначе modprobe молча
+// оставляет в памяти прежний модуль до перезагрузки.
+const awgDirectAction = `rel=$(. /etc/openwrt_release 2>/dev/null; echo "$DISTRIB_RELEASE:$DISTRIB_ARCH") && ver=${rel%%:*} && arch=${rel##*:} && tgt=$(ubus call system board 2>/dev/null | tr -d ' ' | grep -o '"target":"[^"]*"' | cut -d'"' -f4 | tr '/' '_') && base="https://github.com/2Grey/awg-openwrt/releases/download/v$ver" && wget -4 -O /tmp/kmod-awg.ipk "$base/kmod-amneziawg_v${ver}_${arch}_${tgt}.ipk" && wget -4 -O /tmp/tools-awg.ipk "$base/amneziawg-tools_v${ver}_${arch}_${tgt}.ipk" && opkg install /tmp/kmod-awg.ipk /tmp/tools-awg.ipk && (rmmod amneziawg 2>/dev/null || true; modprobe amneziawg 2>/dev/null || true) && rm -f /tmp/kmod-awg.ipk /tmp/tools-awg.ipk`
 
-const awgScriptAction = "wget -4 -qO /tmp/awg-install.sh https://raw.githubusercontent.com/2Grey/awg-openwrt/refs/heads/master/amneziawg-install.sh && sh /tmp/awg-install.sh -e -n < /dev/null"
+const awgScriptAction = "wget -4 -O /tmp/awg-install.sh https://raw.githubusercontent.com/2Grey/awg-openwrt/refs/heads/master/amneziawg-install.sh && sh /tmp/awg-install.sh -e -n < /dev/null"
 
 func awgAction(release string) string {
 	if strings.HasPrefix(release, "25.") {

@@ -153,6 +153,15 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 			"mode": st.Mode, "fragment": st.Fragment, "cacheFile": st.CacheFile, "tuns": tuns,
 			"disabled": s.store.EngineDisabled(), "autostart": s.coreAutostart(),
 		}
+	} else if bin, present := binPresent(); present {
+		// бинар на месте, но version-зонд не прошёл (на роутере без памяти его
+		// убивает OOM): available = «установлен» - иначе диалог пула звал
+		// «на роутере его нет, поставить сейчас» (слово владельца 24.11);
+		// ready:false - селектор движка его не предлагает, конфиг не применится
+		out.Engine = map[string]any{
+			"available": true, "ready": false, "running": false, "api": false,
+			"bin": bin, "disabled": s.store.EngineDisabled(),
+		}
 	}
 	out.Engines = map[string]map[string]any{}
 	if out.Engine != nil {
@@ -187,6 +196,12 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 			"bin": st.Bin, "mixedPort": st.Mixed, "clashPort": st.Clash,
 			"mode": st.Mode, "cacheFile": st.Cache, "tuns": tuns,
 			"disabled": s.store.CoreDisabled("mihomo"),
+		}
+	} else if bin, present := mhBinPresent(); present {
+		// как для sing-box выше: бинар на месте - ядро установлено, хоть и глухое
+		out.Engines["mihomo"] = map[string]any{
+			"available": true, "ready": false, "running": false, "api": false,
+			"bin": bin, "disabled": s.store.CoreDisabled("mihomo"),
 		}
 	} else {
 		out.Engines["mihomo"] = map[string]any{"available": false, "disabled": s.store.CoreDisabled("mihomo")}

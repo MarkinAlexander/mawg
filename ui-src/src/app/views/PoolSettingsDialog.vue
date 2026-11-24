@@ -11,6 +11,7 @@ import { useGroups } from '../../stores/groups'
 import { ApiError } from '../../api/client'
 import type { DeviceBinding, PoolMember, PoolView } from '../../api/types'
 import { fallbackHint } from './poolsLogic'
+import { engineUsable } from './systemLogic'
 import {
   DEV_IP_RE, amnCountryOptionsOf, coreOptions, fbOptionsOf, groupModeOptions,
   nodeOptionsOf, nodeShortName, premCountryOptionsOf, premNoteOf,
@@ -147,7 +148,7 @@ const isEng = computed(() => pool.value?.settings.engineMode === 'singbox');
 const isFree = computed(() => !!pool.value?.free);
 // ядро движка пула (88-док): выбор при установленном mihomo (кроме Free)
 const engineCore = ref('');
-const mihomoAvailable = computed(() => !!status.data?.engines?.mihomo?.available);
+const mihomoAvailable = computed(() => engineUsable(status.data?.engines?.mihomo));
 const showCoreSelect = computed(() => isEng.value && mihomoAvailable.value && !isFree.value);
 const isPrem = computed(() => !!(pool.value?.premium || {}).imported);
 const sourceRowShown = computed(() =>

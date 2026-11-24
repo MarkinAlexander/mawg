@@ -11,8 +11,10 @@ import (
 
 func TestMain(m *testing.M) {
 	// послестартовая перепроверка живости в тестах глушится (нет /proc
-	// с живым magitrickled); тесты самого лечения включают её явно
+	// с живым magitrickled); тесты самого лечения включают её явно.
+	// Окна ожидания демона нулевые: фиктивный /proc сам не меняется
 	procAlive = func() bool { return false }
+	startWait, stopWait, deathWait = 0, 0, 0
 	os.Exit(m.Run())
 }
 
